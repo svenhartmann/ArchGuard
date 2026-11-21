@@ -374,6 +374,7 @@ impl Extractor {
                         kind,
                         via: f.name.clone(),
                         source: SOURCE.into(),
+                        external: false,
                     });
                 };
                 if let Some((to, kind)) = self.relation_of(e, f) {

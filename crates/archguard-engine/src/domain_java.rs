@@ -396,6 +396,7 @@ impl Extractor {
                         kind,
                         via: f.name.clone(),
                         source: SOURCE.into(),
+                        external: false,
                     });
                 }
             }

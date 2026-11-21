@@ -22,8 +22,16 @@
 //!   bases) are inherited. A model class nested in another block is a gap.
 //! - Names are resolved through imports (re-exports and star imports followed)
 //!   or the file's own classes, never by a same name elsewhere: an import of
-//!   unscanned code (`from django.contrib.auth.models import User`) is an
-//!   external reference, so its relation is a gap. A Django string without app
+//!   unscanned code is an external reference, so its relation is a gap, except
+//!   the Django built-ins `ContentType` (`django.contrib.contenttypes.models`),
+//!   `Permission`, `Group` and `User` (`django.contrib.auth.models`, `User` only
+//!   while `AUTH_USER_MODEL` is unset or `auth.User`) and the strings
+//!   `auth.User|Group|Permission`, `contenttypes.ContentType` no scanned model
+//!   matches: those are relations with `external: true` to
+//!   `django.contrib.<label>.<Name>`. `AUTH_USER_MODEL = '<label>.<Model>'` (a
+//!   string literal at module level of `settings.py` / `settings/*.py`) is the
+//!   target of `settings.AUTH_USER_MODEL` and `get_user_model()`; a computed
+//!   value is a gap, and so are those targets. A Django string without app
 //!   label resolves inside the model's own app, `'label.Model'` in the app with
 //!   that label: `AppConfig.label` of its `apps.py`, else the last part of
 //!   `AppConfig.name`, else the directory name (`INSTALLED_APPS` is not read;
@@ -43,6 +51,16 @@
 //!   fields; any other call is a gap "field type not read".
 //! - API models: a SQLModel class without `table=True` goes to `api_models`
 //!   with the reason "SQLModel without table=True".
+//! - SQLAlchemy 2.x attributes besides `Column` / `mapped_column` /
+//!   `relationship`: `column_property`, `deferred`, `query_expression`
+//!   (<https://docs.sqlalchemy.org/en/20/orm/mapped_sql_expr.html>),
+//!   `association_proxy`
+//!   (<https://docs.sqlalchemy.org/en/20/orm/extensions/associationproxy.html>;
+//!   a field, the relation behind it is not read), `composite`
+//!   (<https://docs.sqlalchemy.org/en/20/orm/composites.html>) and `synonym`
+//!   (<https://docs.sqlalchemy.org/en/20/orm/mapping_api.html#sqlalchemy.orm.synonym>)
+//!   are fields. Any other call on a class attribute of such a model is a gap
+//!   "attribute type not read" (`hybrid_property` is a decorator, not read).
 //! - Fields: Django `x = models.CharField(…)` (a call whose last name part ends
 //!   in `Field`, or `ForeignKey`); SQLModel annotated members; SQLAlchemy
 //!   `Column(…)` / `mapped_column(…)`. The type is the callee, resp. the
@@ -173,6 +191,15 @@ struct Mem {
     unread: Option<String>,
 }
 
+/// `AUTH_USER_MODEL` of the Django settings modules.
+#[derive(Default)]
+enum AuthUser {
+    #[default]
+    Unset,
+    Literal(String),
+    Computed,
+}
+
 struct Machine {
     field: String,
     enum_name: String,
@@ -194,6 +221,7 @@ struct Extractor {
     /// Class index → entity id.
     ent: BTreeMap<usize, String>,
     gaps: BTreeSet<(String, u32, String)>,
+    auth_user: AuthUser,
 }
 
 fn last(name: &str) -> &str {
@@ -373,7 +401,38 @@ impl Extractor {
         }
     }
 
+    /// `AUTH_USER_MODEL = '…'` at module level of `settings.py` / `settings/*.py`.
+    fn find_auth_user(&mut self) {
+        let mut found = vec![];
+        for file in &self.files {
+            let parts: Vec<&str> = file.rel.split('/').collect();
+            let n = parts.len();
+            if parts[n - 1] != "settings.py" && !(n > 1 && parts[n - 2] == "settings") {
+                continue;
+            }
+            for st in file.stmts.iter().filter(|s| s.indent == 0) {
+                let Some(m) = member(file, st).filter(|m| m.name == "AUTH_USER_MODEL") else {
+                    continue;
+                };
+                let lit = m.value.and_then(|(_, v)| string_value(v));
+                found.push((file.rel.clone(), line(&file.masked, st.at), lit));
+            }
+        }
+        for (file, ln, lit) in found {
+            match (lit, &self.auth_user) {
+                (None, _) => {
+                    let msg = "AUTH_USER_MODEL is not a string literal; settings.AUTH_USER_MODEL and get_user_model() relations are not read.";
+                    self.gap(&file, ln, msg.into());
+                    self.auth_user = AuthUser::Computed;
+                }
+                (Some(s), AuthUser::Unset) => self.auth_user = AuthUser::Literal(s),
+                _ => {}
+            }
+        }
+    }
+
     fn run(&mut self) {
+        self.find_auth_user();
         self.find_sa_bases();
         self.find_frameworks();
         let mut entities = vec![];
@@ -483,7 +542,7 @@ impl Extractor {
             let df = self.classes[*decl].f;
             let r =
                 (m.rel.as_ref()).map(|r| Resolver(self).target(df, f, &id, &r.target, r.by_table));
-            if let (Some(rel), Some(Ok(t))) = (&m.rel, &r)
+            if let (Some(rel), Some(Ok((t, _)))) = (&m.rel, &r)
                 && rel.by_table
             {
                 fk_targets.insert(t.clone());
@@ -502,7 +561,7 @@ impl Extractor {
                 continue;
             };
             match r {
-                Ok(to) => {
+                Ok((to, external)) => {
                     let kind = match (rel.by_table, rel.kind) {
                         (true, _) => RelationKind::References,
                         (_, Some(k)) => k,
@@ -515,6 +574,7 @@ impl Extractor {
                         kind,
                         via: m.name.clone(),
                         source: SOURCE.into(),
+                        external,
                     });
                 }
                 Err(why) => gaps.push((
@@ -896,6 +956,56 @@ mod resolving {
             }
         }
 
+        /// `label.Name` of a Django built-in model outside the scanned sources.
+        fn builtin(s: &str) -> Option<String> {
+            let (label, name) = s.rsplit_once('.')?;
+            [
+                "auth.User",
+                "auth.Group",
+                "auth.Permission",
+                "contenttypes.ContentType",
+            ]
+            .contains(&s)
+            .then(|| format!("django.contrib.{label}.{name}"))
+        }
+
+        /// A scanned model by Django string, else a built-in model.
+        fn model_or_builtin(&self, mf: usize, me: &str, s: &str) -> Result<Resolved, String> {
+            (self.model(mf, me, s).map(|id| (id, false)))
+                .or_else(|e| Self::builtin(s).map(|id| (id, true)).ok_or(e))
+        }
+
+        fn auth_is_default(&self) -> bool {
+            match &self.0.auth_user {
+                AuthUser::Unset => true,
+                AuthUser::Literal(s) => s == "auth.User",
+                AuthUser::Computed => false,
+            }
+        }
+
+        /// `settings.AUTH_USER_MODEL` / `get_user_model()`.
+        fn auth_user(&self, mf: usize, me: &str) -> Result<Resolved, String> {
+            match &self.0.auth_user {
+                AuthUser::Unset => Ok(("django.contrib.auth.User".into(), true)),
+                AuthUser::Literal(s) => self.model_or_builtin(mf, me, s),
+                AuthUser::Computed => Err("AUTH_USER_MODEL is not a string literal".into()),
+            }
+        }
+
+        /// A class imported from an unscanned `django.contrib.{auth,contenttypes}.models`.
+        fn imported_builtin(&self, f: usize, name: &str) -> Option<String> {
+            let first = name.split('.').next()?;
+            let imp = self.0.files[f].imports.iter().find(|i| i.local == first)?;
+            let label = match imp.module.as_str() {
+                "django.contrib.auth.models" => "auth",
+                "django.contrib.contenttypes.models" => "contenttypes",
+                _ => return None,
+            };
+            let sym = imp.name.as_deref().unwrap_or(last(name));
+            let s = format!("{label}.{sym}");
+            (s != "auth.User" || self.auth_is_default()).then(|| Self::builtin(&s))?
+        }
+
         /// The entity id a relation target points to; `f` is the file the
         /// attribute is written in, `mf` the entity's file (Django strings
         /// resolve from the concrete model's app).
@@ -906,11 +1016,20 @@ mod resolving {
             me: &str,
             t: &Target,
             by_table: bool,
-        ) -> Result<String, String> {
+        ) -> Result<Resolved, String> {
+            let local = |r: Result<String, String>| r.map(|id| (id, false));
             match (t, by_table) {
-                (Target::Lit(s), true) => self.table(s),
-                (Target::Lit(s), false) => self.name(f, s),
-                (Target::Model(s), _) => self.model(mf, me, s),
+                (Target::Lit(s), true) => local(self.table(s)),
+                (Target::Lit(s), false) => local(self.name(f, s)),
+                (Target::Model(s), _) => self.model_or_builtin(mf, me, s),
+                (Target::Ref(r), _)
+                    if r == "get_user_model()"
+                        || r.rsplit_once('.').is_some_and(|(p, n)| {
+                            n == "AUTH_USER_MODEL" && last(p) == "settings"
+                        }) =>
+                {
+                    self.auth_user(mf, me)
+                }
                 (Target::Ref(r), by_table) => {
                     let mut name = r.as_str();
                     if let Some((class, _)) = name.rsplit_once('.').filter(|_| by_table) {
@@ -922,8 +1041,14 @@ mod resolving {
                     if !name.bytes().all(|b| is_id(b) || b == b'.') {
                         return Err(format!("`{r}` is not a class name"));
                     }
-                    let k = Names(self.0).find(f, name)?;
+                    let k = match Names(self.0).find(f, name) {
+                        Ok(k) => k,
+                        Err(e) => {
+                            return (self.imported_builtin(f, name).map(|id| (id, true))).ok_or(e);
+                        }
+                    };
                     (self.0.ent.get(&k).cloned())
+                        .map(|id| (id, false))
                         .ok_or_else(|| format!("`{name}` is not a scanned entity"))
                 }
             }
@@ -931,6 +1056,9 @@ mod resolving {
     }
 }
 use resolving::Resolver;
+
+/// An entity id and whether it is outside the scanned sources.
+type Resolved = (String, bool);
 
 /// Where a name points: imports, definitions, re-exports, and Django apps.
 mod names {
@@ -1023,8 +1151,12 @@ mod names {
                 .map(|(d, m)| {
                     let callee = m.unread.as_deref().unwrap_or_default();
                     let at = x.files[x.classes[*d].f].rel.clone();
+                    let kind = match x.fw[c] {
+                        Some(Fw::Django) | None => "field",
+                        _ => "attribute",
+                    };
                     let what = format!(
-                        "Field {id}.{} not read: field type not read (`{callee}`).",
+                        "Field {id}.{} not read: {kind} type not read (`{callee}`).",
                         m.name
                     );
                     (at, m.line, what)
@@ -1376,53 +1508,66 @@ mod fields {
         r.mem(tn, coll, rel)
     }
 
+    fn sa_column(r: &Read) -> Option<Mem> {
+        let tn = match r.m.ann {
+            Some(a) => ann_type(a).0,
+            None => (r.args.iter())
+                .find(|a| a.name.is_none() && string_value(a.value).is_none())
+                .map(|a| last(&dotted(a.value.as_bytes(), 0).0).to_string())
+                .unwrap_or_default(),
+        };
+        let fk = r.args.iter().find_map(|a| call_in(a.value, "ForeignKey"));
+        let rel = fk.map(|v| RawRel {
+            kind: None,
+            target: target(&v),
+            by_table: true,
+        });
+        r.mem(tn, false, rel)
+    }
+
+    fn sa_relationship(r: &Read) -> Option<Mem> {
+        let ann = r.m.ann.map(ann_type);
+        let first = (r.args.iter()).find(|a| a.name.is_none() || a.name == Some("argument"));
+        let t = match (first, &ann) {
+            (Some(a), _) => target(a.value),
+            (None, Some((tn, _))) if !tn.is_empty() => Target::Ref(tn.clone()),
+            _ => Target::Ref(String::new()),
+        };
+        let one = r.arg("uselist").is_some_and(|a| a.value == "False");
+        let kind = match (&ann, one) {
+            (_, true) => Some(RelationKind::HasOne),
+            (Some((_, many)), _) => Some(if *many {
+                RelationKind::HasMany
+            } else {
+                RelationKind::HasOne
+            }),
+            (None, _) => None,
+        };
+        let (Target::Lit(s) | Target::Model(s) | Target::Ref(s)) = &t;
+        let tn = last(s).to_string();
+        let rel = RawRel {
+            kind,
+            target: t,
+            by_table: false,
+        };
+        r.mem(tn, ann.is_some_and(|a| a.1), Some(rel))
+    }
+
     fn sqlalchemy_member(r: &Read) -> Option<Mem> {
         match r.callee {
-            "Column" | "mapped_column" => {
-                let tn = match r.m.ann {
-                    Some(a) => ann_type(a).0,
-                    None => (r.args.iter())
-                        .find(|a| a.name.is_none() && string_value(a.value).is_none())
-                        .map(|a| last(&dotted(a.value.as_bytes(), 0).0).to_string())
-                        .unwrap_or_default(),
-                };
-                let fk = r.args.iter().find_map(|a| call_in(a.value, "ForeignKey"));
-                let rel = fk.map(|v| RawRel {
-                    kind: None,
-                    target: target(&v),
-                    by_table: true,
-                });
-                r.mem(tn, false, rel)
+            "Column" | "mapped_column" => sa_column(r),
+            "relationship" => sa_relationship(r),
+            "column_property" | "deferred" | "query_expression" | "association_proxy"
+            | "composite" | "synonym" => {
+                let tn = (r.m.ann).map_or_else(|| r.callee.to_string(), |a| ann_type(a).0);
+                r.mem(tn, false, None)
             }
-            "relationship" => {
-                let ann = r.m.ann.map(ann_type);
-                let first =
-                    (r.args.iter()).find(|a| a.name.is_none() || a.name == Some("argument"));
-                let t = match (first, &ann) {
-                    (Some(a), _) => target(a.value),
-                    (None, Some((tn, _))) if !tn.is_empty() => Target::Ref(tn.clone()),
-                    _ => Target::Ref(String::new()),
-                };
-                let one = r.arg("uselist").is_some_and(|a| a.value == "False");
-                let kind = match (&ann, one) {
-                    (_, true) => Some(RelationKind::HasOne),
-                    (Some((_, many)), _) => Some(if *many {
-                        RelationKind::HasMany
-                    } else {
-                        RelationKind::HasOne
-                    }),
-                    (None, _) => None,
-                };
-                let (Target::Lit(s) | Target::Model(s) | Target::Ref(s)) = &t;
-                let tn = last(s).to_string();
-                let rel = RawRel {
-                    kind,
-                    target: t,
-                    by_table: false,
-                };
-                r.mem(tn, ann.is_some_and(|a| a.1), Some(rel))
+            "" => None,
+            callee => {
+                let mut mem = r.mem(callee.to_string(), false, None)?;
+                mem.unread = Some(callee.to_string());
+                Some(mem)
             }
-            _ => None,
         }
     }
 }
@@ -1673,12 +1818,118 @@ class Tag(models.Model):
                 "Book-HasOne->Author via author",
                 "Book-HasOne->Author via editor",
                 "Book-HasMany->Tag via tags",
+                "Book-HasOne->django.contrib.auth.User via owner",
             ]
         );
-        assert!(!m.complete);
-        assert_eq!(m.diagnostics.len(), 1);
-        let d = &m.diagnostics[0];
-        assert!(d.message.contains("Book.owner") && d.line == 12, "{d:?}");
+        assert!(m.complete, "{:?}", m.diagnostics);
+    }
+
+    #[test]
+    fn django_unresolvable_relation_is_a_gap() {
+        let src = "from django.db import models\nclass A(models.Model):\n    b = models.ForeignKey('nowhere.B', on_delete=models.CASCADE)\n";
+        let m = model(&[("shop/models.py", src)]);
+        assert!(rels(&m).is_empty());
+        assert!(m.diagnostics.len() == 1 && m.diagnostics[0].message.contains("A.b"));
+    }
+
+    const OWNED: &str = "from django.db import models\nfrom django.conf import settings\nfrom django.contrib.auth import get_user_model\nfrom django.contrib.contenttypes.models import ContentType\nfrom django.contrib.auth.models import Permission\nclass Note(models.Model):\n    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)\n    editor = models.ForeignKey(get_user_model(), on_delete=models.CASCADE)\n    ct = models.ForeignKey(ContentType, on_delete=models.CASCADE)\n    perm = models.ManyToManyField(Permission)\n";
+
+    #[test]
+    fn django_auth_user_model_literal_resolves_through_app_labels() {
+        let acc = "from django.db import models\nclass Account(models.Model):\n    n = models.CharField(max_length=1)\n";
+        let m = model(&[
+            ("accounts/apps.py", ""),
+            ("accounts/models.py", acc),
+            (
+                "proj/settings/base.py",
+                "AUTH_USER_MODEL = 'accounts.Account'\n",
+            ),
+            ("notes/models.py", OWNED),
+        ]);
+        assert_eq!(
+            rels(&m),
+            [
+                "Note-HasOne->Account via editor",
+                "Note-HasOne->Account via owner",
+                "Note-HasMany->django.contrib.auth.Permission via perm",
+                "Note-HasOne->django.contrib.contenttypes.ContentType via ct",
+            ]
+        );
+        let ext: Vec<bool> = m.relations.iter().map(|r| r.external).collect();
+        assert_eq!(ext, [false, false, true, true]);
+        assert!(m.complete, "{:?}", m.diagnostics);
+    }
+
+    #[test]
+    fn django_builtin_models_are_external_references() {
+        let m = model(&[("notes/models.py", OWNED)]);
+        assert_eq!(
+            rels(&m),
+            [
+                "Note-HasMany->django.contrib.auth.Permission via perm",
+                "Note-HasOne->django.contrib.auth.User via editor",
+                "Note-HasOne->django.contrib.auth.User via owner",
+                "Note-HasOne->django.contrib.contenttypes.ContentType via ct",
+            ]
+        );
+        assert!(m.relations.iter().all(|r| r.external));
+        assert!(m.complete, "{:?}", m.diagnostics);
+    }
+
+    #[test]
+    fn django_computed_auth_user_model_is_a_gap() {
+        let m = model(&[
+            ("proj/settings.py", "AUTH_USER_MODEL = os.environ['U']\n"),
+            ("notes/models.py", OWNED),
+        ]);
+        let msgs: Vec<&str> = m.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        assert!(
+            msgs.iter()
+                .any(|s| s.contains("AUTH_USER_MODEL") && s.contains("not a string literal")),
+            "{msgs:?}"
+        );
+        assert!(msgs.iter().any(|s| s.contains("Note.owner")), "{msgs:?}");
+        assert!(msgs.iter().any(|s| s.contains("Note.editor")), "{msgs:?}");
+        let r = rels(&m);
+        assert!(
+            !r.iter()
+                .any(|s| s.contains("via owner") || s.contains("via editor"))
+        );
+        assert!(r.iter().any(|s| s.contains("via ct")));
+    }
+
+    #[test]
+    fn sqlalchemy_other_attributes_are_fields_or_gaps() {
+        let src = r#"from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, column_property, deferred, query_expression, synonym, composite
+from sqlalchemy.ext.associationproxy import association_proxy
+class Base(DeclarativeBase):
+    pass
+class User(Base):
+    __tablename__ = 'u'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    full = column_property(first + last)
+    bio = deferred(Column(Text))
+    score = query_expression()
+    kw = association_proxy('keywords', 'kw')
+    pt = composite(Point, x, y)
+    nick = synonym('name')
+    odd = mystery_call(3)
+    plain = 3
+"#;
+        let m = model(&[("a/models.py", src)]);
+        let fields: Vec<&str> = m.entities[0]
+            .fields
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        assert_eq!(fields, ["id", "full", "bio", "score", "kw", "pt", "nick"]);
+        assert!(m.relations.is_empty());
+        assert_eq!(m.diagnostics.len(), 1, "{:?}", m.diagnostics);
+        let d = &m.diagnostics[0].message;
+        assert!(
+            d.contains("User.odd") && d.contains("attribute type not read"),
+            "{d}"
+        );
     }
 
     const ORDER: &str = r#"from django.db import models
@@ -1908,16 +2159,17 @@ class Order(models.Model):
     other_app = models.ForeignKey('User', on_delete=models.CASCADE)
 "#;
         let m = model(&[("users/models.py", users), ("shop/models.py", shop)]);
-        assert_eq!(rels(&m), ["Order-HasOne->Profile via same_app"]);
-        let msgs: Vec<&str> = m.diagnostics.iter().map(|d| d.message.as_str()).collect();
-        assert_eq!(msgs.len(), 2, "{msgs:?}");
-        assert!(
-            msgs.iter()
-                .any(|x| x.contains("Order.owner") && x.contains("django.contrib.auth.models")),
-            "{msgs:?}"
+        // The unscanned django.contrib import is the external User, never `users.User`.
+        assert_eq!(
+            rels(&m),
+            [
+                "Order-HasOne->Profile via same_app",
+                "Order-HasOne->django.contrib.auth.User via owner"
+            ]
         );
+        let msgs: Vec<&str> = m.diagnostics.iter().map(|d| d.message.as_str()).collect();
         assert!(
-            msgs.iter().any(|x| x.contains("Order.other_app")),
+            msgs.len() == 1 && msgs[0].contains("Order.other_app"),
             "{msgs:?}"
         );
     }

@@ -488,6 +488,7 @@ impl Extractor {
                         kind,
                         via,
                         source: SOURCE.into(),
+                        external: false,
                     });
                 }
             }
