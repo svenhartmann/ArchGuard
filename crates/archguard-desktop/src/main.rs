@@ -67,6 +67,7 @@ mod status;
 mod tab_support;
 mod timing;
 mod tree;
+mod tree_nav;
 mod tree_order;
 #[cfg(test)]
 mod tree_width_check;

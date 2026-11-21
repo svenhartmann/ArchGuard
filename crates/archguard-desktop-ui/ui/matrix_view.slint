@@ -4,6 +4,7 @@ import { Theme } from "theme.slint";
 import { Icon, Icons, Button, SearchField, KpiItem, StatInline, PageTitle } from "widgets.slint";
 import { Fmt } from "format.slint";
 import { NodeMenu } from "node_menu.slint";
+import { TreeKeys } from "tree_keys.slint";
 
 // kind: 0 package, 1 direct files of the scope root, 2 outside the scope.
 export struct MatrixColumn {
@@ -32,6 +33,8 @@ export struct MatrixRowItem {
     cells: [string],
     // The column the row belongs to (its diagonal cell); -1: none.
     own-col: int,
+    // The parent's row on this page, -1 for none (the Left key).
+    parent: int,
 }
 
 // One Matrix instance as Rust shows it (src/matrix_ui.rs); app.slint
@@ -370,7 +373,19 @@ export component MatrixView inherits Rectangle {
             }
         }
 
-        // Body.
+        // Body. The tree keys of the Explorer: arrows, Home/End, Left/Right
+        // close/open a package, Enter and Space toggle it.
+        keys := TreeKeys {
+          vertical-stretch: 1;
+          count: root.rows.length;
+          info(i) => { { expandable: root.rows[i].package, expanded: root.rows[i].expanded, parent: root.rows[i].parent } }
+          toggle(i) => { if (root.rows[i].package) { root.toggle(root.rows[i].node); } }
+          activate(i) => { if (root.rows[i].package) { root.toggle(root.rows[i].node); } }
+          changed cursor => {
+              if self.cursor < 0 || body.visible-height <= 0 { return; }
+              if self.cursor * root.row-h < -body.content-y { body.content-y = -self.cursor * root.row-h; }
+              else if (self.cursor + 1) * root.row-h > -body.content-y + body.visible-height { body.content-y = -((self.cursor + 1) * root.row-h - body.visible-height); }
+          }
         body := ScrollView {
             vertical-stretch: 1;
             // A view created after the reveal (a new pane) scrolls on start.
@@ -429,12 +444,15 @@ export component MatrixView inherits Rectangle {
                             width: root.label-w;
                             background: r.package ? Theme.panel-2 : Theme.bg;
                         Rectangle {
+                            border-width: keys.has-focus && keys.cursor == i ? 2px : 0;
+                            border-color: Theme.accent;
                             background: r.marked ? Theme.accent.with-alpha(0.2) : r.in-cycle-path ? Theme.cycle.with-alpha(0.12) : root.hover-row == i ? Theme.accent.with-alpha(0.08) : transparent;
                             row-menu := NodeMenu {
                                 package: r.package;
                                 chosen(kind, side) => { root.node-tab(kind, r.node, side); }
                             }
                             TouchArea {
+                                clicked => { keys.cursor = i; keys.focus(); }
                                 changed has-hover => {
                                     root.hover-tip(self.has-hover, r.path, self.absolute-position.x + 22px + r.depth * 16px, self.absolute-position.y + self.height);
                                 }
@@ -493,6 +511,7 @@ export component MatrixView inherits Rectangle {
                     font-size: Theme.font-body;
                 }
             }
+        }
         }
     }
 

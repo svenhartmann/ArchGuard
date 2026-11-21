@@ -387,8 +387,13 @@ fn row_items(m: &MatrixState, rows: &[MatrixRow], locale: Locale) -> Vec<MatrixR
         .map(|c| mx.cycles[c].path.iter().copied().collect())
         .unwrap_or_default();
     let shown = rows.iter().skip(m.page * PAGE).take(PAGE);
+    let shown: Vec<_> = shown.collect();
+    let parents =
+        crate::tree_nav::parents(&shown.iter().map(|r| r.depth as i32).collect::<Vec<_>>());
     shown
-        .map(|r| {
+        .into_iter()
+        .zip(parents)
+        .map(|(r, parent)| {
             let n = &m.tree.nodes[r.node];
             let cells = mx.cells.get(&r.node);
             MatrixRowItem {
@@ -402,6 +407,7 @@ fn row_items(m: &MatrixState, rows: &[MatrixRow], locale: Locale) -> Vec<MatrixR
                 marked: m.marked == Some(r.node),
                 badges: badges(mx, r.node).into(),
                 own_col: mx.owner.get(&r.node).map_or(-1, |&c| c as i32),
+                parent,
                 cells: model((0..mx.columns.len()).map(|c| {
                     cells
                         .and_then(|row| row.get(&c))
