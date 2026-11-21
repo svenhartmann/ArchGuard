@@ -467,7 +467,7 @@ mod attributes {
     }
 
     /// Simple names of project attribute classes deriving from `AuthorizeAttribute`
-    /// or implementing `IAuthorizeData` (direct bases only).
+    /// or implementing `IAuthorizeData` (base classes are checked one level deep only; follow-up: transitive bases).
     pub(super) fn derived_attributes(root: &Path, files: &Files) -> BTreeSet<String> {
         let mut names = BTreeSet::new();
         for rel in files.cs.iter().chain(&files.code_behind) {
@@ -3912,7 +3912,7 @@ mod access_tests {
 
     #[test]
     fn allow_anonymous_only_counts_as_an_attribute() {
-        let page = "@page \"/p\"\n@attribute [Authorize(Roles = \"Admin\")]\n@code { [Parameter] public bool AllowAnonymous { get; set; } }\n";
+        let page = "@page \"/p\"\n@attribute [Authorize(Roles = \"Admin\")]\n@code {\n    [Parameter] public bool AllowAnonymous { get; set; }\n}\n";
         assert_eq!(
             state(&[("App/P.razor", page)], "App:P.razor").0,
             Protected(role("Admin"))
