@@ -1418,6 +1418,11 @@ mod hooks {
     pub(super) struct Rule {
         sels: Vec<Sel>,
         kind: Kind,
+        /// The handle function it comes from: a `Pass` ends only its own group
+        /// (`resolve` calls the next handle of a `sequence`).
+        group: usize,
+        /// Source offset; rules of one function are kept in this order.
+        pos: usize,
     }
 
     /// Whether `s` is the route id (`true`) or the pathname (`false`).
@@ -1505,6 +1510,7 @@ mod hooks {
             checks: &checks,
             out,
             rules: Vec::new(),
+            group: 0,
         };
         for name in [
             "hooks.server.ts",
@@ -1527,6 +1533,7 @@ mod hooks {
         checks: &'a Checks<'a>,
         out: &'a mut Vec<UiFlowDiagnostic>,
         rules: Vec<Rule>,
+        group: usize,
     }
 
     impl Reader<'_> {
@@ -1535,7 +1542,15 @@ mod hooks {
             let message = format!("{why}; every route it could cover is unknown.");
             diag(self.out, file, line, message);
             let kind = Kind::Block(Some(Condition::Unknown(why.into())));
-            self.rules.push(Rule { sels: vec![], kind });
+            self.group += 1;
+            let (group, pos) = (self.group, 0);
+            let sels = vec![];
+            self.rules.push(Rule {
+                sels,
+                kind,
+                group,
+                pos,
+            });
         }
 
         /// Reads the handle `name` declared in (or re-exported from) `file`; `follow`
@@ -1618,14 +1633,30 @@ mod hooks {
             if end <= open {
                 return;
             }
+            self.group += 1;
+            let start = self.rules.len();
             let mut seen = Vec::new();
             self.block(file, text, (open, end), &[], &mut seen);
             for pos in blocking(text, (open, end)) {
                 if !seen.contains(&pos) {
                     let why = "A redirect, error or response of handle is not under an `if` the rules read";
-                    self.unknown(file, line_of(text, pos), why);
+                    let line = line_of(text, pos);
+                    diag(
+                        self.out,
+                        file,
+                        line,
+                        format!("{why}; every route it could cover is unknown."),
+                    );
+                    self.rules.push(Rule {
+                        sels: vec![],
+                        kind: Kind::Block(Some(Condition::Unknown(why.into()))),
+                        group: self.group,
+                        pos,
+                    });
                 }
             }
+            // an unplaceable call applies before any later early return
+            self.rules[start..].sort_by_key(|r| r.pos);
         }
 
         /// The `if` statements directly in the block `{…}` of `text`; `prefix` are the
@@ -1665,12 +1696,11 @@ mod hooks {
                     .collect();
                 let mut conds = prefix.to_vec();
                 conds.push(cond);
-                let line = line_of(text, pos);
                 if !direct.is_empty() {
                     seen.extend(direct);
-                    self.rule(file, text, &conds, (line, false));
+                    self.rule(file, text, &conds, (pos, false));
                 } else if passes(&text[at..body_end]) {
-                    self.rule(file, text, &conds, (line, true));
+                    self.rule(file, text, &conds, (pos, true));
                 }
                 if braced {
                     self.block(file, text, (at, body_end), &conds, seen);
@@ -1679,7 +1709,8 @@ mod hooks {
         }
 
         /// A rule from the `&&` conjuncts of `conds`: route selectors and checks.
-        fn rule(&mut self, file: &str, text: &str, conds: &[String], (line, pass): (u32, bool)) {
+        fn rule(&mut self, file: &str, text: &str, conds: &[String], (pos, pass): (usize, bool)) {
+            let line = line_of(text, pos);
             let (mut sels, mut rest) = (Vec::new(), Vec::new());
             for part in conds.iter().flat_map(|c| split_top(c, "&&")) {
                 match selector(text, part) {
@@ -1690,9 +1721,12 @@ mod hooks {
             if pass {
                 // an early return that is not purely a route selection proves nothing
                 if rest.is_empty() {
+                    let (group, kind) = (self.group, Kind::Pass);
                     self.rules.push(Rule {
                         sels,
-                        kind: Kind::Pass,
+                        kind,
+                        group,
+                        pos,
                     });
                 }
                 return;
@@ -1701,9 +1735,12 @@ mod hooks {
                 true => Some(Condition::Never),
                 false => negate(self.checks.checks(&rest, (file, line), self.out)),
             };
+            let (group, kind) = (self.group, Kind::Block(requirement));
             self.rules.push(Rule {
                 sels,
-                kind: Kind::Block(requirement),
+                kind,
+                group,
+                pos,
             });
         }
     }
@@ -1753,11 +1790,14 @@ mod hooks {
     /// every rule that selects it, up to a rule that lets it pass; `Open` only when
     /// a read allowlist exempts it from a blocking rule and nothing else applies.
     pub(super) fn state(rules: &[Rule], route: &str, id: &str) -> AccessState {
-        let (mut conditions, mut allowed) = (Vec::new(), false);
+        let (mut conditions, mut allowed, mut passed) = (Vec::new(), false, Vec::new());
         for rule in rules {
+            if passed.contains(&rule.group) {
+                continue;
+            }
             let fails: Vec<&Sel> = (rule.sels.iter()).filter(|s| !s.holds(route, id)).collect();
             match &rule.kind {
-                Kind::Pass if fails.is_empty() => break,
+                Kind::Pass if fails.is_empty() => passed.push(rule.group),
                 Kind::Block(Some(c)) if fails.is_empty() => conditions.push(c.clone()),
                 Kind::Block(Some(_)) if fails.iter().all(|s| s.allowlist()) => allowed = true,
                 _ => {}
@@ -3389,5 +3429,43 @@ export const handle = async ({ event, resolve }) => resolve(event);
             ],
         );
         assert_eq!(state(&flow, "web:/a"), Open);
+    }
+
+    #[test]
+    fn an_unplaceable_blocking_call_applies_before_a_later_early_return() {
+        let hooks = "const pub = ['/', '/login'];
+export const handle = async ({ event, resolve }) => {
+  if (!event.locals.user && !pub.includes(event.route.id)) redirect(303, '/login');
+  const r = weird() ? error(403) : 0;
+  if (event.url.pathname === '/login') return resolve(event);
+  return resolve(event);
+};
+";
+        let flow = hooks_project(hooks, &[]);
+        let state = state(&flow, "web:/login");
+        assert!(
+            matches!(state, Protected(Condition::Unknown(_))),
+            "{state:?}"
+        );
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn an_early_return_ends_only_its_own_handle_of_a_sequence() {
+        let hooks = "import { sequence } from '@sveltejs/kit/hooks';
+const skip = async ({ event, resolve }) => {
+  if (event.url.pathname.startsWith('/admin')) return resolve(event);
+  return resolve(event);
+};
+const authz = async ({ event, resolve }) => {
+  if (event.url.pathname.startsWith('/admin') && !event.locals.user) redirect(303, '/login');
+  return resolve(event);
+};
+export const handle = sequence(skip, authz);
+";
+        let flow = hooks_project(hooks, &[]);
+        let want = Protected(custom("event.locals.user"));
+        assert_eq!(state(&flow, "web:/admin"), want);
+        assert_eq!(state(&flow, "web:/"), Undeclared);
     }
 }
