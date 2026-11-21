@@ -1,0 +1,153 @@
+// Why two packages depend on each other (src/graph_ui/deps.rs, the port of
+// the web viewer's renderPackageCycleExplanation): a verdict, one recorded
+// two-edge example, the connections per direction by source path and the
+// file-level cycle groups inside both packages.
+import { Theme } from "theme.slint";
+import { Fmt } from "format.slint";
+
+// One file of the example; `evidence` belongs to the arrow leaving it.
+export struct DepStep {
+    file: string,
+    // Up to three source references, one per line.
+    evidence: string,
+    arrow: bool,
+    // The example returns to the file it started at.
+    back: bool,
+}
+
+// One package direction's distinct file pairs by source path.
+export struct DepScopeRow {
+    label: string,
+    production: int,
+    test: int,
+    mixed: int,
+    unknown: int,
+}
+
+export struct DepCycle {
+    has: bool,
+    // 0 the chain closes at the same file, 1 a different file is reached,
+    // 2 only separate examples.
+    verdict: int,
+    // Every file of the example is a Java file ("types" instead of "files").
+    typed: bool,
+    // Package labels: where the example starts, which package it passes.
+    start: string,
+    middle: string,
+    steps: [DepStep],
+    rows: [DepScopeRow],
+    // Columns shown only when a direction has such connections.
+    mixed: bool,
+    unknown: bool,
+    file-cycles: int,
+}
+
+component Cell inherits Text {
+    in property <bool> head;
+    width: 76px;
+    color: head ? Theme.muted : Theme.text;
+    font-size: Theme.font-small;
+    horizontal-alignment: right;
+}
+
+component Counts inherits VerticalLayout {
+    in property <DepCycle> c;
+    spacing: 4px;
+    Text { text: @tr("Recorded connections by source path"); color: Theme.muted; font-size: Theme.font-small; }
+    HorizontalLayout {
+        spacing: 6px;
+        Text { text: @tr("Direction"); color: Theme.muted; font-size: Theme.font-small; horizontal-stretch: 1; }
+        Cell { head: true; text: @tr("Production"); }
+        Cell { head: true; text: @tr("Tests"); }
+        if c.mixed: Cell { head: true; text: @tr("Mixed"); }
+        if c.unknown: Cell { head: true; text: @tr("Unknown"); }
+    }
+    for r in c.rows: HorizontalLayout {
+        spacing: 6px;
+        Text { text: r.label; color: Theme.text; font-size: Theme.font-small; overflow: elide; horizontal-stretch: 1; }
+        Cell { text: Fmt.int(r.production); }
+        Cell { text: Fmt.int(r.test); }
+        if c.mixed: Cell { text: Fmt.int(r.mixed); }
+        if c.unknown: Cell { text: Fmt.int(r.unknown); }
+    }
+    Text {
+        text: @tr("Each directed file pair counts once. Production and tests follow main/test source paths and explicit test directories; other paths and incomplete samples stay unknown. Path conventions, not verified build source sets.");
+        color: Theme.muted;
+        font-size: Theme.font-caption;
+        wrap: word-wrap;
+    }
+}
+
+component Figure inherits VerticalLayout {
+    in property <DepCycle> c;
+    spacing: 2px;
+    Text {
+        text: c.verdict == 2 ? @tr("Separate recorded examples") : @tr("One recorded example");
+        color: Theme.muted;
+        font-size: Theme.font-small;
+    }
+    for s in c.steps: VerticalLayout {
+        spacing: 2px;
+        HorizontalLayout {
+            alignment: start;
+            Rectangle {
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: s.back ? Theme.cycle : Theme.border;
+                background: Theme.panel-2;
+                height: name.preferred-height + 8px;
+                width: name.preferred-width + 16px;
+                name := Text { text: s.file; color: s.back ? Theme.cycle : Theme.text; font-family: Theme.mono-family; font-size: Theme.font-small; }
+            }
+        }
+        if s.arrow: HorizontalLayout {
+            padding-left: 10px;
+            spacing: 10px;
+            Text { text: "↓"; color: Theme.cycle; font-size: Theme.font-body; vertical-alignment: center; }
+            Text {
+                text: s.evidence == "" ? @tr("No source references recorded.") : s.evidence;
+                color: Theme.muted;
+                font-family: Theme.mono-family;
+                font-size: Theme.font-caption;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+            }
+        }
+        if !s.arrow && c.verdict == 2: Rectangle { height: 6px; }
+    }
+    Text {
+        text: c.verdict == 0 ? @tr("The chain closes at the same file.")
+            : c.verdict == 1 ? @tr("The return reaches a different file in the same package. This example is not a closed file cycle.")
+            : @tr("These arrows do not form a connected file path.");
+        color: Theme.muted;
+        font-size: Theme.font-caption;
+        wrap: word-wrap;
+    }
+}
+
+// The explanation inside an opened dependency card.
+export component DepCycleView inherits VerticalLayout {
+    in property <DepCycle> c;
+    spacing: 10px;
+    Text {
+        text: !c.has ? @tr("No complete file example is available for these packages.")
+            : c.verdict == 0 ? @tr("Package cycle: the example also returns to the same file.")
+            : c.verdict == 2 ? @tr("Package cycle: the two directions come from separate source connections.")
+            : c.typed ? @tr("Package cycle: {0} uses {1}, while {1} depends on other types in {0}.", c.start, c.middle)
+            : @tr("Package cycle: {0} uses {1}, while {1} depends on other files in {0}.", c.start, c.middle);
+        color: Theme.text;
+        font-size: Theme.font-body;
+        font-weight: Theme.weight-strong;
+        wrap: word-wrap;
+    }
+    if c.has && c.steps.length > 0: Figure { c: c; }
+    if c.has: Counts { c: c; }
+    if c.has: Text {
+        text: c.file-cycles > 0
+            ? @tr("{0} file-level cycle group within these packages." | "{0} file-level cycle groups within these packages." % c.file-cycles, Fmt.int(c.file-cycles))
+            : @tr("No file-level cycle within these packages in the recorded graph.");
+        color: Theme.muted;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+}

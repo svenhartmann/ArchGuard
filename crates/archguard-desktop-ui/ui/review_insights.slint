@@ -1,0 +1,182 @@
+// Explorer → Review → "Change coupling & ownership"
+// (src/graph_ui/insights.rs), as the web viewer's review insights.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button } from "widgets.slint";
+import { Fmt } from "format.slint";
+
+// Two files changed together in `shared` commits without an import edge;
+// percentages of each side's changes that touched the other.
+export struct CoChangeItem {
+    left: string,
+    right: string,
+    shared: int,
+    left-to-right: int,
+    right-to-left: int,
+}
+
+// A dependency between files of disjoint CODEOWNERS teams; `count` may end
+// in "+" (lower bound).
+export struct OwnerDepItem {
+    from: string,
+    to: string,
+    from-owners: string,
+    to-owners: string,
+    count: string,
+}
+
+// Declared intent: kind 1 goal (status: priority), 2 constraint, 3
+// decision (status, detail: chosen option).
+export struct IntentItem {
+    kind: int,
+    title: string,
+    status: string,
+    detail: string,
+    alternatives: string,
+    trade-offs: string,
+}
+
+export struct InsightsData {
+    // Read (on a worker) for the document.
+    ready: bool,
+    open: bool,
+    co-available: bool,
+    // Why Git history is unavailable.
+    co-message: string,
+    co-commits: int,
+    co-bulk: int,
+    co-candidates: int,
+    co-shallow: bool,
+    co-truncated: bool,
+    co-pairs: [CoChangeItem],
+    co-more: int,
+    own-available: bool,
+    own-path: string,
+    own-owned: int,
+    own-total: int,
+    own-unowned: int,
+    own-complete: bool,
+    own-cross: int,
+    own-deps: [OwnerDepItem],
+    own-more: int,
+    intent: [IntentItem],
+}
+
+component Heading inherits Text {
+    color: Theme.text;
+    font-size: Theme.font-small;
+    font-weight: Theme.weight-strong;
+    wrap: word-wrap;
+}
+
+component Note inherits Text {
+    color: Theme.muted;
+    font-size: Theme.font-caption;
+    wrap: word-wrap;
+}
+
+component Inspect inherits HorizontalLayout {
+    in property <string> name;
+    callback reveal(string);
+    alignment: start;
+    Button {
+        text: @tr("Inspect {}", root.name);
+        compact: true;
+        clicked => { root.reveal(root.name); }
+    }
+}
+
+component CoChange inherits VerticalLayout {
+    in property <InsightsData> data;
+    callback reveal(string);
+    spacing: 4px;
+    Heading { text: @tr("Co-change candidates"); }
+    if !root.data.co-available: Note { text: @tr("Git unavailable: {}", root.data.co-message); }
+    if root.data.co-available: Note {
+        text: @tr("{} commits used · {} bulk commits excluded · {} candidates without an import edge", Fmt.int(root.data.co-commits), Fmt.int(root.data.co-bulk), Fmt.int(root.data.co-candidates));
+    }
+    if root.data.co-shallow: Note {
+        text: @tr("Shallow Git history: shares describe only the fetched commits.");
+        color: Theme.warning;
+    }
+    if root.data.co-truncated: Note {
+        text: @tr("Truncated result: history, pair search or result list hit a limit; inspect coverage before reading these ratios.");
+        color: Theme.warning;
+    }
+    for p in root.data.co-pairs: VerticalLayout {
+        spacing: 2px;
+        padding-top: 4px;
+        Text { text: p.left + " ↔ " + p.right; color: Theme.text; font-size: Theme.font-caption; wrap: word-wrap; }
+        Note { text: @tr("{} shared commits · {}% of left changes touch right · {}% of right changes touch left", Fmt.int(p.shared), p.left-to-right, p.right-to-left); }
+        Inspect { name: p.left; reveal(n) => { root.reveal(n); } }
+        Inspect { name: p.right; reveal(n) => { root.reveal(n); } }
+    }
+    if root.data.co-available && root.data.co-pairs.length == 0: Note {
+        text: @tr("No pairs meet the co-change thresholds in the available history.");
+    }
+    if root.data.co-more > 0: Note { text: @tr("Showing 20 of {} pairs.", Fmt.int(root.data.co-pairs.length + root.data.co-more)); }
+}
+
+component Ownership inherits VerticalLayout {
+    in property <InsightsData> data;
+    callback reveal(string);
+    spacing: 4px;
+    Heading { text: @tr("Team boundaries · CODEOWNERS"); }
+    if !root.data.own-available: Note { text: @tr("No CODEOWNERS file in .github/, the root or docs/."); }
+    if root.data.own-available: Note {
+        text: @tr("{} · {} of {} files assigned · {} unowned", root.data.own-path, Fmt.int(root.data.own-owned), Fmt.int(root.data.own-total), Fmt.int(root.data.own-unowned))
+            + (root.data.own-complete ? "" : " · " + @tr("incomplete coverage"));
+    }
+    if root.data.own-available: Note { text: @tr("Cross-owner dependencies: {}", Fmt.int(root.data.own-cross)); color: Theme.text; }
+    for d in root.data.own-deps: VerticalLayout {
+        spacing: 2px;
+        padding-top: 4px;
+        Text { text: d.from-owners + " → " + d.to-owners + " · " + d.count; color: Theme.text; font-size: Theme.font-caption; wrap: word-wrap; }
+        Inspect { name: d.from; reveal(n) => { root.reveal(n); } }
+        Inspect { name: d.to; reveal(n) => { root.reveal(n); } }
+    }
+    if root.data.own-more > 0: Note { text: @tr("Showing 20 of {} cross-owner dependencies.", Fmt.int(root.data.own-deps.length + root.data.own-more)); }
+}
+
+component Intent inherits VerticalLayout {
+    in property <InsightsData> data;
+    spacing: 4px;
+    Heading { text: @tr("Architecture intent & trade-offs"); }
+    for i in root.data.intent: VerticalLayout {
+        spacing: 2px;
+        padding-top: 4px;
+        Text {
+            text: i.kind == 2 ? @tr("Constraint: {}", i.title) : i.title;
+            color: Theme.text;
+            font-size: Theme.font-caption;
+            wrap: word-wrap;
+        }
+        if i.kind == 1: Note { text: @tr("Priority: {}", i.status == "" ? @tr("unspecified") : i.status) + (i.detail == "" ? "" : " · " + i.detail); }
+        if i.kind == 2 && i.detail != "": Note { text: i.detail; }
+        if i.kind == 3: Note { text: i.status + " · " + i.detail; }
+        if i.alternatives != "": Note { text: @tr("Alternatives: {}", i.alternatives); }
+        if i.trade-offs != "": Note { text: @tr("Accepted trade-offs: {}", i.trade-offs); }
+    }
+    if root.data.intent.length == 0: Note {
+        text: @tr("No goals, constraints or decisions in the configuration. Priorities are not inferred from the graph.");
+    }
+}
+
+// The section, scrolling in the explorer; `reveal(name)` shows a file in
+// the Graph.
+export component InsightsPanel inherits ScrollView {
+    in property <InsightsData> data;
+    callback reveal(string);
+    content-width: self.visible-width;
+    VerticalLayout {
+        width: root.visible-width;
+        alignment: start;
+        padding-right: 14px;
+        spacing: 14px;
+        if !root.data.ready: Note { text: @tr("Reading Git history and CODEOWNERS…"); }
+        if root.data.ready: Note { text: @tr("Source and history evidence of the analysis; simulated changes are not included."); }
+        if root.data.ready: CoChange { data: root.data; reveal(n) => { root.reveal(n); } }
+        if root.data.ready: Ownership { data: root.data; reveal(n) => { root.reveal(n); } }
+        if root.data.ready: Intent { data: root.data; }
+    }
+}

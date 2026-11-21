@@ -57,6 +57,17 @@ struct MetaFile {
 
 const META_REL_PATH: &str = ".archguard/dep-meta.json";
 
+/// Upper bound for one manifest, lockfile or the metadata import; large
+/// monorepo lockfiles stay well below it.
+const MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Read a repository file without following symlinks (a linked manifest
+/// could point outside the root and leak its lines into the SBOM).
+fn read_text(root: &Path, relative: &Path) -> std::io::Result<String> {
+    let bytes = crate::project_files::read_repo_file(root, relative, MAX_BYTES)?;
+    String::from_utf8(bytes).map_err(|_| std::io::ErrorKind::InvalidData.into())
+}
+
 /// Directories that never contain first-party manifests; `fixtures` and
 /// `testdata` (Go) are test data and `.claude` holds agent worktrees
 /// (copies of the project). `src/test` is skipped in [`find_manifests`].
@@ -87,8 +98,8 @@ const SUPERSEDED_BY: &[(&str, &[&str])] = &[
 ];
 
 /// Find every manifest below `root` (build artifacts, dependency caches and
-/// test data skipped, symlinked directories not followed, so the walk
-/// cannot loop), deterministic order by path.
+/// test data skipped, symlinks neither followed nor read, so the walk
+/// cannot loop or leave the root), deterministic order by path.
 fn find_manifests(root: &Path) -> Vec<(String, PathBuf)> {
     fn known(name: &str) -> Option<&'static str> {
         match name {
@@ -107,7 +118,9 @@ fn find_manifests(root: &Path) -> Vec<(String, PathBuf)> {
     fn superseded(path: &Path, name: &str) -> bool {
         SUPERSEDED_BY.iter().any(|(manifest, locks)| {
             (name.starts_with(manifest) || name.ends_with(manifest))
-                && locks.iter().any(|lock| path.with_file_name(lock).is_file())
+                && locks.iter().any(|lock| {
+                    std::fs::symlink_metadata(path.with_file_name(lock)).is_ok_and(|m| m.is_file())
+                })
         })
     }
     fn walk(dir: &Path, out: &mut Vec<(String, PathBuf)>) {
@@ -126,7 +139,8 @@ fn find_manifests(root: &Path) -> Vec<(String, PathBuf)> {
                 if !SKIP_DIRS.contains(&name) && !test_sources {
                     dirs.push(path);
                 }
-            } else if let Some(eco) = known(name)
+            } else if entry.file_type().is_ok_and(|t| t.is_file())
+                && let Some(eco) = known(name)
                 && !superseded(&path, name)
             {
                 out.push((eco.to_string(), path));
@@ -251,8 +265,8 @@ fn pom_deps(text: &str) -> Vec<Dep> {
     deps
 }
 
-fn deps_for(eco: &str, path: &Path) -> Vec<Dep> {
-    let Ok(text) = std::fs::read_to_string(path) else {
+fn deps_for(eco: &str, root: &Path, path: &Path) -> Vec<Dep> {
+    let Ok(text) = read_text(root, path.strip_prefix(root).unwrap_or(path)) else {
         return Vec::new();
     };
     let text = text.strip_prefix('\u{FEFF}').unwrap_or(&text);
@@ -284,7 +298,7 @@ pub(crate) fn manifest_deps(root: &Path) -> Vec<(String, String, Vec<Dep>)> {
                 .unwrap_or(&path)
                 .display()
                 .to_string();
-            let deps = deps_for(&eco, &path);
+            let deps = deps_for(&eco, root, &path);
             (eco, relative, deps)
         })
         .collect()
@@ -294,8 +308,7 @@ pub(crate) fn manifest_deps(root: &Path) -> Vec<(String, String, Vec<Dep>)> {
 /// file is reported in `notes` and treated as absent — staleness stays
 /// unknown, the inventory itself does not fail.
 fn load_meta(root: &Path, notes: &mut Vec<String>) -> Option<BTreeMap<(String, String), String>> {
-    let path = root.join(META_REL_PATH);
-    let text = match std::fs::read_to_string(&path) {
+    let text = match read_text(root, Path::new(META_REL_PATH)) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
         Err(err) => {
@@ -714,6 +727,44 @@ version = "1.0.219"
         assert_eq!(dependency_inventory(dir.path()).total, 0);
         // `src/main/resources` is production and stays searched.
         write(dir.path(), "src/main/resources/pom.xml", pom);
+        assert_eq!(dependency_inventory(dir.path()).total, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_manifests_and_meta_are_not_read() {
+        let outside = tempfile::tempdir().expect("tempdir");
+        write(outside.path(), "secret.txt", "TOPSECRET_TOKEN=abc\n");
+        write(
+            outside.path(),
+            "meta.json",
+            r#"{"version": 1, "packages": [{"ecosystem": "pypi", "name": "requests", "latest": "TOPSECRET"}]}"#,
+        );
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), "requirements.txt", "requests==2.31.0\n");
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            dir.path().join("requirements-dev.txt"),
+        )
+        .expect("symlink");
+        std::fs::create_dir_all(dir.path().join(".archguard")).expect("mkdir");
+        std::os::unix::fs::symlink(
+            outside.path().join("meta.json"),
+            dir.path().join(META_REL_PATH),
+        )
+        .expect("symlink");
+        let inventory = dependency_inventory(dir.path());
+        let rendered = format!("{inventory:?}");
+        assert!(!rendered.contains("TOPSECRET"), "{rendered}");
+        // The regular manifest beside the link is still counted.
+        assert_eq!(inventory.total, 1, "{rendered}");
+        assert_eq!(inventory.dependencies[0].name, "requests");
+        // A symlinked lockfile does not supersede the regular manifest either.
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            dir.path().join("poetry.lock"),
+        )
+        .expect("symlink");
         assert_eq!(dependency_inventory(dir.path()).total, 1);
     }
 

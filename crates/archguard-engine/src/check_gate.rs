@@ -31,6 +31,24 @@ pub fn read_baseline(path: &Path) -> Result<Baseline, String> {
         .map_err(|err| format!("baseline {}: invalid baseline JSON: {err}", path.display()))
 }
 
+/// [`read_baseline`] for the repository-controlled `[rules].baseline`:
+/// `relative` below `root`, read without following any symlink on the way.
+pub fn read_repo_baseline(root: &Path, relative: &Path) -> Result<Baseline, String> {
+    let bytes =
+        crate::project_files::read_repo_file(root, relative, 64 * 1024 * 1024).map_err(|err| {
+            format!(
+                "baseline {}: {err} (symlinks are not followed)",
+                relative.display()
+            )
+        })?;
+    serde_json::from_slice(&bytes).map_err(|err| {
+        format!(
+            "baseline {}: invalid baseline JSON: {err}",
+            relative.display()
+        )
+    })
+}
+
 /// Whether `baseline` accepts `finding`: **cycle** findings whose
 /// membership [`cycle_hash`] the baseline stores, and **convention**
 /// findings whose id it stores.
@@ -290,6 +308,23 @@ mod tests {
     use super::*;
     use archguard_core::{PropagationCost, ReviewKpis, SdpViolation, Status, Tangledness};
     use std::collections::BTreeMap;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_repository_baseline_is_read_without_following_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, outside) = (dir.path().join("repo"), dir.path().join("outside"));
+        std::fs::create_dir_all(root.join(".archguard")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let json = r#"{"schema_version":1,"hashes":["h"]}"#;
+        std::fs::write(root.join(".archguard/baseline.json"), json).unwrap();
+        std::fs::write(outside.join("baseline.json"), json).unwrap();
+        let ok = read_repo_baseline(&root, Path::new(".archguard/baseline.json")).unwrap();
+        assert!(ok.hashes.contains("h"));
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        assert!(read_repo_baseline(&root, Path::new("link/baseline.json")).is_err());
+        assert!(read_repo_baseline(&root, Path::new("../outside/baseline.json")).is_err());
+    }
 
     fn kpis() -> ReviewKpis {
         ReviewKpis {

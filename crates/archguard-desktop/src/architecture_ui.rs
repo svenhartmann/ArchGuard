@@ -21,6 +21,8 @@ mod rich;
 pub mod sequence;
 mod state;
 mod sync;
+mod target;
+mod target_view;
 mod view;
 mod visual;
 mod window;
@@ -45,7 +47,10 @@ pub fn wire(ui: &AppWindow) {
     let d = ui.global::<ArchitectureData>();
     let a = Actions::<ArchitectureState>::new(ui);
     d.on_select_chapter(a.on(select_chapter));
-    d.on_open_catalogue(a.on0(|s, _| s.catalogue = true));
+    d.on_open_catalogue(a.on0(|s, _| {
+        s.catalogue = true;
+        s.target_open = false;
+    }));
     let toggle =
         a.on(|s, ui, (id, show): (SharedString, bool)| follow_tick(s, Some(ui), &id, show));
     d.on_toggle_diagram(move |id, show| toggle((id, show)));
@@ -115,6 +120,43 @@ pub fn wire(ui: &AppWindow) {
     d.on_download(a.on(|s, ui, all: bool| download(s, ui, all)));
     d.on_plantuml(a.on(|s, ui, unit: SharedString| plantuml(s, ui, &unit)));
     follow::wire();
+    wire_target(ui);
+}
+
+/// The target architecture page's callbacks ([`target`]).
+fn wire_target(ui: &AppWindow) {
+    use target::PAGE;
+    let d = ui.global::<ArchitectureData>();
+    let a = Actions::<ArchitectureState>::new(ui);
+    d.on_open_target(a.on0(|s, _| {
+        s.target_open = true;
+        s.catalogue = false;
+    }));
+    d.on_target_violations(a.on(|s, _, on: bool| {
+        s.target.only_violations = on;
+        s.target.limit = PAGE;
+    }));
+    d.on_target_query(a.on(|s, _, q: SharedString| {
+        s.target.query = q.to_string();
+        s.target.limit = PAGE;
+    }));
+    d.on_target_more(a.on0(|s, _| s.target.limit += PAGE));
+    d.on_target_select(a.on(|s, _, i: i32| {
+        if let Ok(i) = usize::try_from(i) {
+            target::select(&mut s.target, i);
+        }
+    }));
+    d.on_target_component(a.on(|s, _, i: i32| {
+        if let Ok(i) = usize::try_from(i) {
+            target::toggle_component(&mut s.target, i);
+        }
+    }));
+    // Graph-tab nodes are the graph's nodes.
+    d.on_target_reveal(a.on(|s, ui, name: SharedString| {
+        if let Some(n) = s.graph.nodes.iter().position(|n| n.name == name.as_str()) {
+            crate::panes_ui::reveal(ui, n);
+        }
+    }));
 }
 
 impl TabState for ArchitectureState {
@@ -197,6 +239,7 @@ fn select_chapter(s: &mut ArchitectureState, ui: &AppWindow, n: i32) {
         s.chapter = n;
     }
     s.catalogue = false;
+    s.target_open = false;
 }
 
 /// Tick diagram `id` on or off; the open chapter's file follows at once

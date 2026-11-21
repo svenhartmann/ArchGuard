@@ -1,13 +1,16 @@
 import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
-import { Icon, Icons, Button, Badge, ZoomControls, SectionHeading } from "widgets.slint";
+import { Icon, Icons, Button, Badge, ZoomControls, SectionHeading, TipArea } from "widgets.slint";
 import { NodeMenu } from "node_menu.slint";
+import { GraphPanels } from "graph_panels.slint";
 
 export struct TreeRow {
     row: int,
     node: int,
     label: string,
     depth: int,
+    // The parent's row, -1 for a root (the explorer's Left key).
+    parent: int,
     expandable: bool,
     expanded: bool,
     file: bool,
@@ -18,9 +21,13 @@ export struct TreeRow {
     covered: bool,
     // Review priority badge: 0 none, 1 P1 (high), 2 P2 (medium).
     priority: int,
+    // Active imported quality findings in the row's file or subtree.
+    quality: int,
+    // Marked evidence (Services → pattern candidates), or a package of it.
+    marked: bool,
 }
 
-// kind: 0 neutral, 1 incoming, 2 outgoing, 3 cyclic. Paths of the right
+// kind: 0 neutral, 1 incoming, 2 outgoing, 3 cyclic, 4 marked evidence. Paths of the right
 // lane are relative to that lane's left edge.
 export struct TreeLink {
     path: string,
@@ -69,8 +76,8 @@ component RowCard inherits Rectangle {
     height: (TreeGeo.row-h - 4) * 1px * zoom;
     border-radius: 6px * zoom;
     background: selected ? Theme.accent.with-alpha(0.10) : data.covered ? Theme.accent.with-alpha(0.05) : touch.has-hover ? Theme.panel : Theme.panel-2;
-    border-width: selected ? 1.5px : 1px;
-    border-color: selected ? Theme.accent : Theme.border.with-alpha(0.6);
+    border-width: selected || data.marked ? 1.5px : 1px;
+    border-color: selected ? Theme.accent : data.marked ? Theme.warning : Theme.border.with-alpha(0.6);
 
     menu := NodeMenu {
         package: !root.data.file;
@@ -120,11 +127,21 @@ component RowCard inherits Rectangle {
             overflow: elide;
             horizontal-stretch: 1;
         }
-        if data.priority > 0: Badge {
+        if data.priority > 0 && GraphPanels.priorities: Badge {
             text: data.priority == 1 ? "P1" : "P2";
             variant: data.priority == 1 ? "p1" : "p2";
             zoom: root.zoom;
             y: (parent.height - self.height) / 2;
+        }
+        if data.quality > 0: Badge {
+            text: "Q" + (data.quality > 999 ? "999+" : data.quality);
+            zoom: root.zoom;
+            y: (parent.height - self.height) / 2;
+            TipArea {
+                tip: @tr("{} active imported quality findings in this file or subtree; the inspector lists them. Suppressed, unmapped and changed-since-import findings are not counted.", data.quality);
+                pin-on-click: false;
+                activated => { root.select(); }
+            }
         }
         if data.in-cycle: Rectangle {
             width: 7px * zoom;
@@ -285,9 +302,9 @@ export component TreeView inherits Rectangle {
             // Hover dims the other links through their stroke colour: an
             // opacity below 1 (and its animation) would render every
             // canvas-tall path into a layer of its own on each change.
-            property <brush> base: l.kind == 1 ? Theme.incoming : l.kind == 2 ? Theme.outgoing : l.kind == 3 ? Theme.cycle : traced ? Theme.accent : Theme.edge.with-alpha(0.75);
+            property <brush> base: l.kind == 1 ? Theme.incoming : l.kind == 2 ? Theme.outgoing : l.kind == 3 ? Theme.cycle : l.kind == 4 ? Theme.warning : traced ? Theme.accent : Theme.edge.with-alpha(0.75);
             stroke: root.hovered >= 0 && !traced ? base.transparentize(0.85) : base;
-            stroke-width: traced ? 2.6px : l.kind == 0 ? 1.3px : 1.8px;
+            stroke-width: traced ? 2.6px : l.kind == 0 ? 1.3px : l.kind == 4 ? 2.2px : 1.8px;
         }
 
         for r in root.rows: Port {

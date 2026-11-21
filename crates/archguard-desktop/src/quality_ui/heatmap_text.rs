@@ -8,7 +8,7 @@ use super::lang::number;
 use crate::tab_support::Texts;
 
 /// The web's metric definitions (templates), in [`super::heatmap::METRICS`] order.
-const HELP: [&str; 6] = [
+pub(crate) const HELP: [&str; 6] = [
     "CBO — Coupling Between Objects. Distinct resolved target types used by declaration types and calls, excluding self and inheritance. Higher values mean broader coupling to inspect. Missing compiler evidence leaves the value unknown (—); observed counts are lower bounds.",
     "RFC — Response For a Class. Distinct own non-constructor methods and their direct call targets, counting each member once. A larger response set increases the behavior to understand and test. This uses static resolution, not all possible runtime dispatch targets. Incomplete evidence remains —.",
     "DIT — Depth of Inheritance Tree. Superclass edges up to the compiler-known root, including known external bases; interfaces are excluded. Deeper inheritance means more inherited behavior to trace, not an automatic design error. Unknown hierarchy remains —.",

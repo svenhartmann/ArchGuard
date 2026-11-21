@@ -85,7 +85,9 @@ fn print_report(report: &SecurityReport) {
     for target in &report.targets {
         outln!(
             "  {} ({}, {} packages)",
-            target.path, target.ecosystem, target.packages
+            target.path,
+            target.ecosystem,
+            target.packages
         );
     }
     for finding in &report.findings {

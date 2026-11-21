@@ -16,8 +16,9 @@
 //! saving returns `Err`, which [`analyze_cached`](crate::effective::analyze_cached) downgrades to
 //! a warning — analysis stays correct without a cache, and a load of
 //! anything non-regular is a cache miss, never trusted content. On
-//! non-unix platforms there is no no-follow syscall; there the entry
-//! still goes through a unique temporary file plus one atomic rename.
+//! non-unix platforms there is no no-follow syscall; there a symlinked
+//! `.archguard` or entry is refused by checking each component, and the
+//! entry still goes through a unique temporary file plus one atomic rename.
 //!
 //! Superseded T23 layout: `graph.json` + `fingerprint`. Those names
 //! are ignored on load and never deleted on save (the CLI `scan`
@@ -125,6 +126,71 @@ pub fn source_fingerprint(root: &Path, config: &Config) -> Result<String, Archgu
     let files = pipeline::walk_files(root, config)?;
     let mut hash = Sha256::new();
     hash.update(fingerprint(&files));
+    pipeline::hash_manifests(
+        root,
+        files
+            .iter()
+            .filter(|file| file.lang == archguard_extract::Lang::Rust)
+            .map(|file| file.rel_path.as_str()),
+        &mut hash,
+    );
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+/// Cheap change detector for polling: hash of `(rel_path, mtime, len)` of
+/// the configured source set, no file reads. Unequal stamps only mean
+/// "look closer" ([`source_content_fingerprint`]); equal stamps mean unchanged.
+pub fn source_stamp(root: &Path, config: &Config) -> Result<String, ArchguardError> {
+    let mut files = pipeline::walk_files(root, config)?;
+    files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+    let mut hash = Sha256::new();
+    for file in &files {
+        hash.update(file.rel_path.as_bytes());
+        hash.update(b"\0");
+        hash.update(file.project.as_bytes());
+        hash.update(b"\0");
+        match file_stamp(&file.path) {
+            FileStamp::Missing => hash.update(b"-"),
+            FileStamp::Stamped { secs, nanos, len } => {
+                hash.update(secs.to_le_bytes());
+                hash.update(nanos.to_le_bytes());
+                hash.update(len.to_le_bytes());
+            }
+        }
+        hash.update(b"\n");
+    }
+    // A few small Cargo.toml reads: edits to them must change the stamp too.
+    pipeline::hash_manifests(
+        root,
+        files
+            .iter()
+            .filter(|file| file.lang == archguard_extract::Lang::Rust)
+            .map(|file| file.rel_path.as_str()),
+        &mut hash,
+    );
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+/// Hash of the configured source set's paths, projects and bytes, without
+/// mtimes: a touch keeps it, an edit changes it. Not the cache key.
+pub fn source_content_fingerprint(root: &Path, config: &Config) -> Result<String, ArchguardError> {
+    let mut files = pipeline::walk_files(root, config)?;
+    files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+    let mut hash = Sha256::new();
+    for file in &files {
+        hash.update(file.rel_path.as_bytes());
+        hash.update(b"\0");
+        hash.update(file.project.as_bytes());
+        hash.update(b"\0");
+        match fs::read(&file.path) {
+            Ok(bytes) => {
+                hash.update([1]);
+                hash.update((bytes.len() as u64).to_le_bytes());
+                hash.update(bytes);
+            }
+            Err(_) => hash.update([0]),
+        }
+    }
     pipeline::hash_manifests(
         root,
         files
@@ -387,43 +453,22 @@ pub(crate) mod safe {
 
 #[cfg(not(unix))]
 mod safe {
-    use std::fs;
-    use std::io::Write;
     use std::path::Path;
 
     use super::{CACHE_DIR, CACHE_FILE};
+    use crate::project_files::{read_repo_file, write_project_file};
 
-    /// Single unique temporary file plus one atomic rename: without a
-    /// no-follow syscall (Windows has none) this is the strongest
-    /// available pairing guarantee — and rename still replaces a
-    /// symlinked target itself rather than writing through it.
+    /// Without a no-follow syscall (Windows has none) the shared project
+    /// writer refuses a symlinked `.archguard` or `cache.json` and publishes
+    /// through a unique temporary file plus one atomic rename.
     pub fn save(dir: &Path, json: &[u8]) -> std::io::Result<()> {
-        let cache = dir.join(CACHE_DIR);
-        fs::create_dir_all(&cache)?;
-        let tmp = cache.join(format!(
-            "{CACHE_FILE}.tmp.{}.{:x}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        // create_new (O_CREAT|O_EXCL): a pre-planted symlink at the
-        // temporary name is refused instead of written through, the
-        // closest std analogue of the unix guarantee.
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)?;
-        file.write_all(json)?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&tmp, cache.join(CACHE_FILE))?;
-        Ok(())
+        write_project_file(dir, Path::new(CACHE_FILE), json, true).map(drop)
     }
 
     pub fn load(dir: &Path) -> Option<String> {
-        fs::read_to_string(dir.join(CACHE_DIR).join(CACHE_FILE)).ok()
+        // No size bound, like the unix load.
+        let bytes = read_repo_file(dir, &Path::new(CACHE_DIR).join(CACHE_FILE), u64::MAX - 1);
+        String::from_utf8(bytes.ok()?).ok()
     }
 }
 
@@ -496,6 +541,64 @@ mod tests {
             fs::write(path, content).expect("write file");
         }
         dir
+    }
+
+    #[test]
+    fn stamp_follows_size_and_mtime_content_fingerprint_ignores_touch() {
+        let dir = fixture(&[("src/a.py", "x = 1\n")]);
+        let mut config = Config::default();
+        config.project.source_roots = vec!["src".into()];
+        let path = dir.path().join("src/a.py");
+        let stamp = || source_stamp(dir.path(), &config).unwrap();
+        let content = || source_content_fingerprint(dir.path(), &config).unwrap();
+        let (s0, c0) = (stamp(), content());
+        assert_eq!(stamp(), s0, "stable");
+
+        let later = SystemTime::now() + std::time::Duration::from_secs(60);
+        let set_mtime = || {
+            File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(later)
+                .unwrap();
+        };
+        set_mtime();
+        assert_ne!(stamp(), s0, "mtime change");
+        assert_eq!(content(), c0, "touch keeps content hash");
+
+        let s1 = stamp();
+        fs::write(&path, "x = 12\n").unwrap();
+        set_mtime();
+        assert_ne!(stamp(), s1, "size change with same mtime");
+        assert_ne!(content(), c0, "edit changes content hash");
+    }
+
+    #[test]
+    fn stamp_follows_cargo_manifests_and_project_assignment() {
+        let dir = fixture(&[
+            ("src/lib.rs", "pub fn a() {}\n"),
+            ("Cargo.toml", "[package]\nname = \"a\"\n"),
+        ]);
+        let mut config = Config::default();
+        config.project.source_roots = vec!["src".into()];
+        let stamp = |c: &Config| source_stamp(dir.path(), c).unwrap();
+        let s0 = stamp(&config);
+        fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"b\"\n").unwrap();
+        let s1 = stamp(&config);
+        assert_ne!(s1, s0, "manifest edit");
+
+        // A new build file only renames the project of a source file.
+        let dir = fixture(&[("svc/src/main/scala/A.scala", "class A\n")]);
+        let mut config = Config::default();
+        config.project.source_roots = vec!["svc".into()];
+        let before = source_stamp(dir.path(), &config).unwrap();
+        fs::write(dir.path().join("svc/build.sbt"), "name := \"svc\"\n").unwrap();
+        assert_ne!(
+            source_stamp(dir.path(), &config).unwrap(),
+            before,
+            "project"
+        );
     }
 
     #[test]
@@ -782,5 +885,38 @@ mod tests {
             load_graph_if_fresh(dir.path(), "abc").is_none(),
             "parse error tolerated"
         );
+    }
+
+    fn symlink_dir(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).expect("symlink");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(target, link).expect("symlink");
+    }
+
+    #[test]
+    fn a_symlinked_archguard_directory_is_neither_written_nor_read() {
+        let root = tempfile::tempdir().expect("root");
+        let outside = tempfile::tempdir().expect("outside");
+        symlink_dir(outside.path(), &root.path().join(CACHE_DIR));
+        assert!(safe::save(root.path(), b"{}").is_err());
+        assert_eq!(fs::read_dir(outside.path()).expect("list").count(), 0);
+        fs::write(outside.path().join(CACHE_FILE), "{}").expect("plant");
+        assert!(safe::load(root.path()).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_symlinked_cache_file_is_not_written_through() {
+        let root = tempfile::tempdir().expect("root");
+        let outside = tempfile::tempdir().expect("outside");
+        let target = outside.path().join("victim");
+        fs::write(&target, "keep").expect("victim");
+        fs::create_dir(root.path().join(CACHE_DIR)).expect("dir");
+        std::os::windows::fs::symlink_file(&target, root.path().join(CACHE_DIR).join(CACHE_FILE))
+            .expect("symlink");
+        let _ = safe::save(root.path(), b"{}");
+        assert_eq!(fs::read_to_string(&target).expect("victim"), "keep");
+        assert!(safe::load(root.path()).is_none());
     }
 }

@@ -4,11 +4,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
+use marks::Marks;
+
 use archguard_engine::core::{Finding, FindingKind};
 
 use archguard_engine::core::{ReviewPriority, ReviewReport, ReviewSources};
 
 use crate::tree::{EdgeMode, Lane, Sort, Tree, TreeView};
+
+pub mod marks;
 
 /// Rows Explorer → Review shows at first and adds per "Show next".
 pub const REVIEW_PAGE: usize = 20;
@@ -61,6 +65,11 @@ pub struct GraphState {
     pub display: i32,
     /// The explorer's tab: 0 modules, 1 cycles, 2 review.
     pub explorer_tab: i32,
+    /// The dependency card (from, to names) whose package-cycle
+    /// explanation is open in the Dependencies display.
+    pub dep: Option<(String, String)>,
+    /// Evidence marked from Services → pattern candidates.
+    pub marks: Marks,
     review_sources: ReviewSources,
     entry_points: Vec<String>,
 }
@@ -91,6 +100,13 @@ impl GraphState {
             scope: None,
             display: 0,
             explorer_tab: 0,
+            // Snapshot runs: `ARCHGUARD_DESKTOP_DEP=<from>><to>` opens that
+            // card's package-cycle explanation.
+            dep: cfg!(feature = "snapshot")
+                .then(|| std::env::var("ARCHGUARD_DESKTOP_DEP").ok())
+                .flatten()
+                .and_then(|v| v.split_once('>').map(|(a, b)| (a.into(), b.into()))),
+            marks: Marks::default(),
             review_sources,
             entry_points,
         };
@@ -322,6 +338,8 @@ impl GraphState {
         self.expanded = open.into_iter().filter_map(find).collect();
         self.selected = self.selected.map(name).and_then(find);
         self.scope = self.scope.map(name).and_then(find);
+        // Marks show original evidence; a simulated tree has none.
+        self.marks = Marks::default();
         self.tree = tree;
         self.refresh();
     }

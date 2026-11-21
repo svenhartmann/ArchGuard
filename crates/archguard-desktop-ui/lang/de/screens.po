@@ -25,9 +25,6 @@ msgstr "Bedingung {{name}}"
 msgid "unknown ({{name}})"
 msgstr "unbekannt ({{name}})"
 
-msgid "none"
-msgstr "keine"
-
 msgid "open (declared anonymous)"
 msgstr "offen (anonym erlaubt)"
 

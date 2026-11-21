@@ -113,14 +113,13 @@ impl Discovery {
         // tests/**), source roots and semantic settings do not constrain inventory.
         let mut patterns = Vec::new();
         for name in [crate::config::DEFAULT_CONFIG_PATH, "archguard.toml"] {
-            // Never through a symlink: its target may lie outside the root,
-            // and a parse error would quote it.
-            let bytes = match crate::project_files::read_repo_file(root, Path::new(name), 1 << 20) {
-                Ok(bytes) => Ok(bytes),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(e) => Err(e.to_string()),
-            };
-            match bytes
+            // No-follow read: a symlinked config is refused (as in config.rs), so
+            // a parse error can never quote a file outside the root.
+            if std::fs::symlink_metadata(root.join(name)).is_err() {
+                continue;
+            }
+            match crate::project_files::read_repo_file(root, Path::new(name), 1024 * 1024)
+                .map_err(|error| error.to_string())
                 .and_then(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()))
                 .and_then(|text| {
                     text.parse::<toml::Table>()
@@ -185,10 +184,11 @@ impl Discovery {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     /// A configuration that is a symlink is not read, and nothing of the
     /// file it points to reaches a diagnostic (it may lie outside the root).
     #[test]
@@ -204,5 +204,57 @@ mod tests {
         let text = format!("{:?}", report.diagnostics);
         assert!(!text.contains("LEAKMARK"), "{text}");
         assert!(!text.contains("broken"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_analysis_root_still_reads_its_config() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).expect("mkdir");
+        std::fs::write(real.join("archguard.toml"), "[project]\nexclude = []\n").expect("write");
+        std::os::unix::fs::symlink(&real, dir.path().join("link")).expect("symlink");
+        let mut report = ServiceTopology::default();
+        Discovery::new(&dir.path().join("link"), &mut report).expect("discovery");
+        assert!(report.diagnostics.is_empty(), "{report:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_discovery_config_is_not_read_or_quoted() {
+        let outside = tempfile::tempdir().expect("tempdir");
+        let secret = outside.path().join("secret");
+        std::fs::write(&secret, "TOPSECRET_TOKEN = = abc\n").expect("write");
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(root.path().join(".archguard")).expect("mkdir");
+        std::os::unix::fs::symlink(&secret, root.path().join(".archguard/archguard.toml"))
+            .expect("symlink");
+        let mut report = ServiceTopology::default();
+        Discovery::new(root.path(), &mut report).expect("discovery");
+        let rendered = format!("{report:?}");
+        assert!(!rendered.contains("TOPSECRET"), "{rendered}");
+        assert_eq!(report.diagnostics.len(), 1, "{rendered}");
+
+        // A regular config still applies its exclusions.
+        std::fs::remove_file(root.path().join(".archguard/archguard.toml")).expect("rm");
+        std::fs::write(
+            root.path().join("archguard.toml"),
+            "[project]\nexclude = [\"skipped/**\"]\n",
+        )
+        .expect("write");
+        let mut report = ServiceTopology::default();
+        let discovery = Discovery::new(root.path(), &mut report).expect("discovery");
+        assert!(report.diagnostics.is_empty(), "{report:?}");
+        std::fs::create_dir(root.path().join("skipped")).expect("mkdir");
+        std::fs::write(root.path().join("skipped/x.txt"), "").expect("write");
+        let walked: Vec<_> = discovery
+            .walk(root.path())
+            .flatten()
+            .map(|e| relative(root.path(), e.path()))
+            .collect();
+        assert!(
+            !walked.iter().any(|p| p.starts_with("skipped")),
+            "{walked:?}"
+        );
     }
 }

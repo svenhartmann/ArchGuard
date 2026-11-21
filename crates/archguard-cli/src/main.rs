@@ -32,7 +32,6 @@ mod output;
 mod args;
 mod suggest_cmd;
 use args::{BaselineAction, Cli, Command, Format, format_label};
-use check_cmd::read_baseline;
 use cycle_view::{cycle_findings, cyclic_edges};
 use export_cmd::doc;
 use output::{EXIT_FOUND, EXIT_OK, EXIT_USAGE, analysis_error, emit, to_pretty_json, usage};
@@ -818,7 +817,6 @@ fn baseline(
 ) -> i32 {
     match action {
         BaselineAction::Write { file, .. } => {
-            let file = &check_cmd::baseline_path(root, loaded, file.as_deref());
             let hashes: BTreeSet<String> = cycle_hashes(report).into_values().collect();
             let conventions = archguard_engine::baseline_convention_ids(
                 &archguard_engine::view_conventions::convention_findings(root, &loaded.config),
@@ -828,13 +826,10 @@ fn baseline(
                 hashes,
                 conventions,
             };
-            let json = match serde_json::to_string_pretty(&baseline) {
-                Ok(json) => json,
+            let file = match check_cmd::write_baseline(root, loaded, file.as_deref(), &baseline) {
+                Ok(file) => file,
                 Err(err) => return analysis_error(err),
             };
-            if let Err(err) = write_json_file(file, &json) {
-                return analysis_error(err);
-            }
             if !cli.quiet {
                 outln!(
                     "wrote {} cycle hashes and {} convention ids to {}",
@@ -846,8 +841,7 @@ fn baseline(
             EXIT_OK
         }
         BaselineAction::Diff { file, .. } => {
-            let file = &check_cmd::baseline_path(root, loaded, file.as_deref());
-            let baseline = match read_baseline(file) {
+            let baseline = match check_cmd::load_baseline(root, loaded, file.as_deref()) {
                 Ok(baseline) => baseline,
                 Err(err) => return analysis_error(err),
             };

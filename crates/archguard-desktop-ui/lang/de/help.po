@@ -1,0 +1,596 @@
+msgid "Run from the project directory; the dot means the current project. For everyday use doctor, init, check and report are enough; the other commands serve focused analyses, imports and automation."
+msgstr "Im Projektverzeichnis ausführen; der Punkt steht für das aktuelle Projekt. Für den Alltag reichen doctor, init, check und report; die anderen Befehle dienen gezielten Analysen, Importen und Automatisierung."
+
+msgid "Everyday commands"
+msgstr "Befehle für den Alltag"
+
+msgid "Check installed external tools. Does not validate project setup; always exits 0."
+msgstr "Installierte externe Werkzeuge prüfen. Validiert nicht die Projekteinrichtung; beendet sich immer mit Exit-Code 0."
+
+msgid "Replace this binary with the latest published GitHub release after verifying its SHA-256 checksums."
+msgstr "Dieses Binary durch das neueste veröffentlichte GitHub-Release ersetzen, nachdem die SHA-256-Prüfsummen geprüft wurden."
+
+msgid "Create project configuration once; existing configuration is not overwritten."
+msgstr "Projektkonfiguration einmalig anlegen; bestehende Konfiguration wird nicht überschrieben."
+
+msgid "CI gate for cycles, layer rules and configured thresholds. Use the exit status to fail a pipeline."
+msgstr "CI-Prüfung für Zyklen, Schichtenregeln und konfigurierte Grenzwerte. Der Exit-Code kann die Pipeline fehlschlagen lassen."
+
+msgid "Export the graph to stdout and to .archguard/reports/ (DOT, Mermaid, JSON, Structurizr …) for other tools."
+msgstr "Den Graphen auf stdout und nach .archguard/reports/ exportieren (DOT, Mermaid, JSON, Structurizr …), für andere Werkzeuge."
+
+msgid "Write a shareable single-file report (Markdown with Mermaid diagrams): KPIs, gate findings, cycles, review priorities, services and diagrams."
+msgstr "Einen teilbaren Bericht in einer Datei schreiben (Markdown mit Mermaid-Diagrammen): Kennzahlen, Gate-Befunde, Zyklen, Prüfprioritäten, Services und Diagramme."
+
+msgid "Targeted source analysis"
+msgstr "Gezielte Quellcodeanalyse"
+
+msgid "Extract the original graph as JSON with --out; useful for downstream tools."
+msgstr "Originalgraph mit --out als JSON extrahieren; für nachgelagerte Werkzeuge."
+
+msgid "List dependency cycles without a full CI check."
+msgstr "Abhängigkeitszyklen ohne vollständige CI-Prüfung auflisten."
+
+msgid "Read module coupling metrics; --extended includes additional metrics."
+msgstr "Kopplungsmetriken der Module lesen; --extended ergänzt weitere Metriken."
+
+msgid "Rank review candidates using coupling, cycles and Git churn."
+msgstr "Prüfkandidaten anhand von Kopplung, Zyklen und Git-Änderungshäufigkeit priorisieren."
+
+msgid "Find source files that change together without a static import relationship. Needs Git history."
+msgstr "Gemeinsam geänderte Quelldateien ohne statische Importbeziehung finden. Benötigt Git-Historie."
+
+msgid "Inspect CODEOWNERS boundaries and configured forbidden team directions."
+msgstr "CODEOWNERS-Grenzen und konfigurierte verbotene Abhängigkeiten zwischen Teams prüfen."
+
+msgid "Inspect structural load and heavy dependencies; not runtime profiling."
+msgstr "Strukturelle Last und schwere Abhängigkeiten untersuchen; kein Laufzeit-Profiling."
+
+msgid "Read compiler-backed classes, methods, calls and analysis coverage/diagnostics."
+msgstr "Compilerbasierte Klassen, Methoden, Aufrufe sowie Analyseabdeckung und Diagnosen lesen."
+
+msgid "Inspect cohesion of package members and candidates for splitting a package."
+msgstr "Zusammenhalt der Paketmitglieder und Kandidaten für eine Paketaufteilung untersuchen."
+
+msgid "Assess architecture pattern candidates from evidence. These are hypotheses, not a configured target architecture."
+msgstr "Architekturmuster-Kandidaten aus Belegen bewerten. Das sind Hypothesen, keine konfigurierte Zielarchitektur."
+
+msgid "Export/read the dependency-structure matrix of modules. The desktop app also has a Matrix tab."
+msgstr "Abhängigkeitsmatrix der Module ausgeben/lesen. Die Desktop-App bietet ebenfalls einen Matrix-Tab."
+
+msgid "Optional evidence imports"
+msgstr "Optionale Belegimporte"
+
+msgid "Import JaCoCo, Cobertura, Clover or LCOV with --report; without it, read saved coverage. Does not run tests."
+msgstr "JaCoCo, Cobertura, Clover oder LCOV mit --report importieren; ohne diese Option gespeicherte Coverage lesen. Führt keine Tests aus."
+
+msgid "Import JUnit XML test results and optional source mappings; inspect affected-test recommendations."
+msgstr "JUnit-XML-Testergebnisse und optionale Quellzuordnungen importieren; Empfehlungen für betroffene Tests lesen."
+
+msgid "Import mutation-testing-elements JSON or read saved evidence. Does not run mutation tests."
+msgstr "mutation-testing-elements-JSON importieren oder gespeicherte Belege lesen. Führt keine Mutationstests aus."
+
+msgid "Import CPD XML duplication groups or read the saved report. Does not invoke a duplicate scanner."
+msgstr "CPD-XML-Duplikatgruppen importieren oder den gespeicherten Bericht lesen. Startet keinen Duplikat-Scanner."
+
+msgid "Import SARIF findings, read saved findings, or gate changed-code quality with --base and thresholds."
+msgstr "SARIF-Befunde importieren, gespeicherte Befunde lesen oder Qualität geänderten Codes mit --base und Grenzwerten prüfen."
+
+msgid "Import OpenAPI with --report and an exact --service ID; inspect saved contract comparisons."
+msgstr "OpenAPI mit --report und einer exakten --service-ID importieren; gespeicherte Vertragsvergleiche lesen."
+
+msgid "Run Trivy dependency-advisory scanning and save .archguard/security.json. Requires Trivy."
+msgstr "Mit Trivy Abhängigkeiten auf Sicherheitsmeldungen prüfen und .archguard/security.json speichern. Benötigt Trivy."
+
+msgid "Read the runtime profile from recorded OTLP traces in .archguard/runtime. Does not run or instrument the application."
+msgstr "Laufzeitprofil aus aufgezeichneten OTLP-Traces in .archguard/runtime lesen. Startet oder instrumentiert die Anwendung nicht."
+
+msgid "List third-party dependencies from lockfiles and manifests as CycloneDX 1.6, JSON or text; licences only where the files state them. Never fetches from a registry."
+msgstr "Fremdabhängigkeiten aus Lockfiles und Manifesten als CycloneDX 1.6, JSON oder Text auflisten; Lizenzen nur, wenn die Dateien sie angeben. Lädt nie etwas aus einer Registry."
+
+msgid "Architecture, services & documentation"
+msgstr "Architektur, Services & Dokumentation"
+
+msgid "Compare explicitly modeled components and allowed directions with actual imports."
+msgstr "Explizit modellierte Komponenten und erlaubte Richtungen mit tatsächlichen Imports vergleichen."
+
+msgid "Discover projects, applications and Compose HTTP/startup dependencies."
+msgstr "Projekte, Anwendungen sowie Compose-HTTP-/Startabhängigkeiten entdecken."
+
+msgid "Inspect declared dependencies between local projects; --sources opts into source analysis."
+msgstr "Deklarierte Abhängigkeiten zwischen lokalen Projekten prüfen; --sources aktiviert zusätzlich die Quellcodeanalyse."
+
+msgid "Generate arc42 Markdown. --stdout only prints it; --check checks whether the saved document is missing or outdated."
+msgstr "arc42-Markdown erzeugen. --stdout gibt es nur aus; --check prüft, ob das gespeicherte Dokument fehlt oder veraltet ist."
+
+msgid "List the arc42 diagram catalogue, or draw one diagram as text in the terminal."
+msgstr "Den arc42-Diagrammkatalog auflisten oder ein Diagramm als Text im Terminal zeichnen."
+
+msgid "Reviews, changes & history"
+msgstr "Reviews, Änderungen & Verlauf"
+
+msgid "Assemble findings, change impact and evidence gaps for a review, optionally against --base."
+msgstr "Befunde, Änderungsauswirkungen und Beleglücken für ein Review zusammenstellen, optional gegenüber --base."
+
+msgid "record persists a review decision; show reads the decisions in .archguard/reviews.json."
+msgstr "record speichert eine Review-Entscheidung; show liest die Entscheidungen aus .archguard/reviews.json."
+
+msgid "Compare findings with an expert assessment in .archguard/assessment.toml: recall, precision and unjudged findings. --init writes a template; not a gate."
+msgstr "Befunde mit einer Expertenbewertung in .archguard/assessment.toml vergleichen: Recall, Precision und unbewertete Befunde. --init schreibt eine Vorlage; kein Gate."
+
+msgid "Compare Git refs with --from/--to or compare a ref with --staged. Does not compare the working tree."
+msgstr "Git-Referenzen mit --from/--to vergleichen oder eine Referenz mit --staged. Vergleicht nicht den Arbeitsbaum."
+
+msgid "Suggest cuts for cycles as review candidates, not automatic source edits; --plans prints up to three repair plans per cycle."
+msgstr "Schnitte für Zyklen als Prüfkandidaten vorschlagen, keine automatischen Quellcodeänderungen; --plans zeigt bis zu drei Reparaturpläne je Zyklus."
+
+msgid "Simulate cut/move/merge operations and report their effect without changing source files."
+msgstr "Cut-/Move-/Merge-Operationen simulieren und ihre Wirkung ohne Änderungen an Quelldateien ausgeben."
+
+msgid "write accepts existing cycles as the baseline; diff compares against it to identify new cycles."
+msgstr "write übernimmt bestehende Zyklen als Baseline; diff vergleicht damit, um neue Zyklen zu erkennen."
+
+msgid "Append a project summary snapshot to .archguard/history/."
+msgstr "Einen Projektzusammenfassungs-Snapshot an .archguard/history/ anhängen."
+
+msgid "Read the summary snapshots and their deltas. Does not record a new measurement."
+msgstr "Zusammenfassungs-Snapshots und ihre Differenzen lesen. Zeichnet keine neue Messung auf."
+
+msgid "Read per-package quality history; --record explicitly adds current measurements. More granular than snapshot/trend."
+msgstr "Qualitätsverlauf je Paket lesen; --record fügt explizit aktuelle Messungen hinzu. Detaillierter als snapshot/trend."
+
+msgid "Configuration & integrations"
+msgstr "Konfiguration & Integrationen"
+
+msgid "Show effective configuration and where its sections came from. Does not write configuration."
+msgstr "Wirksame Konfiguration und Herkunft ihrer Abschnitte anzeigen. Schreibt keine Konfiguration."
+
+msgid "sync mirrors analysis into the graph database; query runs openCypher. Requires a build with the db feature."
+msgstr "sync spiegelt die Analyse in die Graphdatenbank; query führt openCypher aus. Benötigt einen Build mit db-Feature."
+
+msgid "Start the stdio MCP server for assistant/tool integration; --root sets the project."
+msgstr "Den stdio-MCP-Server für Assistenten-/Werkzeugintegration starten; --root setzt das Projekt."
+
+msgid "Class and method KPIs need the language’s compiler context where named; ArchGuard computes the metrics itself, no separate metrics service is needed."
+msgstr "Klassen- und Methoden-KPIs brauchen den genannten Compilerkontext der Sprache; ArchGuard berechnet die Metriken selbst, ein separater Metrikdienst ist nicht nötig."
+
+msgid "Run the tests with a coverage tool, then import its report. ArchGuard reads JaCoCo, Cobertura, Clover and LCOV. This is optional and separate from the compiler setup; missing coverage stays unknown, never 0 %."
+msgstr "Tests mit einem Coverage-Werkzeug ausführen und dessen Bericht importieren. ArchGuard liest JaCoCo, Cobertura, Clover und LCOV. Das ist optional und unabhängig vom Compiler-Setup; fehlende Abdeckung bleibt unbekannt, nie 0 %."
+
+msgid "Go SDK with go on PATH, or ARCHGUARD_GO pointing to the executable. Package imports work without the SDK."
+msgstr "Go SDK mit go auf PATH oder ARCHGUARD_GO als Pfad zur ausführbaren Datei. Paketimporte funktionieren auch ohne SDK."
+
+msgid "The bundled go/parser and go/types helper reads selected source snapshots offline. It measures structs, interfaces, receiver methods and file-level function groups. WMC, nesting, Cognitive, Halstead, MI and field-based cohesion use source evidence. CBO/RFC remain partial for unresolved calls/types. DIT/NOC are not applicable: Go embedding is composition. Dynamic dispatch, missing external modules and combined build variants remain explicit gaps. Project code, generators and dependency downloads are never executed."
+msgstr "Der mitgelieferte go/parser- und go/types-Helfer liest ausgewählte Quellsnapshots offline. Er erfasst Structs, Interfaces, Receiver-Methoden und Funktionsgruppen je Datei. WMC, Verschachtelung, Cognitive, Halstead, MI und feldbasierte Kohäsion beruhen auf Quellbelegen. CBO/RFC bleiben bei unaufgelösten Aufrufen/Typen teilweise. DIT/NOC sind nicht anwendbar: Go-Embedding ist Komposition. Dynamische Aufrufe, fehlende externe Module und kombinierte Build-Varianten bleiben sichtbare Lücken. Projektcode, Generatoren und Downloads werden nicht ausgeführt."
+
+msgid "Optional external report"
+msgstr "Optionaler externer Bericht"
+
+msgid "Import an existing converted coverage report with paths matching the Go sources. Native Go coverprofiles are not currently accepted. No coverage is inferred from source metrics."
+msgstr "Einen vorhandenen konvertierten Coverage-Bericht mit passenden Go-Quellpfaden importieren. Native Go-Coverprofiles werden derzeit nicht akzeptiert. Quellmetriken ergeben keine Testabdeckung."
+
+msgid "A full JDK 17+ with java on PATH; the selected Java release and dependency JARs must match the project. The javac scanner is included in ArchGuard. Maven/Gradle are only needed to prepare the project context or run tests."
+msgstr "Vollständiges JDK 17+ mit java auf PATH; Java-Release und Abhängigkeits-JARs müssen zum Projekt passen. Der javac-Scanner wird mit ArchGuard geliefert. Maven/Gradle werden nur zum Vorbereiten des Projektkontexts oder für Tests benötigt."
+
+msgid "For Maven projects, export the existing dependency classpath. For Gradle or custom builds, supply the corresponding existing JARs/class directories through the configuration instead. ArchGuard does not run builds or annotation processors."
+msgstr "Bei Maven-Projekten den Abhängigkeits-Classpath exportieren. Bei Gradle oder eigenen Builds die passenden vorhandenen JARs/Klassenverzeichnisse über die Konfiguration angeben. ArchGuard startet keine Projektbuilds oder Annotation Processor."
+
+msgid "Optional example in .archguard/archguard.toml: replace release and paths with your project values. Do not add nonexistent directories."
+msgstr "Optionales Beispiel in .archguard/archguard.toml: Release und Pfade an das Projekt anpassen. Keine nicht vorhandenen Verzeichnisse eintragen."
+
+msgid "Maven example with the JaCoCo plugin already configured in pom.xml. For Gradle, enable XML in jacocoTestReport. Import the XML report, not jacoco.exec or the HTML page."
+msgstr "Maven-Beispiel mit bereits in pom.xml konfiguriertem JaCoCo-Plugin. Für Gradle XML in jacocoTestReport aktivieren. Den XML-Bericht importieren, nicht jacoco.exec oder die HTML-Seite."
+
+msgid "dotnet on PATH, .NET SDK 8+ and the reference packs required by the project target. Roslyn comes with the SDK; ArchGuard supplies its scanner. Restore project dependencies so obj/project.assets.json and the NuGet references exist."
+msgstr "dotnet auf PATH, .NET SDK 8+ sowie die Referenzpakete des Projekt-Targets. Roslyn kommt mit dem SDK; ArchGuard liefert den Scanner. Projektabhängigkeiten wiederherstellen, damit obj/project.assets.json und NuGet-Referenzen vorhanden sind."
+
+msgid "Run restore yourself for the intended project or solution. ArchGuard does not start project builds, restore, analyzers or source generators. Check global.json and the selected target framework if analysis is partial."
+msgstr "Restore für das gewünschte Projekt bzw. die Solution selbst ausführen. ArchGuard startet keine Projektbuilds, Restores, Analyzer oder Source-Generatoren. Bei Teilabdeckung global.json und das ausgewählte Target-Framework prüfen."
+
+msgid "Optional example in .archguard/archguard.toml; use your actual project path and target framework."
+msgstr "Optionales Beispiel in .archguard/archguard.toml; tatsächlichen Projektpfad und das passende Target-Framework einsetzen."
+
+msgid "Example for VSTest with coverlet.collector and a compatible Microsoft.NET.Test.Sdk in the test project. Microsoft.Testing.Platform uses a different integration. Replace Tests.csproj and RUN-ID with the actual paths."
+msgstr "Beispiel für VSTest mit coverlet.collector und passendem Microsoft.NET.Test.Sdk im Testprojekt. Microsoft.Testing.Platform verwendet eine andere Integration. Tests.csproj und RUN-ID durch die tatsächlichen Pfade ersetzen."
+
+msgid "Node.js on PATH and the project’s installed typescript package. ArchGuard uses the nearest node_modules/typescript/lib/typescript.js, or the explicitly configured compiler, once ARCHGUARD_TRUST_PROJECT_COMPILER=1 marks the repository as trusted. Dependencies and tsconfig.json provide type resolution."
+msgstr "Node.js auf PATH und das im Projekt installierte Paket typescript. ArchGuard nutzt die nächste node_modules/typescript/lib/typescript.js oder den explizit konfigurierten Compiler, sobald ARCHGUARD_TRUST_PROJECT_COMPILER=1 das Repository als vertrauenswürdig markiert. Abhängigkeiten und tsconfig.json liefern die Typauflösung."
+
+msgid "Use versions compatible with the project. Without tsconfig, only TypeScript is analyzed in a limited ES2020/CommonJS context. No application code, build scripts or compiler plugins are run by ArchGuard; the compiler itself comes from the project and only runs after the opt-in."
+msgstr "Zum Projekt passende Versionen verwenden. Ohne tsconfig wird nur TypeScript in einem eingeschränkten ES2020/CommonJS-Kontext analysiert. ArchGuard führt keinen Anwendungscode, keine Build-Skripte und keine Compiler-Plugins aus; der Compiler selbst stammt aus dem Projekt und läuft erst nach der Freigabe."
+
+msgid "Optional explicit configuration in .archguard/archguard.toml."
+msgstr "Optionale explizite Konfiguration in .archguard/archguard.toml."
+
+msgid "Example for an existing Vitest project. Install its matching coverage provider. Other runners such as c8/nyc can also export LCOV; TypeScript paths must map back to the original sources."
+msgstr "Beispiel für ein vorhandenes Vitest-Projekt. Den zur Vitest-Version passenden Coverage-Provider installieren. Auch andere Runner wie c8/nyc können LCOV liefern; TypeScript-Pfade müssen auf die ursprünglichen Quellen zeigen."
+
+msgid "JavaScript also needs Node.js and the installed TypeScript compiler for class/method KPIs. The actual tsconfig project must enable allowJs and include the JavaScript files. Installing Node.js alone is insufficient."
+msgstr "Auch JavaScript benötigt für Klassen-/Methoden-KPIs Node.js und den installierten TypeScript-Compiler. Das tatsächliche tsconfig-Projekt muss allowJs aktivieren und die JavaScript-Dateien einschließen. Node.js allein reicht nicht."
+
+msgid "Merge the example into the project’s tsconfig, preserving its module, JSX and include settings. A jsconfig.json can be selected explicitly through [semantic.typescript].project. Dynamic or ambiguous targets remain unresolved."
+msgstr "Das Beispiel in die tsconfig des Projekts übernehmen; Modul-, JSX- und Include-Einstellungen beibehalten. Eine jsconfig.json lässt sich explizit über [semantic.typescript].project auswählen. Dynamische oder mehrdeutige Ziele bleiben unaufgelöst."
+
+msgid "Example for tsconfig.json; adapt include to the actual source paths."
+msgstr "Beispiel für tsconfig.json; include an die tatsächlichen Quellpfade anpassen."
+
+msgid "Python 3.9+ on PATH, or ARCHGUARD_PYTHON pointing to it. Classes, functions, Complexity, Cognitive and Halstead per function come from the standard ast module; project code is never imported. Call targets are resolved statically from imports, module functions, classes, self/cls and super(); other calls and types stay unresolved, so CBO, RFC, DIT and NOC stay partial."
+msgstr "Python 3.9+ auf PATH oder ARCHGUARD_PYTHON mit dem Pfad dazu. Klassen, Funktionen, Complexity, Cognitive und Halstead pro Funktion stammen aus dem Standardmodul ast; Projektcode wird nie importiert. Aufrufziele werden statisch aus Imports, Modulfunktionen, Klassen, self/cls und super() aufgelöst; andere Aufrufe und Typen bleiben unaufgelöst, daher bleiben CBO, RFC, DIT und NOC partiell."
+
+msgid "Example for a pytest project with coverage.py and pytest installed in the active Python environment. Adapt the test runner and source selection to your project. --branch records branch data as well."
+msgstr "Beispiel für ein pytest-Projekt mit coverage.py und pytest in der aktiven Python-Umgebung. Test-Runner und Quellauswahl an das Projekt anpassen. --branch erfasst zusätzlich Zweigabdeckung."
+
+msgid "No PHP installation needed. Classes, functions, Complexity, Cognitive and Halstead per function come from ArchGuard’s own token scanner; nothing is executed. Call targets are resolved statically from namespaces, use imports and the project class hierarchy; calls on other variables, dynamic calls and types stay unresolved, so CBO, RFC, DIT and NOC stay partial."
+msgstr "Keine PHP-Installation nötig. Klassen, Funktionen, Complexity, Cognitive und Halstead pro Funktion stammen aus dem eigenen Token-Scanner von ArchGuard; nichts wird ausgeführt. Aufrufziele werden statisch aus Namespaces, use-Imports und der Klassenhierarchie des Projekts aufgelöst; Aufrufe auf anderen Variablen, dynamische Aufrufe und Typen bleiben unaufgelöst, daher bleiben CBO, RFC, DIT und NOC partiell."
+
+msgid "PHPUnit needs a coverage driver in PHP CLI. The example uses an installed Xdebug with coverage mode. PCOV is an alternative for line coverage only. Configure the source filter in PHPUnit; a missing driver cannot produce measurements."
+msgstr "PHPUnit braucht einen Coverage-Treiber in PHP CLI. Das Beispiel nutzt ein installiertes Xdebug im Coverage-Modus. PCOV ist eine Alternative ausschließlich für Zeilenabdeckung. Den Quellfilter in PHPUnit konfigurieren; ohne Treiber entstehen keine Messwerte."
+
+msgid "No Kotlin compiler needed. Classes, objects, functions, Complexity, Cognitive and Halstead per function come from ArchGuard’s own token scanner; nothing is executed. Call targets are resolved statically from imports, packages and the project class hierarchy; with a JDK also into Java classes of the project, from the javac declarations. Calls on variables, extension functions and lambdas, and without a JDK calls into Java classes, stay unresolved, so CBO, RFC, DIT and NOC stay partial. Gradle .kts scripts are not scanned."
+msgstr "Kein Kotlin-Compiler nötig. Klassen, Objekte, Funktionen, Complexity, Cognitive und Halstead pro Funktion stammen aus dem eigenen Token-Scanner von ArchGuard; nichts wird ausgeführt. Aufrufziele werden statisch aus Imports, Paketen und der Klassenhierarchie des Projekts aufgelöst; mit JDK auch in Java-Klassen des Projekts, aus den javac-Deklarationen. Aufrufe auf Variablen, Extension-Funktionen und Lambdas sowie ohne JDK Aufrufe in Java-Klassen bleiben unaufgelöst, daher bleiben CBO, RFC, DIT und NOC partiell. Gradle-Skripte (.kts) werden nicht gescannt."
+
+msgid "Gradle example with the jacoco plugin applied and XML enabled in jacocoTestReport (reports.xml.required = true). Import the XML report, not the .exec file or the HTML page."
+msgstr "Gradle-Beispiel mit angewendetem jacoco-Plugin und in jacocoTestReport aktiviertem XML (reports.xml.required = true). Den XML-Bericht importieren, nicht die .exec-Datei oder die HTML-Seite."
+
+msgid "No compiler or preprocessor needed. Classes, structs, unions, functions, Complexity, Cognitive and Halstead per function come from ArchGuard’s own token scanner; nothing is executed. Preprocessor directives are skipped and every #if branch is measured as written. Includes resolve against the including directory and the include directories of compile_commands.json and literal CMake include_directories. Calls and types stay unresolved, so CBO, RFC, DIT and NOC stay partial."
+msgstr "Kein Compiler und kein Präprozessor nötig. Klassen, Structs, Unions, Funktionen, Complexity, Cognitive und Halstead pro Funktion stammen aus dem eigenen Token-Scanner von ArchGuard; nichts wird ausgeführt. Präprozessor-Direktiven werden übersprungen und jeder #if-Zweig wird so gemessen, wie er dasteht. Includes werden gegen das Verzeichnis der einbindenden Datei und die Include-Verzeichnisse aus compile_commands.json und literalen CMake-include_directories aufgelöst. Aufrufe und Typen bleiben unaufgelöst, daher bleiben CBO, RFC, DIT und NOC partiell."
+
+msgid "Example for a build compiled with --coverage (GCC or Clang) whose tests already ran. gcovr reads the .gcda files next to the objects. Use paths relative to the repository root."
+msgstr "Beispiel für einen mit --coverage (GCC oder Clang) gebauten Stand, dessen Tests bereits liefen. gcovr liest die .gcda-Dateien neben den Objektdateien. Pfade relativ zum Repository-Wurzelverzeichnis verwenden."
+
+msgid "No Swift compiler needed. Types, extensions, functions, Complexity, Cognitive and Halstead per function come from ArchGuard’s own token scanner; nothing is executed. Modules are the targets of Package.swift with literal names; Xcode projects are not read. Only Type(…) and Type.staticMethod(…) of a unique project type are resolved; other calls and types stay unresolved, so CBO, RFC, DIT and NOC stay partial."
+msgstr "Kein Swift-Compiler nötig. Typen, Extensions, Funktionen, Complexity, Cognitive und Halstead pro Funktion stammen aus dem eigenen Token-Scanner von ArchGuard; nichts wird ausgeführt. Module sind die Targets aus Package.swift mit literalen Namen; Xcode-Projekte werden nicht gelesen. Aufgelöst werden nur Typ(…) und Typ.statischeMethode(…) eines eindeutigen Projekttyps; andere Aufrufe und Typen bleiben unaufgelöst, daher bleiben CBO, RFC, DIT und NOC partiell."
+
+msgid "Swift Package Manager example on macOS; replace ShopPackageTests with the test bundle of your package. On Linux, call llvm-cov without xcrun and pass the .xctest file itself."
+msgstr "Beispiel für Swift Package Manager unter macOS; ShopPackageTests durch das Test-Bundle des eigenen Pakets ersetzen. Unter Linux llvm-cov ohne xcrun aufrufen und die .xctest-Datei selbst übergeben."
+
+msgid "No Ruby installation needed. Classes, modules, methods, Complexity, Cognitive and Halstead per method come from ArchGuard’s own token scanner; nothing is executed. Call targets are resolved statically for Const.method and Const.new on unique project classes, self.method, bare calls and super along included and prepended modules and superclasses; calls on variables, send, define_method and method_missing stay unresolved, so CBO, RFC, DIT and NOC stay partial. Ruby has no abstract classes: abstractness does not apply. Constant references become import edges only in Rails/Zeitwerk projects."
+msgstr "Keine Ruby-Installation nötig. Klassen, Module, Methoden, Complexity, Cognitive und Halstead pro Methode stammen aus dem eigenen Token-Scanner von ArchGuard; nichts wird ausgeführt. Aufrufziele werden statisch aufgelöst für Const.methode und Const.new auf eindeutigen Projektklassen, self.methode, Aufrufe ohne Empfänger und super entlang eingebundener Module und Oberklassen; Aufrufe auf Variablen, send, define_method und method_missing bleiben unaufgelöst, daher bleiben CBO, RFC, DIT und NOC partiell. Ruby kennt keine abstrakten Klassen: Abstraktheit ist nicht anwendbar. Konstantenreferenzen werden nur in Rails-/Zeitwerk-Projekten zu Import-Kanten."
+
+msgid "Requires the simplecov and simplecov-lcov gems in the test group. Start SimpleCov before the application code is loaded (top of spec_helper.rb or test_helper.rb) with the LCOV formatter writing a single report, for example SimpleCov::Formatter::LcovFormatter.config.report_with_single_file = true and single_report_path = \"coverage/lcov.info\". The command runs the project tests."
+msgstr "Benötigt die Gems simplecov und simplecov-lcov in der Testgruppe. SimpleCov vor dem Laden des Anwendungscodes starten (oben in spec_helper.rb oder test_helper.rb), mit dem LCOV-Formatter und einem einzigen Bericht, zum Beispiel SimpleCov::Formatter::LcovFormatter.config.report_with_single_file = true und single_report_path = \"coverage/lcov.info\". Der Aufruf führt die Tests des Projekts aus."
+
+msgid "No Scala compiler or sbt needed. Classes, traits, objects, defs, Complexity, Cognitive and Halstead per def come from ArchGuard’s own token scanner for Scala 2 and 3 syntax; nothing is executed. Call targets are resolved statically from imports, packages and the project class hierarchy; calls on values, implicits and givens, extension methods and calls into Java or Kotlin classes stay unresolved, so CBO, RFC, DIT and NOC stay partial. Scripts and worksheets (.sc) are not scanned."
+msgstr "Kein Scala-Compiler und kein sbt nötig. Klassen, Traits, Objekte, defs, Complexity, Cognitive und Halstead pro def stammen aus dem eigenen Token-Scanner von ArchGuard für Scala-2- und Scala-3-Syntax; nichts wird ausgeführt. Aufrufziele werden statisch aus Imports, Paketen und der Klassenhierarchie des Projekts aufgelöst; Aufrufe auf Werten, Implicits und Givens, Extension-Methoden und Aufrufe in Java- oder Kotlin-Klassen bleiben unaufgelöst, daher bleiben CBO, RFC, DIT und NOC partiell. Skripte und Worksheets (.sc) werden nicht gescannt."
+
+msgid "sbt example with the sbt-scoverage plugin added to project/plugins.sbt. The command builds and runs the project tests; replace <version> with the Scala version directory under target."
+msgstr "sbt-Beispiel mit dem in project/plugins.sbt eingetragenen Plugin sbt-scoverage. Der Befehl baut das Projekt und führt seine Tests aus; <version> durch das Scala-Versionsverzeichnis unter target ersetzen."
+
+msgid "No compiler needed for Complexity, Cognitive and Halstead per function, or for abstractness and implemented traits; these come from syntax. Precise call targets and type references need rust-analyzer on PATH (or ARCHGUARD_RUST_ANALYZER) and ARCHGUARD_TRUST_PROJECT_COMPILER=1 set outside the repository; build scripts and proc macros never run, so calls and types in code they generate stay unresolved and CBO and RFC stay partial. DIT and NOC are not applicable: Rust has no implementation inheritance."
+msgstr "Für Complexity, Cognitive und Halstead pro Funktion sowie für Abstraktheit und implementierte Traits ist kein Compiler nötig, sie stammen aus der Syntax. Genaue Aufrufziele und Typreferenzen brauchen rust-analyzer auf PATH (oder ARCHGUARD_RUST_ANALYZER) und ARCHGUARD_TRUST_PROJECT_COMPILER=1 außerhalb des Repositorys; Build-Skripte und Proc-Macros laufen nie, daher bleiben Aufrufe und Typen in von ihnen erzeugtem Code unaufgelöst, und CBO und RFC bleiben partiell. DIT und NOC sind nicht anwendbar: Rust hat keine Implementierungsvererbung."
+
+msgid "Requires the Rust toolchain, cargo-llvm-cov and the matching LLVM tools (usually the rustup component llvm-tools-preview). The command builds and runs the project tests. cargo-tarpaulin with Cobertura XML is another compatible producer."
+msgstr "Benötigt die Rust-Toolchain, cargo-llvm-cov und passende LLVM-Werkzeuge (üblicherweise die rustup-Komponente llvm-tools-preview). Der Aufruf baut das Projekt und führt Tests aus. cargo-tarpaulin mit Cobertura-XML ist ein weiterer kompatibler Producer."
+
+msgid "Copy a request below into your agent chat. ArchGuard must be connected through MCP; the agent selects the matching tools and retrieves the project evidence. References such as “the package we just discussed” refer to your conversation."
+msgstr "Kopiere eine der folgenden Anfragen in deinen Agenten-Chat. ArchGuard muss dort über MCP verbunden sein; der Agent wählt die passenden Tools und lädt die Projektbelege. Formulierungen wie „das gerade besprochene Paket“ beziehen sich auf euren Gesprächskontext."
+
+msgid "Start & project structure"
+msgstr "Einstieg & Projektstruktur"
+
+msgid "Task-oriented routes through the tools and current analysis coverage."
+msgstr "Aufgabenbezogene Einstiege in die Tools und aktuelle Analyseabdeckung."
+
+msgid "Use ArchGuard to give me an overview of this project. Where should I start to understand its architecture, and which analyses are available?"
+msgstr "Gib mir mit ArchGuard einen Überblick über dieses Projekt. Wo sollte ich anfangen, um die Architektur zu verstehen, und welche Analysen sind verfügbar?"
+
+msgid "Count nodes, dependencies, languages and cycles."
+msgstr "Knoten, Abhängigkeiten, Sprachen und Zyklen zählen."
+
+msgid "Use ArchGuard to summarize the size and structure of this project: files, packages, dependencies, languages and cycles."
+msgstr "Fasse mit ArchGuard Größe und Struktur dieses Projekts zusammen: Dateien, Pakete, Abhängigkeiten, Sprachen und Zyklen."
+
+msgid "Discover projects, applications and configured service relationships."
+msgstr "Projekte, Anwendungen und konfigurierte Service-Beziehungen erkennen."
+
+msgid "Use ArchGuard to show the services and projects in this repository. Distinguish applications, libraries and test tools, and explain their configured relationships."
+msgstr "Zeige mir mit ArchGuard die Services und Projekte dieses Repositorys. Unterscheide Anwendungen, Bibliotheken und Testwerkzeuge und erkläre ihre konfigurierten Beziehungen."
+
+msgid "Read dependencies between local projects. sources enables bounded source analysis; no builds are run."
+msgstr "Abhängigkeiten zwischen lokalen Projekten lesen. sources aktiviert begrenzte Quellanalyse; Builds werden nicht ausgeführt."
+
+msgid "Use ArchGuard to examine dependencies between the projects in this monorepo, including available source evidence. Explain where cross-project analysis is incomplete."
+msgstr "Untersuche mit ArchGuard die Abhängigkeiten zwischen den Projekten dieses Monorepos einschließlich verfügbarer Quellbelege. Erkläre, wo die projektübergreifende Analyse unvollständig ist."
+
+msgid "Explore packages and their connections; use returned area names to drill down."
+msgstr "Pakete und ihre Verbindungen erkunden; zurückgegebene Bereichsnamen zum Vertiefen verwenden."
+
+msgid "Use ArchGuard to show the main packages and their relationships. Then explore the package with the most connections and explain its responsibilities from the available evidence."
+msgstr "Zeige mir mit ArchGuard die wichtigsten Pakete und ihre Beziehungen. Vertiefe anschließend das Paket mit den meisten Verbindungen und erläutere seine Aufgaben anhand der verfügbaren Belege."
+
+msgid "Inspect class/file evidence and complexity. Missing measurements remain unknown."
+msgstr "Klassen-/Dateibelege und Komplexität ansehen. Fehlende Messwerte bleiben unbekannt."
+
+msgid "Use ArchGuard to explain the most complex classes in this project. Name the measured values and source files, and distinguish missing measurements from low complexity."
+msgstr "Erkläre mir mit ArchGuard die komplexesten Klassen dieses Projekts. Nenne Messwerte und Quelldateien und unterscheide fehlende Messungen von geringer Komplexität."
+
+msgid "Expand one exact module name from the graph."
+msgstr "Einen exakten Modulnamen aus dem Graphen aufklappen."
+
+msgid "Use ArchGuard to expand the package we just discussed by one level. Show its direct subpackages and their dependencies."
+msgstr "Klappe mit ArchGuard das gerade besprochene Paket eine Ebene auf. Zeige seine direkten Unterpakete und deren Abhängigkeiten."
+
+msgid "Read the dependency matrix; within optionally selects a package."
+msgstr "Abhängigkeitsmatrix lesen; within wählt optional ein Paket."
+
+msgid "Use ArchGuard to show a dependency matrix for the package we just discussed. Explain the strongest connections and visible cycles."
+msgstr "Zeige mit ArchGuard eine Abhängigkeitsmatrix für das gerade besprochene Paket. Erkläre die stärksten Verbindungen und sichtbaren Zyklen."
+
+msgid "Dependencies & cycles"
+msgstr "Abhängigkeiten & Zyklen"
+
+msgid "List cycle IDs; level=file distinguishes file cycles from module aggregation."
+msgstr "Zyklus-IDs auflisten; level=file unterscheidet Dateizyklen von Modulaggregation."
+
+msgid "Use ArchGuard to find the largest dependency cycles. Distinguish file cycles from cycles that only appear when packages are aggregated."
+msgstr "Finde mit ArchGuard die größten Abhängigkeitszyklen. Unterscheide Dateizyklen von Zyklen, die erst durch die Zusammenfassung zu Paketen entstehen."
+
+msgid "Read members and source evidence for an ID returned by cycles_list."
+msgstr "Mitglieder und Quellbelege zu einer ID aus cycles_list lesen."
+
+msgid "Use ArchGuard to examine the cycle we just found. List its members and show a closed dependency path with the corresponding source locations."
+msgstr "Untersuche mit ArchGuard den gerade gefundenen Zyklus. Liste seine Mitglieder auf und zeige einen geschlossenen Abhängigkeitspfad mit den zugehörigen Quellstellen."
+
+msgid "Follow incoming, outgoing or both dependency directions."
+msgstr "Eingehende, ausgehende oder beide Abhängigkeitsrichtungen verfolgen."
+
+msgid "Use ArchGuard to show what depends directly on the package we just discussed and what that package itself depends on. Explain incoming and outgoing relationships separately."
+msgstr "Zeige mit ArchGuard, was direkt vom gerade besprochenen Paket abhängt und wovon dieses Paket selbst abhängt. Erkläre eingehende und ausgehende Beziehungen getrennt."
+
+msgid "Read import locations behind one directed module connection."
+msgstr "Importstellen hinter einer gerichteten Modulverbindung lesen."
+
+msgid "Use ArchGuard to explain why the two packages we just discussed are connected. Show the direction and the import locations that establish this dependency."
+msgstr "Erkläre mit ArchGuard, warum die beiden gerade besprochenen Pakete verbunden sind. Zeige die Richtung und die Importstellen, die diese Abhängigkeit belegen."
+
+msgid "Suggest dependency cuts for a returned cycle ID; does not edit sources."
+msgstr "Abhängigkeitsschnitte für eine zurückgegebene Zyklus-ID vorschlagen; ändert keine Quellen."
+
+msgid "Use ArchGuard to suggest three ways to break the cycle we just discussed. Explain the evidence and trade-offs for each suggestion without editing files."
+msgstr "Schlage mit ArchGuard drei Möglichkeiten vor, den gerade besprochenen Zyklus aufzubrechen. Erkläre jeweils die Belege und Nachteile, ohne Dateien zu ändern."
+
+msgid "Evaluate a virtual refactoring on a graph copy without editing files."
+msgstr "Virtuelles Refactoring auf einer Graphkopie bewerten, ohne Dateien zu ändern."
+
+msgid "Use ArchGuard to simulate removing the dependency we just discussed. Compare cycles and coupling before and after, without changing source files."
+msgstr "Simuliere mit ArchGuard das Entfernen der gerade besprochenen Abhängigkeit. Vergleiche Zyklen und Kopplung vorher und nachher, ohne Quelldateien zu verändern."
+
+msgid "Architecture & documentation"
+msgstr "Architektur & Dokumentation"
+
+msgid "Read declared goals, constraints, target model and missing context."
+msgstr "Deklarierte Ziele, Einschränkungen, Zielmodell und fehlenden Kontext lesen."
+
+msgid "Use ArchGuard to summarize the declared architecture goals, constraints and target structure. Clearly separate documented decisions from assumptions and missing information."
+msgstr "Fasse mit ArchGuard die dokumentierten Architekturziele, Einschränkungen und die Zielstruktur zusammen. Trenne dokumentierte Entscheidungen klar von Annahmen und fehlenden Angaben."
+
+msgid "Return evidence-backed arc42 Markdown; concatenate pages in order. No file is written."
+msgstr "Belegtes arc42-Markdown liefern; Seiten in Reihenfolge zusammenfügen. Schreibt keine Datei."
+
+msgid "Use ArchGuard to produce the arc42 building block view for this project. Retrieve the complete chapter, explain its packages and mark information that cannot be inferred from the code."
+msgstr "Erstelle mit ArchGuard die arc42-Bausteinsicht dieses Projekts. Lade das vollständige Kapitel, erkläre die Pakete und kennzeichne Informationen, die sich nicht aus dem Code ableiten lassen."
+
+msgid "Inspect pattern hypotheses with supporting and contradicting evidence."
+msgstr "Architekturhypothesen mit unterstützenden und widersprechenden Belegen prüfen."
+
+msgid "Use ArchGuard to investigate which architecture patterns are supported by this project. For each candidate, show supporting evidence, counter-evidence and what is still unknown."
+msgstr "Prüfe mit ArchGuard, welche Architekturmuster in diesem Projekt belegbar sind. Zeige für jeden Kandidaten unterstützende Belege, Gegenbelege und offene Fragen."
+
+msgid "Show effective configuration and its provenance."
+msgstr "Wirksame Konfiguration und ihre Herkunft anzeigen."
+
+msgid "Use ArchGuard to explain the architecture rules currently applied to this project. Show which settings were explicitly declared and which were derived or defaulted."
+msgstr "Erkläre mit ArchGuard die aktuell angewendeten Architekturregeln dieses Projekts. Zeige, welche Einstellungen ausdrücklich festgelegt, abgeleitet oder als Standard übernommen wurden."
+
+msgid "Find current problems, stable finding IDs and evidence freshness."
+msgstr "Aktuelle Probleme, stabile Befund-IDs und Aktualität der Belege finden."
+
+msgid "Use ArchGuard to find the current architecture problems. Prioritize the most important findings and explain their evidence, affected components and analysis gaps."
+msgstr "Finde mit ArchGuard die aktuellen Architekturprobleme. Priorisiere die wichtigsten Befunde und erkläre ihre Belege, betroffenen Komponenten und Analyselücken."
+
+msgid "Read evidence and repair context for a finding_id from architecture_findings."
+msgstr "Belege und Reparaturkontext zu einer finding_id aus architecture_findings lesen."
+
+msgid "Use ArchGuard to examine the finding we just discussed in detail. Show the relevant source locations, the violated rule and possible repair steps."
+msgstr "Untersuche mit ArchGuard den gerade besprochenen Befund im Detail. Zeige die relevanten Quellstellen, die verletzte Regel und mögliche Reparaturschritte."
+
+msgid "Check architecture rules, optionally considering the configured baseline."
+msgstr "Architekturregeln prüfen, optional mit konfigurierter Baseline."
+
+msgid "Use ArchGuard to check this project against its architecture rules and configured baseline. Explain which findings fail the check and which are covered by the baseline."
+msgstr "Prüfe dieses Projekt mit ArchGuard gegen seine Architekturregeln und die konfigurierte Baseline. Erkläre, welche Befunde die Prüfung scheitern lassen und welche durch die Baseline abgedeckt sind."
+
+msgid "Compare current cycles with an existing baseline. Requires a baseline file/configuration."
+msgstr "Aktuelle Zyklen mit bestehender Baseline vergleichen. Benötigt eine Baseline-Datei/-Konfiguration."
+
+msgid "Use ArchGuard to compare the current cycles with the existing baseline. Which cycles are new, which have disappeared, and is a usable baseline available?"
+msgstr "Vergleiche mit ArchGuard die aktuellen Zyklen mit der vorhandenen Baseline. Welche Zyklen sind neu, welche verschwunden, und ist eine nutzbare Baseline vorhanden?"
+
+msgid "Metrics & code understanding"
+msgstr "Metriken & Codeverständnis"
+
+msgid "Read module coupling and instability."
+msgstr "Modulkopplung und Instabilität lesen."
+
+msgid "Use ArchGuard to compare the coupling and instability of the main packages. Explain the values and identify packages that deserve a closer look."
+msgstr "Vergleiche mit ArchGuard Kopplung und Instabilität der wichtigsten Pakete. Erkläre die Werte und benenne Pakete, die genauer untersucht werden sollten."
+
+msgid "Read class/source metrics with explicit measurement coverage."
+msgstr "Klassen-/Quellmetriken mit ausgewiesener Messabdeckung lesen."
+
+msgid "Use ArchGuard to show the available class metrics and complexity measurements. Explain conspicuous values with source evidence and identify missing measurements."
+msgstr "Zeige mit ArchGuard die verfügbaren Klassenmetriken und Komplexitätsmessungen. Erkläre auffällige Werte mit Quellbelegen und benenne fehlende Messungen."
+
+msgid "Read available review KPIs; unmeasured values are not zero."
+msgstr "Verfügbare Review-KPIs lesen; nicht gemessene Werte sind nicht null."
+
+msgid "Use ArchGuard to summarize the available architecture review KPIs. Explain the most concerning measured values and which KPIs could not be measured."
+msgstr "Fasse mit ArchGuard die verfügbaren Architektur-Review-KPIs zusammen. Erkläre die auffälligsten gemessenen Werte und welche KPIs nicht gemessen werden konnten."
+
+msgid "Inspect compiler-backed classes, methods or calls; provider gaps remain visible."
+msgstr "Compilerbelegte Klassen, Methoden oder Aufrufe prüfen; Abdeckungslücken bleiben sichtbar."
+
+msgid "Use ArchGuard to show the methods and callers of the class we just discussed. Distinguish compiler-resolved calls from unresolved or external targets."
+msgstr "Zeige mit ArchGuard die Methoden und Aufrufer der gerade besprochenen Klasse. Unterscheide compileraufgelöste Aufrufe von ungeklärten oder externen Zielen."
+
+msgid "Inspect structural package cohesion and disconnected groups."
+msgstr "Strukturellen Paketzusammenhalt und getrennte Gruppen prüfen."
+
+msgid "Use ArchGuard to examine the cohesion of the package we just discussed. Are there disconnected groups of classes, and what evidence would support splitting the package?"
+msgstr "Untersuche mit ArchGuard den Zusammenhalt des gerade besprochenen Pakets. Gibt es getrennte Klassengruppen, und welche Belege würden für eine Aufteilung sprechen?"
+
+msgid "Rank review candidates using dependency and Git evidence."
+msgstr "Review-Kandidaten anhand von Abhängigkeits- und Git-Belegen priorisieren."
+
+msgid "Use ArchGuard to identify ten review priorities from dependencies, cycles and Git changes. Explain why each is ranked highly without treating the ranking as proof of a defect."
+msgstr "Ermittle mit ArchGuard zehn Review-Schwerpunkte anhand von Abhängigkeiten, Zyklen und Git-Änderungen. Erkläre die jeweilige Priorität, ohne die Rangfolge als Fehlernachweis darzustellen."
+
+msgid "Find Git co-change candidates; shared changes do not prove a dependency."
+msgstr "Gemeinsam geänderte Dateien in Git finden; gemeinsame Änderungen beweisen keine Abhängigkeit."
+
+msgid "Use ArchGuard to find files that are frequently changed together despite having no recorded direct dependency. Explain the Git evidence and possible reasons."
+msgstr "Finde mit ArchGuard Dateien, die häufig gemeinsam geändert werden, obwohl keine direkte Abhängigkeit erfasst ist. Erkläre die Git-Belege und mögliche Ursachen."
+
+msgid "Read CODEOWNERS assignments and cross-team dependencies."
+msgstr "CODEOWNERS-Zuordnungen und teamübergreifende Abhängigkeiten lesen."
+
+msgid "Use ArchGuard to show team ownership from CODEOWNERS. Identify unassigned files and dependencies across team boundaries."
+msgstr "Zeige mit ArchGuard die Team-Zuständigkeiten aus CODEOWNERS. Benenne nicht zugeordnete Dateien und Abhängigkeiten über Teamgrenzen hinweg."
+
+msgid "Review structural dependency costs; does not measure runtime performance."
+msgstr "Strukturelle Abhängigkeitskosten prüfen; misst keine Laufzeitperformance."
+
+msgid "Use ArchGuard to investigate structural performance risks such as large dependency closures and heavy imports. Distinguish static indicators from measured runtime performance."
+msgstr "Untersuche mit ArchGuard strukturelle Performance-Risiken wie große Abhängigkeitsketten und schwere Imports. Unterscheide statische Hinweise von gemessener Laufzeitperformance."
+
+msgid "Changes & review"
+msgstr "Änderungen & Review"
+
+msgid "Read dependencies, policies and impact for files changed since a Git base."
+msgstr "Abhängigkeiten, Regeln und Auswirkungen für seit einer Git-Basis geänderte Dateien lesen."
+
+msgid "Use ArchGuard to assess my uncommitted changes against HEAD. Which components depend on the changed code, and which architecture constraints should I consider?"
+msgstr "Bewerte mit ArchGuard meine noch nicht committeten Änderungen gegenüber HEAD. Welche Komponenten hängen vom geänderten Code ab, und welche Architekturvorgaben muss ich beachten?"
+
+msgid "Compare the complete staged index with HEAD; excludes unstaged changes."
+msgstr "Den vollständigen vorgemerkten Index mit HEAD vergleichen; ohne nicht vorgemerkte Änderungen."
+
+msgid "Use ArchGuard to review only my staged changes against HEAD. Which architecture findings and dependency changes would this commit introduce?"
+msgstr "Prüfe mit ArchGuard ausschließlich meine vorgemerkten Änderungen gegenüber HEAD. Welche Architekturbefunde und Abhängigkeitsänderungen würde dieser Commit einführen?"
+
+msgid "Compare the working tree against a Git ref; optional target compares two exact branch tips."
+msgstr "Arbeitsstand mit einer Git-Referenz vergleichen; optional vergleicht target zwei exakte Branch-Stände."
+
+msgid "Use ArchGuard to compare my working tree with HEAD. Explain new and resolved architecture findings and changes in coupling."
+msgstr "Vergleiche mit ArchGuard meinen Arbeitsstand mit HEAD. Erkläre neue und behobene Architekturbefunde sowie Änderungen der Kopplung."
+
+msgid "Read the last saved review and check its freshness. Create it with archguard review --save."
+msgstr "Letztes gespeichertes Review lesen und Aktualität prüfen. Mit archguard review --save erzeugen."
+
+msgid "Use ArchGuard to summarize the last saved architecture review. Which findings and decisions remain relevant, and is the review still current?"
+msgstr "Fasse mit ArchGuard das letzte gespeicherte Architekturreview zusammen. Welche Befunde und Entscheidungen sind noch relevant, und ist das Review noch aktuell?"
+
+msgid "List decisions. action=record writes .archguard/reviews.json and requires finding and decision; accept-risk may require adr. This example only reads."
+msgstr "Entscheidungen auflisten. action=record schreibt .archguard/reviews.json und benötigt finding und decision; accept-risk kann adr erfordern. Dieses Beispiel liest nur."
+
+msgid "Use ArchGuard to list the recorded review decisions. Which findings were deferred or accepted as risks, and which explanations and ADR references were recorded? Do not change the register."
+msgstr "Liste mit ArchGuard die erfassten Review-Entscheidungen auf. Welche Befunde wurden vertagt oder als Risiko akzeptiert, und welche Begründungen und ADR-Verweise wurden hinterlegt? Ändere das Register nicht."
+
+msgid "Return a Markdown PR summary against a Git base; does not post a comment."
+msgstr "Markdown-PR-Zusammenfassung gegenüber einer Git-Basis liefern; veröffentlicht keinen Kommentar."
+
+msgid "Use ArchGuard to draft an architecture review comment for my changes against HEAD. Include new and resolved findings and recorded accepted risks, but do not publish the comment."
+msgstr "Entwirf mit ArchGuard einen Architektur-Review-Kommentar für meine Änderungen gegenüber HEAD. Nenne neue und behobene Befunde sowie dokumentierte akzeptierte Risiken, veröffentliche den Kommentar aber nicht."
+
+msgid "Read explicitly recorded package metric history; does not create snapshots."
+msgstr "Explizit aufgezeichneten Verlauf der Paketmetriken lesen; erzeugt keine Snapshots."
+
+msgid "Use ArchGuard to compare the recorded quality history of the packages. Which measured values improved or worsened, and which comparisons are not reliable?"
+msgstr "Vergleiche mit ArchGuard den aufgezeichneten Qualitätsverlauf der Pakete. Welche Messwerte wurden besser oder schlechter, und welche Vergleiche sind nicht belastbar?"
+
+msgid "Read the snapshot history recorded by archguard snapshot."
+msgstr "Mit archguard snapshot aufgezeichneten Verlauf lesen."
+
+msgid "Use ArchGuard to show the trend in cycles, coupling and dependency counts over the last ten recorded snapshots. Explain any gaps in the history."
+msgstr "Zeige mit ArchGuard die Entwicklung von Zyklen, Kopplung und Abhängigkeitszahlen über die letzten zehn aufgezeichneten Snapshots. Erkläre mögliche Lücken im Verlauf."
+
+msgid "Imported quality, tests & security"
+msgstr "Importierte Qualität, Tests & Sicherheit"
+
+msgid "Read saved SARIF findings; does not start linters or import reports."
+msgstr "Gespeicherte SARIF-Befunde lesen; startet keine Linter und importiert keine Berichte."
+
+msgid "Use ArchGuard to summarize the imported quality findings and show the most relevant source locations. Identify stale reports and do not start a new scan."
+msgstr "Fasse mit ArchGuard die importierten Qualitätsbefunde zusammen und zeige die wichtigsten Quellstellen. Benenne veraltete Berichte und starte keinen neuen Scan."
+
+msgid "Read saved dependency advisories. Refresh explicitly with archguard security."
+msgstr "Gespeicherte Schwachstellenmeldungen zu Abhängigkeiten lesen. Explizit mit archguard security aktualisieren."
+
+msgid "Use ArchGuard to summarize the saved dependency vulnerability findings. Show affected packages, versions and available fixes, and state when the scan was recorded."
+msgstr "Fasse mit ArchGuard die gespeicherten Schwachstellenbefunde zu Abhängigkeiten zusammen. Zeige betroffene Pakete, Versionen und verfügbare Korrekturen sowie den Zeitpunkt des Scans."
+
+msgid "Read imported CPD groups and source occurrences."
+msgstr "Importierte CPD-Duplikatgruppen und Quellstellen lesen."
+
+msgid "Use ArchGuard to show the largest imported code duplication groups. List the affected files and explain where shared code might be worth considering."
+msgstr "Zeige mit ArchGuard die größten importierten Code-Duplikatgruppen. Liste die betroffenen Dateien auf und erläutere, wo gemeinsamer Code sinnvoll sein könnte."
+
+msgid "Read imported coverage and uncovered-file priorities; does not run tests."
+msgstr "Importierte Testabdeckung und Prioritäten nicht abgedeckter Dateien lesen; führt keine Tests aus."
+
+msgid "Use ArchGuard to identify important files with test coverage gaps, considering how much code depends on them. Distinguish missing coverage data from measured uncovered lines."
+msgstr "Ermittle mit ArchGuard wichtige Dateien mit Testabdeckungslücken und berücksichtige, wie viel Code von ihnen abhängt. Unterscheide fehlende Abdeckungsdaten von gemessenen, nicht abgedeckten Zeilen."
+
+msgid "Read imported test identities/durations; targets optionally requests impact-based recommendations."
+msgstr "Importierte Testnamen/-laufzeiten lesen; targets fordert optional Empfehlungen anhand betroffener Quellen an."
+
+msgid "Use ArchGuard to recommend tests for the file we just discussed. Explain the recorded source mappings and dependencies, and which additional tests cannot safely be ruled out."
+msgstr "Empfiehl mit ArchGuard Tests für die gerade besprochene Datei. Erkläre die erfassten Quellzuordnungen und Abhängigkeiten und welche weiteren Tests nicht sicher ausgeschlossen werden können."
+
+msgid "Read imported mutation outcomes; does not execute mutation tests."
+msgstr "Importierte Mutationsergebnisse lesen; führt keine Mutationstests aus."
+
+msgid "Use ArchGuard to examine the imported mutation test results. Show surviving mutations and their source locations without executing new mutation tests."
+msgstr "Untersuche mit ArchGuard die importierten Mutationstest-Ergebnisse. Zeige überlebende Mutationen und ihre Quellstellen, ohne neue Mutationstests auszuführen."
+
+msgid "Read imported OpenAPI contracts, changes and declared consumers."
+msgstr "Importierte OpenAPI-Verträge, Änderungen und deklarierte Verbraucher lesen."
+
+msgid "Use ArchGuard to compare the imported API contract with its previous import. Explain contract changes and identify declared consumers that may be affected."
+msgstr "Vergleiche mit ArchGuard den importierten API-Vertrag mit dem vorherigen Import. Erkläre Vertragsänderungen und benenne deklarierte Verbraucher, die betroffen sein könnten."
+
+msgid "Metrics, commands & MCP"
+msgstr "Kennzahlen, Befehle & MCP"
+
+msgid "Metrics, commands & MCP…"
+msgstr "Kennzahlen, Befehle & MCP…"
+
+msgid "Copied"
+msgstr "Kopiert"
+
+msgid "Graph KPIs"
+msgstr "Graph-KPIs"
+
+msgid "Classes & methods"
+msgstr "Klassen & Methoden"
+
+msgid "Requirements by language"
+msgstr "Voraussetzungen je Sprache"
+
+msgid "This project and view"
+msgstr "Dieses Projekt und diese Ansicht"
+
+msgid "The development_guide request for the shown view, and the MCP server entry for this project. Paste the entry into the mcpServers configuration of your MCP client."
+msgstr "Die development_guide-Anfrage für die angezeigte Ansicht und der MCP-Server-Eintrag für dieses Projekt. Den Eintrag in die mcpServers-Konfiguration des MCP-Clients einfügen."
+
+msgid "The Graph tab counts its figures on the shown modules: rows that are not expanded. The Matrix and Start figures name their level in their label."
+msgstr "Der Graph-Tab zählt seine Kennzahlen auf den angezeigten Modulen: den nicht aufgeklappten Zeilen. Die Kennzahlen von Matrix und Start nennen ihre Ebene im Namen."
+
+msgid "Class metrics of the Quality tab's heatmap. Missing compiler evidence leaves a value unknown (—), never 0."
+msgstr "Klassenmetriken der Heatmap im Qualitäts-Tab. Fehlende Compiler-Belege lassen einen Wert unbekannt (—), nie 0."
+
+msgid "UI screens, navigations and permissions against backend endpoints."
+msgstr "UI-Screens, Navigationen und Berechtigungen gegen Backend-Endpunkte."
+
+msgid "Domain entities, state machines, use cases and events."
+msgstr "Domänen-Entitäten, Zustandsautomaten, Use Cases und Events."

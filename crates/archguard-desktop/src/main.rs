@@ -11,6 +11,8 @@ mod architecture_ui;
 #[cfg(feature = "snapshot")]
 mod bench;
 mod calls_ui;
+mod compare;
+mod compare_ui;
 mod config_editor;
 mod context;
 mod deferred;
@@ -32,6 +34,7 @@ mod graph_panels_ui;
 mod graph_ui;
 #[cfg(feature = "snapshot")]
 mod headless;
+mod help_ui;
 mod instances;
 mod kpi;
 mod matrix;
@@ -45,8 +48,10 @@ mod panes_ui;
 mod platform;
 mod quality_ui;
 mod rating;
+mod reanalyze_ui;
 mod review_decisions;
 mod review_decisions_ui;
+mod review_findings;
 mod runtime_ui;
 mod screens_ui;
 #[cfg(test)]
@@ -66,6 +71,7 @@ mod status;
 mod tab_support;
 mod timing;
 mod tree;
+mod tree_nav;
 mod tree_order;
 #[cfg(test)]
 mod tree_width_check;
@@ -96,6 +102,8 @@ fn main() -> Result<(), slint::PlatformError> {
     documents_ui::wire(&ui);
     shell_ui::wire(&ui);
     review_decisions_ui::wire(&ui);
+    compare_ui::wire(&ui);
+    help_ui::wire(&ui);
     shell_ui::start(&ui, args);
     let _update = update_ui::wire(&ui); // kept until run() returns: starts a restart or installer
 

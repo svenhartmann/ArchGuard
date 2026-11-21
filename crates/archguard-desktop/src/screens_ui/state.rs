@@ -331,7 +331,7 @@ impl ScreensState {
         };
         // the per-application copies the views read get the same fallback
         let atoms: Vec<&Atom> = atoms.map(|(atom, _)| atom).collect();
-        let mut fill = |x: &mut Assignment| {
+        let fill = |x: &mut Assignment| {
             for atom in &atoms {
                 atom_map(x, atom)
                     .entry(atom.name.clone())

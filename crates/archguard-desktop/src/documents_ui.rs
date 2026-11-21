@@ -24,8 +24,8 @@ use crate::settings_file;
 use crate::tab_support::{self, Shared, Texts, Topology, model as vec_model};
 use crate::ui::{AppWindow, DocItem, RecentItem, SubProjectItem};
 use crate::{
-    architecture_ui, calls_ui, file_ui, instances, matrix_ui, quality_ui, runtime_ui, security_ui,
-    services_ui, start_ui,
+    architecture_ui, calls_ui, file_ui, instances, matrix_ui, quality_ui, reanalyze_ui, runtime_ui,
+    security_ui, services_ui, start_ui,
 };
 
 /// Register the callbacks of the document strip and of every tab.
@@ -45,6 +45,13 @@ pub fn wire(ui: &AppWindow) {
     crate::export_ui::wire(ui);
     crate::follow_ui::wire(ui);
     panes_ui::wire(ui);
+    let again = with_ui(ui, |ui, ()| {
+        if let Some((id, root)) = reanalyze_ui::admit(ui) {
+            spawn_analysis(ui, id, root);
+        }
+    });
+    ui.on_analyze_again(move || again(()));
+    reanalyze_ui::watch(ui);
     ui.on_select_doc(with_ui(ui, |ui, i: i32| activate(ui, index(i))));
     ui.on_open_sub_project(with_ui(ui, |ui, i: i32| open_sub_project(ui, index(i))));
     let add = with_ui(ui, |ui, ()| pick_folder(ui));
@@ -264,18 +271,22 @@ impl Run {
     }
 }
 
+/// Analyse document `id` on a worker; the newest run's result lands.
 fn spawn_analysis(ui: &AppWindow, id: DocId, root: PathBuf) {
     let run = Run::start(id);
     let topology = Shared::<Topology>::new();
     documents::set_state(id, topology.clone());
     let weak = ui.as_weak();
     let name = "desktop: analyze project";
-    let work = tab_support::traced(&root.clone(), name, move || analyze(&root, &topology));
+    let at = root.clone();
+    let work = tab_support::traced(&at, name, move || analyze(&root, &topology));
     std::thread::spawn(move || {
+        // Taken first, so edits during the analysis count as changes.
+        let baseline = reanalyze_ui::fingerprint(&at);
         let result = guarded(work);
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
-                finished(&ui, id, run, result);
+                finished(&ui, id, run, (result, baseline));
             }
         });
     });
@@ -287,15 +298,13 @@ fn guarded<T>(analyze: impl FnOnce() -> Result<T, String>) -> Result<T, String> 
     tab_support::catch(analyze).and_then(|r| r)
 }
 
-fn finished(
-    ui: &AppWindow,
-    id: DocId,
-    run: u64,
-    result: Result<(Analysis, Vec<SubProject>), String>,
-) {
+type Landing = (Result<(Analysis, Vec<SubProject>), String>, Option<String>);
+
+fn finished(ui: &AppWindow, id: DocId, run: u64, (result, baseline): Landing) {
     let Some(active) = Run::land(id, run, result) else {
         return;
     };
+    reanalyze_ui::landed(ui, id, baseline);
     if active {
         refresh(ui);
     } else {

@@ -1,0 +1,42 @@
+// The Explorer's tree keys for the flat trees of Matrix and Calls: Up/Down
+// move the cursor, Home/End jump, Right opens a closed row or steps to its
+// first child, Left closes an open row or steps to its parent, Enter and
+// Space activate the row as a click on its label does.
+export struct TreeKeyRow {
+    expandable: bool,
+    expanded: bool,
+    // The parent's row, -1 for none (src/tree_nav.rs).
+    parent: int,
+}
+
+export component TreeKeys inherits FocusScope {
+    in property <int> count;
+    in-out property <int> cursor: -1;
+    callback info(int) -> TreeKeyRow;
+    callback toggle(int);
+    callback activate(int);
+
+    key-pressed(event) => {
+        if (root.count == 0) { return reject; }
+        let at = max(0, min(root.count - 1, root.cursor));
+        let r = root.info(at);
+        if (event.text == Key.DownArrow) { root.cursor = root.cursor < 0 ? 0 : min(root.count - 1, at + 1); return accept; }
+        if (event.text == Key.UpArrow) { root.cursor = max(0, at - 1); return accept; }
+        if (event.text == Key.Home) { root.cursor = 0; return accept; }
+        if (event.text == Key.End) { root.cursor = root.count - 1; return accept; }
+        if (event.text == Key.RightArrow) {
+            root.cursor = at;
+            if (r.expandable && !r.expanded) { root.toggle(at); }
+            else if (r.expanded) { root.cursor = min(root.count - 1, at + 1); }
+            return accept;
+        }
+        if (event.text == Key.LeftArrow) {
+            root.cursor = at;
+            if (r.expanded) { root.toggle(at); }
+            else if (r.parent >= 0) { root.cursor = r.parent; }
+            return accept;
+        }
+        if (event.text == Key.Return || event.text == " ") { root.cursor = at; root.activate(at); return accept; }
+        reject
+    }
+}

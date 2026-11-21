@@ -226,9 +226,10 @@ fn fill_tree(m: &mut CallsModel, s: &State, ui: &UiLabels) {
                     .is_some_and(|c| c.kind == "module"),
             cycle: s.is_cycle_member(node.kind, &node.id),
             pressed,
+            parent: -1,
         });
     }
-    m.tree = model(rows);
+    m.tree = model(with_parents(rows));
     m.tree_shown = int(v.shown.len());
     m.tree_total = int(v.visible.len());
     m.tree_more = v.visible.len() > s.tree_limit;
@@ -243,6 +244,15 @@ fn fill_tree(m: &mut CallsModel, s: &State, ui: &UiLabels) {
         })
         .unwrap_or_default()
         .into();
+}
+
+/// `rows` with each row's parent row set (the keyboard's Left key).
+fn with_parents(mut rows: Vec<CallsTreeRow>) -> Vec<CallsTreeRow> {
+    let parents = crate::tree_nav::parents(&rows.iter().map(|r| r.depth).collect::<Vec<_>>());
+    for (r, parent) in rows.iter_mut().zip(parents) {
+        r.parent = parent;
+    }
+    rows
 }
 
 /// The type name without its package; a file name stays whole.

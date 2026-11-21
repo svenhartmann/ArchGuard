@@ -28,8 +28,8 @@ msgstr "PNG-Bild"
 msgid "SVG is available in Graph → Tree and Services."
 msgstr "SVG ist unter Graph → Baum und Dienste verfügbar."
 
-msgid "Markdown and JSON are available in Graph, Matrix, Services, Security, Quality and Architecture."
-msgstr "Markdown und JSON sind unter Graph, Matrix, Dienste, Sicherheit, Qualität und Architektur verfügbar."
+msgid "Markdown and JSON are available in Graph, Matrix, Calls, Services, Security, Quality and Architecture."
+msgstr "Markdown und JSON sind unter Graph, Matrix, Aufrufe, Dienste, Sicherheit, Qualität und Architektur verfügbar."
 
 msgid "Exported {} with the current scope and filter settings."
 msgstr "{} mit dem aktuellen Ausschnitt und den Filtereinstellungen exportiert."

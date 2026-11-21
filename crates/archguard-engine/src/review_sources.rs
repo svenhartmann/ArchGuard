@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use archguard_core::{
     ArchguardError, Config, GitEvidence, GitStatus, NodeKind, ReviewSources, SourceEvidence,
@@ -145,10 +145,8 @@ fn source_evidence_from_files(
 }
 
 pub(crate) fn git_query(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
-    let output = Command::new("git")
-        .current_dir(root)
+    let output = crate::git_cmd::git(root)
         .args(args)
-        .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
         .ok()?;
@@ -184,10 +182,10 @@ pub(crate) fn collect_git_history(
     let prefix = prefix.strip_suffix('\n').unwrap_or(&prefix);
     evidence.shallow =
         git_query(root, &["rev-parse", "--is-shallow-repository"]).as_deref() == Some(b"true\n");
-    let Ok(mut child) = Command::new("git")
-        .current_dir(root)
+    let Ok(mut child) = crate::git_cmd::git(root)
         .args([
             "log",
+            "--no-show-signature",
             "--no-ext-diff",
             "--no-textconv",
             "--no-merges",
@@ -199,7 +197,6 @@ pub(crate) fn collect_git_history(
         .arg(format!("--since={since}"))
         .arg(format!("--max-count={}", max_commits.saturating_add(1)))
         .args(["--", "."])
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()

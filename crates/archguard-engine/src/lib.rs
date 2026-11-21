@@ -37,8 +37,12 @@ mod co_change;
 mod cohesion;
 pub use class_cohesion::class_cohesion;
 mod comparison;
+mod git_cmd;
 mod staged;
-pub use staged::{compare_branches, compare_staged};
+pub use staged::{
+    CANCELLED, GitBranch, GitBranches, compare_branches, compare_branches_cancellable,
+    compare_staged, compare_staged_cancellable, list_git_branches,
+};
 mod arc42_context;
 mod compiler_sandbox;
 mod compiler_trust;
@@ -75,6 +79,7 @@ mod quality_goals;
 mod quality_history;
 mod reference_paths;
 mod review_decision_doc;
+mod review_markdown;
 mod review_metrics;
 mod review_register;
 mod review_session;
@@ -169,13 +174,16 @@ pub use arc42::{arc42_document, arc42_from_evidence};
 /// Source-root stripping, as module names spell project paths (ADR 0010).
 pub use archguard_extract::strip_root;
 pub use architecture::architecture_context;
-pub use cache::{fingerprint, load_graph_if_fresh, save_graph, source_fingerprint};
+pub use cache::{
+    fingerprint, load_graph_if_fresh, save_graph, source_content_fingerprint, source_fingerprint,
+    source_stamp,
+};
 pub use change_context::{ChangeContext, ChangeContextOptions, build_change_context};
 pub use check_gate::{
     ViewNotes, accepted_by_baseline, accepted_by_note, apply_convention_baseline,
     baseline_convention_ids, check_gate_findings, check_gate_findings_in, empty_analysis_error,
     gate_fails, note_value, note_word, noted_gaps, noted_gaps_value, read_baseline,
-    review_gate_findings, view_notes,
+    read_repo_baseline, review_gate_findings, view_notes,
 };
 pub use co_change::{CoChangeFile, CoChangeOptions, CoChangePair, CoChangeReport, co_change};
 pub use cohesion::{
@@ -235,6 +243,7 @@ pub use quality_history::{
 };
 pub use reference_paths::source_reference_paths;
 pub use review_decision_doc::review_decision_document;
+pub use review_markdown::{markdown_cell, review_markdown};
 pub use review_metrics::{ReviewMetrics, review_metrics};
 pub use review_register::{
     LEGACY_DECISIONS_REL_PATH, REGISTER_REL_PATH, check_adr_gate, iso_from_unix, load_register,

@@ -2,6 +2,7 @@ import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
 import { Icons, Button, Badge, ZoomControls } from "widgets.slint";
 import { NoSources } from "tree_view.slint";
+import { GraphPanels } from "graph_panels.slint";
 
 export struct NetCard {
     row: int,
@@ -86,7 +87,7 @@ component PackageCard inherits Rectangle {
                     overflow: elide;
                     horizontal-stretch: 1;
                 }
-                if card.priority > 0: Badge {
+                if card.priority > 0 && GraphPanels.priorities: Badge {
                     text: card.priority == 1 ? "P1" : "P2";
                     variant: card.priority == 1 ? "p1" : "p2";
                     zoom: root.zoom * 1.2;

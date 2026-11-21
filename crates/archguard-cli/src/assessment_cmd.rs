@@ -25,8 +25,8 @@ pub(crate) fn run(
     if out.is_some() {
         return usage("--out applies to --format pr-comment only");
     }
-    if !matches!(cli.format, Format::Text | Format::Json) {
-        return usage("review supports text, json and pr-comment");
+    if !matches!(cli.format, Format::Text | Format::Json | Format::Markdown) {
+        return usage("review supports text, json, markdown and pr-comment");
     }
     let result = || -> Result<(), ArchguardError> {
         let now = SystemTime::now()
@@ -40,52 +40,7 @@ pub(crate) fn run(
             project_files::ensure_ignore_rules(root)?;
         }
         // Render before persistence, so a renderer error cannot publish a record.
-        let text = match cli.format {
-            Format::Json => serde_json::to_string_pretty(&report).expect("review serializes"),
-            _ => {
-                let mut text = format!(
-                    "Architecture review · {}\nRevision: {}\nOpen: {} · accepted risks: {} · evidence gaps: {}\n",
-                    report.status,
-                    report.revision,
-                    report.summary["open"],
-                    report.summary["accepted_risk"],
-                    report.summary["evidence_gaps"]
-                );
-                if let Some(base) = &report.base_ref {
-                    text.push_str(&format!(
-                        "Base: {base} (direct comparison, current policy)\n"
-                    ));
-                }
-                for finding in &report.findings {
-                    text.push_str(&format!(
-                        "\n{} · {} · {} · {}\n  {}\n  id: {}\n",
-                        finding.severity,
-                        finding.category,
-                        finding.change,
-                        finding.disposition,
-                        finding.title,
-                        finding.id
-                    ));
-                    if let Some(d) = &finding.decision {
-                        text.push_str(&format!(
-                            "  Owner: {} · {} · expires: {}\n",
-                            d.author,
-                            d.note,
-                            d.expires_on.as_deref().unwrap_or("—")
-                        ));
-                    }
-                }
-                for gap in &report.gaps {
-                    text.push_str(&format!(
-                        "\nEvidence gap: {} · {}\n",
-                        gap["source"].as_str().unwrap_or(""),
-                        gap["status"].as_str().unwrap_or("")
-                    ));
-                }
-                text.push_str("\nReview decisions do not change CI gates. Missing evidence does not establish a clean architecture.\n");
-                text
-            }
-        };
+        let text = render(cli.format, &report);
         if save {
             project_files::ensure_ignore_rules(root)?;
             archguard_engine::save_review(root, &report)?;
@@ -98,5 +53,56 @@ pub(crate) fn run(
     match result() {
         Ok(()) => EXIT_OK,
         Err(e) => analysis_error(e),
+    }
+}
+
+/// The review in the chosen format: JSON, the desktop's Markdown or text.
+fn render(format: Format, report: &archguard_engine::ReviewReport) -> String {
+    match format {
+        Format::Json => serde_json::to_string_pretty(report).expect("review serializes"),
+        Format::Markdown => archguard_engine::review_markdown(report),
+        _ => {
+            let mut text = format!(
+                "Architecture review · {}\nRevision: {}\nOpen: {} · accepted risks: {} · evidence gaps: {}\n",
+                report.status,
+                report.revision,
+                report.summary["open"],
+                report.summary["accepted_risk"],
+                report.summary["evidence_gaps"]
+            );
+            if let Some(base) = &report.base_ref {
+                text.push_str(&format!(
+                    "Base: {base} (direct comparison, current policy)\n"
+                ));
+            }
+            for finding in &report.findings {
+                text.push_str(&format!(
+                    "\n{} · {} · {} · {}\n  {}\n  id: {}\n",
+                    finding.severity,
+                    finding.category,
+                    finding.change,
+                    finding.disposition,
+                    finding.title,
+                    finding.id
+                ));
+                if let Some(d) = &finding.decision {
+                    text.push_str(&format!(
+                        "  Owner: {} · {} · expires: {}\n",
+                        d.author,
+                        d.note,
+                        d.expires_on.as_deref().unwrap_or("—")
+                    ));
+                }
+            }
+            for gap in &report.gaps {
+                text.push_str(&format!(
+                    "\nEvidence gap: {} · {}\n",
+                    gap["source"].as_str().unwrap_or(""),
+                    gap["status"].as_str().unwrap_or("")
+                ));
+            }
+            text.push_str("\nReview decisions do not change CI gates. Missing evidence does not establish a clean architecture.\n");
+            text
+        }
     }
 }

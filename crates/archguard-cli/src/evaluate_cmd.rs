@@ -27,7 +27,10 @@ pub(crate) fn run(cli: &Cli, root: &Path, assessment: Option<&Path>, init: bool)
     match archguard_engine::evaluate_project(root, cli.config.as_deref(), assessment) {
         Ok(evaluation) => {
             for warning in &evaluation.warnings {
-                eprintln!("archguard: warning: {warning}");
+                eprintln!(
+                    "archguard: warning: {}",
+                    crate::output::terminal_safe(warning)
+                );
             }
             if !cli.quiet {
                 emit(&match cli.format {

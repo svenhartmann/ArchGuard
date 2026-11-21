@@ -6,6 +6,26 @@ use serde_json::Value;
 /// Lines of a Markdown document under construction.
 pub(super) type Lines = Vec<String>;
 
+/// Key order of the calls snapshot's `filters` and `metrics`.
+const CALLS_FILTERS: [&str; 10] = [
+    "workspace",
+    "call_view",
+    "cycle_kind",
+    "language",
+    "package",
+    "query",
+    "resolution",
+    "include_internal",
+    "element",
+    "selected_cycle",
+];
+const CALLS_METRICS: [&str; 4] = [
+    "cyclic_groups",
+    "shown_nodes",
+    "shown_dependencies",
+    "call_sites",
+];
+
 /// Key order of `filters` and `metrics` per kind, as the web viewer
 /// builds the objects (serde_json keeps keys sorted).
 fn key_order(kind: &str) -> (&'static [&'static str], &'static [&'static str]) {
@@ -55,6 +75,7 @@ fn key_order(kind: &str) -> (&'static [&'static str], &'static [&'static str]) {
             ],
         ),
         "quality" => (&["workspace", "section", "target", "query"], &[]),
+        "calls" => (&CALLS_FILTERS, &CALLS_METRICS),
         _ => (
             &[
                 "workspace",

@@ -39,7 +39,8 @@ fn print_text(p: &RuntimeProfile) {
     let state = if p.complete { "complete" } else { "incomplete" };
     outln!(
         "Runtime profile: {} spans in {} traces · sampling {sampling} · {state}",
-        p.spans, p.traces
+        p.spans,
+        p.traces
     );
     print_findings(p);
     print_requests(p);
@@ -91,12 +92,16 @@ fn print_requests(p: &RuntimeProfile) {
         if let Some(s) = &r.samples {
             outln!(
                 "    {} samples, interval {} ms, clock {} (statistical; samples × interval is a lower bound)",
-                s.samples, s.interval_ms, s.clock
+                s.samples,
+                s.interval_ms,
+                s.clock
             );
             for m in s.methods.iter().take(3) {
                 outln!(
                     "      self {} · on stack {} · {}",
-                    m.self_samples, m.total_samples, m.function
+                    m.self_samples,
+                    m.total_samples,
+                    m.function
                 );
             }
         }

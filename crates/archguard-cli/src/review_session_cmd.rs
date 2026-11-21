@@ -128,7 +128,10 @@ fn record(
     };
     // R30's gate (the engine's one rule): a usage error, not a record.
     if let Err(e) = archguard_engine::check_adr_gate(root, std::slice::from_ref(&decision)) {
-        eprintln!("archguard: {e} — pass --adr docs/adr/NNN.md");
+        eprintln!(
+            "archguard: {} — pass --adr docs/adr/NNN.md",
+            crate::output::terminal_safe(&e.to_string())
+        );
         return Ok(EXIT_USAGE);
     }
     if kind == DecisionKind::AcceptRisk && adr.is_none() && !cli.quiet {

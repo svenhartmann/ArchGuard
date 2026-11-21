@@ -79,6 +79,35 @@ pub const SHOWN_ACD: Kpi = Kpi {
         "Average component dependency (Lakos) of the shown modules: how many shown modules one depends on, itself included, on average.",
     )
 };
+// Graph → More metrics: the review summary of the shown modules.
+pub const SHOWN_CCD: Kpi = kpi(
+    "graph.ccd",
+    "CCD (shown level)",
+    "Cumulative component dependency (Lakos) of the shown modules: for every shown module, the shown modules it reaches, itself included, summed up. Structural coupling, not measured compilation time.",
+);
+pub const SHOWN_NCCD: Kpi = Kpi {
+    precision: Precision::Dec(2),
+    ..kpi(
+        "graph.nccd",
+        "NCCD (shown level)",
+        "Normalized CCD: CCD divided by (N + 1) × log2(N + 1) − N, the balanced-tree reference for N shown modules. Dimensionless; a comparison of structure, not a runtime or build-time measurement.",
+    )
+};
+pub const LARGEST_CYCLE_GROUP: Kpi = kpi(
+    "graph.largest_cycle_group",
+    "Largest cycle group",
+    "Shown modules in the largest group that depends on itself in a cycle; each member reaches every other. Size shows structural entanglement.",
+);
+pub const MODULES_IN_CYCLES: Kpi = kpi(
+    "graph.modules_in_cycles",
+    "Modules in cycles",
+    "Shown modules that belong to any cycle group. Package cycles and file cycles can differ.",
+);
+pub const HIGH_PRIORITY: Kpi = kpi(
+    "graph.high_priority",
+    "High review priority",
+    "Shown modules with a review priority of at least 40 of 100: a transparent heuristic from cycles, coupling, impact and Git change touches, not a probability of defects.",
+);
 pub const MODULE_ACD: Kpi = Kpi {
     precision: Precision::Dec(2),
     ..kpi(
@@ -110,11 +139,16 @@ pub const PACKAGE_CYCLES: Kpi = kpi(
 );
 /// All figures, for the registry's own checks.
 #[cfg(test)]
-pub const ALL: [&Kpi; 14] = [
+pub const ALL: [&Kpi; 19] = [
     &SHOWN_MODULES,
     &SHOWN_DEPENDENCIES,
     &SHOWN_CYCLE_GROUPS,
     &SHOWN_ACD,
+    &SHOWN_CCD,
+    &SHOWN_NCCD,
+    &LARGEST_CYCLE_GROUP,
+    &MODULES_IN_CYCLES,
+    &HIGH_PRIORITY,
     &MODULE_ACD,
     &FILE_CYCLE_GROUPS,
     &MATRIX_FILES,

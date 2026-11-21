@@ -117,6 +117,7 @@ pub fn data(g: &GraphState, old: &ReviewData) -> ReviewData {
         selected_reasons: selected.map_or(ModelRc::default(), |m| {
             sync_rows(&old.selected_reasons, m.reasons.iter().map(|r| reason(r)))
         }),
+        insights: super::insights::data(&old.insights),
     }
 }
 

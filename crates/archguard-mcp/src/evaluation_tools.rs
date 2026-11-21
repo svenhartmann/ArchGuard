@@ -32,12 +32,14 @@ impl ArchguardTools {
     ) -> Result<String, ErrorData> {
         crate::engineering_tools::validate(&params.page)?;
         let root = crate::tools::resolve_root(&self.root, params.page.path.as_deref())?;
-        let assessment = params
-            .assessment
-            .as_deref()
-            .map(|a| crate::tools::resolve_file_in_root(&self.root, Path::new(a), false))
-            .transpose()?;
-        let evaluation = archguard_engine::evaluate_project(&root, None, assessment.as_deref())
+        // The default is confined like an explicit argument: a symlink out of
+        // the root is refused before anything is read.
+        let assessment = match params.assessment.as_deref() {
+            Some(a) => Path::new(a).to_path_buf(),
+            None => root.join(archguard_engine::DEFAULT_ASSESSMENT_PATH),
+        };
+        let assessment = crate::tools::resolve_file_in_root(&self.root, &assessment, false)?;
+        let evaluation = archguard_engine::evaluate_project(&root, None, Some(&assessment))
             .map_err(|err| match err {
                 ArchguardError::Config(_) => crate::tools::invalid_params(err.to_string()),
                 _ => ErrorData::internal_error(err.to_string(), None),
@@ -222,5 +224,18 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlinked_default_assessment_outside_the_root_is_not_quoted() {
+        let dir = project();
+        let outside = tempfile::tempdir().unwrap();
+        let secret = outside.path().join("secret.toml");
+        fs::write(&secret, "TOPSECRET_TOKEN = = abc\n").unwrap();
+        std::os::unix::fs::symlink(&secret, dir.path().join(".archguard/assessment.toml")).unwrap();
+        let err = call(dir.path(), json!({})).await.unwrap_err();
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(!format!("{err:?}").contains("TOPSECRET"), "{err:?}");
     }
 }

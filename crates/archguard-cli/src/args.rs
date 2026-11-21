@@ -74,6 +74,8 @@ pub(crate) enum Format {
     Asciidoc,
     /// Word document of `doc --arc42`, e.g. for a Confluence import.
     Docx,
+    /// Markdown assessment of `review`, as the desktop exports it.
+    Markdown,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -873,6 +875,13 @@ pub(crate) fn format_label(format: Format) -> &'static str {
         Format::Dot => "dot",
         Format::Graphml => "graphml",
         Format::Gexf => "gexf",
+        other => format_label_documents(other),
+    }
+}
+
+/// The remaining labels, split off to keep each `match` small.
+fn format_label_documents(format: Format) -> &'static str {
+    match format {
         Format::Table => "table",
         Format::Csv => "csv",
         Format::PrComment => "pr-comment",
@@ -880,5 +889,7 @@ pub(crate) fn format_label(format: Format) -> &'static str {
         Format::Structurizr => "structurizr",
         Format::Asciidoc => "asciidoc",
         Format::Docx => "docx",
+        Format::Markdown => "markdown",
+        _ => unreachable!("labelled by format_label"),
     }
 }

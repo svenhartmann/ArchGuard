@@ -14,7 +14,9 @@ use archguard_engine::report::package_map::{SourceModel, levels};
 use serde_json::Value;
 
 use crate::args::{Cli, Command, Format};
-use crate::output::{EXIT_OK, analysis_error, emit, to_pretty_json, usage};
+use crate::output::{
+    EXIT_OK, analysis_error, emit, emit_drawing, terminal_safe, to_pretty_json, usage,
+};
 
 /// `diagram`, and `doc --arc42 --format json` (without `--check`);
 /// `None` for every other `doc`.
@@ -116,12 +118,12 @@ fn run(cli: &Cli, root: &Path, loaded: &LoadedConfig, graph: &Graph, report: &Re
         Err(code) => return code,
     };
     if !cli.quiet {
-        emit(&match (cli.format, id.is_some()) {
-            (Format::Json, true) => to_pretty_json(&catalogue[0]),
-            (Format::Json, false) => to_pretty_json(&Value::from(catalogue)),
-            (_, true) => drawing(&catalogue[0], *ascii),
-            (_, false) => table(&catalogue),
-        });
+        match (cli.format, id.is_some()) {
+            (Format::Json, true) => emit(&to_pretty_json(&catalogue[0])),
+            (Format::Json, false) => emit(&to_pretty_json(&Value::from(catalogue))),
+            (_, true) => emit_drawing(&drawing(&catalogue[0], *ascii)),
+            (_, false) => emit(&table(&catalogue)),
+        }
     }
     EXIT_OK
 }
@@ -236,7 +238,11 @@ fn title(t: &str) -> String {
 const TITLE: usize = 60;
 
 /// Title line, the drawing, what the counts count.
+/// Written past `emit`'s filter to keep the colours, so every string of
+/// the entry (repository names, labels, title) is neutralised first.
 fn drawing(entry: &Value, ascii: bool) -> String {
+    let mut entry = entry.clone();
+    neutralise(&mut entry);
     let d: Diagram = serde_json::from_value(entry.clone()).expect("a catalogue diagram");
     let stdout = std::io::stdout().is_terminal();
     let style = Style {
@@ -256,6 +262,17 @@ fn drawing(entry: &Value, ascii: bool) -> String {
     out
 }
 
+/// Every string in `value` through [`terminal_safe`]; ids and the
+/// relations' ends change alike, so they still match.
+fn neutralise(value: &mut Value) {
+    match value {
+        Value::String(s) => *s = terminal_safe(s),
+        Value::Array(items) => items.iter_mut().for_each(neutralise),
+        Value::Object(fields) => fields.values_mut().for_each(neutralise),
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -264,5 +281,28 @@ mod tests {
         assert_eq!(cut.chars().count(), super::TITLE);
         assert!(cut.ends_with('…'));
         assert_eq!(super::title("Package overview"), "Package overview");
+    }
+
+    #[test]
+    fn a_drawing_escapes_repository_control_chars() {
+        use archguard_engine::core::{Diagram, DiagramKind};
+        let payload = "x\x1b]0;X\x07\x1b[31m\ny";
+        // A relation of a box to itself is listed below the picture, past
+        // the canvas.
+        let mut d: Diagram = serde_json::from_value(serde_json::json!({
+            "id": payload, "chapter": 5, "title": payload, "kind": "packages",
+            "note": "", "unit": payload, "shown": true,
+            "elements": [{"id": payload, "name": payload, "kind": "package", "cycle": false}],
+            "relations": [{"from": payload, "to": payload, "kind": "dependency", "count": 1,
+                "cycle": false, "error": false, "reply": false}],
+        }))
+        .unwrap();
+        d.kind = DiagramKind::Packages;
+        let out = super::drawing(&serde_json::to_value(&d).unwrap(), true);
+        assert!(!out.contains(['\x1b', '\x07']), "{out:?}");
+        assert!(
+            out.starts_with("x\\u{1b}]0;X\\u{7}\\u{1b}[31m\ny ["),
+            "{out:?}"
+        );
     }
 }

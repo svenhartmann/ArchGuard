@@ -80,16 +80,8 @@ pub(crate) fn run(
         Ok(inputs) => inputs,
         Err(error) => return analysis_error(error),
     };
-    let baseline = baseline.map(|file| baseline_path(root, loaded, file));
-    let comparison = comparison.as_ref();
-    check(
-        cli,
-        baseline.as_deref(),
-        &checked,
-        comparison,
-        &paths,
-        &notes,
-    )
+    let baseline = baseline.map(|file| load_baseline(root, loaded, file));
+    check(cli, baseline, &checked, comparison.as_ref(), &paths, &notes)
 }
 
 /// What the output needs besides the report: the source paths SARIF links
@@ -110,11 +102,78 @@ fn output_inputs(
 
 /// The baseline file: `file` as given (relative to the working directory),
 /// or `[rules].baseline` under the project `root` — the file MCP reads too.
-pub(crate) fn baseline_path(root: &Path, loaded: &LoadedConfig, file: Option<&Path>) -> PathBuf {
-    file.map_or_else(
-        || root.join(&loaded.config.rules.baseline),
-        Path::to_path_buf,
-    )
+/// The configured path is repository state: it must stay relative without
+/// `..`, and a symlink on its way is refused. An operator `file` is not.
+pub(crate) fn baseline_path(
+    root: &Path,
+    loaded: &LoadedConfig,
+    file: Option<&Path>,
+) -> Result<PathBuf, String> {
+    if let Some(file) = file {
+        return Ok(file.to_path_buf());
+    }
+    let configured = Path::new(&loaded.config.rules.baseline);
+    let mut path = root.to_path_buf();
+    for part in configured.components() {
+        if !matches!(part, std::path::Component::Normal(_)) {
+            return Err(format!(
+                "[rules].baseline {:?} must be a relative path inside the project without `..`",
+                configured.display().to_string()
+            ));
+        }
+        path.push(part);
+        if std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return Err(format!(
+                "[rules].baseline: {} is a symlink and is not followed",
+                path.display()
+            ));
+        }
+    }
+    Ok(path)
+}
+
+/// The baseline [`baseline_path`] names; the configured one is read
+/// descriptor-relative, so a symlink swapped in after the check is not followed.
+pub(crate) fn load_baseline(
+    root: &Path,
+    loaded: &LoadedConfig,
+    file: Option<&Path>,
+) -> Result<archguard_engine::analysis::Baseline, String> {
+    let path = baseline_path(root, loaded, file)?;
+    match file {
+        Some(_) => read_baseline(&path),
+        None => {
+            archguard_engine::read_repo_baseline(root, Path::new(&loaded.config.rules.baseline))
+        }
+    }
+}
+
+/// `baseline write`: an operator `file` is written as given; the
+/// repository-controlled `[rules].baseline` only below `.archguard`, through
+/// the descriptor-relative writer that never follows a symlink.
+pub(crate) fn write_baseline(
+    root: &Path,
+    loaded: &LoadedConfig,
+    file: Option<&Path>,
+    baseline: &archguard_engine::analysis::Baseline,
+) -> Result<PathBuf, String> {
+    let path = baseline_path(root, loaded, file)?;
+    let json = serde_json::to_string_pretty(baseline).map_err(|err| err.to_string())?;
+    let written = match file {
+        Some(_) => crate::insights_cmd::write_document(&path, &format!("{json}\n")),
+        None => Path::new(&loaded.config.rules.baseline)
+            .strip_prefix(".archguard")
+            .map_err(|_| {
+                std::io::Error::other(
+                    "[rules].baseline must lie below .archguard to be written; pass a file argument",
+                )
+            })
+            .and_then(|relative| {
+                archguard_engine::write_project_file(root, relative, format!("{json}\n").as_bytes(), true)
+            })
+            .map(drop),
+    };
+    written.map(|()| path).map_err(|err| err.to_string())
 }
 
 /// The exit code of a check that must not run: an invalid ACD limit
@@ -147,7 +206,7 @@ fn precondition_error(
 /// or unparsable baseline file is an IO error (exit 3).
 pub(crate) fn check(
     cli: &Cli,
-    baseline: Option<&Path>,
+    baseline: Option<Result<archguard_engine::analysis::Baseline, String>>,
     report: &Report,
     comparison: Option<&archguard_engine::Comparison>,
     source_paths: &BTreeMap<String, String>,
@@ -161,7 +220,7 @@ pub(crate) fn check(
     }
     let baseline = match baseline {
         None => None,
-        Some(path) => match read_baseline(path) {
+        Some(loaded) => match loaded {
             Ok(baseline) => Some(baseline),
             Err(err) => return analysis_error(err),
         },

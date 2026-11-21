@@ -17,7 +17,12 @@ use crate::ui::{ArcFigure, ArchitectureModel};
 pub(super) fn model(s: &ArchitectureState, texts: &Texts) -> ArchitectureModel {
     let _span = archguard_engine::self_trace::tracing::info_span!("model").entered();
     let mut m = ArchitectureModel {
-        has_model: s.has_model,
+        target_view: s.target_open,
+        target: if s.target_open {
+            super::target_view::model(&s.target, &s.graph)
+        } else {
+            Default::default()
+        },
         saved: s.saved.as_str().into(),
         ..Default::default()
     };
@@ -67,7 +72,7 @@ pub(super) fn model(s: &ArchitectureState, texts: &Texts) -> ArchitectureModel {
     m.figure_error = s.figure_error.as_str().into();
     s.editor.fill(&mut m);
     // The diagram view shows no chapter; its unsaved changes keep the save bar.
-    m.editing &= !s.catalogue;
+    m.editing &= !s.catalogue && !s.target_open;
     m
 }
 

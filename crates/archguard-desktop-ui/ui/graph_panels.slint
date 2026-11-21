@@ -1,12 +1,15 @@
 // What every Graph of the window shares: the explorer's and the details
 // panel's width; likewise the tree and details widths of the Screens and
 // Domain views. Rust loads and saves them in the settings (`[graph]`,
-// `[screens]`, `[domain]`, src/graph_panels_ui.rs).
+// `[screens]`, `[domain]`, src/graph_panels_ui.rs). The Graph also keeps
+// whether review priorities are highlighted.
 import { Theme } from "theme.slint";
 
 export global GraphPanels {
     in-out property <length> explorer-w: 250px;
     in-out property <length> details-w: 320px;
+    // P1/P2 badges in the explorer, the tree and the network.
+    in-out property <bool> priorities: true;
     out property <length> explorer-min: 180px;
     out property <length> explorer-max: 520px;
     out property <length> details-min: 240px;
@@ -17,7 +20,7 @@ export global GraphPanels {
     in-out property <length> screens-details-w: 360px;
     in-out property <length> domain-tree-w: 330px;
     in-out property <length> domain-details-w: 360px;
-    // A drag ended: save.
+    // A drag ended or the toggle changed: save.
     callback changed();
     // A side panel's edge dragged to a new width, or double-clicked.
     callback side-drag(int, bool, length);

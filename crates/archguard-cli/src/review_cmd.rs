@@ -50,7 +50,10 @@ pub(crate) fn run(
             for row in &report.nodes {
                 outln!(
                     "{:>3}. {:>3}/100 {:?} {}",
-                    row.rank, row.score, row.priority, row.name
+                    row.rank,
+                    row.score,
+                    row.priority,
+                    row.name
                 );
                 for reason in &row.reasons {
                     outln!("     {reason}");

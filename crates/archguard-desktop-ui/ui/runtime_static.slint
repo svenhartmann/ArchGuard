@@ -1,0 +1,248 @@
+// Runtime tab → "Static indicators" (src/runtime_ui/statics.rs, the web
+// viewer's "Source & build indicators"): entry points by reachable files,
+// cyclic build groups, main-sequence distance and source-cost findings from
+// the structural report behind `archguard performance`; for the chosen node
+// its A, I, D′ and findings. Nothing here is measured at runtime.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { SectionHeading } from "widgets.slint";
+import { Fmt } from "format.slint";
+
+export struct RtEntry {
+    name: string,
+    files: string,
+    // Components on the longest path and cyclic components on it.
+    path: string,
+    cyclic: string,
+    // Empty: unknown.
+    lines: string,
+}
+
+export struct RtGroup {
+    size: string,
+    files: string,
+    lines: string,
+    nodes: string,
+}
+
+export struct RtDistance {
+    name: string,
+    // A cyclic group, not a single node.
+    group: bool,
+    a: string,
+    i: string,
+    d: string,
+}
+
+export struct RtCost {
+    // 0 heavy (eager) import, 1 barrel, 2 other (`other` names it).
+    kind: int,
+    other: string,
+    node: string,
+    place: string,
+    message: string,
+    raw: string,
+    library: string,
+    reexports: string,
+    code-lines: string,
+}
+
+export struct RtContract {
+    from: string,
+    to: string,
+    message: string,
+    interfaces: string,
+    evidence: string,
+}
+
+export struct RtNode {
+    name: string,
+    has-metric: bool,
+    // A and D′ are known (complete compiler coverage).
+    measured: bool,
+    a: string,
+    i: string,
+    d: string,
+    abstract-types: string,
+    types: string,
+    reason: string,
+    costs: [RtCost],
+    contracts: [RtContract],
+}
+
+export struct RtStatic {
+    // 0 computing, 1 ready, 2 failed (error).
+    state: int,
+    error: string,
+    entries: [RtEntry],
+    entries-total: int,
+    groups: [RtGroup],
+    distances: [RtDistance],
+    heavy: int,
+    barrels: int,
+    contracts: int,
+    contracts-limited: bool,
+    costs: [RtCost],
+    diagnostics: [string],
+    node: RtNode,
+}
+
+component Line inherits Text {
+    in property <bool> muted;
+    in property <bool> mono;
+    color: muted ? Theme.muted : Theme.text;
+    font-size: Theme.font-small;
+    font-family: mono ? Theme.mono-family : "";
+    wrap: word-wrap;
+}
+
+// A row that shows its node's evidence when clicked.
+component Pick inherits Rectangle {
+    in property <string> title;
+    in property <string> sub;
+    in property <bool> on;
+    callback clicked();
+    height: col.preferred-height;
+    border-radius: 6px;
+    background: on ? Theme.accent.with-alpha(0.10) : touch.has-hover ? Theme.panel-2 : transparent;
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    col := VerticalLayout {
+        padding: 4px;
+        padding-left: 8px;
+        Line { text: root.title; mono: true; color: root.on ? Theme.accent : Theme.text; }
+        if root.sub != "": Line { text: root.sub; muted: true; }
+    }
+}
+
+component Heading inherits VerticalLayout {
+    in property <string> label;
+    padding-top: 12px;
+    SectionHeading { label: root.label; }
+}
+
+component Overview inherits VerticalLayout {
+    in property <RtStatic> data;
+    callback pick(string);
+    spacing: 2px;
+    Heading { label: @tr("Entry points by reachable files"); }
+    for e in data.entries: Pick {
+        title: @tr("{} · {} reachable files", e.name, e.files);
+        sub: @tr("{} components on longest path · {} cyclic components", e.path, e.cyclic) + " · "
+            + (e.lines == "" ? @tr("unknown source lines") : @tr("{} source lines", e.lines));
+        on: e.name == data.node.name;
+        clicked => { root.pick(e.name); }
+    }
+    if data.entries.length == 0: Line { text: @tr("No entry point matched."); muted: true; }
+    if data.entries-total > data.entries.length: Line {
+        text: @tr("Showing {} of {} entry points.", Fmt.int(data.entries.length), Fmt.int(data.entries-total));
+        muted: true;
+    }
+    Heading { label: @tr("Cyclic build structure"); }
+    for g in data.groups: Line {
+        text: @tr("{} scope nodes · {} source files", g.size, g.files) + " · "
+            + (g.lines == "" ? @tr("unknown lines") : @tr("{} lines", g.lines)) + ": " + g.nodes;
+        mono: true;
+    }
+    if data.groups.length == 0: Line { text: @tr("No cyclic groups in the report scope."); muted: true; }
+    Heading { label: @tr("Normalized main sequence distance"); }
+    for d in data.distances: Pick {
+        title: (d.group ? @tr("Cyclic group ") : "") + d.name + " · A " + d.a + " · I " + d.i + " · D′ " + d.d;
+        on: d.name == data.node.name;
+        clicked => { root.pick(d.name); }
+    }
+    if data.distances.length == 0: Line { text: @tr("Unavailable: no complete compiler-backed type coverage for this scope."); muted: true; }
+    Heading { label: @tr("Source cost findings"); }
+    Line {
+        text: @tr("{} eager-import hints · {} barrel candidates · {} concrete-call review candidates", Fmt.int(data.heavy), Fmt.int(data.barrels), Fmt.int(data.contracts))
+            + (data.contracts-limited ? " " + @tr("(limited)") : "");
+        muted: true;
+    }
+    for c in data.costs: Pick {
+        title: (c.kind == 0 ? @tr("heavy import") : c.kind == 1 ? @tr("barrel") : c.other) + " · " + c.place;
+        on: c.node == data.node.name;
+        clicked => { root.pick(c.node); }
+    }
+    for d in data.diagnostics: Line { text: d; muted: true; }
+}
+
+component NodeEvidence inherits VerticalLayout {
+    in property <RtNode> n;
+    spacing: 4px;
+    if n.name == "": Line { text: @tr("Choose an entry point, a distance or a finding to see its evidence."); muted: true; }
+    if n.name != "": Text { text: n.name; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; font-family: Theme.mono-family; wrap: word-wrap; }
+    if n.has-metric && n.measured: Line { text: @tr("A {} · {} / {} abstract types", n.a, n.abstract-types, n.types); }
+    if n.has-metric && n.measured: Line { text: @tr("I {} · normalized D′ {}", n.i, n.d); }
+    if n.has-metric && !n.measured: Line {
+        text: @tr("A / D′ unavailable: {}", n.reason == "" ? @tr("incomplete compiler coverage") : n.reason);
+        muted: true;
+    }
+    if n.name != "": Heading { label: @tr("Source cost evidence · {}", Fmt.int(n.costs.length + n.contracts.length)); }
+    for c in n.costs: VerticalLayout {
+        padding-top: 6px;
+        spacing: 2px;
+        Line {
+            text: c.kind == 1 ? @tr("Barrel candidate · {} / {} re-export lines", c.reexports, c.code-lines)
+                : c.kind == 0 ? @tr("Eager import · {}", c.library) : c.other;
+            font-weight: Theme.weight-strong;
+        }
+        Line { text: c.message; muted: true; }
+        Line { text: c.place; mono: true; muted: true; }
+        Line { text: c.raw; mono: true; }
+    }
+    for k in n.contracts: VerticalLayout {
+        padding-top: 6px;
+        spacing: 2px;
+        Line { text: k.from + " → " + k.to; font-weight: Theme.weight-strong; mono: true; }
+        Line { text: k.message; muted: true; }
+        if k.interfaces != "": Line { text: @tr("Existing interface candidates: {}", k.interfaces); mono: true; }
+        Line { text: k.evidence; mono: true; }
+    }
+    if n.name != "" && n.costs.length == 0 && n.contracts.length == 0: Line { text: @tr("No source cost findings for this node."); muted: true; }
+}
+
+export component RuntimeStatic inherits VerticalLayout {
+    in property <RtStatic> data;
+    callback pick(string);
+    VerticalLayout {
+        padding-left: Theme.page-pad;
+        padding-right: Theme.page-pad;
+        padding-top: 10px;
+        Line {
+            text: @tr("Static indicators from source and dependency structure, not measured at runtime or build time.");
+            muted: true;
+        }
+    }
+    if data.state != 1: Text {
+        vertical-stretch: 1;
+        text: data.state == 2 ? data.error : @tr("Computing static indicators …");
+        color: data.state == 2 ? Theme.danger : Theme.muted;
+        font-size: Theme.font-body;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        wrap: word-wrap;
+    }
+    if data.state == 1: HorizontalLayout {
+        vertical-stretch: 1;
+        ScrollView {
+            horizontal-stretch: 3;
+            VerticalLayout {
+                width: parent.visible-width;
+                padding: Theme.page-pad;
+                padding-top: 0;
+                alignment: start;
+                Overview { data: root.data; pick(n) => { root.pick(n); } }
+            }
+        }
+        Rectangle { width: 1px; background: Theme.border; }
+        ScrollView {
+            horizontal-stretch: 2;
+            VerticalLayout {
+                width: parent.visible-width;
+                padding: Theme.page-pad;
+                padding-top: 12px;
+                alignment: start;
+                NodeEvidence { n: root.data.node; }
+            }
+        }
+    }
+}

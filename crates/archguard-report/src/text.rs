@@ -13,7 +13,9 @@
 //! Findings are rendered in the order the [`Report`] carries them (Kap. 5
 //! already fixes that as severity, then id); the text layer never re-sorts.
 //! The verdict token is `FAIL`/`PASS` from [`Status`] — core defines no
-//! other verdict. The string ends with a trailing newline.
+//! other verdict. The string ends with a trailing newline. Control
+//! characters from the repository other than `\n` and `\t` are written
+//! as `\u{..}`.
 
 use archguard_core::{Finding, FindingKind, HealthLevel, Report, ReviewKpis, Severity, Status};
 
@@ -40,6 +42,21 @@ pub fn to_text(r: &Report) -> String {
     for finding in &r.findings {
         out.push('\n');
         out.push_str(&finding_block(finding));
+    }
+    terminal_safe(&out)
+}
+
+/// `text` with every control character but `\n` and `\t` written as
+/// `\u{..}`: names and messages come from the repository and must not
+/// drive the reader's terminal (titles, screen clears, colours).
+fn terminal_safe(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_control() && c != '\n' && c != '\t' {
+            out.extend(c.escape_unicode());
+        } else {
+            out.push(c);
+        }
     }
     out
 }
@@ -560,6 +577,21 @@ mod tests {
         assert!(!text.ends_with("\n\n"));
         // Determinism: same input, same bytes.
         assert_eq!(text, to_text(&sample_report()));
+    }
+
+    #[test]
+    fn repository_control_chars_are_escaped_visibly() {
+        let payload = "x\x1b]0;X\x07\x1b[31m\u{7f}\u{9b}";
+        let mut report = sample_report();
+        report.findings[0].nodes = vec![payload.into()];
+        report.findings[0].message = Some(format!("{payload}\nnext"));
+        let text = to_text(&report);
+        assert!(
+            !text.contains(['\x1b', '\x07', '\u{7f}', '\u{9b}']),
+            "{text}"
+        );
+        assert!(text.contains(r"members: x\u{1b}]0;X\u{7}\u{1b}[31m\u{7f}\u{9b}"));
+        assert!(text.contains("\nnext\n"), "newlines stay");
     }
 
     #[test]

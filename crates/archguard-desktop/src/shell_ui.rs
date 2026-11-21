@@ -91,6 +91,7 @@ pub fn wire(ui: &AppWindow) {
     ui.on_choose_theme(|family, dark| {
         settings_file::update(|s| s.theme = Theme::from_look(family, dark));
     });
+    ui.on_follow_system_theme(|| settings_file::update(|s| s.theme = Theme::System));
     ui.on_choose_language(with_ui(ui, |ui, lang: SharedString| {
         settings_file::update(|s| s.language = lang.to_string());
         select_language(ui, &lang);

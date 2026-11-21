@@ -1,0 +1,68 @@
+msgid "Compare architecture…"
+msgstr "Architektur vergleichen …"
+
+msgid "Compare architecture"
+msgstr "Architektur vergleichen"
+
+msgid "Compare"
+msgstr "Vergleichen"
+
+msgid "Architecture compare"
+msgstr "Architekturvergleich"
+
+msgid "Base"
+msgstr "Basis"
+
+msgid "Compare with"
+msgstr "Vergleichen mit"
+
+msgid "Git index (staged)"
+msgstr "Git-Index (gestagt)"
+
+msgid "Both sides are analyzed from Git objects with the same rules; the checkout and working files stay untouched."
+msgstr "Beide Seiten werden aus Git-Objekten mit denselben Regeln analysiert; Checkout und Arbeitsdateien bleiben unverändert."
+
+msgid "Comparing {} with {} … both sides are analyzed, this can take a while."
+msgstr "Vergleiche {} mit {} … beide Seiten werden analysiert, das kann dauern."
+
+msgid "changed"
+msgstr "geändert"
+
+msgid "unchanged"
+msgstr "unverändert"
+
+msgid "Cycle new"
+msgstr "Zyklus neu"
+
+msgid "Cycle removed"
+msgstr "Zyklus entfällt"
+
+msgid "{} more source references"
+msgstr "{} weitere Quellbelege"
+
+msgid "Select a package or file to see its relations and their source evidence."
+msgstr "Paket oder Datei auswählen, um die Beziehungen und ihre Quellbelege zu sehen."
+
+msgid "No relations."
+msgstr "Keine Beziehungen."
+
+msgid "No comparison yet"
+msgstr "Noch kein Vergleich"
+
+msgid "File → Compare architecture… compares two branches, or a branch with the Git index."
+msgstr "Datei → Architektur vergleichen … vergleicht zwei Branches oder einen Branch mit dem Git-Index."
+
+msgid "No architecture change between {} and {}"
+msgstr "Keine Architekturänderung zwischen {} und {}"
+
+msgid "Packages: +{} / −{} · relations: +{} / −{} · {} with other evidence · cycles: {} new, {} removed"
+msgstr "Pakete: +{} / −{} · Beziehungen: +{} / −{} · {} mit anderen Belegen · Zyklen: {} neu, {} entfallen"
+
+msgid "Show files"
+msgstr "Dateien anzeigen"
+
+msgid "Hide files"
+msgstr "Dateien ausblenden"
+
+msgid "Filter packages and files"
+msgstr "Pakete und Dateien filtern"

@@ -11,7 +11,7 @@ use archguard_engine::report::Arc42Document;
 use archguard_engine::report::arc42_file::MARKER;
 
 use super::visual::{self, Kind, Map, MapState, RELATIONS_PAGE};
-use super::{catalogue, edit};
+use super::{catalogue, edit, target};
 use crate::documents::{self, DocId};
 use crate::tab_support::Texts;
 use crate::ui::AppWindow;
@@ -25,7 +25,9 @@ pub struct ArchitectureState {
     pub(super) graph: Graph,
     /// The arc42 document, or why it could not be written.
     pub(super) doc: Result<Arc42Document, String>,
-    pub(super) has_model: bool,
+    /// The target architecture page and whether it is open instead of a chapter.
+    pub(super) target: target::TargetView,
+    pub(super) target_open: bool,
     pub(super) model: SourceModel,
     pub(super) deps: Vec<(usize, usize)>,
     pub(super) calls: Vec<(usize, usize)>,
@@ -90,7 +92,8 @@ pub(super) fn build_from(
         deps: projection::dependency_edges(&model, &graph),
         calls: projection::call_edges(&graph, calls),
         calls_status: calls.status.clone(),
-        has_model: config.architecture.model.is_some(),
+        target: target::build(&graph, config),
+        target_open: false,
         graph,
         doc,
         model,
@@ -131,6 +134,19 @@ pub(super) fn snapshot_overrides(s: &mut ArchitectureState) {
         && std::path::Path::new(root) == s.root
     {
         toggle_diagram(s, None, id, on == "1");
+    }
+    // `ARCHGUARD_DESKTOP_ARC_TARGET=1` opens the target architecture page;
+    // `=<from>><to>[,<component>]` also selects that direction and opens
+    // the component's details.
+    if let Ok(spec) = std::env::var("ARCHGUARD_DESKTOP_ARC_TARGET") {
+        s.target_open = true;
+        let (pair, component) = spec.split_once(',').unwrap_or((&spec, ""));
+        if let Some((from, to)) = pair.split_once('>') {
+            s.target.selected = Some((from.into(), to.into()));
+        }
+        if !component.is_empty() {
+            s.target.open.insert(component.into());
+        }
     }
     if let Ok(name) = std::env::var("ARCHGUARD_DESKTOP_ARC_SCOPE") {
         s.maps[Kind::Dependencies as usize].scope =

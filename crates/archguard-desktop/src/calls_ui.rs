@@ -10,6 +10,7 @@ mod actions;
 mod cycles;
 mod evidence;
 mod evidence_view;
+mod export;
 mod follow;
 mod model;
 mod notes;
@@ -105,6 +106,13 @@ impl TabState for CallsState {
     fn changed(&mut self) {
         self.refresh();
     }
+}
+
+/// The export snapshot of the active document's tab, as it is shown.
+pub fn export_snapshot(project: &str) -> Option<crate::export::Snapshot> {
+    crate::documents::with_active_state(|s: &mut CallsState| {
+        crate::export::calls_snapshot(&export::input(s, project))
+    })
 }
 
 /// The World's "Calls": class `id` as the focused element of the active

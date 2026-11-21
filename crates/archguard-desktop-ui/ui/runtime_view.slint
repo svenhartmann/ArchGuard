@@ -8,6 +8,7 @@ import { Button, Badge, EmptyState, SectionHeading } from "widgets.slint";
 import { Fmt } from "format.slint";
 import { RuntimeSummary, RtSummary, RtFinding, RtEndpoint, RtStatement, RtSite } from "runtime_summary.slint";
 import { RuntimeTime, FlameGraph, RtBreakdown, RtPart, RtHot, RtFlame, RtSampled, RtSampledRow } from "runtime_time.slint";
+import { RuntimeStatic, RtStatic } from "runtime_static.slint";
 
 export { RtSummary, RtFinding, RtEndpoint, RtStatement, RtSite, RtBreakdown, RtPart, RtHot, RtFlame, RtSampled, RtSampledRow }
 
@@ -70,7 +71,7 @@ export struct RuntimeModel {
     // 0 loading, 1 ready, 2 no runtime input, 3 reading failed (error).
     state: int,
     error: string,
-    // 0 requests, 1 summary, 2 time.
+    // 0 requests, 1 summary, 2 time, 3 static indicators.
     page: int,
     live: bool,
     requests-total: int,
@@ -87,7 +88,11 @@ export struct RuntimeModel {
 
 export global RuntimeData {
     in-out property <RuntimeModel> model;
+    // The static indicators, built from the analysis (not the recordings).
+    in-out property <RtStatic> statics;
     callback select-page(int);
+    // Show a node's static evidence.
+    callback select-node(string);
     callback select-request(int);
     callback toggle-live();
 }
@@ -249,6 +254,12 @@ export component RuntimeView inherits Rectangle {
                     clicked => { RuntimeData.select-page(2); }
                 }
             }
+            // Static: also without recordings.
+            Button {
+                text: @tr("Static indicators");
+                pressed-state: m.page == 3;
+                clicked => { RuntimeData.select-page(3); }
+            }
             Button {
                 text: m.live ? @tr("Live: on") : @tr("Live: off");
                 pressed-state: m.live;
@@ -261,7 +272,12 @@ export component RuntimeView inherits Rectangle {
             }
         }
         Rectangle { height: 1px; background: Theme.border; }
-        if m.state == 2 || (m.page == 0 && m.requests.length == 0): EmptyState {
+        if m.page == 3: RuntimeStatic {
+            vertical-stretch: 1;
+            data: RuntimeData.statics;
+            pick(n) => { RuntimeData.select-node(n); }
+        }
+        if (m.state == 2 && m.page != 3) || (m.state == 1 && m.page == 0 && m.requests.length == 0): EmptyState {
             vertical-stretch: 1;
             title: m.state == 2 ? @tr("No recorded runtime") : @tr("No requests recorded yet");
             reason: m.state == 2
