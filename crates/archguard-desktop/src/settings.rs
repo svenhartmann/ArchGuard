@@ -635,7 +635,10 @@ mod tests {
     fn graph_panel_widths_round_trip_and_are_clamped() {
         let (mut doc, mut s) = parse("").expect("valid");
         assert_eq!(s.graph, GraphPanels::default());
-        assert!(!render(&mut doc, &s).contains("[graph]"), "default not written");
+        assert!(
+            !render(&mut doc, &s).contains("[graph]"),
+            "default not written"
+        );
         s.graph.explorer_width = 300;
         s.graph.priorities = false;
         let out = render(&mut doc, &s);

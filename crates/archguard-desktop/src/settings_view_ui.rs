@@ -29,8 +29,8 @@ use crate::panes::{Layout, SETTINGS};
 use crate::panes_ui;
 use crate::tab_support::{Actions, TabState, Texts, index};
 use crate::ui::{AppWindow, SettingsData, SettingsEdit, SettingsModel};
-pub(crate) use session::file_written;
 use session::SettingsState;
+pub(crate) use session::file_written;
 
 type Typed = Coalesce<(SharedString, SharedString)>;
 

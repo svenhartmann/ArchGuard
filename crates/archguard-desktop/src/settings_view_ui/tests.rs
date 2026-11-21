@@ -666,7 +666,11 @@ fn clean_settings_take_over_a_file_written_elsewhere() {
         assert_eq!(text.as_deref(), Ok(ticked), "the form shows the file");
         s.edit("rules.max_acd", "2.5");
         s.save();
-        assert!(!s.changed_on_disk && s.save_error.is_empty(), "{}", s.save_error);
+        assert!(
+            !s.changed_on_disk && s.save_error.is_empty(),
+            "{}",
+            s.save_error
+        );
     })
     .expect("state");
     let saved = fs::read_to_string(&file).unwrap();
@@ -681,13 +685,23 @@ fn edited_settings_keep_their_edits_when_the_file_changes() {
     let (dir, doc, mut s) = project("[rules]\nmax_acd = 3.5\n");
     s.edit("rules.max_acd", "4");
     let file = config_file(dir.path());
-    fs::write(&file, "[rules]\nmax_acd = 3.5\n\n[arc42]\nhidden_diagrams = []\n").unwrap();
+    fs::write(
+        &file,
+        "[rules]\nmax_acd = 3.5\n\n[arc42]\nhidden_diagrams = []\n",
+    )
+    .unwrap();
     s.refresh();
-    assert_eq!(item(&in_group(&mut s, Group::Rules), "rules.max_acd").text, "4");
+    assert_eq!(
+        item(&in_group(&mut s, Group::Rules), "rules.max_acd").text,
+        "4"
+    );
     assert!(documents::is_dirty(doc));
     s.save();
     assert!(s.changed_on_disk, "{}", s.save_error);
     s.reload();
     assert!(!documents::is_dirty(doc));
-    assert_eq!(item(&in_group(&mut s, Group::Rules), "rules.max_acd").text, "3.5");
+    assert_eq!(
+        item(&in_group(&mut s, Group::Rules), "rules.max_acd").text,
+        "3.5"
+    );
 }

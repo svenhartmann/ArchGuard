@@ -356,7 +356,8 @@ fn apply_view_hooks(ui: &AppWindow) {
         ui.invoke_navigate(tab.into());
     }
     if env::<String>("ARCHGUARD_DESKTOP_ARC_TAB").as_deref() == Some("diagrams") {
-        ui.global::<crate::ui::ArchitectureData>().set_chapter_tab(1);
+        ui.global::<crate::ui::ArchitectureData>()
+            .set_chapter_tab(1);
     }
     if env::<String>("ARCHGUARD_DESKTOP_MENU").as_deref() == Some("projects") {
         ui.set_projects_open(true);

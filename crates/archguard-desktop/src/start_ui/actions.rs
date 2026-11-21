@@ -10,8 +10,8 @@ use std::time::Duration;
 use slint::{ComponentHandle, Timer};
 
 use super::state::StartState;
-use crate::documents::{self, DocId};
 use crate::calls_ui::{self, CallsState};
+use crate::documents::{self, DocId};
 use crate::panes_ui;
 use crate::quality_ui::{self, QualityState};
 use crate::ui::{AppWindow, CallsData, QualityData};
