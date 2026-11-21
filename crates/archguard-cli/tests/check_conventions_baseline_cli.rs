@@ -181,7 +181,8 @@ fn link_conventions_honour_baseline_and_accept_risk() {
     let home = "@page \"/\"\n<a href=\"/nowhere\">Lost</a>\n";
     write(dir.path(), "Web/Pages/Home.razor", home);
     let flow = r#"{"definition":"ui-flow/v1","complete":true,
-"endpoints":[{"method":"GET","path":"/api/unused","access":"open","file":"Api/Unused.cs","line":9,"source":"x"}]}"#;
+"actions":[{"screen":{"any_screen":{"application":"Web"}},"call":{"http":{"method":"GET","path":"/api/used"}},"file":"Web/Pages/Home.razor","line":2,"source":"x"}],
+"endpoints":[{"method":"GET","path":"/api/used","access":"open","file":"Api/Used.cs","line":3,"source":"x"},{"method":"GET","path":"/api/unused","access":"open","file":"Api/Unused.cs","line":9,"source":"x"}]}"#;
     write(dir.path(), ".archguard/ui-flow.json", flow);
 
     let (_, ids) = check_json(dir.path());
