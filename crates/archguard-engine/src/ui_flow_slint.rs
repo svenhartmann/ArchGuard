@@ -132,12 +132,13 @@ fn transition(flow: &mut UiFlow, src: &Src, at: usize, from: Origin, target: Tar
         diagnostic(flow, &src.rel, line, message, true);
     }
     Transition {
+        weak: false,
         from,
         target,
         trigger: None,
         file: src.rel.clone(),
         line,
-        condition: None,
+        condition: archguard_core::AccessState::Undeclared,
         source: SOURCE.into(),
     }
 }
@@ -348,6 +349,7 @@ mod model {
 
         fn screen(&self, id: &str, name: &str, kind: ScreenKind, file: usize, at: usize) -> Screen {
             Screen {
+                weak: false,
                 id: format!("{}:{id}", self.app),
                 name: name.into(),
                 kind,
@@ -355,7 +357,7 @@ mod model {
                 application: Some(self.app.clone()),
                 file: self.files[file].rel.clone(),
                 line: self.files[file].line(at),
-                access: None,
+                access: archguard_core::AccessState::Undeclared,
                 source: SOURCE.into(),
             }
         }

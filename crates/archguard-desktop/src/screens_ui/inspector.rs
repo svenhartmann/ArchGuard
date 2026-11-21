@@ -86,7 +86,7 @@ fn panel(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> FlowInspector {
     // The simulated copy: an unreadable guard follows the switches too.
     let guard = s
         .selected
-        .and_then(|i| s.sim.screens.get(i)?.access.as_ref());
+        .and_then(|i| s.sim.screens.get(i)?.access.condition());
     let outcome = guard.map_or(Outcome::Allowed, |c| evaluate_condition(c, &s.assignment()));
     let triggered = actions(s, flow, screen, texts);
     let (meaning, meaning_from, _) = meaning(s, screen, texts);
@@ -99,7 +99,7 @@ fn panel(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> FlowInspector {
         location: at(&screen.file, screen.line).into(),
         file: screen.file.as_str().into(),
         line: screen.line as i32,
-        access: words::access(texts, screen.access.as_ref()).into(),
+        access: words::access(texts, screen.access.condition()).into(),
         result: words::outcome(texts, outcome).into(),
         result_tone: match outcome {
             Outcome::Allowed => 0,
@@ -294,7 +294,7 @@ fn undeclared(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> Vec<FlowRow> {
 /// an entry of `[views.access]` named in the screen's file, or unknown;
 /// and the origin short enough for a card.
 pub fn meaning(s: &ScreensState, screen: &Screen, texts: &Texts) -> (String, String, String) {
-    let Some(c) = &screen.access else {
+    let archguard_engine::core::AccessState::Protected(c) = &screen.access else {
         return (
             texts
                 .t("No guard: everyone who reaches the screen may open it.")
@@ -379,6 +379,7 @@ mod tests {
 
     fn flow() -> UiFlow {
         let screen = Screen {
+            weak: false,
             id: "orders".into(),
             name: "Orders".into(),
             kind: ScreenKind::Page,
@@ -386,10 +387,11 @@ mod tests {
             application: Some("Web".into()),
             file: "Orders.razor".into(),
             line: 1,
-            access: Some(Condition::Authenticated),
+            access: archguard_engine::core::AccessState::Protected(Condition::Authenticated),
             source: "t".into(),
         };
         let action = |path: &str, line| Action {
+            weak: false,
             screen: Origin::AnyScreen {
                 application: "Web".into(),
             },
@@ -400,7 +402,7 @@ mod tests {
             },
             file: "Orders.razor".into(),
             line,
-            condition: None,
+            condition: archguard_engine::core::AccessState::Undeclared,
             source: "t".into(),
         };
         let endpoint = EndpointAccess {

@@ -144,7 +144,7 @@ fn ui_flow_simulates_an_anonymous_user() {
     let dir = project();
     let text = run(dir.path(), &["ui-flow", "--anonymous"]);
     assert!(text.contains("Simulated: anonymous"), "{text}");
-    assert!(line_with(&text, "Home").ends_with("· reached surely"));
+    assert!(line_with(&text, "Home").contains("· reached, a screen or link"));
     assert!(line_with(&text, "/orders").ends_with("· denied (needs: signed in)"));
     // Open, but only a link the rules could not resolve leads there.
     assert!(
@@ -155,7 +155,7 @@ fn ui_flow_simulates_an_anonymous_user() {
     let value = json(dir.path(), &["ui-flow", "--anonymous"]);
     let simulation = &value["simulation"];
     assert_eq!(simulation["anonymous"], true);
-    assert_eq!(reach_of(simulation, "/"), "sure");
+    assert_eq!(reach_of(simulation, "/"), "undeclared");
     assert_eq!(reach_of(simulation, "/orders"), "denied");
     let item = (simulation["screens"].as_array().unwrap().iter())
         .find(|s| s["route"] == "/item/{id:int}")
@@ -173,7 +173,7 @@ fn ui_flow_simulates_roles() {
         text.contains("Simulated: signed in with roles Admin"),
         "{text}"
     );
-    assert!(line_with(&text, "/admin").ends_with("· reached surely"));
+    assert!(line_with(&text, "/admin").contains("· reached, a screen or link"));
     assert!(line_with(&text, "GET /api/orders").starts_with("  denied "));
     let value = json(
         dir.path(),
@@ -181,7 +181,7 @@ fn ui_flow_simulates_roles() {
     );
     let simulation = &value["simulation"];
     assert_eq!(simulation["roles"], serde_json::json!(["Admin", "Clerk"]));
-    assert_eq!(reach_of(simulation, "/orders"), "sure");
+    assert_eq!(reach_of(simulation, "/orders"), "undeclared");
     assert_eq!(simulation["endpoints"][0]["outcome"], "allowed");
 }
 

@@ -8,6 +8,7 @@ use super::state::{ScreensState, Unknown, build_from};
 
 fn screen(id: &str, app: &str, route: &str, access: Option<Condition>) -> Screen {
     Screen {
+        weak: false,
         id: id.into(),
         name: id.into(),
         kind: ScreenKind::Page,
@@ -15,19 +16,20 @@ fn screen(id: &str, app: &str, route: &str, access: Option<Condition>) -> Screen
         application: Some(app.into()),
         file: format!("{id}.ts"),
         line: 1,
-        access,
+        access: archguard_engine::core::AccessState::from_parts(access, false),
         source: "test".into(),
     }
 }
 
 fn go(from: &str, to: &str) -> Transition {
     Transition {
+        weak: false,
         from: Origin::Screen(from.into()),
         target: Target::Screen(to.into()),
         trigger: None,
         file: "x.ts".into(),
         line: 1,
-        condition: None,
+        condition: archguard_engine::core::AccessState::Undeclared,
         source: "test".into(),
     }
 }
@@ -98,7 +100,7 @@ fn unknown_conditions_stay_open_or_all_hold_or_none_hold() {
     assert!(
         matches!(
             &s.flow().unwrap().screens[4].access,
-            Some(Condition::Unknown(_))
+            archguard_engine::core::AccessState::Protected(Condition::Unknown(_))
         ),
         "the shown flow keeps the unreadable text"
     );

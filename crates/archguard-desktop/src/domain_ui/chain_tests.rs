@@ -98,6 +98,7 @@ fn across_services() -> DomainModel {
 fn flow() -> UiFlow {
     UiFlow {
         screens: vec![Screen {
+            weak: false,
             id: "checkout".into(),
             name: "Checkout".into(),
             kind: archguard_engine::core::ScreenKind::Page,
@@ -105,10 +106,11 @@ fn flow() -> UiFlow {
             application: Some("Web".into()),
             file: "Checkout.razor".into(),
             line: 1,
-            access: None,
+            access: archguard_engine::core::AccessState::Undeclared,
             source: "t".into(),
         }],
         actions: vec![Action {
+            weak: false,
             screen: Origin::Screen("checkout".into()),
             trigger: Some("Pay".into()),
             call: Call::Http {
@@ -117,7 +119,7 @@ fn flow() -> UiFlow {
             },
             file: "Checkout.razor".into(),
             line: 9,
-            condition: None,
+            condition: archguard_engine::core::AccessState::Undeclared,
             source: "t".into(),
         }],
         endpoints: vec![EndpointAccess {

@@ -51,7 +51,7 @@ struct Node {
 pub fn class(reach: Option<&ScreenReach>) -> Filter {
     match reach {
         Some(ScreenReach::Denied) => Filter::Denied,
-        Some(ScreenReach::Sure | ScreenReach::Possible) => Filter::All,
+        Some(ScreenReach::Sure | ScreenReach::Possible | ScreenReach::Undeclared) => Filter::All,
         _ => Filter::NoPath,
     }
 }
@@ -189,6 +189,7 @@ mod tests {
 
     fn screen(id: &str, app: &str, route: Option<&str>) -> Screen {
         Screen {
+            weak: false,
             id: id.into(),
             name: id.into(),
             kind: ScreenKind::Page,
@@ -196,7 +197,7 @@ mod tests {
             application: Some(app.into()),
             file: format!("{id}.ts"),
             line: 1,
-            access: None,
+            access: archguard_engine::core::AccessState::Undeclared,
             source: "test".into(),
         }
     }

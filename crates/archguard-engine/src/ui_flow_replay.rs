@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write;
 
 use archguard_core::{
-    Assignment, Condition, Config, Origin, Outcome, Screen, Target, Transition, UiFlow,
+    AccessState, Assignment, Config, Origin, Outcome, Screen, Target, Transition, UiFlow,
     evaluate_condition, normalize_path_pattern, start_screen_ids,
 };
 
@@ -96,8 +96,10 @@ pub fn url_for(
     ))
 }
 
-fn not_denied(condition: Option<&Condition>, assignment: &Assignment) -> bool {
-    condition.is_none_or(|c| evaluate_condition(c, assignment) != Outcome::Denied)
+fn not_denied(access: &AccessState, assignment: &Assignment) -> bool {
+    access
+        .condition()
+        .is_none_or(|c| evaluate_condition(c, assignment) != Outcome::Denied)
 }
 
 /// A start screen by the one rule core uses (`start_screen_ids`).
@@ -121,7 +123,7 @@ pub fn path_to<'a>(
     screen_id: &str,
     assignment: &Assignment,
 ) -> Option<Vec<&'a Transition>> {
-    let open = |s: &Screen| not_denied(s.access.as_ref(), assignment);
+    let open = |s: &Screen| not_denied(&s.access, assignment);
     let mut via: BTreeMap<&str, Option<(&str, &Transition)>> = BTreeMap::new();
     let mut queue = VecDeque::new();
     for start in flow.screens.iter().filter(|s| is_start(flow, s) && open(s)) {
@@ -136,9 +138,7 @@ pub fn path_to<'a>(
             let Some(next) = flow.screens.iter().find(|s| s.id == *to) else {
                 continue;
             };
-            if via.contains_key(to.as_str())
-                || !not_denied(t.condition.as_ref(), assignment)
-                || !open(next)
+            if via.contains_key(to.as_str()) || !not_denied(&t.condition, assignment) || !open(next)
             {
                 continue;
             }

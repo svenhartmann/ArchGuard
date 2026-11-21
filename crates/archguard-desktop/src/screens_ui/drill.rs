@@ -214,6 +214,7 @@ mod tests {
     /// which publishes an event the Payment service handles.
     fn shop() -> (UiFlow, DomainModel) {
         let action = |path: &str| Action {
+            weak: false,
             screen: Origin::Screen("checkout".into()),
             trigger: Some("Place order".into()),
             call: Call::Http {
@@ -222,7 +223,7 @@ mod tests {
             },
             file: "Checkout.razor".into(),
             line: 114,
-            condition: None,
+            condition: archguard_engine::core::AccessState::Undeclared,
             source: "t".into(),
         };
         let flow = UiFlow {

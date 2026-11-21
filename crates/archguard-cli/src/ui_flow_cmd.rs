@@ -200,7 +200,7 @@ fn print_screens(flow: &UiFlow, simulation: Option<&Value>) {
         for screen in screens {
             let access = screen
                 .access
-                .as_ref()
+                .condition()
                 .map_or("none".into(), Condition::text);
             let reached = reach
                 .get(screen.id.as_str())
@@ -473,6 +473,7 @@ fn reach_text(row: &Value, access: &str) -> String {
     match row["reach"].as_str().unwrap_or("") {
         "sure" => "reached surely".into(),
         "possible" => "reached possibly".into(),
+        "undeclared" => "reached, a screen or link on the way has no declared access".into(),
         "denied" => format!("denied (needs: {access})"),
         "no_known_path" => {
             let n = row["unresolved_transitions_in_application"]
@@ -511,6 +512,7 @@ mod tests {
         use archguard_engine::core::{AccessState, EndpointAccess, MatrixKind, ScreenKind};
         let flow = UiFlow {
             screens: vec![archguard_engine::core::Screen {
+                weak: false,
                 id: "a".into(),
                 name: "a".into(),
                 kind: ScreenKind::Page,
@@ -518,7 +520,7 @@ mod tests {
                 application: None,
                 file: "A.razor".into(),
                 line: 3,
-                access: Some(Condition::Authenticated),
+                access: archguard_engine::core::AccessState::Protected(Condition::Authenticated),
                 source: "t".into(),
             }],
             endpoints: vec![EndpointAccess {
@@ -574,6 +576,7 @@ mod tests {
     fn role_names_follow_the_catalog_and_the_simulation_shows_implied_roles() {
         use archguard_engine::core::{RoleDef, RoleKind};
         let def = |name: &str, includes: &[&str]| RoleDef {
+            application: None,
             name: name.into(),
             kind: RoleKind::Role,
             includes: includes.iter().map(|s| s.to_string()).collect(),

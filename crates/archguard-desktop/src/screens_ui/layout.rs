@@ -280,6 +280,7 @@ mod tests {
 
     fn screen(id: &str, app: &str, route: &str) -> Screen {
         Screen {
+            weak: false,
             id: id.into(),
             name: id.into(),
             kind: ScreenKind::Page,
@@ -287,19 +288,20 @@ mod tests {
             application: Some(app.into()),
             file: format!("{id}.razor"),
             line: 1,
-            access: None,
+            access: archguard_engine::core::AccessState::Undeclared,
             source: "test".into(),
         }
     }
 
     fn go(from: Origin, target: Target) -> Transition {
         Transition {
+            weak: false,
             from,
             target,
             trigger: None,
             file: "x.razor".into(),
             line: 3,
-            condition: None,
+            condition: archguard_engine::core::AccessState::Undeclared,
             source: "test".into(),
         }
     }

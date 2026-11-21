@@ -1783,6 +1783,7 @@ mod views {
             let handler = &site.handler;
             ScreenInfo {
                 screen: Screen {
+                    weak: false,
                     id: format!("{}:{handler}{suffix}", self.app),
                     name: format!("{}{suffix}", simple(handler)),
                     kind: ScreenKind::Page,
@@ -1790,7 +1791,7 @@ mod views {
                     application: Some(self.app.clone()),
                     file: self.pys[site.file].rel.clone(),
                     line: site.line,
-                    access: decl.condition(),
+                    access: archguard_core::AccessState::from_parts(decl.condition(), false),
                     source: SOURCE.into(),
                 },
                 templates,
@@ -2568,17 +2569,19 @@ impl Project<'_> {
         flow: &mut UiFlow,
     ) {
         let transition = |target| Transition {
+            weak: false,
             from: from.clone(),
             target,
             trigger: None,
             file: file.into(),
             line,
-            condition: None,
+            condition: archguard_core::AccessState::Undeclared,
             source: SOURCE.into(),
         };
         match target {
             Ok(views::Named::Screen(id)) => flow.transitions.push(transition(Target::Screen(id))),
             Ok(views::Named::Endpoint(path)) => flow.actions.push(Action {
+                weak: false,
                 screen: from.clone(),
                 trigger: None,
                 call: Call::Http {
@@ -2587,7 +2590,7 @@ impl Project<'_> {
                 },
                 file: file.into(),
                 line,
-                condition: None,
+                condition: archguard_core::AccessState::Undeclared,
                 source: SOURCE.into(),
             }),
             Err((text, message)) => {
@@ -2898,26 +2901,26 @@ def stats(request):
             ),
             ("home", Some("shop"), "shop/orders/views.py", 8)
         );
-        assert_eq!(home.access, None);
+        assert_eq!(home.access, archguard_core::AccessState::Undeclared);
         let access = |id: &str| screen(&flow, id).access.clone();
         assert_eq!(
             access("shop:orders.views.archive"),
-            Some(Condition::Authenticated)
+            archguard_core::AccessState::Protected(Condition::Authenticated)
         );
         assert_eq!(
             access("shop:orders.views.secret"),
-            Some(Condition::All(vec![
+            archguard_core::AccessState::Protected(Condition::All(vec![
                 Condition::Role("Manager".into()),
                 Condition::Authenticated
             ]))
         );
         assert_eq!(
             access("shop:orders.views.OrderListView"),
-            Some(Condition::Authenticated)
+            archguard_core::AccessState::Protected(Condition::Authenticated)
         );
         assert_eq!(
             access("shop:orders.views.OrderDetailView"),
-            Some(Condition::All(vec![
+            archguard_core::AccessState::Protected(Condition::All(vec![
                 Condition::Policy("orders.view_order".into()),
                 Condition::Policy("orders.change_order".into())
             ]))
@@ -3281,7 +3284,7 @@ urlpatterns = router.urls
                 (
                     s.id.as_str(),
                     s.route.as_deref().unwrap_or(""),
-                    s.access.clone(),
+                    s.access.condition().cloned(),
                 )
             })
             .collect();

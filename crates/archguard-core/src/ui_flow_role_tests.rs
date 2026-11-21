@@ -3,6 +3,7 @@ use crate::ui_flow::*;
 
 fn def(name: &str, kind: RoleKind, includes: &[&str]) -> RoleDef {
     RoleDef {
+        application: None,
         name: name.into(),
         kind,
         includes: includes.iter().map(|s| s.to_string()).collect(),
@@ -13,11 +14,20 @@ fn def(name: &str, kind: RoleKind, includes: &[&str]) -> RoleDef {
 }
 fn policy(name: &str, requires: Condition) -> PolicyDef {
     PolicyDef {
+        application: None,
         name: name.into(),
         requires,
         file: "Startup.cs".into(),
         line: 2,
         source: "test".into(),
+    }
+}
+fn dotted() -> RoleConvention {
+    RoleConvention {
+        permissions: PermissionFormat::Dotted {
+            wildcard: "*".into(),
+        },
+        ..RoleConvention::default()
     }
 }
 fn holding(roles: &[&str]) -> Assignment {
@@ -113,6 +123,7 @@ fn wildcard_permissions_cover_the_defined_ids_below_them() {
             def("sq.apps.{app}.contents.read", RoleKind::Permission, &[]),
             def("sq.admin.users", RoleKind::Permission, &[]),
         ],
+        role_conventions: vec![dotted()],
         ..UiFlow::default()
     };
     let read = Condition::Role("sq.apps.{app}.contents.read".into());
@@ -129,7 +140,6 @@ fn wildcard_permissions_cover_the_defined_ids_below_them() {
         eval(&flow, &users, &holding(&["sq.apps.{app}.*"])),
         Outcome::Denied
     );
-    assert!(permission_covers("a.b", "a.b.c") && !permission_covers("a.b.c", "a.b"));
 }
 
 #[test]
@@ -144,6 +154,7 @@ fn nothing_defined_keeps_the_old_behaviour() {
 fn purge_flow() -> UiFlow {
     UiFlow {
         screens: vec![Screen {
+            weak: false,
             id: "purge".into(),
             name: "Purge".into(),
             kind: ScreenKind::Page,
@@ -151,7 +162,7 @@ fn purge_flow() -> UiFlow {
             application: None,
             file: "Purge.razor".into(),
             line: 1,
-            access: Some(Condition::Policy("CanPurge".into())),
+            access: AccessState::Protected(Condition::Policy("CanPurge".into())),
             source: "test".into(),
         }],
         start_screens: vec!["purge".into()],
@@ -178,10 +189,11 @@ fn screen_reaches_resolve_policies_and_hierarchy() {
 #[test]
 fn findings_resolve_policies() {
     let open = Screen {
-        access: None,
+        access: AccessState::Undeclared,
         ..purge_flow().screens[0].clone()
     };
     let action = Action {
+        weak: false,
         screen: Origin::Screen("purge".into()),
         trigger: Some("purge".into()),
         call: Call::Http {
@@ -190,7 +202,7 @@ fn findings_resolve_policies() {
         },
         file: "Purge.razor".into(),
         line: 5,
-        condition: None,
+        condition: AccessState::Undeclared,
         source: "test".into(),
     };
     let endpoint = EndpointAccess {
@@ -250,4 +262,187 @@ fn catalog_merges_as_sorted_union_and_is_left_out_when_empty() {
     assert_eq!(serde_json::from_value::<UiFlow>(json).unwrap(), ab);
     let empty = serde_json::to_value(UiFlow::default()).unwrap();
     assert!(empty.get("roles").is_none() && empty.get("policies").is_none());
+}
+
+fn names(items: &[&str]) -> std::collections::BTreeSet<String> {
+    items.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn holds_compares_by_the_convention() {
+    let exact = RoleConvention::default();
+    let (role, policy) = (AtomKind::Role, AtomKind::Policy);
+    assert!(holds(&exact, role, &names(&["Admin"]), "Admin"));
+    assert!(!holds(&exact, role, &names(&["Admin"]), "admin"));
+    let loose = RoleConvention {
+        role_case: NameCase::Insensitive,
+        ..RoleConvention::default()
+    };
+    assert!(holds(&loose, role, &names(&["Admin"]), "admin"));
+    assert!(
+        !holds(&loose, policy, &names(&["Admin"]), "admin"),
+        "policy_case is its own"
+    );
+    let dot = dotted();
+    assert!(holds(&dot, policy, &names(&["a.b"]), "a.b.c"));
+    assert!(holds(&dot, policy, &names(&["a.*"]), "a.b.c"));
+    assert!(!holds(&dot, policy, &names(&["a.b.c"]), "a.b"));
+    assert!(!holds(&exact, policy, &names(&["a.b"]), "a.b.c"));
+    let casl = RoleConvention {
+        permissions: PermissionFormat::ActionSubject {
+            any_action: "manage".into(),
+            any_subject: "all".into(),
+        },
+        action_aliases: vec![("read".into(), vec!["index".into(), "show".into()])],
+        ..RoleConvention::default()
+    };
+    assert!(holds(&casl, policy, &names(&["manage all"]), "delete Post"));
+    assert!(holds(&casl, policy, &names(&["read Post"]), "show Post"));
+    assert!(!holds(
+        &casl,
+        policy,
+        &names(&["read Post"]),
+        "show Comment"
+    ));
+    assert!(!holds(&casl, policy, &names(&["read Post"]), "update Post"));
+    assert!(holds(&casl, policy, &names(&["update all"]), "update Post"));
+}
+
+#[test]
+fn hierarchy_is_expanded_before_holds_and_canonical_label_use_the_prefix() {
+    let flow = UiFlow {
+        roles: vec![def("ROLE_ADMIN", RoleKind::Role, &["ROLE_USER"])],
+        role_conventions: vec![RoleConvention {
+            role_prefix: Some("ROLE_".into()),
+            ..RoleConvention::default()
+        }],
+        ..UiFlow::default()
+    };
+    let conv = flow.convention(None);
+    let admin = canonical(&conv, AtomKind::Role, "ADMIN");
+    assert_eq!(admin, "ROLE_ADMIN");
+    assert_eq!(canonical(&conv, AtomKind::Role, "ROLE_ADMIN"), "ROLE_ADMIN");
+    assert_eq!(label(&conv, AtomKind::Role, &admin), "ADMIN");
+    let user = Condition::Role("ROLE_USER".into());
+    assert_eq!(eval(&flow, &user, &holding(&[&admin])), Outcome::Allowed);
+    assert_eq!(eval(&flow, &user, &holding(&["USER"])), Outcome::Denied);
+}
+
+fn screen(id: &str, access: AccessState) -> Screen {
+    Screen {
+        id: id.into(),
+        name: id.into(),
+        kind: ScreenKind::Page,
+        route: Some(if id == "home" {
+            "/".into()
+        } else {
+            format!("/{id}")
+        }),
+        application: None,
+        file: "A.tsx".into(),
+        line: 1,
+        access,
+        weak: false,
+        source: "test".into(),
+    }
+}
+
+#[test]
+fn a_screen_without_declaration_is_undeclared_not_sure() {
+    let link = |to: &str, condition| Transition {
+        from: Origin::Screen("home".into()),
+        target: Target::Screen(to.into()),
+        trigger: None,
+        file: "A.tsx".into(),
+        line: 1,
+        condition,
+        weak: false,
+        source: "test".into(),
+    };
+    let flow = UiFlow {
+        screens: vec![
+            screen("home", AccessState::Open),
+            screen("plain", AccessState::Undeclared),
+            screen("open", AccessState::Open),
+            screen("shut", AccessState::Protected(Condition::Never)),
+        ],
+        transitions: vec![
+            link("plain", AccessState::Open),
+            link("open", AccessState::Open),
+            link("shut", AccessState::Open),
+        ],
+        ..UiFlow::default()
+    };
+    let reached = reachable_screens(&flow, "home", &Assignment::default());
+    assert_eq!(reached["home"], Reach::Sure);
+    assert_eq!(reached["plain"], Reach::Undeclared);
+    assert_eq!(reached["open"], Reach::Sure);
+    assert!(!reached.contains_key("shut"));
+    assert_eq!(
+        screen_reaches(&flow, &Assignment::default())["plain"],
+        ScreenReach::Undeclared
+    );
+}
+
+#[test]
+fn access_state_reads_old_and_new_files() {
+    let read = |json: &str| serde_json::from_str::<Screen>(json).unwrap().access;
+    let base = |access: &str| {
+        format!(r#"{{"id":"a","name":"a","kind":"page","file":"f","line":1,{access}"source":"t"}}"#)
+    };
+    assert_eq!(read(&base("")), AccessState::Undeclared);
+    assert_eq!(read(&base(r#""access":null,"#)), AccessState::Undeclared);
+    assert_eq!(read(&base(r#""access":"open","#)), AccessState::Open);
+    assert_eq!(
+        read(&base(r#""access":"undeclared","#)),
+        AccessState::Undeclared
+    );
+    let auth = AccessState::Protected(Condition::Authenticated);
+    assert_eq!(
+        read(&base(r#""access":"authenticated","#)),
+        auth,
+        "old bare condition"
+    );
+    assert_eq!(
+        read(&base(r#""access":{"role":"Admin"},"#)),
+        AccessState::Protected(Condition::Role("Admin".into()))
+    );
+    assert_eq!(
+        read(&base(r#""access":{"protected":"authenticated"},"#)),
+        auth
+    );
+    // Round trip: undeclared is omitted, the others survive.
+    let s = screen("a", AccessState::Open);
+    assert_eq!(
+        serde_json::from_str::<Screen>(&serde_json::to_string(&s).unwrap()).unwrap(),
+        s
+    );
+    assert!(
+        !serde_json::to_string(&screen("a", AccessState::Undeclared))
+            .unwrap()
+            .contains("access")
+    );
+}
+
+#[test]
+fn access_state_layers_and_defaults() {
+    use AccessState::*;
+    let role = |n: &str| Protected(Condition::Role(n.into()));
+    assert_eq!(Undeclared.and(role("a")), role("a"));
+    assert_eq!(Open.and(role("a")), role("a"));
+    assert_eq!(Open.and(Undeclared), Open);
+    assert_eq!(
+        role("a").and(role("b")),
+        Protected(Condition::All(vec![
+            Condition::Role("a".into()),
+            Condition::Role("b".into())
+        ]))
+    );
+    assert_eq!(Undeclared.or_default(Open), Open);
+    assert_eq!(role("a").or_default(Open), role("a"));
+    assert_eq!(AccessState::from_parts(None, true), Open);
+    assert_eq!(
+        AccessState::from_parts(Some(Condition::Never), true),
+        Protected(Condition::Never)
+    );
 }

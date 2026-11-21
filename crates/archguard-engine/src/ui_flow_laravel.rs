@@ -277,6 +277,7 @@ impl Run<'_> {
 
     fn screen(&self, id: &str, r: &RouteDef, view: &str, access: AccessState) -> Screen {
         Screen {
+            weak: false,
             id: id.to_string(),
             name: view.to_string(),
             kind: ScreenKind::Page,
@@ -284,9 +285,10 @@ impl Run<'_> {
             application: Some(self.app.name.clone()),
             file: r.file.clone(),
             line: r.line,
+            // Open stays Undeclared until the extractors read it (change d).
             access: match access {
-                AccessState::Protected(c) => Some(c),
-                _ => None,
+                AccessState::Protected(c) => AccessState::Protected(c),
+                _ => AccessState::Undeclared,
             },
             source: SOURCE.into(),
         }
@@ -316,6 +318,7 @@ impl Run<'_> {
                     continue;
                 }
                 flow.policies.push(PolicyDef {
+                    application: None,
                     name: m.name.clone(),
                     requires: Condition::Unknown(format!("{}::{}", c.name, m.name)),
                     file: s.rel.clone(),
@@ -2774,24 +2777,26 @@ mod links {
 
         fn action(&self, call: Call) -> Action {
             Action {
+                weak: false,
                 screen: self.origin.clone(),
                 trigger: self.link.trigger.clone(),
                 call,
                 file: self.tpl.rel.clone(),
                 line: self.link.line,
-                condition: self.condition.clone(),
+                condition: archguard_core::AccessState::from_parts(self.condition.clone(), false),
                 source: SOURCE.into(),
             }
         }
 
         fn transition(&self, target: Target) -> Transition {
             Transition {
+                weak: false,
                 from: self.origin.clone(),
                 target,
                 trigger: self.link.trigger.clone(),
                 file: self.tpl.rel.clone(),
                 line: self.link.line,
-                condition: self.condition.clone(),
+                condition: archguard_core::AccessState::from_parts(self.condition.clone(), false),
                 source: SOURCE.into(),
             }
         }
@@ -3110,14 +3115,14 @@ require __DIR__.'/auth.php';
             .find(|s| s.id == "shop:/books/{id}")
             .unwrap();
         let want = Condition::All(vec![Condition::Authenticated, policy("view")]);
-        assert_eq!(books.access, Some(want));
+        assert_eq!(books.access, archguard_core::AccessState::Protected(want));
         assert_eq!(books.application.as_deref(), Some("shop"));
         let public = flow
             .screens
             .iter()
             .find(|s| s.id == "shop:/public")
             .unwrap();
-        assert_eq!(public.access, None);
+        assert_eq!(public.access, archguard_core::AccessState::Undeclared);
     }
 
     const KERNEL: &str = r#"<?php
@@ -3371,7 +3376,12 @@ class RouteServiceProvider extends ServiceProvider
                     Target::Screen(id) => id.clone(),
                     Target::Unresolved(text) => format!("? {text}"),
                 };
-                (origin(&t.from), to, t.trigger.clone(), t.condition.clone())
+                (
+                    origin(&t.from),
+                    to,
+                    t.trigger.clone(),
+                    t.condition.condition().cloned(),
+                )
             })
             .collect()
     }

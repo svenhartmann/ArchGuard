@@ -64,15 +64,15 @@ pub use ui_flow_matrix::{
 #[cfg(test)]
 mod ui_flow_role_tests;
 pub use ui_flow::{
-    ANY_METHOD, AccessState, Action, Assignment, Call, Condition, DiagnosticSeverity,
-    EndpointAccess, EndpointCounts, HandlerSite, Origin, Outcome, PolicyDef, Reach, RoleDef,
-    RoleKind, Screen, ScreenKind, ScreenReach, SimulatedRole, Target, Transition,
-    UI_FLOW_DEFINITION, UI_FLOW_IMPORT_SOURCE, UiFlow, UiFlowActionRef, UiFlowDiagnostic,
-    UiFlowEndpointRef, UiFlowFinding, UiFlowFindingKind, UiFlowSummary, best_route,
-    evaluate_access, evaluate_condition, join_actions_to_endpoints, merge_ui_flows,
-    normalize_path_pattern, path_match_score, path_patterns_match, permission_covers,
-    reachable_screens, resolve_assignment, screen_reaches, start_screen_ids, ui_flow_findings,
-    ui_flow_summary,
+    ANY_METHOD, AccessState, Action, Assignment, AtomKind, Call, Condition, ConventionOrigin,
+    DiagnosticSeverity, EndpointAccess, EndpointCounts, HandlerSite, NameCase, Origin, Outcome,
+    PermissionFormat, PolicyDef, Reach, RoleConvention, RoleDef, RoleKind, Screen, ScreenKind,
+    ScreenReach, SimulatedRole, Target, Transition, UI_FLOW_DEFINITION, UI_FLOW_IMPORT_SOURCE,
+    UiFlow, UiFlowActionRef, UiFlowDiagnostic, UiFlowEndpointRef, UiFlowFinding, UiFlowFindingKind,
+    UiFlowSummary, best_route, canonical, evaluate_access, evaluate_condition, holds,
+    join_actions_to_endpoints, label, merge_ui_flows, normalize_path_pattern, path_match_score,
+    path_patterns_match, reachable_screens, resolve_assignment, resolve_assignment_for,
+    screen_reaches, start_screen_ids, ui_flow_findings, ui_flow_summary,
 };
 mod view;
 mod workspace;

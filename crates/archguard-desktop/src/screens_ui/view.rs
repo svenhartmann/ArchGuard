@@ -126,6 +126,7 @@ pub fn role_label(texts: &Texts, flow: &UiFlow, name: &str) -> String {
         RoleKind::Role => "role",
         RoleKind::Permission => "permission",
         RoleKind::Group => "group",
+        RoleKind::Scope => "scope",
     });
     let mut includes: Vec<&str> = (defs.iter().flat_map(|d| &d.includes))
         .map(String::as_str)
@@ -237,6 +238,7 @@ mod tests {
 
     fn screen(id: &str, route: &str, access: Option<Condition>) -> Screen {
         Screen {
+            weak: false,
             id: id.into(),
             name: id.into(),
             kind: archguard_engine::core::ScreenKind::Page,
@@ -244,19 +246,20 @@ mod tests {
             application: Some("Web".into()),
             file: format!("{id}.razor"),
             line: 1,
-            access,
+            access: archguard_engine::core::AccessState::from_parts(access, false),
             source: "test".into(),
         }
     }
 
     fn shop() -> UiFlow {
         let go = |to: Target| Transition {
+            weak: false,
             from: Origin::Screen("home".into()),
             target: to,
             trigger: None,
             file: "home.razor".into(),
             line: 7,
-            condition: None,
+            condition: archguard_engine::core::AccessState::Undeclared,
             source: "test".into(),
         };
         UiFlow {
@@ -353,6 +356,7 @@ mod tests {
         use archguard_engine::core::{PolicyDef, RoleDef};
         use slint::Model;
         let def = |name: &str, includes: &[&str]| RoleDef {
+            application: None,
             name: name.into(),
             kind: RoleKind::Role,
             includes: includes.iter().map(|s| s.to_string()).collect(),
@@ -363,6 +367,7 @@ mod tests {
         let mut f = shop();
         f.roles = vec![def("ADMIN", &["USER"]), def("USER", &[])];
         f.policies = vec![PolicyDef {
+            application: None,
             name: "CanPurge".into(),
             requires: Condition::Role("ADMIN".into()),
             file: "P.cs".into(),

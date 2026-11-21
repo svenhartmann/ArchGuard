@@ -24,6 +24,7 @@ fn config() -> Config {
 
 fn screen(id: &str, route: &str, access: Option<Condition>) -> Screen {
     Screen {
+        weak: false,
         id: id.into(),
         name: id.into(),
         kind: ScreenKind::Page,
@@ -31,19 +32,20 @@ fn screen(id: &str, route: &str, access: Option<Condition>) -> Screen {
         application: Some("Web".into()),
         file: format!("Web/{id}.razor"),
         line: 1,
-        access,
+        access: archguard_core::AccessState::from_parts(access, false),
         source: "test".into(),
     }
 }
 
 fn link(from: Origin, to: &str, trigger: Option<&str>, condition: Option<Condition>) -> Transition {
     Transition {
+        weak: false,
         from,
         target: Target::Screen(to.into()),
         trigger: trigger.map(Into::into),
         file: "Web/x.razor".into(),
         line: 3,
-        condition,
+        condition: archguard_core::AccessState::from_parts(condition, false),
         source: "test".into(),
     }
 }

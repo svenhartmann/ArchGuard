@@ -243,7 +243,7 @@ pub fn rights(flow: &UiFlow, chains: &[Chain], assignment: &Assignment) -> Vec<C
                 let mut parts = vec![endpoint_part(endpoint, assignment)];
                 if let Some(action) = action {
                     parts.push(screen_part(flow, action, &reaches));
-                    if let Some(condition) = &action.condition {
+                    if let archguard_core::AccessState::Protected(condition) = &action.condition {
                         let outcome = evaluate_condition(condition, assignment);
                         let text = format!("action needs {}", condition.text());
                         parts.push((outcome, text));
@@ -292,7 +292,9 @@ fn screen_part(
 ) -> (Outcome, String) {
     let part = |id: &str| {
         let (outcome, how) = match reaches.get(id) {
-            Some(ScreenReach::Sure) => (Outcome::Allowed, "reached surely"),
+            Some(ScreenReach::Sure | ScreenReach::Undeclared) => {
+                (Outcome::Allowed, "reached surely")
+            }
             Some(ScreenReach::Possible) => (Outcome::Unknown, "reached possibly"),
             Some(ScreenReach::Denied) => (Outcome::Denied, "denied"),
             Some(ScreenReach::NoKnownPath { .. }) => (Outcome::Unknown, "no known path"),

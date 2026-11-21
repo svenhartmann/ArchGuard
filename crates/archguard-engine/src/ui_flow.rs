@@ -375,7 +375,7 @@ public class OrdersController : ControllerBase
             };
             screen_reaches(&flow, &a)["Web:Pages/Purge.razor"]
         };
-        assert_eq!(purge(&["Administrator"]), ScreenReach::Sure);
+        assert_eq!(purge(&["Administrator"]), ScreenReach::Undeclared);
         assert_eq!(purge(&[]), ScreenReach::Denied);
     }
 

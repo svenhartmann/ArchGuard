@@ -20,6 +20,7 @@ fn roles(flow: &UiFlow) -> Vec<String> {
                 RoleKind::Role => "role",
                 RoleKind::Permission => "permission",
                 RoleKind::Group => "group",
+                RoleKind::Scope => "scope",
             };
             format!("{} {kind} {}:{} {:?}", d.name, d.file, d.line, d.includes)
         })

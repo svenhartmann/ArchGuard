@@ -415,7 +415,10 @@ impl App {
         let loads = self.loads(&checks, &mut flow.diagnostics);
         let mut pages = self.pages();
         for page in &mut pages {
-            page.screen.access = self.page_access(page, &loads, &hooks);
+            page.screen.access = archguard_core::AccessState::from_parts(
+                self.page_access(page, &loads, &hooks),
+                false,
+            );
         }
         endpoints::extract(self, &hooks, &mut flow.endpoints);
         let clients = Clients::new(&self.files);
@@ -456,6 +459,7 @@ impl App {
             };
             let (route, variants) = route_of(dir);
             let screen = Screen {
+                weak: false,
                 id: format!("{}:{route}", self.name),
                 name: heading(text).unwrap_or_else(|| route.clone()),
                 kind: ScreenKind::Page,
@@ -463,7 +467,7 @@ impl App {
                 application: Some(self.name.clone()),
                 file: file.clone(),
                 line: 1,
-                access: None,
+                access: archguard_core::AccessState::Undeclared,
                 source: SOURCE.into(),
             };
             let dir = dir.to_string();
@@ -1615,12 +1619,16 @@ mod nav {
         for from in &site.froms {
             flow.transitions
                 .extend(triggers.iter().map(|trigger| Transition {
+                    weak: false,
                     from: from.clone(),
                     target: target.clone(),
                     trigger: trigger.clone(),
                     file: site.file.into(),
                     line,
-                    condition: nav.condition.clone(),
+                    condition: archguard_core::AccessState::from_parts(
+                        nav.condition.clone(),
+                        false,
+                    ),
                     source: SOURCE.into(),
                 }));
         }
@@ -1646,12 +1654,13 @@ mod http {
             };
             for from in &site.froms {
                 flow.actions.extend(triggers.iter().map(|trigger| Action {
+                    weak: false,
                     screen: from.clone(),
                     trigger: trigger.clone(),
                     call: call.clone(),
                     file: site.file.into(),
                     line: line_of(site.text, pos),
-                    condition: None,
+                    condition: archguard_core::AccessState::Undeclared,
                     source: SOURCE.into(),
                 }));
             }
@@ -1819,7 +1828,7 @@ mod tests {
 
     fn access(flow: &UiFlow, id: &str) -> Option<Condition> {
         let screen = flow.screens.iter().find(|s| s.id == id);
-        screen.expect("screen").access.clone()
+        screen.expect("screen").access.condition().cloned()
     }
 
     type Row = (Origin, Target, Option<String>, Option<Condition>);
@@ -1828,7 +1837,12 @@ mod tests {
         let mut got: Vec<Row> = (flow.transitions.iter())
             .map(|t| {
                 let (from, target) = (t.from.clone(), t.target.clone());
-                (from, target, t.trigger.clone(), t.condition.clone())
+                (
+                    from,
+                    target,
+                    t.trigger.clone(),
+                    t.condition.condition().cloned(),
+                )
             })
             .collect();
         got.sort();

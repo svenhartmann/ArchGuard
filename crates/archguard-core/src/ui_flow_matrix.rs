@@ -75,11 +75,11 @@ pub fn permission_matrix(flow: &UiFlow, kind: MatrixKind) -> PermissionMatrix {
                 label: s.route.clone().unwrap_or_else(|| s.name.clone()),
                 file: s.file.clone(),
                 line: s.line,
-                requires: s.access.as_ref().map_or("none".into(), |c| c.text()),
+                requires: s.access.condition().map_or("none".into(), |c| c.text()),
                 cells: (assignments.iter())
                     .map(|a| {
                         s.access
-                            .as_ref()
+                            .condition()
                             .map_or(Outcome::Allowed, |c| evaluate_condition(c, a))
                     })
                     .collect(),
@@ -116,6 +116,7 @@ mod tests {
 
     fn screen(route: &str, access: Option<Condition>) -> Screen {
         Screen {
+            weak: false,
             id: route.into(),
             name: route.into(),
             kind: ScreenKind::Page,
@@ -123,7 +124,7 @@ mod tests {
             application: None,
             file: "S.razor".into(),
             line: 1,
-            access,
+            access: AccessState::from_parts(access, false),
             source: "test".into(),
         }
     }
@@ -144,6 +145,7 @@ mod tests {
 
     fn def(name: &str, kind: RoleKind, includes: &[&str]) -> RoleDef {
         RoleDef {
+            application: None,
             name: name.into(),
             kind,
             includes: includes.iter().map(|s| s.to_string()).collect(),
@@ -179,6 +181,7 @@ mod tests {
                 def("app.read", RoleKind::Permission, &[]),
             ],
             policies: vec![PolicyDef {
+                application: None,
                 name: "CanPurge".into(),
                 requires: Condition::Role("admin".into()),
                 file: "P.cs".into(),
@@ -235,6 +238,7 @@ mod tests {
                 def("USER", RoleKind::Role, &[]),
             ],
             policies: vec![PolicyDef {
+                application: None,
                 name: "P".into(),
                 requires: Condition::Role("USER".into()),
                 file: "P.cs".into(),
@@ -262,7 +266,7 @@ mod tests {
                 );
                 assert_eq!(
                     *cell,
-                    evaluate_condition(s.access.as_ref().unwrap(), &a),
+                    evaluate_condition(s.access.condition().unwrap(), &a),
                     "{}",
                     row.label
                 );

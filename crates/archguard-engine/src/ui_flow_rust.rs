@@ -456,6 +456,7 @@ mod nav {
         kind: ScreenKind,
     ) -> Screen {
         Screen {
+            weak: false,
             id: format!("{}:{id}", app.name),
             name: name.into(),
             kind,
@@ -463,7 +464,7 @@ mod nav {
             application: Some(app.name.clone()),
             file: src.rel.clone(),
             line: src.line(at),
-            access: None,
+            access: archguard_core::AccessState::Undeclared,
             source: SOURCE.into(),
         }
     }
@@ -512,12 +513,13 @@ mod nav {
             diag(flow, &src.rel, line, message, true);
         }
         flow.transitions.push(Transition {
+            weak: false,
             from,
             target,
             trigger,
             file: src.rel.clone(),
             line,
-            condition: None,
+            condition: archguard_core::AccessState::Undeclared,
             source: SOURCE.into(),
         });
     }
@@ -1178,7 +1180,10 @@ mod leptos {
             if level.required == "/" && level.path != "/" {
                 flow.start_screens.push(screen.id.clone());
             }
-            (screen.route, screen.access) = (Some(level.path), level.condition);
+            (screen.route, screen.access) = (
+                Some(level.path),
+                archguard_core::AccessState::from_parts(level.condition, false),
+            );
             if !known.screens.iter().any(|s| s.id == screen.id) {
                 known.screens.push(screen);
             }
@@ -1427,6 +1432,7 @@ mod server {
                 continue;
             }
             flow.actions.push(Action {
+                weak: false,
                 screen: nav::origin(cx, at),
                 trigger: None,
                 call: Call::Http {
@@ -1435,7 +1441,7 @@ mod server {
                 },
                 file: src.rel.clone(),
                 line: src.line(at),
-                condition: None,
+                condition: archguard_core::AccessState::Undeclared,
                 source: SOURCE.into(),
             });
         }
@@ -2195,12 +2201,13 @@ mod tauri {
                     nav::diag(flow, rel, line, message, true);
                 }
                 flow.actions.push(Action {
+                    weak: false,
                     screen: nav::any(app),
                     trigger: None,
                     call,
                     file: rel.to_string(),
                     line,
-                    condition: None,
+                    condition: archguard_core::AccessState::Undeclared,
                     source: SOURCE.into(),
                 });
             }
@@ -2549,11 +2556,11 @@ pub async fn add_contact(name: String) -> Result<(), ServerFnError> {
         };
         assert_eq!(
             access("contacts:/admin"),
-            Some(Condition::Role("Admin".into()))
+            archguard_core::AccessState::Protected(Condition::Role("Admin".into()))
         );
         assert!(matches!(
             access("contacts:/settings"),
-            Some(Condition::Unknown(_))
+            archguard_core::AccessState::Protected(Condition::Unknown(_))
         ));
         assert_eq!(
             flow.screens

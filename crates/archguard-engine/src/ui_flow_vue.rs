@@ -282,6 +282,7 @@ impl App {
 
     fn screen(&self, route: String, name: String, file: &str, line: u32) -> Screen {
         Screen {
+            weak: false,
             id: format!("{}:{route}", self.name),
             name,
             kind: ScreenKind::Page,
@@ -289,7 +290,7 @@ impl App {
             application: Some(self.name.clone()),
             file: file.into(),
             line,
-            access: None,
+            access: archguard_core::AccessState::Undeclared,
             source: SOURCE.into(),
         }
     }
@@ -589,7 +590,7 @@ mod nuxt {
             let (route, name) = route_of(&path.split('/').collect::<Vec<_>>());
             let (line, access) = page_meta(file, text, out);
             let mut screen = app.screen(route, file.clone(), file, line);
-            screen.access = access;
+            screen.access = archguard_core::AccessState::from_parts(access, false);
             routes.push(Route {
                 screen,
                 owner: Some(file.clone()),
@@ -928,7 +929,7 @@ mod router {
         let mut screen = ctx
             .app
             .screen(format!("/{full}"), name, ctx.file, line_of(text, item.at));
-        screen.access = all(conditions.to_vec());
+        screen.access = archguard_core::AccessState::from_parts(all(conditions.to_vec()), false);
         let name = match field(fields, "name").map(|n| &n.value) {
             Some(Value::Str(n)) => Some(n.clone()),
             _ => None,
@@ -1335,12 +1336,13 @@ mod nav {
             for from in at.froms {
                 for trigger in &triggers {
                     flow.transitions.push(Transition {
+                        weak: false,
                         from: from.clone(),
                         target: target.clone(),
                         trigger: trigger.clone(),
                         file: at.file.into(),
                         line: line_of(at.text, nav.at),
-                        condition: None,
+                        condition: archguard_core::AccessState::Undeclared,
                         source: SOURCE.into(),
                     });
                 }
@@ -1390,12 +1392,13 @@ mod http {
             for trigger in at.triggers(*pos) {
                 for from in at.froms {
                     flow.actions.push(Action {
+                        weak: false,
                         screen: from.clone(),
                         trigger: trigger.clone(),
                         call: call.clone(),
                         file: file.into(),
                         line: line_of(text, *pos),
-                        condition: None,
+                        condition: archguard_core::AccessState::Undeclared,
                         source: SOURCE.into(),
                     });
                 }
@@ -1453,7 +1456,12 @@ mod tests {
             .iter()
             .map(|s| {
                 let route = s.route.clone();
-                (s.id.clone(), s.name.clone(), route, s.access.clone())
+                (
+                    s.id.clone(),
+                    s.name.clone(),
+                    route,
+                    s.access.condition().cloned(),
+                )
             })
             .collect()
     }

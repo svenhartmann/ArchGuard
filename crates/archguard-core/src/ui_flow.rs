@@ -38,6 +38,10 @@ pub struct UiFlow {
     /// Where endpoint handlers are declared; see [`UiFlow::handler_site`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub handler_sites: Vec<HandlerSite>,
+    /// How each application writes and compares role and permission names;
+    /// an application without an entry compares exactly.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub role_conventions: Vec<RoleConvention>,
 }
 impl Default for UiFlow {
     /// Empty and complete, so it is the identity of [`merge_ui_flows`].
@@ -54,11 +58,21 @@ impl Default for UiFlow {
             roles: vec![],
             policies: vec![],
             handler_sites: vec![],
+            role_conventions: vec![],
         }
     }
 }
 
 impl UiFlow {
+    /// The convention of `application` (`None`: the entry for the whole flow);
+    /// default (exact) when nothing was read.
+    pub fn convention(&self, application: Option<&str>) -> RoleConvention {
+        (self.role_conventions.iter())
+            .find(|c| c.application.as_deref() == application)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// Where the handler method of `e` is declared, when the extractor read it.
     pub fn handler_site(&self, e: &EndpointAccess) -> Option<&HandlerSite> {
         (self.handler_sites.iter()).find(|s| {
@@ -91,9 +105,17 @@ pub struct Screen {
     pub application: Option<String>,
     pub file: String,
     pub line: u32,
-    /// Guard on the screen itself; none means no guard.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub access: Option<Condition>,
+    /// Guard on the screen itself; missing or `null` in a file reads as `undeclared`.
+    #[serde(
+        default,
+        skip_serializing_if = "AccessState::is_undeclared",
+        serialize_with = "AccessState::serialize_element"
+    )]
+    pub access: AccessState,
+    /// The guard only holds as a rule of thumb (layout load, parent loader):
+    /// shown as "weakly protected", never changes the outcome.
+    #[serde(default, skip_serializing_if = "wire::is_false")]
+    pub weak: bool,
     /// Extractor name, or `import`.
     pub source: String,
 }
@@ -127,8 +149,15 @@ pub struct Transition {
     pub trigger: Option<String>,
     pub file: String,
     pub line: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub condition: Option<Condition>,
+    #[serde(
+        default,
+        skip_serializing_if = "AccessState::is_undeclared",
+        serialize_with = "AccessState::serialize_element"
+    )]
+    pub condition: AccessState,
+    /// See [`Screen::weak`].
+    #[serde(default, skip_serializing_if = "wire::is_false")]
+    pub weak: bool,
     pub source: String,
 }
 
@@ -153,8 +182,15 @@ pub struct Action {
     pub call: Call,
     pub file: String,
     pub line: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub condition: Option<Condition>,
+    #[serde(
+        default,
+        skip_serializing_if = "AccessState::is_undeclared",
+        serialize_with = "AccessState::serialize_element"
+    )]
+    pub condition: AccessState,
+    /// See [`Screen::weak`].
+    #[serde(default, skip_serializing_if = "wire::is_false")]
+    pub weak: bool,
     pub source: String,
 }
 
@@ -196,15 +232,118 @@ pub struct HandlerSite {
     pub line: u32,
 }
 
+mod wire {
+    pub(super) fn is_false(b: &bool) -> bool {
+        !*b
+    }
+}
+
 /// Never two states: `undeclared` must not look `open` (ADR 0021, decision 2).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// Reads a missing field or `null` as `undeclared`, `"open"`, `"undeclared"`,
+/// `{"protected": <condition>}`, and a bare condition of older files as `protected`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccessState {
     Protected(Condition),
     /// Declared anonymous, e.g. `[AllowAnonymous]`, `permitAll`.
     Open,
     /// No declaration found; the code may still check by hand.
+    #[default]
     Undeclared,
+}
+
+impl<'de> Deserialize<'de> for AccessState {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum Current {
+            Protected(Condition),
+            Open,
+            Undeclared,
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Null(()),
+            Current(Current),
+            Legacy(Condition),
+        }
+        Ok(match Wire::deserialize(d)? {
+            Wire::Null(()) | Wire::Current(Current::Undeclared) => AccessState::Undeclared,
+            Wire::Current(Current::Open) => AccessState::Open,
+            Wire::Current(Current::Protected(c)) | Wire::Legacy(c) => AccessState::Protected(c),
+        })
+    }
+}
+
+impl AccessState {
+    /// A condition the extractor read wins over an open marker; neither is undeclared.
+    pub fn from_parts(condition: Option<Condition>, open: bool) -> Self {
+        match (condition, open) {
+            (Some(c), _) => AccessState::Protected(c),
+            (None, true) => AccessState::Open,
+            (None, false) => AccessState::Undeclared,
+        }
+    }
+
+    /// Screens, links and actions keep writing a protected state as the bare
+    /// condition (files stay as before) and an open one as `"open"`.
+    fn serialize_element<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            AccessState::Protected(c) => c.serialize(s),
+            AccessState::Open => s.serialize_str("open"),
+            AccessState::Undeclared => s.serialize_unit(),
+        }
+    }
+
+    pub fn is_undeclared(&self) -> bool {
+        *self == AccessState::Undeclared
+    }
+
+    /// The condition when protected.
+    pub fn condition(&self) -> Option<&Condition> {
+        match self {
+            AccessState::Protected(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    pub fn condition_mut(&mut self) -> Option<&mut Condition> {
+        match self {
+            AccessState::Protected(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    /// Both layers must hold. Undeclared is the identity (so folding layers
+    /// starts from it); `Open` adds no condition.
+    pub fn and(self, other: AccessState) -> AccessState {
+        use AccessState::*;
+        match (self, other) {
+            (Undeclared, x) | (x, Undeclared) => x,
+            (Open, x) | (x, Open) => x,
+            (Protected(a), Protected(b)) => {
+                let mut items = match a {
+                    Condition::All(items) => items,
+                    a => vec![a],
+                };
+                match b {
+                    Condition::All(more) => items.extend(more),
+                    b => items.push(b),
+                }
+                Protected(Condition::All(items))
+            }
+        }
+    }
+
+    /// Fallback/default policy: applies only when no declaration gave a state.
+    pub fn or_default(self, default: AccessState) -> AccessState {
+        if self == AccessState::Undeclared {
+            default
+        } else {
+            self
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -272,6 +411,8 @@ pub enum DiagnosticSeverity {
 /// and custom atoms are switches, and a switch missing here is unknown.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Assignment {
+    /// How role names compare; filled by [`resolve_assignment`], exact otherwise.
+    pub convention: RoleConvention,
     pub authenticated: bool,
     pub roles: BTreeSet<String>,
     pub policies: BTreeMap<String, bool>,
@@ -316,10 +457,27 @@ pub fn evaluate_condition(condition: &Condition, assignment: &Assignment) -> Out
         Condition::Not(inner) => negate(evaluate_condition(inner, assignment)),
         Condition::Authenticated => known(Some(&assignment.authenticated)),
         Condition::Never => Outcome::Denied,
-        Condition::Role(name) => known(Some(&assignment.roles.contains(name))),
-        Condition::Policy(name) => known(assignment.policies.get(name)),
+        Condition::Role(name) => known(Some(&holds(
+            &assignment.convention,
+            AtomKind::Role,
+            &assignment.roles,
+            name,
+        ))),
+        Condition::Policy(name) => known(assignment.policy_switch(name)),
         Condition::Custom(name) => known(assignment.custom.get(name)),
         Condition::Unknown(_) => Outcome::Unknown,
+    }
+}
+
+impl Assignment {
+    /// The switch of a policy; names compare by `policy_case`.
+    fn policy_switch(&self, name: &str) -> Option<&bool> {
+        match self.convention.policy_case {
+            NameCase::Exact => self.policies.get(name),
+            NameCase::Insensitive => (self.policies.iter())
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v),
+        }
     }
 }
 
@@ -340,17 +498,39 @@ pub fn evaluate_access(access: &AccessState, assignment: &Assignment) -> Outcome
     }
 }
 
-fn evaluate_optional(condition: Option<&Condition>, assignment: &Assignment) -> Outcome {
-    condition.map_or(Outcome::Allowed, |c| evaluate_condition(c, assignment))
+/// The findings keep reading a missing declaration as "no guard".
+fn evaluate_optional(access: &AccessState, assignment: &Assignment) -> Outcome {
+    match access {
+        AccessState::Undeclared => Outcome::Allowed,
+        other => evaluate_access(other, assignment),
+    }
 }
 
+/// Order is strength, strongest first: a path is as weak as its weakest step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reach {
     /// Some path has every guard allowed.
     Sure,
+    /// Not denied, but some step has no declaration (not "open"); the code may
+    /// still check by hand. Separate from `Possible`, which is an unknown guard.
+    Undeclared,
     /// Reached only over paths with an unknown guard.
     Possible,
+}
+
+impl AccessState {
+    /// Reach level of one screen or link; none when denied.
+    fn level(&self, assignment: &Assignment) -> Option<Reach> {
+        match self {
+            AccessState::Undeclared => Some(Reach::Undeclared),
+            other => match evaluate_access(other, assignment) {
+                Outcome::Allowed => Some(Reach::Sure),
+                Outcome::Unknown => Some(Reach::Possible),
+                Outcome::Denied => None,
+            },
+        }
+    }
 }
 
 /// Screens reachable from `start` (included). A transition is followed when
@@ -366,20 +546,12 @@ pub fn reachable_screens(
     let assignment = &resolve_assignment(flow, assignment);
     let screens: BTreeMap<&str, &Screen> =
         flow.screens.iter().map(|s| (s.id.as_str(), s)).collect();
-    let level = |outcome| match outcome {
-        Outcome::Allowed => Some(Reach::Sure),
-        Outcome::Unknown => Some(Reach::Possible),
-        Outcome::Denied => None,
-    };
     let mut reached = BTreeMap::new();
-    let Some(first) = screens
-        .get(start)
-        .and_then(|s| level(evaluate_optional(s.access.as_ref(), assignment)))
-    else {
+    let Some(first) = screens.get(start).and_then(|s| s.access.level(assignment)) else {
         return reached;
     };
     reached.insert(start.to_string(), first);
-    // Each screen improves at most twice (none -> possible -> sure), so this ends on cycles.
+    // Each screen improves at most three times (none -> possible -> undeclared -> sure), so this ends on cycles.
     let mut changed = true;
     while changed {
         changed = false;
@@ -391,12 +563,13 @@ pub fn reachable_screens(
             let Some(target) = screens.get(to.as_str()) else {
                 continue;
             };
-            let edge = and(
-                evaluate_optional(transition.condition.as_ref(), assignment),
-                evaluate_optional(target.access.as_ref(), assignment),
-            );
-            let Some(edge) = level(edge) else { continue };
-            let via = from.max(edge); // Sure < Possible: the weaker link wins.
+            let (Some(link), Some(screen)) = (
+                transition.condition.level(assignment),
+                target.access.level(assignment),
+            ) else {
+                continue;
+            };
+            let via = from.max(link).max(screen); // the weakest step wins
             if reached.get(to).is_none_or(|old| via < *old) {
                 reached.insert(to.clone(), via);
                 changed = true;
@@ -412,6 +585,8 @@ pub fn reachable_screens(
 pub enum ScreenReach {
     Sure,
     Possible,
+    /// Reached, but a screen or link on the way has no declaration.
+    Undeclared,
     /// The screen's own access evaluates denied.
     Denied,
     /// Not denied, but no resolved path from a start screen. The count of
@@ -469,10 +644,9 @@ pub fn screen_reaches(flow: &UiFlow, assignment: &Assignment) -> BTreeMap<String
     let reached = reach_from(flow, &starts, assignment);
     let reason = |s: &Screen| match reached.get(&s.id) {
         Some(Reach::Sure) => ScreenReach::Sure,
+        Some(Reach::Undeclared) => ScreenReach::Undeclared,
         Some(Reach::Possible) => ScreenReach::Possible,
-        None if evaluate_optional(s.access.as_ref(), assignment) == Outcome::Denied => {
-            ScreenReach::Denied
-        }
+        None if s.access.level(assignment).is_none() => ScreenReach::Denied,
         None if !started.contains(&app(s)) => ScreenReach::NoStartScreen,
         None => ScreenReach::NoKnownPath {
             unresolved_transitions_in_application: unresolved
@@ -678,10 +852,14 @@ pub fn merge_ui_flows(a: UiFlow, b: UiFlow) -> UiFlow {
         roles: union(a.roles, b.roles),
         policies: union(a.policies, b.policies),
         handler_sites: union(a.handler_sites, b.handler_sites),
+        role_conventions: union(a.role_conventions, b.role_conventions),
     }
 }
 
-pub use roles::{PolicyDef, RoleDef, RoleKind, permission_covers, resolve_assignment};
+pub use roles::{
+    AtomKind, ConventionOrigin, NameCase, PermissionFormat, PolicyDef, RoleConvention, RoleDef,
+    RoleKind, canonical, holds, label, resolve_assignment, resolve_assignment_for,
+};
 
 /// The role and policy catalog and how the simulation applies it.
 mod roles {
@@ -695,6 +873,9 @@ mod roles {
         /// Names this one implies (`ROLE_ADMIN > ROLE_USER`: ADMIN includes USER).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub includes: Vec<String>,
+        /// Owning application; none for a catalog of the whole flow.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub application: Option<String>,
         pub file: String,
         pub line: u32,
         pub source: String,
@@ -704,9 +885,11 @@ mod roles {
     #[serde(rename_all = "snake_case")]
     pub enum RoleKind {
         Role,
-        /// A permission id; dotted ids cover each other by [`permission_covers`].
+        /// A permission id; dotted ids cover each other by [`PermissionFormat::Dotted`].
         Permission,
         Group,
+        /// An OAuth scope or token authority.
+        Scope,
     }
 
     /// A named policy (ASP.NET `AddPolicy`) and what it requires.
@@ -714,45 +897,230 @@ mod roles {
     pub struct PolicyDef {
         pub name: String,
         pub requires: Condition,
+        /// Owning application; none for a catalog of the whole flow.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub application: Option<String>,
         pub file: String,
         pub line: u32,
         pub source: String,
     }
 
-    /// Squidex rule for dotted permission ids: `held` covers `wanted` when its
-    /// segments are a prefix of `wanted`'s and each is equal or `*`
-    /// (`app.{app}.*` and `app.{app}` both cover `app.{app}.contents.read`).
-    pub fn permission_covers(held: &str, wanted: &str) -> bool {
-        let h: Vec<&str> = held.split('.').collect();
-        let w: Vec<&str> = wanted.split('.').collect();
-        held != wanted && h.len() <= w.len() && h.iter().zip(&w).all(|(h, w)| h == w || *h == "*")
+    /// How ONE application writes and compares role and permission names, as
+    /// its extractor read it. Nothing read means exact comparison.
+    #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    pub struct RoleConvention {
+        /// Same key as `Screen::application`; none is the whole flow.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub application: Option<String>,
+        /// Prefix the framework puts before role names (Spring `ROLE_`); only
+        /// used to canonicalize user input and shorten labels.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub role_prefix: Option<String>,
+        /// Prefix for token scopes and authorities (Spring `SCOPE_`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub scope_prefix: Option<String>,
+        /// Claim that carries the roles; information only, never compared.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub role_claim: Option<String>,
+        #[serde(default)]
+        pub role_case: NameCase,
+        #[serde(default)]
+        pub policy_case: NameCase,
+        #[serde(default)]
+        pub permissions: PermissionFormat,
+        /// Action aliases (CanCanCan `read` -> `index`, `show`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub action_aliases: Vec<(String, Vec<String>)>,
+        /// Where each field came from.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub origins: Vec<ConventionOrigin>,
     }
 
-    /// The assignment the simulator evaluates: every held role adds the roles it
-    /// `includes` (transitively, cycle-safe) and the permission defs it covers, and
-    /// every defined policy the assignment does not switch explicitly is set from
-    /// what it requires, when that is known. Several defs of one name that disagree
-    /// leave the policy unknown. Nothing defined returns the assignment unchanged.
-    /// Idempotent; [`reachable_screens`], [`screen_reaches`] and the findings apply
-    /// it, [`evaluate_condition`] and [`evaluate_access`] take it as given.
+    /// Where one [`RoleConvention`] field was read: a file position or
+    /// `framework default <name> <version>` in `source`.
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    pub struct ConventionOrigin {
+        pub field: String,
+        pub file: String,
+        pub line: u32,
+        pub source: String,
+    }
+
+    #[derive(
+        Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
+    )]
+    #[serde(rename_all = "snake_case")]
+    pub enum NameCase {
+        #[default]
+        Exact,
+        Insensitive,
+    }
+
+    #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum PermissionFormat {
+        #[default]
+        Exact,
+        /// Dotted ids; a held id covers `wanted` when its segments are a
+        /// prefix of `wanted`'s and each is equal or `wildcard` (Squidex:
+        /// `app.{app}.*` and `app.{app}` cover `app.{app}.contents.read`).
+        Dotted { wildcard: String },
+        /// `"<action> <subject>"` (CASL, CanCanCan).
+        ActionSubject {
+            any_action: String,
+            any_subject: String,
+        },
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum AtomKind {
+        Role,
+        Policy,
+    }
+
+    fn same(case: NameCase, a: &str, b: &str) -> bool {
+        match case {
+            NameCase::Exact => a == b,
+            NameCase::Insensitive => a.to_lowercase() == b.to_lowercase(),
+        }
+    }
+
+    fn case_of(conv: &RoleConvention, kind: AtomKind) -> NameCase {
+        match kind {
+            AtomKind::Role => conv.role_case,
+            AtomKind::Policy => conv.policy_case,
+        }
+    }
+
+    /// Whether the held names satisfy `wanted` under the application's
+    /// convention. The only place that compares names. A prefix is never
+    /// guessed (names are stored as the runtime authority) and hierarchy is
+    /// expanded beforehand by [`resolve_assignment`]. The permission format
+    /// applies to both kinds: Squidex ids are roles today.
+    pub fn holds(
+        conv: &RoleConvention,
+        kind: AtomKind,
+        held: &BTreeSet<String>,
+        wanted: &str,
+    ) -> bool {
+        let case = case_of(conv, kind);
+        if case == NameCase::Exact && held.contains(wanted) {
+            return true;
+        }
+        if held.iter().any(|h| same(case, h, wanted)) {
+            return true;
+        }
+        match &conv.permissions {
+            PermissionFormat::Exact => false,
+            PermissionFormat::Dotted { wildcard } => {
+                (held.iter()).any(|h| dotted_covers(case, wildcard, h, wanted))
+            }
+            PermissionFormat::ActionSubject {
+                any_action,
+                any_subject,
+            } => (held.iter())
+                .any(|h| action_subject_covers(conv, case, any_action, any_subject, h, wanted)),
+        }
+    }
+
+    fn dotted_covers(case: NameCase, wildcard: &str, held: &str, wanted: &str) -> bool {
+        let h: Vec<&str> = held.split('.').collect();
+        let w: Vec<&str> = wanted.split('.').collect();
+        !same(case, held, wanted)
+            && h.len() <= w.len()
+            && h.iter()
+                .zip(&w)
+                .all(|(h, w)| *h == wildcard || same(case, h, w))
+    }
+
+    fn action_subject_covers(
+        conv: &RoleConvention,
+        case: NameCase,
+        any_action: &str,
+        any_subject: &str,
+        held: &str,
+        wanted: &str,
+    ) -> bool {
+        let (Some((ha, hs)), Some((wa, ws))) = (held.split_once(' '), wanted.split_once(' '))
+        else {
+            return false;
+        };
+        let action = same(case, ha, any_action)
+            || same(case, ha, wa)
+            || (conv.action_aliases.iter()).any(|(alias, actions)| {
+                same(case, alias, ha) && actions.iter().any(|a| same(case, a, wa))
+            });
+        action && (same(case, hs, any_subject) || same(case, hs, ws))
+    }
+
+    fn strip_prefix_case<'a>(case: NameCase, prefix: &str, text: &'a str) -> Option<&'a str> {
+        let head = text.get(..prefix.len())?;
+        same(case, head, prefix).then(|| &text[prefix.len()..])
+    }
+
+    /// A user input (`--role ADMIN`) in the stored form (`ROLE_ADMIN`).
+    /// Policies are stored as written.
+    pub fn canonical(conv: &RoleConvention, kind: AtomKind, input: &str) -> String {
+        match (kind, &conv.role_prefix) {
+            (AtomKind::Role, Some(p)) if strip_prefix_case(conv.role_case, p, input).is_none() => {
+                format!("{p}{input}")
+            }
+            _ => input.to_string(),
+        }
+    }
+
+    /// The stored name without its prefix, for display only, never compared.
+    pub fn label(conv: &RoleConvention, kind: AtomKind, stored: &str) -> String {
+        let (prefix, case) = match kind {
+            AtomKind::Role => (&conv.role_prefix, conv.role_case),
+            AtomKind::Policy => (&conv.scope_prefix, conv.policy_case),
+        };
+        (prefix.as_deref())
+            .and_then(|p| strip_prefix_case(case, p, stored))
+            .unwrap_or(stored)
+            .to_string()
+    }
+
+    /// The assignment the simulator evaluates, with the convention of the whole
+    /// flow; see [`resolve_assignment_for`].
     pub fn resolve_assignment(flow: &UiFlow, assignment: &Assignment) -> Assignment {
+        resolve_assignment_for(flow, None, assignment)
+    }
+
+    /// The assignment the simulator evaluates for one application's elements:
+    /// it carries that application's [`RoleConvention`], every held role adds
+    /// the roles it `includes` (transitively, cycle-safe) and the permission
+    /// defs it covers, and every defined policy the assignment does not switch
+    /// explicitly is set from what it requires, when that is known. Several
+    /// defs of one name that disagree leave the policy unknown. Idempotent;
+    /// [`reachable_screens`], [`screen_reaches`] and the findings apply it,
+    /// [`evaluate_condition`] and [`evaluate_access`] take it as given.
+    pub fn resolve_assignment_for(
+        flow: &UiFlow,
+        application: Option<&str>,
+        assignment: &Assignment,
+    ) -> Assignment {
         let mut out = assignment.clone();
-        imply_roles(flow, &mut out.roles);
+        out.convention = flow.convention(application);
+        imply_roles(flow, &out.convention, &mut out.roles);
         resolve_policies(flow, &mut out);
         out
     }
 
     /// Adds the roles every held role includes and the permission defs it covers.
-    fn imply_roles(flow: &UiFlow, roles: &mut BTreeSet<String>) {
+    fn imply_roles(flow: &UiFlow, conv: &RoleConvention, roles: &mut BTreeSet<String>) {
         let mut todo: Vec<String> = roles.iter().cloned().collect();
         while let Some(held) = todo.pop() {
-            let included = (flow.roles.iter().filter(|d| d.name == held)).flat_map(|d| &d.includes);
-            let covered = (flow.roles.iter())
-                .filter(|d| d.kind == RoleKind::Permission && permission_covers(&held, &d.name))
-                .map(|d| &d.name);
-            for name in included.chain(covered) {
-                if roles.insert(name.clone()) {
-                    todo.push(name.clone());
+            let one = BTreeSet::from([held.clone()]);
+            let matching = flow.roles.iter().filter(|d| match d.kind {
+                RoleKind::Permission => holds(conv, AtomKind::Role, &one, &d.name),
+                _ => same(conv.role_case, &d.name, &held),
+            });
+            for d in matching {
+                for name in d.includes.iter().chain([&d.name]) {
+                    if roles.insert(name.clone()) {
+                        todo.push(name.clone());
+                    }
                 }
             }
         }
@@ -1021,9 +1389,13 @@ mod findings {
             }
         }
         let mut names = BTreeSet::new();
-        let conditions = (flow.screens.iter().filter_map(|s| s.access.as_ref()))
-            .chain(flow.transitions.iter().filter_map(|t| t.condition.as_ref()))
-            .chain(flow.actions.iter().filter_map(|a| a.condition.as_ref()))
+        let conditions = (flow.screens.iter().filter_map(|s| s.access.condition()))
+            .chain(
+                flow.transitions
+                    .iter()
+                    .filter_map(|t| t.condition.condition()),
+            )
+            .chain(flow.actions.iter().filter_map(|a| a.condition.condition()))
             .chain(flow.endpoints.iter().filter_map(|e| match &e.access {
                 AccessState::Protected(c) => Some(c),
                 _ => None,
@@ -1055,7 +1427,8 @@ mod findings {
         assignment: &Assignment,
         reached: &BTreeMap<String, Reach>,
     ) -> bool {
-        let sure = |id: &String| reached.get(id) == Some(&Reach::Sure);
+        // An undeclared step counts as unguarded here, as before `Reach::Undeclared`.
+        let sure = |id: &String| matches!(reached.get(id), Some(Reach::Sure | Reach::Undeclared));
         let on_sure_screen = match &action.screen {
             Origin::Screen(id) => sure(id),
             Origin::AnyScreen { application } => flow
@@ -1063,24 +1436,20 @@ mod findings {
                 .iter()
                 .any(|s| s.application.as_deref().unwrap_or("") == application && sure(&s.id)),
         };
-        on_sure_screen
-            && evaluate_optional(action.condition.as_ref(), assignment) != Outcome::Denied
+        on_sure_screen && evaluate_optional(&action.condition, assignment) != Outcome::Denied
     }
 
     /// The screen's access and the action's condition deny an anonymous user.
     fn guarded_for_anonymous(flow: &UiFlow, action: &Action) -> bool {
         let anonymous = resolve_assignment(flow, &Assignment::default());
         let screen_access = match &action.screen {
-            Origin::Screen(id) => flow
-                .screens
-                .iter()
-                .find(|s| s.id == *id)
-                .and_then(|s| s.access.as_ref()),
-            Origin::AnyScreen { .. } => None,
+            Origin::Screen(id) => (flow.screens.iter().find(|s| s.id == *id))
+                .map_or(AccessState::Undeclared, |s| s.access.clone()),
+            Origin::AnyScreen { .. } => AccessState::Undeclared,
         };
         and(
-            evaluate_optional(screen_access, &anonymous),
-            evaluate_optional(action.condition.as_ref(), &anonymous),
+            evaluate_optional(&screen_access, &anonymous),
+            evaluate_optional(&action.condition, &anonymous),
         ) == Outcome::Denied
     }
 
@@ -1141,6 +1510,7 @@ mod findings {
 
         fn screen(id: &str, app: &str, route: &str, access: Option<Condition>) -> Screen {
             Screen {
+                weak: false,
                 id: id.into(),
                 name: id.into(),
                 kind: ScreenKind::Page,
@@ -1148,29 +1518,31 @@ mod findings {
                 application: Some(app.into()),
                 file: format!("{id}.razor"),
                 line: 1,
-                access,
+                access: AccessState::from_parts(access, false),
                 source: "test".into(),
             }
         }
         fn go(from: &str, to: Target) -> Transition {
             Transition {
+                weak: false,
                 from: Origin::Screen(from.into()),
                 target: to,
                 trigger: None,
                 file: "Home.razor".into(),
                 line: 2,
-                condition: None,
+                condition: AccessState::Undeclared,
                 source: "test".into(),
             }
         }
         fn act(screen: Origin, line: u32, call: Call, condition: Option<Condition>) -> Action {
             Action {
+                weak: false,
                 screen,
                 trigger: Some(format!("t{line}")),
                 call,
                 file: "Ui.razor".into(),
                 line,
-                condition,
+                condition: AccessState::from_parts(condition, false),
                 source: "test".into(),
             }
         }
@@ -1335,7 +1707,7 @@ mod findings {
         fn denied_action_condition_is_not_shown_and_an_allowed_endpoint_clears_it() {
             let mut flow = fixture();
             // The action hides itself from everyone, so no role sees it refused.
-            flow.actions[0].condition = Some(Condition::Never);
+            flow.actions[0].condition = AccessState::Protected(Condition::Never);
             // A second endpoint of the same shape that admits everyone signed in.
             flow.endpoints.push(EndpointAccess {
                 application: Some("api2".into()),
@@ -1410,6 +1782,7 @@ mod tests {
     }
     fn screen(id: &str, access: Option<Condition>) -> Screen {
         Screen {
+            weak: false,
             id: id.into(),
             name: id.into(),
             kind: ScreenKind::Page,
@@ -1417,23 +1790,25 @@ mod tests {
             application: None,
             file: "App.razor".into(),
             line: 1,
-            access,
+            access: AccessState::from_parts(access, false),
             source: "test".into(),
         }
     }
     fn go(from: &str, to: &str, condition: Option<Condition>) -> Transition {
         Transition {
+            weak: false,
             from: Origin::Screen(from.into()),
             target: Target::Screen(to.into()),
             trigger: None,
             file: "App.razor".into(),
             line: 2,
-            condition,
+            condition: AccessState::from_parts(condition, false),
             source: "test".into(),
         }
     }
     fn http_action(method: &str, path: &str) -> Action {
         Action {
+            weak: false,
             screen: Origin::Screen("orders".into()),
             trigger: Some("save".into()),
             call: Call::Http {
@@ -1442,7 +1817,7 @@ mod tests {
             },
             file: "Orders.razor".into(),
             line: 9,
-            condition: None,
+            condition: AccessState::Undeclared,
             source: "test".into(),
         }
     }
@@ -1588,19 +1963,19 @@ mod tests {
         assert_eq!(
             reached,
             BTreeMap::from([
-                ("home".to_string(), Reach::Sure),
-                ("orders".to_string(), Reach::Sure),
+                ("home".to_string(), Reach::Undeclared),
+                ("orders".to_string(), Reach::Undeclared),
                 ("beta".to_string(), Reach::Possible),
                 ("beta_detail".to_string(), Reach::Possible),
             ])
         );
         let reached = reachable_screens(&flow, "home", &admin());
-        assert_eq!(reached.get("admin"), Some(&Reach::Sure));
+        assert_eq!(reached.get("admin"), Some(&Reach::Undeclared));
         // A sure path upgrades a screen first seen as possible.
         let mut upgraded = flow.clone();
         upgraded.transitions.push(go("orders", "beta_detail", None));
         let reached = reachable_screens(&upgraded, "home", &user);
-        assert_eq!(reached.get("beta_detail"), Some(&Reach::Sure));
+        assert_eq!(reached.get("beta_detail"), Some(&Reach::Undeclared));
         assert!(reachable_screens(&flow, "nowhere", &user).is_empty());
         assert!(reachable_screens(&flow, "admin", &user).is_empty());
     }
@@ -1646,7 +2021,7 @@ mod tests {
         assert_eq!(
             reaches,
             BTreeMap::from([
-                ("home".to_string(), ScreenReach::Sure),
+                ("home".to_string(), ScreenReach::Undeclared),
                 ("beta".to_string(), ScreenReach::Possible),
                 ("admin".to_string(), ScreenReach::Denied),
                 // Open, but only an unresolved link could lead there.
@@ -1657,7 +2032,10 @@ mod tests {
                 ("locked".to_string(), ScreenReach::Denied),
             ])
         );
-        assert_eq!(screen_reaches(&flow, &admin())["admin"], ScreenReach::Sure);
+        assert_eq!(
+            screen_reaches(&flow, &admin())["admin"],
+            ScreenReach::Undeclared
+        );
         assert_eq!(
             serde_json::to_value(no_path(2)).unwrap(),
             serde_json::json!({"reach": "no_known_path", "unresolved_transitions_in_application": 2})
@@ -1701,8 +2079,8 @@ mod tests {
             reached,
             BTreeMap::from([
                 ("beta".to_string(), Reach::Possible),
-                ("cart".to_string(), Reach::Sure),
-                ("home".to_string(), Reach::Sure),
+                ("cart".to_string(), Reach::Undeclared),
+                ("home".to_string(), Reach::Undeclared),
             ])
         );
         // From a screen reached only possibly, the menu is only possible too.
@@ -1809,8 +2187,8 @@ mod tests {
         flow.start_screens = vec!["login".into()];
         assert_eq!(start_screen_ids(&flow), ["login"]);
         let reaches = screen_reaches(&flow, &anonymous);
-        assert_eq!(reaches["login"], ScreenReach::Sure);
-        assert_eq!(reaches["catalog"], ScreenReach::Sure);
+        assert_eq!(reaches["login"], ScreenReach::Undeclared);
+        assert_eq!(reaches["catalog"], ScreenReach::Undeclared);
         assert_eq!(reaches["orders"], ScreenReach::Denied);
         assert!(ui_flow_findings(&flow).is_empty());
         // A screen routed `/` stays a start screen next to a marked one.
@@ -1999,7 +2377,7 @@ mod tests {
                 http_action("GET", "/api/orders"),
                 Action {
                     call: Call::Method("Svc.Load".into()),
-                    condition: Some(Condition::All(vec![
+                    condition: AccessState::Protected(Condition::All(vec![
                         Condition::Authenticated,
                         Condition::Custom("c".into()),
                     ])),
