@@ -1115,19 +1115,28 @@ mod access {
                     Some(Def::Scheme { auto_error: None }) => {
                         Meaning::Cond(self.unknown(d, name, "auto_error is not a literal"))
                     }
-                    _ => Meaning::None,
+                    Some(Def::Instance(callee)) => {
+                        let class = callee.rsplit('.').next().unwrap_or("");
+                        match self.access.get(class) {
+                            Some(m) => self.listed(d, class, m),
+                            None => self.dropped(d),
+                        }
+                    }
+                    _ => self.dropped(d),
                 },
-                Some(_) => Meaning::None,
-                None => {
-                    let message = format!(
-                        "Dependency `{}` not found in the project; whether it checks access is \
-                         unknown. Name it in [views.access].",
-                        d.target
-                    );
-                    self.at(d, message, DiagnosticSeverity::Gap);
-                    Meaning::None
-                }
+                _ => self.dropped(d),
             }
+        }
+
+        /// A dependency that is not read: a gap, never silence.
+        fn dropped(&mut self, d: &Dep) -> Meaning {
+            let message = format!(
+                "Dependency `{}` is not followed; whether it checks access is unknown. \
+                 Name it in [views.access].",
+                d.target
+            );
+            self.at(d, message, DiagnosticSeverity::Gap);
+            Meaning::None
         }
 
         /// A project function: `custom(name)` plus its own access dependencies.
@@ -1835,6 +1844,32 @@ mod tests {
             only(&flow),
             (AccessState::Protected(custom("bearer")), vec![])
         );
+    }
+
+    #[test]
+    fn instances_of_unscanned_classes_are_gaps_and_never_open() {
+        let body = "from ext import RoleChecker\nchecker = RoleChecker('admin')\n";
+        let alone = format!("{body}@app.get('/x')\ndef x(a=Depends(checker)):\n    pass\n");
+        let flow = one(&alone, "");
+        assert_eq!(
+            only(&flow),
+            (AccessState::Undeclared, vec![DiagnosticSeverity::Gap])
+        );
+        assert!(!flow.complete);
+        let both = format!(
+            "{body}@app.get('/x')\ndef x(a=Depends(public), b=Depends(checker)):\n    pass\n"
+        );
+        let flow = one(&both, "public = \"open\"\n");
+        assert_eq!(
+            only(&flow),
+            (
+                AccessState::Protected(Condition::Unknown("checker".into())),
+                vec![DiagnosticSeverity::Gap]
+            )
+        );
+        // the class is listed: its meaning applies to the instance
+        let flow = one(&alone, "RoleChecker = \"role:admin\"\n");
+        assert_eq!(only(&flow), (AccessState::Protected(role("admin")), vec![]));
     }
 
     #[test]
