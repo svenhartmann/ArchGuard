@@ -14,6 +14,7 @@ Files per app and view: <app>.<view>.json (stdout), .err (stderr), .meta.json (e
 timeout). The corpus is only read, never written.
 """
 import argparse
+import collections
 import concurrent.futures as cf
 import hashlib
 import json
@@ -181,20 +182,21 @@ def _name(o):
 
 
 def access_elements(flow):
-    """{(kind, identity): state}. Old shape: absent/null screen, link or action condition is "unknown"
+    """{(kind, identity): Counter(state)}; elements sharing a key are all kept. Old shape: absent/null screen, link or action condition is "unknown"
     (legacy), so a later switch to undeclared is no move; new shape: absent/null is undeclared."""
     new = _flow_is_new(flow)
     null = "undeclared" if new else "unknown"
-    out = {}
+    out = collections.defaultdict(collections.Counter)
     for e in flow.get("endpoints", []):
-        out[("endpoints", f"{e.get('application') or ''} {e['method']} {e['path']}".strip())] = _state(e.get("access"), "undeclared")
+        out[("endpoints", f"{e.get('application') or ''} {e['method']} {e['path']}".strip())][_state(e.get("access"), "undeclared")] += 1
     for e in flow.get("screens", []):
         ident = f"{e.get('application') or ''} {e.get('route') or e['id']}".strip()
-        out[("screens", ident)] = _state(e.get("access"), null)
+        out[("screens", ident)][_state(e.get("access"), null)] += 1
     for k, kind, name in (("transitions", "links", lambda e: f"{_name(e['from'])} -> {_name(e['target'])} [{e.get('trigger') or ''}]"),
                           ("actions", "actions", lambda e: f"{_name(e['screen'])} -> {_name(e['call'])} [{e.get('trigger') or ''}]")):
         for e in flow.get(k, []):
-            out[(kind, name(e))] = _state(e["access"] if "access" in e else e.get("condition"), null)
+            out[(kind, name(e))][_state(e["access"] if "access" in e else e.get("condition"), null)] += 1
+    assert sum(sum(c.values()) for c in out.values()) == sum(len(flow.get(k, [])) for k in ("endpoints", "screens", "transitions", "actions"))
     return out
 
 
@@ -209,10 +211,10 @@ def access_moves(base, head):
     for app in sorted(set(base) | set(head)):
         b = access_elements(base[app]) if app in base else {}
         h = access_elements(head[app]) if app in head else {}
-        counts[app] = {k: tuple({s: sum(1 for (kk, _), v in e.items() if kk == k and v == s) for s in STATES} for e in (b, h)) for k in KINDS}
-        bad += [(app, kind, ident) for e in (b, h) for (kind, ident), v in sorted(e.items()) if v == "unrecognised"]
-        moves += [(app, kind, ident, b.get((kind, ident), "absent")) for (kind, ident), v in sorted(h.items())
-                  if v == "open" and b.get((kind, ident)) != "open"]
+        counts[app] = {k: tuple({s: sum(c[s] for (kk, _), c in e.items() if kk == k) for s in STATES} for e in (b, h)) for k in KINDS}
+        bad += [(app, kind, ident, c["unrecognised"]) for e in (b, h) for (kind, ident), c in sorted(e.items()) if c["unrecognised"]]
+        moves += [(app, kind, ident, dict(b.get((kind, ident), {})) or "absent", dict(c)) for (kind, ident), c in sorted(h.items())
+                  if c["open"] > b.get((kind, ident), {}).get("open", 0)]
     return counts, moves, sorted(set(bad))
 
 
@@ -222,10 +224,10 @@ def cmd_access_diff(a):
         deltas = [f"{k}:" + ",".join(f"{s[0].upper()}{h[s] - b[s]:+d}" for s in STATES if h[s] != b[s])
                   for k, (b, h) in kinds.items() if b != h]
         print(f"{app}: " + ("  ".join(deltas) or "no change"))
-    for app, kind, ident, was in moves:
-        print(f"TOWARDS OPEN {app} {kind} {ident} ({was} -> open)")
-    for app, kind, ident in bad:
-        print(f"UNRECOGNISED access value {app} {kind} {ident}")
+    for app, kind, ident, was, now in moves:
+        print(f"TOWARDS OPEN {app} {kind} {ident} (base {was} -> head {now})")
+    for app, kind, ident, n in bad:
+        print(f"UNRECOGNISED access value {app} {kind} {ident} (x{n})")
     print(f"{len(moves)} element(s) moved towards Open, {len(bad)} unrecognised")
     sys.exit(2 if bad else 1 if moves else 0)  # 2 = cannot trust the result
 

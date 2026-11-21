@@ -50,6 +50,13 @@ class T(unittest.TestCase):
         f = flow("authenticated", "undeclared")
         self.assertEqual(run(f, f), 0)
 
+    def test_shared_key_twin_hides_move(self):
+        ep = lambda a: {"method": "GET", "path": "/a", "access": a}
+        base = flow(extra={"endpoints": [ep("open"), ep({"protected": COND})]})
+        head = flow(extra={"endpoints": [ep("open"), ep("open")]})
+        self.assertEqual(run(base, head), 1)
+        self.assertEqual(run(base, base), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
