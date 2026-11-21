@@ -4,6 +4,7 @@
 //! `compare_ui.rs` shows it.
 
 pub mod diff;
+pub mod filter;
 pub mod git;
 mod packages;
 #[cfg(test)]

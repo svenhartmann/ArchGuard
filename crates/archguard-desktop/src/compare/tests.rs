@@ -7,7 +7,12 @@ use std::path::Path;
 use std::process::Command;
 
 use super::diff::{Comparison, Cycle, Status};
-use super::git::{Target, preselect, refs, run};
+use super::git::{Target, preselect, refs, run as run_with};
+use std::sync::atomic::AtomicBool;
+
+fn run(root: &Path, from: &str, to: &Target) -> Result<Comparison, String> {
+    run_with(root, from, to, &AtomicBool::new(false))
+}
 
 pub(crate) fn git(root: &Path, args: &[&str]) {
     let out = Command::new("git")
@@ -213,4 +218,18 @@ fn preselection_falls_back_to_master_and_the_index() {
     assert_eq!((master.from, master.to), (1, Some(0)));
     let detached = preselect(names(&["dev"]), None);
     assert_eq!((detached.from, detached.to), (0, None));
+}
+
+#[test]
+fn a_set_cancel_flag_stops_the_comparison_with_an_error() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    repo(dir.path());
+    let err = run_with(
+        dir.path(),
+        "main",
+        &Target::Ref("feature".into()),
+        &AtomicBool::new(true),
+    )
+    .expect_err("cancelled");
+    assert!(err.contains(archguard_engine::CANCELLED), "{err}");
 }

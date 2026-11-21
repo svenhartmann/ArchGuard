@@ -57,3 +57,12 @@ msgstr "Keine Architekturänderung zwischen {} und {}"
 
 msgid "Packages: +{} / −{} · relations: +{} / −{} · {} with other evidence · cycles: {} new, {} removed"
 msgstr "Pakete: +{} / −{} · Beziehungen: +{} / −{} · {} mit anderen Belegen · Zyklen: {} neu, {} entfallen"
+
+msgid "Show files"
+msgstr "Dateien anzeigen"
+
+msgid "Hide files"
+msgstr "Dateien ausblenden"
+
+msgid "Filter packages and files"
+msgstr "Pakete und Dateien filtern"
