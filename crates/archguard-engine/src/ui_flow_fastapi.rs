@@ -311,6 +311,8 @@ mod model {
         Security,
         /// A parameter annotation that may be an `Annotated` alias.
         Annotation,
+        /// `dependencies=NAME`: a variable (or expression) holding the list.
+        Listed,
     }
 
     pub(super) struct Dep {
@@ -336,7 +338,8 @@ mod model {
         Alias(Vec<Dep>),
         Func(Vec<Dep>),
         Scheme {
-            auto_error: bool,
+            /// `None`: `auto_error=` is not a literal.
+            auto_error: Option<bool>,
         },
         Str(String),
         Class(HashMap<String, String>),
@@ -590,7 +593,8 @@ mod model {
         }
         let (callee, j) = dotted(&src.b, rhs.0);
         let last = callee.rsplit('.').next().unwrap_or("");
-        if last == "Annotated" && src.b.get(skip_ws(&src.b, j)) == Some(&b'[') {
+        let annotated = last == "Annotated" && src.b.get(skip_ws(&src.b, j)) == Some(&b'[');
+        if annotated || (indent == 0 && plain_list(src, rhs)) {
             return Some(Def::Alias(deps_in(src, file, rhs)));
         }
         let (callee, open) = src.call(rhs)?;
@@ -603,13 +607,25 @@ mod model {
                 at: rhs.0,
             },
             s if SCHEMES.contains(&s) => Def::Scheme {
-                auto_error: src
-                    .kwarg(&parts, "auto_error")
-                    .is_none_or(|v| src.text(v) != "False"),
+                auto_error: auto_error(src, &parts),
             },
             _ if indent == 0 => Def::Instance(callee),
             _ => return None,
         })
+    }
+
+    /// `[…]` and nothing else.
+    fn plain_list(src: &Src, (a, e): (usize, usize)) -> bool {
+        src.b[a] == b'[' && src.close(a) == Some(e - 1)
+    }
+
+    /// `auto_error=`: `None` when it is not a literal.
+    fn auto_error(src: &Src, parts: &[(usize, usize)]) -> Option<bool> {
+        match src.kwarg(parts, "auto_error").map(|v| src.text(v)) {
+            None | Some("True") => Some(true),
+            Some("False") => Some(false),
+            _ => None,
+        }
     }
 
     fn val(src: &Src, (a, e): (usize, usize)) -> Val {
@@ -621,8 +637,15 @@ mod model {
     }
 
     fn deps_kwarg(src: &Src, file: usize, parts: &[(usize, usize)]) -> Vec<Dep> {
-        src.kwarg(parts, "dependencies")
-            .map_or_else(Vec::new, |v| deps_in(src, file, v))
+        let Some(v) = src.kwarg(parts, "dependencies") else {
+            return Vec::new();
+        };
+        let mut deps = deps_in(src, file, v);
+        // Anything but a plain list may hold more than the calls found in it.
+        if !plain_list(src, v) {
+            deps.push(Dep::new(file, v.0, Kind::Listed, src.text(v).to_string()));
+        }
+        deps
     }
 
     /// A function's parameter dependencies, annotations included.
@@ -992,9 +1015,21 @@ mod access {
 
         /// All of `deps`: their conditions, else `open` when one is listed open.
         pub(super) fn deps<'d>(&mut self, deps: impl IntoIterator<Item = &'d Dep>) -> Meaning {
-            let (mut conds, mut open) = (Vec::new(), false);
+            let (mut conds, mut open, mut dropped) = (Vec::new(), false, None);
             for d in deps {
-                match self.dep(d) {
+                let before = self.diags.len();
+                let m = self.dep(d);
+                // A dependency dropped with a gap must never let `open` win.
+                if matches!(m, Meaning::None)
+                    && self.diags[before..]
+                        .iter()
+                        .any(|g| g.severity == DiagnosticSeverity::Gap)
+                {
+                    dropped.get_or_insert_with(|| {
+                        d.target.rsplit('.').next().unwrap_or("").to_string()
+                    });
+                }
+                match m {
                     Meaning::Cond(c) => conds.push(c),
                     Meaning::Open => open = true,
                     Meaning::None => {}
@@ -1002,7 +1037,10 @@ mod access {
             }
             match (conds.is_empty(), open) {
                 (false, _) => Meaning::Cond(all(conds)),
-                (true, true) => Meaning::Open,
+                (true, true) => match dropped {
+                    Some(n) => Meaning::Cond(Condition::Unknown(n)),
+                    None => Meaning::Open,
+                },
                 (true, false) => Meaning::None,
             }
         }
@@ -1016,6 +1054,21 @@ mod access {
                         _ => Meaning::None,
                     },
                     _ => Meaning::None,
+                };
+            }
+            if d.kind == Kind::Listed {
+                return match p.resolve(d.file, &d.target) {
+                    Some(Res::Def(f, n)) if matches!(p.def(f, &n), Some(Def::Alias(_))) => {
+                        let Some(Def::Alias(deps)) = p.def(f, &n) else {
+                            return Meaning::None;
+                        };
+                        self.deps(deps)
+                    }
+                    _ => {
+                        let c =
+                            self.unknown(d, &d.target, "it is not a literal list of dependencies");
+                        Meaning::Cond(c)
+                    }
                 };
             }
             let name = d.target.rsplit('.').next().unwrap_or("").to_string();
@@ -1047,16 +1100,21 @@ mod access {
                     "Dependency factory `{name}(…)` is not followed; whether it checks access is \
                      unknown. Name it in [views.access]."
                 );
-                self.at(d, message, DiagnosticSeverity::Note);
+                self.at(d, message, DiagnosticSeverity::Gap);
                 return Meaning::None;
             }
             match p.resolve(d.file, &d.target) {
                 Some(Res::Def(f, n)) => match p.def(f, &n) {
                     Some(Def::Func(_)) => self.func(f, &n),
-                    Some(Def::Scheme { auto_error: true }) => {
-                        Meaning::Cond(Condition::Authenticated)
+                    Some(Def::Scheme {
+                        auto_error: Some(true),
+                    }) => Meaning::Cond(Condition::Authenticated),
+                    Some(Def::Scheme {
+                        auto_error: Some(false),
+                    }) => Meaning::Cond(Condition::Custom(name.into())),
+                    Some(Def::Scheme { auto_error: None }) => {
+                        Meaning::Cond(self.unknown(d, name, "auto_error is not a literal"))
                     }
-                    Some(Def::Scheme { .. }) => Meaning::Cond(Condition::Custom(name.into())),
                     _ => Meaning::None,
                 },
                 Some(_) => Meaning::None,
@@ -1066,7 +1124,7 @@ mod access {
                          unknown. Name it in [views.access].",
                         d.target
                     );
-                    self.at(d, message, DiagnosticSeverity::Note);
+                    self.at(d, message, DiagnosticSeverity::Gap);
                     Meaning::None
                 }
             }
@@ -1598,11 +1656,11 @@ mod tests {
             ]
         );
         let notes = vec![
-            ("main.py".to_string(), 14, DiagnosticSeverity::Note),
-            ("main.py".to_string(), 17, DiagnosticSeverity::Note),
+            ("main.py".to_string(), 14, DiagnosticSeverity::Gap),
+            ("main.py".to_string(), 17, DiagnosticSeverity::Gap),
         ];
         assert_eq!(gaps(&flow), notes);
-        assert!(flow.complete);
+        assert!(!flow.complete);
 
         let flow = run(
             SCOPES,
@@ -1650,12 +1708,133 @@ mod tests {
             vec![
                 at(5, DiagnosticSeverity::Gap),
                 at(10, DiagnosticSeverity::Gap),
-                at(13, DiagnosticSeverity::Note),
+                at(13, DiagnosticSeverity::Gap),
                 at(16, DiagnosticSeverity::Gap),
                 at(20, DiagnosticSeverity::Gap),
             ]
         );
         assert!(!flow.complete);
+    }
+
+    const CUR: &str = "from fastapi import FastAPI, APIRouter, Depends\n\
+         from fastapi.security import OAuth2PasswordBearer, HTTPBearer\n\
+         oauth2 = OAuth2PasswordBearer(tokenUrl='t')\n\
+         def cur(token: str = Depends(oauth2)):\n    pass\n\
+         def public():\n    pass\napp = FastAPI()\n";
+
+    fn only(flow: &UiFlow) -> (AccessState, Vec<DiagnosticSeverity>) {
+        let sev = flow.diagnostics.iter().map(|d| d.severity).collect();
+        (flow.endpoints[0].access.clone(), sev)
+    }
+
+    fn one(body: &str, access: &str) -> UiFlow {
+        run(&[("main.py", &format!("{CUR}{body}"))], access)
+    }
+
+    #[test]
+    fn py36_7_dependencies_name_follows_a_literal_list_else_unknown() {
+        let user = all(vec![Condition::Authenticated, custom("cur")]);
+        let flow = one(
+            "COMMON = [Depends(cur)]\n@app.get('/x', dependencies=COMMON)\ndef x():\n    pass\n",
+            "",
+        );
+        assert_eq!(only(&flow), (user, vec![]));
+        let flow = one(
+            "COMMON = build()\n@app.get('/x', dependencies=COMMON)\ndef x():\n    pass\n",
+            "",
+        );
+        assert_eq!(
+            only(&flow),
+            (
+                AccessState::Protected(Condition::Unknown("COMMON".into())),
+                vec![DiagnosticSeverity::Gap]
+            )
+        );
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn py36_8_unlisted_factory_is_a_gap_not_a_note() {
+        let body = "from ext import RoleChecker\n@app.get('/x')\n\
+                    def x(u=Depends(RoleChecker('admin'))):\n    pass\n";
+        let flow = one(body, "");
+        assert_eq!(
+            only(&flow),
+            (AccessState::Undeclared, vec![DiagnosticSeverity::Gap])
+        );
+        assert!(!flow.complete);
+        let flow = one(body, "RoleChecker = \"role:$arg\"\n");
+        assert_eq!(only(&flow), (AccessState::Protected(role("admin")), vec![]));
+    }
+
+    #[test]
+    fn py36_9_unresolved_dependency_next_to_a_guard_is_a_gap() {
+        let flow = one(
+            "from extlib import verify\n@app.get('/x')\n\
+             def x(a=Depends(cur), b=Depends(verify)):\n    pass\n",
+            "",
+        );
+        assert_eq!(
+            only(&flow),
+            (
+                all(vec![Condition::Authenticated, custom("cur")]),
+                vec![DiagnosticSeverity::Gap]
+            )
+        );
+        assert!(!flow.complete);
+        assert!(flow.diagnostics[0].message.contains("verify"));
+    }
+
+    #[test]
+    fn py36_11_open_marker_never_hides_a_dropped_unknown() {
+        let route = "@app.get('/x')\ndef x(a=Depends(public)):\n    pass\n";
+        let flow = one(route, "public = \"open\"\n");
+        assert_eq!(only(&flow), (AccessState::Open, vec![]));
+        let flow = one(
+            "@app.get('/x')\ndef x(a=Depends(public), b=Depends(cur)):\n    pass\n",
+            "public = \"open\"\n",
+        );
+        assert_eq!(
+            only(&flow).0,
+            all(vec![Condition::Authenticated, custom("cur")])
+        );
+        let flow = one(
+            "from ext import verify\n@app.get('/x')\n\
+             def x(a=Depends(public), b=Depends(verify)):\n    pass\n",
+            "public = \"open\"\n",
+        );
+        assert_eq!(
+            only(&flow),
+            (
+                AccessState::Protected(Condition::Unknown("verify".into())),
+                vec![DiagnosticSeverity::Gap]
+            )
+        );
+    }
+
+    #[test]
+    fn auto_error_with_a_non_literal_is_unknown() {
+        let flow = one(
+            "FLAG = get_flag()\nbearer = HTTPBearer(auto_error=FLAG)\n\
+             @app.get('/x')\ndef x(a=Depends(bearer)):\n    pass\n",
+            "",
+        );
+        assert_eq!(
+            only(&flow),
+            (
+                AccessState::Protected(Condition::Unknown("bearer".into())),
+                vec![DiagnosticSeverity::Gap]
+            )
+        );
+        let flow = one(
+            "bearer = HTTPBearer(auto_error=False)\n\
+             @app.get('/x')\ndef x(a=Depends(bearer)):\n    pass\n",
+            "",
+        );
+        assert_eq!(
+            only(&flow),
+            (AccessState::Protected(custom("bearer")), vec![])
+        );
     }
 
     #[test]
