@@ -1925,6 +1925,436 @@ mod spring {
 
     pub(super) use chain::central_rules;
 
+    /// Which scoping-name calls are rules of the authorization block.
+    mod rule_calls {
+        use super::super::lex::{skip_ws, skip_ws_back};
+        use super::super::*;
+        use super::chain_span;
+
+        /// `(parameter, open, close)` of every authorization lambda.
+        pub(super) type Lambdas = [(String, usize, usize)];
+
+        fn ident_before(src: &Source, end: usize) -> (usize, &str) {
+            let b = src.bytes();
+            let start = end
+                - b[..end]
+                    .iter()
+                    .rev()
+                    .take_while(|c| lex::is_ident(**c))
+                    .count();
+            (start, &src.text[start..end])
+        }
+
+        /// The link of a receiver chain that ends before `dot`: `(start, name,
+        /// is a call)`; `None` when it is no plain `name` / `name(…)`.
+        fn link_before(src: &Source, dot: usize) -> Option<(usize, &str, bool)> {
+            let b = src.bytes();
+            let end = skip_ws_back(b, dot);
+            let call = end > 0 && b[end - 1] == b')';
+            let name_end = if call {
+                let open = (0..end).rev().find(|&k| src.pair(k) == Some(end - 1));
+                skip_ws_back(b, open.filter(|&k| b[k] == b'(')?)
+            } else {
+                end
+            };
+            let (start, name) = ident_before(src, name_end);
+            (!name.is_empty()).then_some((start, name, call))
+        }
+
+        /// Whether the receiver chain ending before the `.` at `dot` starts at an
+        /// authorization lambda's parameter or at an `authorizeRequests()` /
+        /// `authorizeHttpRequests()` call, with no `.and()` in between. Anything
+        /// unclear (cast, index, `?.`, unbalanced) is not rooted.
+        fn rooted_in_rules(src: &Source, mut dot: usize, lambdas: &Lambdas) -> bool {
+            let b = src.bytes();
+            while let Some((start, name, call)) = link_before(src, dot) {
+                // Only the empty-parentheses form returns the rule registry; the
+                // lambda form returns the HttpSecurity.
+                let open = skip_ws(b, start + name.len());
+                let empty = src
+                    .pair(open)
+                    .is_some_and(|c| src.text[open + 1..c].trim().is_empty());
+                match (call, name) {
+                    (true, "and") => return false,
+                    (true, "authorizeRequests" | "authorizeHttpRequests") if empty => return true,
+                    _ => {}
+                }
+                let before = skip_ws_back(b, start);
+                if before == 0 || b[before - 1] != b'.' {
+                    let param = |&(ref p, f, t): &(String, usize, usize)| {
+                        p == name && f <= start && start < t
+                    };
+                    return !call && lambdas.iter().any(param);
+                }
+                dot = before - 1;
+            }
+            false
+        }
+
+        /// A bare call (static factory) is legitimate only inside the arguments of
+        /// a rule call.
+        fn in_rule_args(src: &Source, s: usize, lambdas: &Lambdas) -> bool {
+            let b = src.bytes();
+            let mut at = s;
+            while let Some(open) = chain_span::enclosing_open(src, at) {
+                let (start, name) = ident_before(src, skip_ws_back(b, open));
+                let before = skip_ws_back(b, start);
+                let rule = chain_span::SCOPING.contains(&name)
+                    && !name.starts_with("securityMatcher")
+                    && before > 0
+                    && b[before - 1] == b'.'
+                    && rooted_in_rules(src, before - 1, lambdas);
+                if rule {
+                    return true;
+                }
+                at = open;
+            }
+            false
+        }
+
+        /// Whether the scoping-name call starting at `s` is a rule call.
+        /// `securityMatcher(s)` never is.
+        pub(super) fn is_rule_call(src: &Source, s: usize, lambdas: &Lambdas) -> bool {
+            let b = src.bytes();
+            if src.text[s..].starts_with("securityMatcher") {
+                return false;
+            }
+            let q = skip_ws_back(b, s);
+            if q > 0 && b[q - 1] == b'.' {
+                return rooted_in_rules(src, q - 1, lambdas);
+            }
+            in_rule_args(src, s, lambdas)
+        }
+    }
+
+    /// Where a call chain ends in the source text.
+    mod chain_span {
+        use super::super::lex::{skip_ws, skip_ws_back};
+        use super::super::*;
+
+        /// The identifier word ending at `q` (exclusive), possibly empty.
+        pub(super) fn word_before(src: &Source, q: usize) -> &str {
+            let b = src.bytes();
+            let start = q - b[..q]
+                .iter()
+                .rev()
+                .take_while(|c| lex::is_ident(**c))
+                .count();
+            &src.text[start..q]
+        }
+
+        /// Whether the name at `s..e` is a call or method reference. Only a
+        /// declaration or a constructor is not: Kotlin `fun [Recv.]name(`, Java
+        /// `name(…)` followed by a body (`{` or `throws`), and `new name(`. When
+        /// unsure it is a call (conservative).
+        pub(super) fn is_call(src: &Source, s: usize, e: usize) -> bool {
+            let b = src.bytes();
+            let q = skip_ws_back(b, s);
+            if q >= 2 && &b[q - 2..q] == b"::" {
+                return true;
+            }
+            let open = skip_ws(b, e);
+            if b.get(open) != Some(&b'(') || word_before(src, q) == "new" {
+                return false;
+            }
+            if src.rel.ends_with(".kt") {
+                let mut r = q;
+                if q > 0 && b[q - 1] == b'.' {
+                    // the receiver type of `fun Foo.name(`
+                    while r > 0 && !b[r - 1].is_ascii_whitespace() {
+                        r -= 1;
+                    }
+                }
+                return word_before(src, skip_ws_back(b, r)) != "fun";
+            }
+            let body = src.pair(open).map(|c| skip_ws(b, c + 1));
+            !body.is_some_and(|k| b.get(k) == Some(&b'{') || src.text[k..].starts_with("throws"))
+        }
+
+        /// The innermost `(` around `at` that is still open, if any.
+        pub(super) fn enclosing_open(src: &Source, at: usize) -> Option<usize> {
+            let b = src.bytes();
+            let mut depth = 0;
+            for k in (0..at).rev() {
+                match b[k] {
+                    b')' => depth += 1,
+                    b'(' if depth == 0 => return Some(k),
+                    b'(' => depth -= 1,
+                    b';' | b'{' | b'}' => return None,
+                    _ => {}
+                }
+            }
+            None
+        }
+
+        /// Names of the `HttpSecurity` parameters (`HttpSecurity http`, `http: HttpSecurity`).
+        pub(super) fn http_vars(src: &Source) -> Vec<String> {
+            let mut vars = Vec::new();
+            for p in lex::words(&src.text, "HttpSecurity") {
+                let Some(open) = enclosing_open(src, p) else {
+                    continue;
+                };
+                let Some(close) = src.pair(open) else {
+                    continue;
+                };
+                for part in lex::split_top(&src.text[open + 1..close]) {
+                    if lex::words(part, "HttpSecurity").next().is_none() {
+                        continue;
+                    }
+                    let name = match part.split_once(':') {
+                        Some((n, _)) => n.split_whitespace().last(),
+                        None => part.split_whitespace().last(),
+                    };
+                    vars.extend(name.map(str::to_owned));
+                }
+            }
+            vars.sort();
+            vars.dedup();
+            vars
+        }
+
+        /// Whole identifiers that scope a security chain when called outside the
+        /// authorization block (`ignoringAntMatchers` and the like do not).
+        pub(super) const SCOPING: [&str; 10] = [
+            "antMatcher",
+            "antMatchers",
+            "mvcMatcher",
+            "mvcMatchers",
+            "regexMatcher",
+            "regexMatchers",
+            "requestMatcher",
+            "requestMatchers",
+            "securityMatcher",
+            "securityMatchers",
+        ];
+        /// Kotlin scope functions and Spring configurer calls: they take or
+        /// provide the `HttpSecurity` as `this`/`it`/an argument.
+        const SCOPE_FUNS: [&str; 5] = ["apply", "with", "also", "let", "run"];
+
+        fn in_ranges(ranges: &[(usize, usize)], at: usize) -> bool {
+            ranges.iter().any(|&(from, to)| from <= at && at < to)
+        }
+
+        pub(super) fn ident_end(src: &Source, s: usize) -> usize {
+            s + src.bytes()[s..]
+                .iter()
+                .take_while(|c| lex::is_ident(**c))
+                .count()
+        }
+
+        /// Offset of the first call of a [`SCOPING`] name that is no rule call.
+        pub(super) fn scoping_call(
+            src: &Source,
+            lambdas: &super::rule_calls::Lambdas,
+        ) -> Option<usize> {
+            let b = src.bytes();
+            (0..b.len()).find(|&s| {
+                let e = ident_end(src, s);
+                (s == 0 || !lex::is_ident(b[s - 1]))
+                    && SCOPING.contains(&&src.text[s..e])
+                    && is_call(src, s, e)
+                    && !super::rule_calls::is_rule_call(src, s, lambdas)
+            })
+        }
+
+        /// `name.ident` / `name?.ident` right after `end`: the value is only a receiver.
+        fn is_receiver(src: &Source, end: usize) -> bool {
+            let b = src.bytes();
+            let mut k = skip_ws(b, end);
+            if b.get(k) == Some(&b'?') {
+                k += 1;
+            }
+            b.get(k) == Some(&b'.') && b.get(skip_ws(b, k + 1)).is_some_and(|c| lex::is_ident(*c))
+        }
+
+        /// The parameter declaration itself: `HttpSecurity http` or `http: HttpSecurity`.
+        fn is_declaration(src: &Source, p: usize, end: usize) -> bool {
+            let b = src.bytes();
+            let typed = b.get(skip_ws(b, end)) == Some(&b':')
+                && src.text[skip_ws(b, end) + 1..]
+                    .trim_start()
+                    .starts_with("HttpSecurity");
+            typed || word_before(src, skip_ws_back(b, p)) == "HttpSecurity"
+        }
+
+        /// The `{ … }` of `with(http) { … }` or `http.apply { … }` (any [`SCOPE_FUNS`]).
+        fn scope_block(src: &Source, p: usize, end: usize) -> Option<(usize, usize)> {
+            let b = src.bytes();
+            let q = skip_ws_back(b, p);
+            let brace = if q > 0 && b[q - 1] == b'(' {
+                let close = skip_ws(b, end);
+                let named = word_before(src, skip_ws_back(b, q - 1)) == "with";
+                (named && b.get(close) == Some(&b')')).then(|| skip_ws(b, close + 1))?
+            } else {
+                let dot = skip_ws(b, end);
+                let s = skip_ws(b, dot + 1);
+                let e = ident_end(src, s);
+                let known = b.get(dot) == Some(&b'.') && SCOPE_FUNS.contains(&&src.text[s..e]);
+                known.then(|| skip_ws(b, e))?
+            };
+            let close = (b.get(brace) == Some(&b'{'))
+                .then(|| src.pair(brace))
+                .flatten()?;
+            Some((brace, close))
+        }
+
+        /// Spans of string and char literals.
+        fn literal_spans(src: &Source) -> Vec<(usize, usize)> {
+            let b = src.bytes();
+            let (mut spans, mut j) = (Vec::new(), 0);
+            while j < b.len() {
+                match literal_end(b, j) {
+                    Some(e) => {
+                        spans.push((j, e));
+                        j = e.max(j + 1);
+                    }
+                    None => j += 1,
+                }
+            }
+            spans
+        }
+
+        /// Whether `p` lies in a string literal that cannot use the variable: a
+        /// Kotlin string with a `$` template (`"$x"`, `"${…}"`) is not plain.
+        fn in_plain_string(src: &Source, strings: &[(usize, usize)], p: usize) -> bool {
+            let template = |t: &str| {
+                t.as_bytes()
+                    .windows(2)
+                    .any(|w| w[0] == b'$' && (w[1] == b'{' || lex::is_ident(w[1])))
+            };
+            let kotlin = src.rel.ends_with(".kt");
+            (strings.iter().find(|&&(f, t)| f <= p && p < t))
+                .is_some_and(|&(f, t)| !(kotlin && template(&src.text[f..t])))
+        }
+
+        /// An occurrence of the `HttpSecurity` variable that is not a receiver, a
+        /// declaration or the `with(http) { }` scope: it is passed, aliased or cast.
+        /// Occurrences in string literals (`"http://…"`) are no uses.
+        fn var_hand_off(src: &Source, inside: &[(usize, usize)], vars: &[String]) -> Option<usize> {
+            let strings = literal_spans(src);
+            vars.iter().find_map(|var| {
+                lex::words(&src.text, var).find(|&p| {
+                    let end = p + var.len();
+                    !in_ranges(inside, p)
+                        && !in_plain_string(src, &strings, p)
+                        && !is_declaration(src, p, end)
+                        && !is_receiver(src, end)
+                        && scope_block(src, p, end).is_none()
+                })
+            })
+        }
+
+        /// A `.apply(…)`, `.with(…)`, `.also(…)`, `.let(…)` or `.run(…)` call with
+        /// parentheses: the configurer or function is unknown here.
+        fn call_hand_off(src: &Source, inside: &[(usize, usize)]) -> Option<usize> {
+            let b = src.bytes();
+            (0..b.len()).filter(|&i| b[i] == b'.').find_map(|i| {
+                let s = skip_ws(b, i + 1);
+                let e = ident_end(src, s);
+                let call =
+                    SCOPE_FUNS.contains(&&src.text[s..e]) && b.get(skip_ws(b, e)) == Some(&b'(');
+                (call && !in_ranges(inside, s)).then_some(s)
+            })
+        }
+
+        /// `this`/`it` inside a scope block of the variable that is not a receiver.
+        fn block_hand_off(
+            src: &Source,
+            inside: &[(usize, usize)],
+            blocks: &[(usize, usize)],
+        ) -> Option<usize> {
+            blocks.iter().find_map(|&(from, to)| {
+                ["this", "it"].iter().find_map(|kw| {
+                    lex::words(&src.text[from..to], kw)
+                        .map(|p| p + from)
+                        .find(|&at| !in_ranges(inside, at) && !is_receiver(src, at + kw.len()))
+                })
+            })
+        }
+
+        /// Offset where the `HttpSecurity` leaves the configure method / bean
+        /// outside `inside`, so rules elsewhere cannot be seen.
+        fn hand_off(src: &Source, inside: &[(usize, usize)]) -> Option<usize> {
+            let vars = http_vars(src);
+            let blocks: Vec<(usize, usize)> = (vars.iter())
+                .flat_map(|v| lex::words(&src.text, v).map(move |p| (p, v.len())))
+                .filter_map(|(p, len)| scope_block(src, p, p + len))
+                .collect();
+            var_hand_off(src, inside, &vars)
+                .or_else(|| call_hand_off(src, inside))
+                .or_else(|| block_hand_off(src, inside, &blocks))
+        }
+
+        /// Why the project's chain cannot be read as global, if so: several
+        /// configurations; a scoping call in any file that mentions `HttpSecurity`
+        /// (configurers, extensions, helpers); or the `HttpSecurity` handed out of
+        /// the configure method / bean of `files`.
+        pub(super) fn why_not_evaluated(
+            sources: &[Source],
+            files: &[&Source],
+            chains: usize,
+        ) -> Option<String> {
+            if chains > 1 {
+                return Some("Several security configurations".into());
+            }
+            let lambdas = |s: &Source| super::chain::auth_lambdas(s);
+            let at = |s: &Source, p: usize| format!("{}:{}", s.rel, s.line(p));
+            let mentions = |s: &&Source| lex::words(&s.text, "HttpSecurity").next().is_some();
+            let scoped = (sources.iter())
+                .filter(|s| !s.rel.ends_with(".cs"))
+                .filter(mentions)
+                .find_map(|s| scoping_call(s, &lambdas(s)).map(|p| at(s, p)));
+            if let Some(site) = scoped {
+                return Some(format!("A scoping matcher at {site}"));
+            }
+            let handed = files
+                .iter()
+                .find_map(|s| hand_off(s, &[]).map(|p| at(s, p)));
+            handed.map(|site| format!("Code at {site} hands the HttpSecurity out"))
+        }
+
+        /// End of the call chain starting at `from`: the `;`, or (Kotlin has none) a
+        /// line end outside brackets whose next code line does not continue the
+        /// chain with a leading `.` (comment lines skipped; a trailing `.` continues).
+        pub(super) fn chain_end(src: &Source, from: usize) -> usize {
+            let b = src.bytes();
+            let end = minimal::statement_end(src, from);
+            let mut j = from;
+            while j < end {
+                if let Some(e) = literal_end(b, j) {
+                    j = e;
+                    continue;
+                }
+                match b[j] {
+                    b'(' | b'[' | b'{' => j = src.pair(j).map_or(j + 1, |c| c + 1),
+                    b'\n' if !continues(src, j) => return j,
+                    _ => j += 1,
+                }
+            }
+            end
+        }
+
+        /// Whether the chain goes on after the line end at `nl`.
+        fn continues(src: &Source, nl: usize) -> bool {
+            let b = src.bytes();
+            let last = skip_ws_back(b, nl);
+            if last > 0 && b[last - 1] == b'.' {
+                return true;
+            }
+            let mut k = skip_ws(b, nl);
+            loop {
+                let rest = &src.text[k.min(b.len())..];
+                if rest.starts_with("//") {
+                    k = skip_ws(b, k + rest.find('\n').unwrap_or(rest.len()));
+                } else if rest.starts_with("/*") {
+                    k = skip_ws(b, k + rest.find("*/").map_or(rest.len(), |e| e + 2));
+                } else {
+                    return b.get(k) == Some(&b'.') || k >= b.len();
+                }
+            }
+        }
+    }
+
     /// Central rules of a `SecurityFilterChain` (`authorizeHttpRequests` /
     /// `authorizeRequests`), applied to the project's endpoints from index
     /// `first` on.
@@ -1944,11 +2374,44 @@ mod spring {
     /// (non-literal matcher or other grant), lies inside `if`/`else`, or
     /// matches only some requests (`/api/users/me` against
     /// `/api/users/{login}`, a method rule against `ANY`). No matching rule:
-    /// unchanged. Several chains or a `securityMatcher` are not evaluated.
+    /// unchanged. Legacy `configure(HttpSecurity)` of classes extending
+    /// `WebSecurityConfigurerAdapter` / `ResourceServerConfigurerAdapter` is read
+    /// the same way (a class without readable rules is a gap).
+    ///
+    /// Not evaluated (one note, endpoints keep their annotation access):
+    /// - several chains or adapters;
+    /// - a call or method reference of `antMatcher(s)`, `mvcMatcher(s)`,
+    ///   `regexMatcher(s)`, `requestMatcher(s)` or `securityMatcher(s)` outside
+    ///   the authorization block (and outside `configure(WebSecurity)`) in ANY
+    ///   file that mentions `HttpSecurity` (configurers, extensions, helpers);
+    ///   declarations and `new` are no calls;
+    /// - the `HttpSecurity` handed out of the configure method / bean: its
+    ///   variable used other than as a receiver (`http.x`), declaration or
+    ///   `with(http) { }`; `this`/`it` in `with(http)`, `http.apply/let/also/run
+    ///   { }` blocks used other than as a receiver; any `.apply(…)`, `.with(…)`,
+    ///   `.also(…)`, `.let(…)` or `.run(…)` call with parentheses (a configurer).
+    ///
+    /// A scoping-name call is a rule only if its dotted receiver chain (balanced
+    /// calls, newlines allowed) is rooted at the parameter of an authorization
+    /// lambda or at an `authorizeRequests()`/`authorizeHttpRequests()` call, with
+    /// no `.and()` in between; a bare call (static factory) only inside the
+    /// arguments of such a rule call; `securityMatcher(s)` never. Unclear receiver
+    /// chains are not rules. There are no ranges or statement ends involved.
+    /// A scoping name or hand-off anywhere else counts, also in
+    /// `configure(WebSecurity)`, a `WebSecurityCustomizer` or the arguments of
+    /// `ignoring…Matcher(s)(…)`. Accepted conservative limit: apps using
+    /// `web.ignoring().requestMatchers(..)`, `WebSecurityCustomizer`,
+    /// `csrf().ignoring…Matchers(..)` with matcher calls, or `configure(WebSecurity)`
+    /// with matchers are "not evaluated". Other statements of an authorization
+    /// block still count as uses of the variable. Occurrences of the variable in
+    /// plain string literals are no uses; a Kotlin string with a `$` template is.
+    ///
+    /// Limits: scoping in a file that never mentions `HttpSecurity` is not seen;
+    /// `.apply(`/`.with(`/… count whatever their receiver (conservative).
     mod chain {
         use super::super::lex::{skip_ws, skip_ws_back, split_top, words};
         use super::super::*;
-        use super::role;
+        use super::{role, spel};
 
         const MATCHERS: [&str; 4] = [
             "requestMatchers",
@@ -1983,26 +2446,80 @@ mod spring {
             out: &mut Out,
             first: usize,
         ) {
-            let files: Vec<&Source> = (sources.iter())
-                .filter(|s| !s.rel.ends_with(".cs") && s.text.contains("SecurityFilterChain"))
+            let found: Vec<(&Source, Vec<(String, usize)>)> = (sources.iter())
+                .filter(|s| !s.rel.ends_with(".cs"))
+                .map(|s| (s, adapters(s)))
+                .filter(|(s, a)| !a.is_empty() || s.text.contains("SecurityFilterChain"))
                 .collect();
-            let Some(home) = files.first() else {
+            let files: Vec<&Source> = found.iter().map(|(s, _)| *s).collect();
+            let Some((home, home_adapters)) = found.first() else {
                 return;
             };
-            let at = home.text.find("SecurityFilterChain").unwrap_or(0);
-            let chains: usize = (files.iter())
-                .map(|s| {
-                    words(&s.text, "SecurityFilterChain")
-                        .filter(|p| bean(s, *p))
-                        .count()
+            let at = (home_adapters.first().map(|a| a.1))
+                .or_else(|| home.text.find("SecurityFilterChain"))
+                .unwrap_or(0);
+            let chains: usize = (found.iter())
+                .map(|(s, a)| {
+                    let beans = words(&s.text, "SecurityFilterChain").filter(|p| bean(s, *p));
+                    beans.count() + a.len()
                 })
                 .sum();
-            if chains > 1 || files.iter().any(|s| s.text.contains("securityMatcher")) {
-                let message = "Several SecurityFilterChain beans or a securityMatcher: central rules are not evaluated; endpoints marked undeclared may be protected there.";
-                return out.note(&home.rel, home.line(at), message.into());
+            let why = super::chain_span::why_not_evaluated(sources, &files, chains);
+            if let Some(why) = why {
+                let message = format!(
+                    "{why}: central rules are not evaluated; endpoints marked undeclared may be protected there."
+                );
+                return out.note(&home.rel, home.line(at), message);
             }
             let rules: Vec<Rule> = (files.iter()).flat_map(|s| read(s, index)).collect();
-            for r in &rules {
+            unreadable_classes(&found, index, out);
+            rule_notes(&rules, out);
+            let (changed, partial) = apply(&rules, &mut out.0.endpoints[first..]);
+            for (i, n) in partial {
+                let r = &rules[i];
+                let message = format!(
+                    "Filter chain rule `{}` matches only some requests of {n} endpoint(s) (a path parameter or ANY method); they keep their declared access.",
+                    r.text
+                );
+                out.note(&r.file, r.line, message);
+            }
+            if rules.is_empty() {
+                return;
+            }
+            let source = if found.iter().all(|(_, a)| a.is_empty()) {
+                "Central SecurityFilterChain"
+            } else {
+                "Security configuration"
+            };
+            let message = format!(
+                "{source} rules evaluated: {} rule(s), access of {changed} endpoint(s) changed.",
+                rules.len()
+            );
+            out.note(&home.rel, home.line(at), message);
+        }
+
+        /// A gap per adapter class in a file without any readable rule.
+        fn unreadable_classes(
+            found: &[(&Source, Vec<(String, usize)>)],
+            index: &Index,
+            out: &mut Out,
+        ) {
+            for (s, classes) in found {
+                if classes.is_empty() || !read(s, index).is_empty() {
+                    continue;
+                }
+                for (name, at) in classes {
+                    let message = format!(
+                        "Security configuration `{name}` has no readable `authorizeRequests()` rules; endpoints it protects stay undeclared."
+                    );
+                    out.at(s, *at, message);
+                }
+            }
+        }
+
+        /// A note per rule that is not read completely.
+        fn rule_notes(rules: &[Rule], out: &mut Out) {
+            for r in rules {
                 let why = match (&r.patterns, &r.grant) {
                     (None, _) => "its matcher is not a literal",
                     (_, None) => "its grant is not read",
@@ -2015,20 +2532,6 @@ mod spring {
                 );
                 out.note(&r.file, r.line, message);
             }
-            let (changed, partial) = apply(&rules, &mut out.0.endpoints[first..]);
-            for (i, n) in partial {
-                let r = &rules[i];
-                let message = format!(
-                    "Filter chain rule `{}` matches only some requests of {n} endpoint(s) (a path parameter or ANY method); they keep their declared access.",
-                    r.text
-                );
-                out.note(&r.file, r.line, message);
-            }
-            let message = format!(
-                "Central SecurityFilterChain rules evaluated: {} rule(s), access of {changed} endpoint(s) changed.",
-                rules.len()
-            );
-            out.note(&home.rel, home.line(at), message);
         }
 
         /// Applies the first matching rule to each endpoint; returns how many
@@ -2063,6 +2566,23 @@ mod spring {
             (changed, partial)
         }
 
+        /// Classes extending the legacy Spring Security configurer adapters, as
+        /// `(name, offset)`.
+        fn adapters(src: &Source) -> Vec<(String, usize)> {
+            (decls(src, true).into_iter())
+                .filter(|d| d.class)
+                .filter(|d| {
+                    (d.bases.iter()).any(|b| {
+                        matches!(
+                            b.as_str(),
+                            "WebSecurityConfigurerAdapter" | "ResourceServerConfigurerAdapter"
+                        )
+                    })
+                })
+                .map(|d| (d.name, d.open))
+                .collect()
+        }
+
         /// A `SecurityFilterChain name(` method declaration at `p`.
         fn bean(src: &Source, p: usize) -> bool {
             let b = src.bytes();
@@ -2071,9 +2591,8 @@ mod spring {
             e > s && b.get(skip_ws(b, e)) == Some(&b'(')
         }
 
-        /// The rules of every `authorizeHttpRequests`/`authorizeRequests` call in `src`.
-        fn read(src: &Source, index: &Index) -> Vec<Rule> {
-            let mut rules = Vec::new();
+        /// The `(` of every `authorizeHttpRequests`/`authorizeRequests` call, in order.
+        fn authorize_sites(src: &Source) -> Vec<usize> {
             let b = src.bytes();
             let mut sites: Vec<usize> = ["authorizeHttpRequests", "authorizeRequests"]
                 .iter()
@@ -2084,7 +2603,53 @@ mod spring {
                 })
                 .collect();
             sites.sort();
-            for open in sites {
+            sites
+        }
+
+        /// The text range holding the rules of the `authorize…(` call opening at
+        /// `open`, and whether it is the lambda argument; otherwise the chain
+        /// `authorizeRequests().antMatchers(…)…` up to `.and()` or the statement end.
+        fn block(src: &Source, open: usize) -> Option<(usize, usize, bool)> {
+            let b = src.bytes();
+            let close = src.pair(open)?;
+            let (from, to, lambda) = match src.text[open + 1..close].find("->") {
+                None => (
+                    close + 1,
+                    super::chain_span::chain_end(src, close + 1),
+                    false,
+                ),
+                Some(arrow) => {
+                    let body = skip_ws(b, open + 1 + arrow + 2);
+                    match (b.get(body), src.pair(body)) {
+                        (Some(b'{'), Some(end)) => (body + 1, end, true),
+                        _ => (body, close, true),
+                    }
+                }
+            };
+            // `.and()` returns to the HttpSecurity: what follows is no rule.
+            let end = (calls(src, from, to).into_iter())
+                .find(|c| c.1 == "and")
+                .map_or(to, |c| c.0);
+            Some((from, end, lambda))
+        }
+
+        /// `(parameter, open, close)` of every authorization lambda: its rule calls
+        /// are rooted at the parameter.
+        pub(in super::super) fn auth_lambdas(src: &Source) -> Vec<(String, usize, usize)> {
+            (authorize_sites(src).into_iter())
+                .filter_map(|open| {
+                    let close = src.pair(open)?;
+                    let text = &src.text[open + 1..close];
+                    let head = text[..text.find("->")?].trim().trim_matches(['(', ')']);
+                    Some((head.split_whitespace().last()?.to_owned(), open, close))
+                })
+                .collect()
+        }
+
+        /// The rules of every `authorizeHttpRequests`/`authorizeRequests` call in `src`.
+        fn read(src: &Source, index: &Index) -> Vec<Rule> {
+            let mut rules = Vec::new();
+            for open in authorize_sites(src) {
                 site(src, index, open, &mut rules);
             }
             rules
@@ -2092,26 +2657,13 @@ mod spring {
 
         /// The rules of the `authorize…(` call whose parenthesis opens at `open`.
         fn site(src: &Source, index: &Index, open: usize, rules: &mut Vec<Rule>) {
-            let b = src.bytes();
-            let Some(close) = src.pair(open) else {
+            let Some((from, to, lambda)) = block(src, open) else {
                 return;
-            };
-            let lambda = src.text[open + 1..close].find("->");
-            let (from, to) = match lambda {
-                Some(arrow) => {
-                    let body = skip_ws(b, open + 1 + arrow + 2);
-                    match (b.get(body), src.pair(body)) {
-                        (Some(b'{'), Some(end)) => (body + 1, end),
-                        _ => (body, close),
-                    }
-                }
-                // `authorizeRequests().antMatchers(…)…` up to `.and()` or the statement end.
-                None => (close + 1, minimal::statement_end(src, close + 1)),
             };
             let conditional = conditional(src, open);
             let mut pending: Option<(usize, Vec<String>, Option<Vec<String>>)> = None;
             for (at, name, args) in calls(src, from, to) {
-                if name == "and" && lambda.is_none() {
+                if name == "and" && !lambda {
                     break;
                 }
                 if MATCHERS.contains(&name) || pending.is_none() {
@@ -2235,6 +2787,13 @@ mod spring {
                 "anonymous" => protected(Condition::Not(Box::new(Condition::Authenticated))),
                 "hasRole" | "hasAuthority" | "hasAnyRole" | "hasAnyAuthority" => {
                     roles().map(AccessState::Protected)
+                }
+                "access" => {
+                    let expr = index.text(args)?;
+                    match expr.trim() {
+                        "permitAll" | "permitAll()" => Some(AccessState::Open),
+                        _ => spel(&expr).map(AccessState::Protected),
+                    }
                 }
                 _ => None,
             }
@@ -2459,6 +3018,8 @@ mod spring {
         while i < b.len() {
             let (tok, len) = match b[i] {
                 c if c.is_ascii_whitespace() => (None, 1),
+                // `#oauth2.hasScope('x')`: the OAuth2 expression root; scopes are roles.
+                b'#' if expr[i..].starts_with("#oauth2.") => (None, "#oauth2.".len()),
                 q @ (b'\'' | b'"') => {
                     let end = i + 1 + b[i + 1..].iter().position(|x| *x == q)?;
                     (Some(Tok::Str(expr[i + 1..end].into())), end + 1 - i)
@@ -2542,8 +3103,10 @@ mod spring {
             };
             match (name.as_str(), args.len()) {
                 ("isAuthenticated" | "isFullyAuthenticated", 0) => Some(Condition::Authenticated),
-                ("hasRole" | "hasAuthority", 1) => args.pop(),
-                ("hasAnyRole" | "hasAnyAuthority", 1..) => combine(args, Condition::Any),
+                ("hasRole" | "hasAuthority" | "hasScope", 1) => args.pop(),
+                ("hasAnyRole" | "hasAnyAuthority" | "hasAnyScope", 1..) => {
+                    combine(args, Condition::Any)
+                }
                 _ => None,
             }
         }
@@ -4071,6 +4634,832 @@ public class ManagementResource {
             (flow.diagnostics.iter())
                 .filter(|d| d.message.contains("ilter chain"))
                 .all(|d| d.severity == DiagnosticSeverity::Note)
+        );
+    }
+
+    const LEGACY_RESOURCES: &str = r##"
+@RestController
+@RequestMapping("/api/v1")
+public class TicketController {
+    @PostMapping("/admin/tickets")
+    public void create() {}
+    @GetMapping("/admin/tickets")
+    public void list() {}
+    @GetMapping("/open/ping")
+    public void ping() {}
+    @GetMapping("/other")
+    public void other() {}
+    @GetMapping("/hidden/x")
+    public void hidden() {}
+    @PreAuthorize("#oauth2.hasScope('server')")
+    @GetMapping("/internal")
+    public void internal() {}
+    @PreAuthorize("#oauth2.hasAnyScope('a', 'b') or hasRole('ROOT')")
+    @GetMapping("/either")
+    public void either() {}
+}
+"##;
+
+    fn legacy(rules: &str) -> UiFlow {
+        let config = format!(
+            "@Configuration\npublic class SecurityConfig extends WebSecurityConfigurerAdapter {{\n    @Override\n    protected void configure(HttpSecurity http) throws Exception {{\n        http.csrf().disable().sessionManagement().and()\n            .authorizeRequests()\n{rules}\n            .and().addFilterBefore(new JWTFilter(), X.class);\n    }}\n}}\n"
+        );
+        let dir = project(&[
+            ("pom.xml", "<project/>"),
+            ("src/main/java/app/SecurityConfig.java", &config),
+            ("src/main/java/app/TicketController.java", LEGACY_RESOURCES),
+        ]);
+        extract(dir.path())
+    }
+
+    #[test]
+    fn legacy_adapter_reads_methods_roles_and_any_request() {
+        let flow = legacy(
+            r#"            .antMatchers(HttpMethod.POST, "/api/v1/admin/**").hasAnyRole("ADMIN", "ROLE_ROOT")
+            .antMatchers("/api/v1/open/**", "/swagger/**").permitAll()
+            .anyRequest().authenticated()"#,
+        );
+        let admin = Condition::Any(vec![role("ADMIN"), role("ROOT")]);
+        assert_eq!(
+            access(&flow, "POST", "/api/v1/admin/tickets"),
+            &protected(admin)
+        );
+        // The POST rule skips GET; anyRequest decides.
+        let signed_in = protected(Condition::Authenticated);
+        assert_eq!(access(&flow, "GET", "/api/v1/admin/tickets"), &signed_in);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        assert_eq!(access(&flow, "GET", "/api/v1/other"), &signed_in);
+        assert!(flow.complete, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn legacy_adapter_first_match_wins() {
+        let flow = legacy(
+            r#"            .antMatchers("/api/v1/**").permitAll()
+            .antMatchers("/api/v1/admin/**").hasRole("ADMIN")
+            .anyRequest().denyAll()"#,
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/admin/tickets"),
+            &AccessState::Open
+        );
+        let flow = legacy(
+            r#"            .antMatchers("/api/v1/admin/**").hasRole("ADMIN")
+            .antMatchers("/api/v1/**").permitAll()"#,
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/admin/tickets"),
+            &protected(role("ADMIN"))
+        );
+        assert_eq!(access(&flow, "GET", "/api/v1/other"), &AccessState::Open);
+    }
+
+    #[test]
+    fn legacy_regex_matchers_stay_undeclared_with_a_note() {
+        let flow = legacy(
+            r#"            .regexMatchers("/api/v1/hidden/.*").denyAll()
+            .anyRequest().authenticated()"#,
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/hidden/x"),
+            &AccessState::Undeclared
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &AccessState::Undeclared
+        );
+        assert_eq!(notes(&flow, "not a literal"), 1, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn legacy_access_expression_and_oauth2_scopes() {
+        let flow = legacy(
+            r##"            .antMatchers("/api/v1/admin/**").access("#oauth2.hasScope('server') and hasRole('ADMIN')")
+            .anyRequest().authenticated()"##,
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/admin/tickets"),
+            &protected(Condition::All(vec![role("ADMIN"), role("server")]))
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/internal"),
+            &protected(Condition::All(vec![
+                Condition::Authenticated,
+                role("server")
+            ]))
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/either"),
+            &protected(Condition::All(vec![
+                Condition::Any(vec![
+                    Condition::Any(vec![role("a"), role("b")]),
+                    role("ROOT")
+                ]),
+                Condition::Authenticated
+            ]))
+        );
+    }
+
+    fn configured(files: &[(&str, &str)]) -> UiFlow {
+        let mut all = vec![
+            ("pom.xml", "<project/>"),
+            ("src/main/java/app/TicketController.java", LEGACY_RESOURCES),
+        ];
+        all.extend_from_slice(files);
+        let dir = project(&all);
+        extract(dir.path())
+    }
+
+    fn adapter(body: &str) -> String {
+        format!(
+            "public class SecurityConfig extends WebSecurityConfigurerAdapter {{\n    protected void configure(HttpSecurity http) throws Exception {{\n        {body}\n    }}\n}}\n"
+        )
+    }
+
+    /// Scoped or several configurations: nothing evaluated, one note.
+    fn assert_not_evaluated(flow: &UiFlow) {
+        assert_eq!(
+            access(flow, "GET", "/api/v1/other"),
+            &AccessState::Undeclared
+        );
+        assert_eq!(notes(flow, "not evaluated"), 1, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn security_matchers_scope_a_filter_chain() {
+        let chain = "public class C { @Bean SecurityFilterChain api(HttpSecurity http) { http.securityMatchers(m -> m.requestMatchers(\"/api/**\")).authorizeHttpRequests(a -> a.anyRequest().authenticated()); return http.build(); } }";
+        let flow = configured(&[("src/main/java/app/C.java", chain)]);
+        assert_not_evaluated(&flow);
+    }
+
+    #[test]
+    fn legacy_scoping_forms_are_not_evaluated() {
+        for scope in [
+            "http.requestMatchers().antMatchers(\"/api/**\").and().authorizeRequests().anyRequest().authenticated();",
+            "http.antMatcher(\"/api/**\").authorizeRequests().anyRequest().authenticated();",
+        ] {
+            let config = adapter(scope);
+            let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+            assert_not_evaluated(&flow);
+        }
+    }
+
+    fn kotlin(body: &str) -> UiFlow {
+        let config = format!(
+            "class SecurityConfig : WebSecurityConfigurerAdapter() {{\n    override fun configure(http: HttpSecurity) {{\n{body}\n    }}\n}}\n"
+        );
+        configured(&[("src/main/java/app/SecurityConfig.kt", &config)])
+    }
+
+    #[test]
+    fn a_kotlin_chain_ends_at_its_last_line() {
+        // No `;`: a later scoping call is not part of the authorization block.
+        for body in [
+            "        http.authorizeRequests().antMatchers(\"/api/**\").authenticated().anyRequest().permitAll()\n        http.antMatcher(\"/api/**\")",
+            "        http.authorizeRequests()\n            .antMatchers(\"/api/**\").authenticated()\n            // comment between rules\n            .anyRequest().permitAll()\n\n        http.requestMatchers().antMatchers(\"/api/**\")",
+        ] {
+            let flow = kotlin(body);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared
+            );
+        }
+        let flow = kotlin(
+            "        http.csrf().disable()\n        http.authorizeRequests()\n            .antMatchers(\"/api/v1/open/**\").permitAll()\n            .anyRequest().authenticated()\n            .and().httpBasic()",
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn kotlin_receiver_blocks_call_scoping_matchers_without_a_dot() {
+        let chain = "authorizeRequests()\n            .antMatchers(\"/api/**\").authenticated()\n            .anyRequest().permitAll()";
+        for body in [
+            format!(
+                "        http.apply {{\n            {chain}\n            antMatcher(\"/api/**\")\n        }}"
+            ),
+            format!(
+                "        http.apply {{\n            antMatcher(\"/api/**\")\n            {chain}\n        }}"
+            ),
+            format!("        with(http) {{ antMatcher(\"/api/**\"); {chain} }}"),
+            format!(
+                "        http.run {{\n            {chain}\n            mvcMatcher(\"/api/**\")\n        }}"
+            ),
+        ] {
+            let flow = kotlin(&body);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared,
+                "{body}"
+            );
+        }
+        let flow = kotlin(
+            "        http.apply {\n            authorizeRequests()\n                .antMatchers(\"/api/v1/open/**\").permitAll()\n                .anyRequest().authenticated()\n        }",
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn kotlin_scoping_matchers_in_any_expression_position() {
+        let chain = "authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll().anyRequest().authenticated()";
+        for scope in [
+            "if (api) antMatcher(\"/api/**\")",
+            "if (api) antMatcher(\"/api/**\") else antMatcher(\"/x/**\")",
+            "val scoped = antMatcher(\"/api/**\")",
+            "when (mode) { \"api\" -> antMatcher(\"/api/**\") }",
+            "requireNotNull(antMatcher(\"/api/**\"))",
+        ] {
+            let flow = kotlin(&format!(
+                "        http.apply {{\n            {scope}\n            {chain}\n        }}"
+            ));
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared,
+                "{scope}"
+            );
+            let flow = kotlin(&format!("        http.apply {{ {chain}; {scope} }}"));
+            assert_not_evaluated(&flow);
+        }
+    }
+
+    #[test]
+    fn scoping_calls_are_found_whatever_precedes_the_name() {
+        let chain = "authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll().anyRequest().authenticated()";
+        for scope in [
+            "val api = true\n            antMatcher(\"/api/**\")",
+            "val h = http\n            antMatcher(\"/api/**\")",
+            "val m = \"a\" to antMatcher(\"/api/**\")",
+            "val f = http::antMatcher",
+        ] {
+            let body = format!(
+                "        http.apply {{\n            {scope}\n            {chain}\n        }}"
+            );
+            let flow = kotlin(&body);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared,
+                "{scope}"
+            );
+        }
+        let flow = kotlin(&format!(
+            "        http.apply {{\n            {chain}\n            return@apply antMatcher(\"/api/**\")\n        }}"
+        ));
+        assert_not_evaluated(&flow);
+        for scope in [
+            "http.<HttpSecurity>antMatcher(\"/api/**\").authorizeRequests().anyRequest().authenticated();",
+            "Function<String, HttpSecurity> f = http::antMatcher; http.authorizeRequests().anyRequest().authenticated();",
+        ] {
+            let config = adapter(scope);
+            let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+            assert_not_evaluated(&flow);
+        }
+    }
+
+    #[test]
+    fn a_helper_receiving_the_http_security_hides_its_scoping() {
+        for body in [
+            "ApiScope.scope(http); http.authorizeRequests().anyRequest().authenticated();",
+            "customize(http); http.authorizeRequests().anyRequest().authenticated();",
+            "run(a, http); http.authorizeRequests().anyRequest().authenticated();",
+        ] {
+            let config = adapter(body);
+            let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                notes(&flow, "hands the HttpSecurity out"),
+                1,
+                "{:#?}",
+                flow.diagnostics
+            );
+        }
+        let flow = kotlin(
+            "        scope(http)\n        http.authorizeRequests().anyRequest().authenticated()",
+        );
+        assert_not_evaluated(&flow);
+        // The DSL itself is no helper: with(http), http.apply(..), http.x(y), assignments.
+        let flow =
+            kotlin("        with(http) { authorizeRequests().anyRequest().authenticated() }");
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &protected(Condition::Authenticated)
+        );
+    }
+
+    const OPEN_CHAIN_JAVA: &str = "http.authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll().anyRequest().authenticated();";
+    const OPEN_CHAIN_KT: &str = "http.authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll().anyRequest().authenticated()";
+
+    #[test]
+    fn handing_the_http_security_out_is_not_evaluated() {
+        let java = [
+            "HttpSecurity h = http; ApiScope.scope(h);",
+            "this.h = http; scope(this.h);",
+            "ApiScope.scope((HttpSecurity) http);",
+            "http.apply(new ApiScopeConfigurer());",
+            "http.csrf().disable().and().apply(cfg);",
+            "http.with(cfg, Customizer.withDefaults());",
+        ];
+        for hand_off in java {
+            let config = adapter(&format!("{hand_off} {OPEN_CHAIN_JAVA}"));
+            let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared,
+                "{hand_off}"
+            );
+            assert_eq!(notes(&flow, "hands the HttpSecurity out"), 1, "{hand_off}");
+        }
+        let kotlin_forms = [
+            "val h = http\n        ApiScope.scope(h)",
+            "http.let { ApiScope.scope(it) }",
+            "with(http) { ApiScope.scope(this) }",
+            "http.apply { ApiScope.scope(this) }",
+            "ApiScope.scope(h = http)",
+            "http.also(ApiScope::scope)",
+        ];
+        for hand_off in kotlin_forms {
+            let flow = kotlin(&format!("        {hand_off}\n        {OPEN_CHAIN_KT}"));
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared,
+                "{hand_off}"
+            );
+        }
+    }
+
+    #[test]
+    fn scoping_in_any_file_mentioning_http_security_scopes_every_chain() {
+        let extension = "fun HttpSecurity.scopeApi() = antMatcher(\"/api/**\")\n";
+        let configurer = "class ApiScopeConfigurer : AbstractHttpConfigurer<ApiScopeConfigurer, HttpSecurity>() {\n    override fun init(http: HttpSecurity) {\n        http.antMatcher(\"/api/**\")\n    }\n}\n";
+        for (file, text, call) in [
+            ("ApiScope.kt", extension, "http.scopeApi()"),
+            ("ApiScope.kt", extension, "http.csrf().disable()"),
+            ("ApiScopeConfigurer.kt", configurer, "http.csrf().disable()"),
+        ] {
+            let config = adapter(&format!("{call}; {OPEN_CHAIN_JAVA}"));
+            let path = format!("src/main/java/app/{file}");
+            let flow = configured(&[
+                ("src/main/java/app/SecurityConfig.java", &config),
+                (path.as_str(), text),
+            ]);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                notes(&flow, &format!("{file}:")),
+                1,
+                "{:#?}",
+                flow.diagnostics
+            );
+        }
+        // A file without the word HttpSecurity is not inspected (documented limit).
+        let other = "object Unrelated { fun f(x: Any) = x.antMatcher(\"/api/**\") }\n";
+        let config = adapter(OPEN_CHAIN_JAVA);
+        let flow = configured(&[
+            ("src/main/java/app/SecurityConfig.java", &config),
+            ("src/main/java/app/Unrelated.kt", other),
+        ]);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+    }
+
+    #[test]
+    fn calls_after_and_inside_the_authorization_lambda_are_not_rules() {
+        let rules =
+            "a.requestMatchers(\"/api/v1/open/**\").permitAll().anyRequest().authenticated()";
+        let beans = [
+            format!("http.authorizeHttpRequests(a -> {rules}.and().securityMatcher(\"/api/**\"));"),
+            format!(
+                "http.authorizeHttpRequests(a -> {{ {rules}; a.and().securityMatcher(\"/api/**\"); }});"
+            ),
+            format!("http.authorizeHttpRequests(a -> {rules}.and().apply(cfg));"),
+            format!(
+                "http.authorizeHttpRequests(a -> {rules}.and().with(cfg, Customizer.withDefaults()));"
+            ),
+        ];
+        for body in beans {
+            let text = format!(
+                "public class C {{ @Bean SecurityFilterChain api(HttpSecurity http) throws Exception {{ {body} return http.build(); }} }}"
+            );
+            let flow = configured(&[("src/main/java/app/C.java", &text)]);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared,
+                "{body}"
+            );
+        }
+        for tail in [
+            ".and().antMatcher(\"/api/**\")",
+            ".and().requestMatchers().antMatchers(\"/api/**\")",
+        ] {
+            let config = adapter(&format!(
+                "http.authorizeRequests(a -> a.antMatchers(\"/api/v1/open/**\").permitAll().anyRequest().authenticated(){tail});"
+            ));
+            let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+            assert_not_evaluated(&flow);
+        }
+    }
+
+    #[test]
+    fn strings_are_no_uses_of_the_http_security_variable() {
+        let java = format!(
+            "public class SecurityConfig extends WebSecurityConfigurerAdapter {{\n    void cors() {{ c.setAllowedOrigins(List.of(\"http://localhost:4200\")); log.debug(\"configuring http security\"); String t = \"\"\"\n        http text\n        \"\"\"; }}\n    protected void configure(HttpSecurity http) throws Exception {{ {OPEN_CHAIN_JAVA} }}\n}}\n"
+        );
+        let flow = configured(&[("src/main/java/app/SecurityConfig.java", &java)]);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+        let flow = kotlin(&format!(
+            "        val s = \"http security\"\n        {OPEN_CHAIN_KT}"
+        ));
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        for template in ["\"${http}\"", "\"$http\""] {
+            let flow = kotlin(&format!(
+                "        val s = {template}\n        {OPEN_CHAIN_KT}"
+            ));
+            assert_not_evaluated(&flow);
+        }
+    }
+
+    #[test]
+    fn ignoring_matchers_and_customizers_make_the_chain_not_evaluated() {
+        let config = adapter(&format!(
+            "http.csrf(c -> c.ignoringRequestMatchers(antMatcher(\"/h2-console/**\"))); {OPEN_CHAIN_JAVA}"
+        ));
+        let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+        assert_not_evaluated(&flow);
+        let customizer = "public class SecurityConfig extends WebSecurityConfigurerAdapter {\n    @Bean public WebSecurityCustomizer customizer() { return web -> web.ignoring().requestMatchers(\"/static/**\"); }\n    protected void configure(HttpSecurity http) throws Exception { http.authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll(); }\n}\n";
+        let flow = configured(&[("src/main/java/app/SecurityConfig.java", customizer)]);
+        assert_not_evaluated(&flow);
+        let config = adapter(OPEN_CHAIN_JAVA);
+        let other_java = "class Other { void f(HttpSecurity h) {} @Bean WebSecurityCustomizer c() { return web -> web.ignoring().requestMatchers(\"/x\"); } }";
+        let other_kt = "class Other { fun f(h: HttpSecurity) {}\n fun c() = WebSecurityCustomizer { web -> web.ignoring().requestMatchers(\"/x\") } }";
+        for (file, text) in [("Other.java", other_java), ("Other.kt", other_kt)] {
+            let path = format!("src/main/java/app/{file}");
+            let flow = configured(&[
+                ("src/main/java/app/SecurityConfig.java", &config),
+                (path.as_str(), text),
+            ]);
+            assert_not_evaluated(&flow);
+        }
+    }
+
+    #[test]
+    fn skips_never_hide_scoping_or_hand_offs() {
+        let open =
+            "a.requestMatchers(\"/api/v1/open/**\").permitAll().anyRequest().authenticated()";
+        let bean_chain = format!("http.authorizeHttpRequests(a -> {open});");
+        // F-A: WebSecurityCustomizer next to the chain is not a skip.
+        let scope = "http.securityMatcher(\"/api/**\");";
+        let java = [
+            format!(
+                "public class C implements WebSecurityCustomizer {{ public void customize(WebSecurity w) {{}} @Bean SecurityFilterChain api(HttpSecurity http) throws Exception {{ {scope} {bean_chain} return http.build(); }} }}"
+            ),
+            format!(
+                "public class C {{ @ConditionalOnMissingBean(WebSecurityCustomizer.class) @Bean SecurityFilterChain api(HttpSecurity http) throws Exception {{ {scope} {bean_chain} return http.build(); }} }}"
+            ),
+            format!(
+                "public class C {{ @Bean SecurityFilterChain api(HttpSecurity http, WebSecurityCustomizer c) throws Exception {{ {scope} {bean_chain} return http.build(); }} }}"
+            ),
+            format!(
+                "public class C {{ @Bean WebSecurityCustomizer c(HttpSecurity http) throws Exception {{ {scope} return web -> web.ignoring().requestMatchers(\"/x\"); }} @Bean SecurityFilterChain api(HttpSecurity http) throws Exception {{ {bean_chain} return http.build(); }} }}"
+            ),
+            // F-B: the argument of ignoring…Matchers names the HttpSecurity.
+            format!(
+                "public class C {{ @Bean SecurityFilterChain api(HttpSecurity http) throws Exception {{ http.csrf(c -> c.ignoringRequestMatchers(http.antMatcher(\"/api/**\"))); {bean_chain} return http.build(); }} }}"
+            ),
+            format!(
+                "public class C {{ @Bean SecurityFilterChain api(HttpSecurity http) throws Exception {{ http.csrf(c -> c.ignoringRequestMatchers(ApiScope.scope(http))); {bean_chain} return http.build(); }} }}"
+            ),
+            // F-D: a statement in the authorization block that uses the variable.
+            format!(
+                "public class C {{ @Bean SecurityFilterChain api(HttpSecurity http) throws Exception {{ http.authorizeHttpRequests(a -> {{ {open}; ApiScope.scope(http); }}); return http.build(); }} }}"
+            ),
+        ];
+        for text in &java {
+            let flow = configured(&[("src/main/java/app/C.java", text)]);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared,
+                "{text}"
+            );
+        }
+        let kt = "class C : WebSecurityConfigurerAdapter(), WebSecurityCustomizer {\n    override fun configure(http: HttpSecurity) {\n        http.antMatcher(\"/api/**\")\n        http.authorizeRequests().anyRequest().authenticated()\n    }\n}\n";
+        assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", kt)]));
+        // F-C: Kotlin templates that may use the variable.
+        for template in [
+            "\"${describe(http)}\"",
+            "\"${ http }\"",
+            "\"\"\"${scope(http)}\"\"\"",
+        ] {
+            let flow = kotlin(&format!(
+                "        val s = {template}\n        {OPEN_CHAIN_KT}"
+            ));
+            assert_not_evaluated(&flow);
+        }
+    }
+
+    #[test]
+    fn nothing_after_ignoring_hides_scoping() {
+        let chain = OPEN_CHAIN_JAVA;
+        let bean = format!(
+            "@Bean SecurityFilterChain api(HttpSecurity http) throws Exception {{ {chain} return http.build(); }}"
+        );
+        let adapter_cfg =
+            format!("protected void configure(HttpSecurity http) throws Exception {{ {chain} }}");
+        let java = [
+            format!(
+                "public class C {{ HttpSecurity otherHttp; @Bean WebSecurityCustomizer c() {{ return web -> {{ web.ignoring().requestMatchers(\"/x\"); otherHttp.securityMatcher(\"/api/**\"); }}; }} {bean} }}"
+            ),
+            format!(
+                "public class C {{ final HttpSecurity otherHttp = null; @Bean WebSecurityCustomizer c() {{ return web -> {{ web.ignoring().requestMatchers(\"/x\"); otherHttp.securityMatcher(\"/api/**\"); }}; }} {bean} }}"
+            ),
+            format!(
+                "public class C {{ @Bean WebSecurityCustomizer c() {{ return web -> {{ web.ignoring().requestMatchers(\"/x\"); Scopes.chain().securityMatcher(\"/api/**\"); }}; }} {bean} }}"
+            ),
+            format!(
+                "public class C extends WebSecurityConfigurerAdapter {{ @Bean WebSecurityCustomizer c() {{ return web -> {{ web.ignoring().requestMatchers(\"/x\"); getHttp().antMatcher(\"/api/**\"); }}; }} {adapter_cfg} }}"
+            ),
+            format!(
+                "public class C extends WebSecurityConfigurerAdapter {{ public void configure(WebSecurity web) {{ web.ignoring().antMatchers(\"/x\"); getHttp().antMatcher(\"/api/**\"); }} {adapter_cfg} }}"
+            ),
+            format!(
+                "public class C extends WebSecurityConfigurerAdapter {{ HttpSecurity h; public void configure(WebSecurity web) {{ web.ignoring().antMatchers(\"/x\"); h.antMatcher(\"/api/**\"); }} {adapter_cfg} }}"
+            ),
+        ];
+        for text in &java {
+            let flow = configured(&[("src/main/java/app/C.java", text)]);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared,
+                "{text}"
+            );
+        }
+        // Braced authorization lambda: only statements on the lambda parameter are rules.
+        let rules =
+            "a.requestMatchers(\"/api/v1/open/**\").permitAll(); a.anyRequest().authenticated();";
+        for x in [
+            "otherHttp.securityMatcher(\"/api/**\");",
+            "getHttp().antMatcher(\"/api/**\");",
+            "http.requestMatchers(\"/api/**\");",
+            "a.securityMatcher(\"/api/**\");",
+        ] {
+            let text = format!(
+                "public class C {{ HttpSecurity otherHttp; @Bean SecurityFilterChain api(HttpSecurity http) throws Exception {{ http.authorizeHttpRequests(a -> {{ {rules} {x} }}); return http.build(); }} }}"
+            );
+            let flow = configured(&[("src/main/java/app/C.java", &text)]);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared,
+                "{x}"
+            );
+        }
+        let kt = "class C : WebSecurityConfigurerAdapter() {\n    override fun configure(http: HttpSecurity) {\n        http.authorizeRequests({ a -> a.antMatchers(\"/api/v1/open/**\").permitAll(); a.anyRequest().authenticated(); getHttp().antMatcher(\"/api/**\") })\n    }\n}\n";
+        assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", kt)]));
+        // The lambda form of authorizeHttpRequests returns the HttpSecurity, not the rules.
+        let text = "public class C { @Bean SecurityFilterChain api(HttpSecurity http) throws Exception { http.authorizeHttpRequests(a -> a.anyRequest().permitAll()).antMatcher(\"/public/**\"); return http.build(); } }";
+        assert_not_evaluated(&configured(&[("src/main/java/app/C.java", text)]));
+        let kt = "class C : WebSecurityConfigurerAdapter() {\n    override fun configure(http: HttpSecurity) {\n        http.authorizeRequests { a -> a.anyRequest().permitAll() }.antMatcher(\"/public/**\")\n    }\n}\n";
+        assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", kt)]));
+        // Kotlin statements separated by newlines only.
+        for x in [
+            "http.antMatcher(\"/admin/**\")",
+            "http.antMatcher(\"/api/**\")",
+        ] {
+            let kt = format!(
+                "class C : WebSecurityConfigurerAdapter() {{\n    override fun configure(http: HttpSecurity) {{\n        http.authorizeRequests({{ a ->\n            a.antMatchers(\"/api/v1/open/**\").permitAll()\n            a.anyRequest().authenticated()\n            {x}\n        }})\n    }}\n}}\n"
+            );
+            assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", &kt)]));
+        }
+        // A multi-line rule chain on the lambda parameter stays evaluated.
+        let text = "public class C { @Bean SecurityFilterChain api(HttpSecurity http) throws Exception { http.authorizeHttpRequests(a -> a\n  .requestMatchers(\"/api/v1/open/**\").permitAll()\n  .anyRequest().authenticated()); return http.build(); } }";
+        let flow = configured(&[("src/main/java/app/C.java", text)]);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        // Static factories inside a rule's arguments stay legitimate.
+        let text = "public class C { @Bean SecurityFilterChain api(HttpSecurity http) throws Exception { http.authorizeHttpRequests(a -> { a.requestMatchers(antMatcher(\"/api/v1/open/**\")).permitAll(); a.anyRequest().authenticated(); }); return http.build(); } }";
+        let flow = configured(&[("src/main/java/app/C.java", text)]);
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+        let kt_head = "class C : WebSecurityConfigurerAdapter() {\n";
+        let kt_cfg = "    override fun configure(http: HttpSecurity) {\n        http.authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll().anyRequest().authenticated()\n    }\n}\n";
+        let kotlin_bodies = [
+            "    fun c() = WebSecurityCustomizer { web -> web.ignoring().requestMatchers(\"/x\"); getHttp().antMatcher(\"/api/**\") }\n",
+            "    override fun configure(http: HttpSecurity) {\n        http.apply { csrf().ignoringRequestMatchers(securityMatcher(\"/api/**\").let { it }) }\n    }\n",
+            "    override fun configure(http: HttpSecurity) {\n        with(http) { csrf().ignoringRequestMatchers(run { antMatcher(\"/api/**\"); x }) }\n    }\n",
+        ];
+        for body in kotlin_bodies {
+            let text = format!("{kt_head}{body}{kt_cfg}");
+            let flow = configured(&[("src/main/java/app/C.kt", &text)]);
+            assert_not_evaluated(&flow);
+        }
+    }
+
+    #[test]
+    fn receivers_and_scope_blocks_stay_evaluated() {
+        let flow = kotlin(
+            "        with(http) { authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll().anyRequest().authenticated() }",
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        let flow = kotlin(&format!(
+            "        http.apply {{ this.csrf().disable() }}\n        http.let {{ it.csrf() }}\n        {OPEN_CHAIN_KT}"
+        ));
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+        let config = adapter(&format!(
+            "http\n            .csrf().disable(); {OPEN_CHAIN_JAVA}"
+        ));
+        let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+    }
+
+    #[test]
+    fn declarations_of_scoping_names_are_not_calls() {
+        let kt = "class SecurityConfig : WebSecurityConfigurerAdapter() {\n    fun requestMatcher(): RequestMatcher = TODO()\n    fun Foo.antMatcher(x: String) = 1\n    override fun configure(http: HttpSecurity) {\n        http.authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll()\n    }\n}\n";
+        let flow = configured(&[("src/main/java/app/SecurityConfig.kt", kt)]);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+        let java = "public class SecurityConfig extends WebSecurityConfigurerAdapter {\n    private RequestMatcher requestMatcher() { return null; }\n    RequestMatcher[] requestMatchers() throws Exception {\n        return null;\n    }\n    protected void configure(HttpSecurity http) throws Exception {\n        http.authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll();\n    }\n}\n";
+        let flow = configured(&[("src/main/java/app/SecurityConfig.java", java)]);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn web_security_matchers_make_the_chain_not_evaluated_csrf_ignoring_names_do_not() {
+        let chain = "http.csrf().ignoringAntMatchers(\"/api/v1/x\").and().csrf(c -> c.ignoringRequestMatchers(\"/y\")).authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll().anyRequest().authenticated();";
+        let config = format!(
+            "public class SecurityConfig extends WebSecurityConfigurerAdapter {{\n    @Override\n    public void configure(WebSecurity web) throws Exception {{\n        web.ignoring().antMatchers(\"/static/**\");\n    }}\n    protected void configure(HttpSecurity http) throws Exception {{\n        {chain}\n    }}\n    private RequestMatcher requestMatcher() {{ return null; }}\n}}\n"
+        );
+        let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+        assert_not_evaluated(&flow);
+        let kt = "class SecurityConfig : WebSecurityConfigurerAdapter() {\n    override fun configure(web: WebSecurity) {\n        web.ignoring().antMatchers(\"/static/**\")\n    }\n    override fun configure(http: HttpSecurity) {\n        http.authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll()\n    }\n}\n";
+        let flow = configured(&[("src/main/java/app/SecurityConfig.kt", kt)]);
+        assert_not_evaluated(&flow);
+    }
+
+    #[test]
+    fn any_matcher_call_outside_the_authorization_block_scopes_the_chain() {
+        for scope in [
+            "http.requestMatchers(m -> m.antMatchers(\"/api/**\")).authorizeRequests(a -> a.anyRequest().authenticated());",
+            "http.mvcMatcher(\"/api/**\").authorizeRequests().anyRequest().authenticated();",
+            "http.regexMatcher(\"/api/.*\").authorizeRequests().anyRequest().authenticated();",
+            "http.requestMatchers().antMatchers(\"/api/**\").and().authorizeRequests().anyRequest().authenticated();",
+        ] {
+            let config = adapter(scope);
+            let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared,
+                "{scope}"
+            );
+        }
+        // Matchers inside the authorization block stay rules; a variable is no call.
+        let config = adapter(
+            "RequestMatcher requestMatcher = null; http.csrf().disable().authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll().regexMatchers(\"/x\").denyAll().anyRequest().authenticated().and().httpBasic();",
+        );
+        let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn several_adapters_are_not_evaluated() {
+        let one = adapter("http.authorizeRequests().anyRequest().authenticated();");
+        let two = one.replace("class SecurityConfig", "class OtherConfig");
+        let flow = configured(&[
+            ("src/main/java/app/SecurityConfig.java", &one),
+            ("src/main/java/app/OtherConfig.java", &two),
+        ]);
+        assert_not_evaluated(&flow);
+    }
+
+    #[test]
+    fn access_permit_all_with_and_without_parentheses() {
+        for call in ["permitAll", "permitAll()"] {
+            let config = adapter(&format!(
+                "http.authorizeRequests().antMatchers(\"/api/v1/open/**\").access(\"{call}\").anyRequest().authenticated();"
+            ));
+            let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Open,
+                "{call}"
+            );
+        }
+    }
+
+    #[test]
+    fn kotlin_and_qualified_adapters_are_recognised() {
+        let body = "http.authorizeRequests().anyRequest().authenticated()";
+        let kotlin = format!(
+            "class SecurityConfig : WebSecurityConfigurerAdapter() {{\n    override fun configure(http: HttpSecurity) {{\n        {body}\n    }}\n}}\n"
+        );
+        let qualified = adapter(body).replace(
+            "extends WebSecurityConfigurerAdapter",
+            "extends org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter",
+        );
+        for (file, text) in [
+            ("SecurityConfig.kt", &kotlin),
+            ("SecurityConfig.java", &qualified),
+        ] {
+            let path = format!("src/main/java/app/{file}");
+            let flow = configured(&[(path.as_str(), text)]);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/other"),
+                &protected(Condition::Authenticated),
+                "{file}: {:#?}",
+                flow.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn notes_name_the_source_and_skip_zero_rule_counts() {
+        let config = adapter("http.authorizeRequests().anyRequest().authenticated();");
+        let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+        assert_eq!(notes(&flow, "Security configuration rules evaluated: 1"), 1);
+        let empty = "public class ResourceServerConfig extends ResourceServerConfigurerAdapter {}";
+        let flow = configured(&[("src/main/java/app/ResourceServerConfig.java", empty)]);
+        assert_eq!(notes(&flow, "0 rule"), 0, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn an_unreadable_security_class_is_a_gap() {
+        let dir = project(&[
+            ("pom.xml", "<project/>"),
+            (
+                "src/main/java/app/ResourceServerConfig.java",
+                "@Configuration\npublic class ResourceServerConfig extends ResourceServerConfigurerAdapter {}\n",
+            ),
+            ("src/main/java/app/TicketController.java", LEGACY_RESOURCES),
+        ]);
+        let flow = extract(dir.path());
+        assert!(!flow.complete);
+        assert_eq!(
+            (flow.diagnostics.iter())
+                .filter(|d| d.severity == DiagnosticSeverity::Gap
+                    && d.message.contains("ResourceServerConfig"))
+                .count(),
+            1,
+            "{:#?}",
+            flow.diagnostics
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &AccessState::Undeclared
         );
     }
 
