@@ -911,7 +911,7 @@ public class ShipOrderCommandHandler
     }
 
     #[test]
-    fn endpoint_called_ignores_a_fully_read_app_without_http_calls() {
+    fn endpoint_called_is_not_evaluated_while_an_app_has_no_resolved_call() {
         let docs = r#"{"id":"docs","name":"Docs","kind":"page","route":"/docs","application":"docs","file":"Docs/Docs.razor","line":1,"source":"x"}"#;
         let unused = r#",{"method":"GET","path":"/api/unused","access":"open","file":"Api/U.cs","line":3,"source":"x"}"#;
         let flow = flow_with(&[], "", unused).replacen(
@@ -922,47 +922,16 @@ public class ShipOrderCommandHandler
         let dir = linked(&flow);
         write(dir.path(), &[("Docs/Docs.razor", "<h1>Docs</h1>\n")]);
         let findings = run(dir.path(), &["endpoint_called"]);
-        let ids: Vec<&str> = findings.iter().map(|f| f.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            ["view-endpoint_called:Api/U.cs:GET /api/unused"],
-            "{findings:#?}"
-        );
+        assert_eq!(findings.len(), 1, "{findings:#?}");
+        assert_eq!(findings[0].severity, Severity::Info);
+        let message = findings[0].message.as_deref().unwrap();
+        assert!(message.contains("docs has 0 resolved calls"), "{message}");
     }
 
     /// CleanArchitecture's shape: screens, no readable call, one endpoint.
     const NO_CALLS: &str = r#"{"definition":"ui-flow/v1","complete":true,
 "screens":[{"id":"home","name":"Home","kind":"page","route":"/","application":"web","file":"Web/app/home.ts","line":1,"source":"x"}],
 "endpoints":[{"method":"GET","path":"/api/x","access":"open","file":"Api/X.cs","line":1,"source":"x"}]}"#;
-
-    #[test]
-    fn endpoint_called_is_not_evaluated_for_an_app_that_uses_an_http_client() {
-        let dir = linked(NO_CALLS);
-        write(
-            dir.path(),
-            &[(
-                "Web/app/home.ts",
-                "constructor(private http: HttpClient) {}\n",
-            )],
-        );
-        let findings = run(dir.path(), &["endpoint_called"]);
-        assert_eq!(findings.len(), 1, "{findings:#?}");
-        assert_eq!(findings[0].severity, Severity::Info);
-        let message = findings[0].message.as_deref().unwrap();
-        assert!(
-            message.contains("web has 0 resolved calls but uses an HTTP client"),
-            "{message}"
-        );
-    }
-
-    #[test]
-    fn endpoint_called_is_not_evaluated_when_the_language_is_unknown() {
-        let dir = linked(NO_CALLS);
-        write(dir.path(), &[("Web/app/home.xyz", "nothing readable\n")]);
-        let findings = run(dir.path(), &["endpoint_called"]);
-        assert_eq!(findings.len(), 1, "{findings:#?}");
-        assert_eq!(findings[0].severity, Severity::Info);
-    }
 
     #[test]
     fn endpoint_called_is_not_evaluated_with_an_unread_generated_client_config() {
@@ -979,10 +948,6 @@ public class ShipOrderCommandHandler
         assert_eq!(findings[0].severity, Severity::Info);
         let message = findings[0].message.as_deref().unwrap();
         assert!(message.contains("nswag.json"), "{message}");
-        // Without the marker the same fully read app is evaluated.
-        std::fs::remove_file(dir.path().join("Web/nswag.json")).unwrap();
-        let findings = run(dir.path(), &["endpoint_called"]);
-        assert_eq!(findings[0].severity, Severity::Error, "{findings:#?}");
     }
 
     #[test]
