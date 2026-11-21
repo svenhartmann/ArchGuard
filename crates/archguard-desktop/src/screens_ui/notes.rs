@@ -242,12 +242,13 @@ mod tests {
 
     fn flow() -> UiFlow {
         let go = |line, target| Transition {
+            weak: false,
             from: Origin::Screen("home".into()),
             target,
             trigger: None,
             file: "Home.razor".into(),
             line,
-            condition: None,
+            condition: archguard_engine::core::AccessState::Undeclared,
             source: "t".into(),
         };
         let x = || Target::Unresolved("Url(x)".into());
@@ -260,12 +261,13 @@ mod tests {
         UiFlow {
             transitions: vec![go(3, x()), go(5, Target::Screen("a".into())), go(9, x())],
             actions: vec![Action {
+                weak: false,
                 screen: Origin::Screen("home".into()),
                 trigger: None,
                 call: Call::Unresolved("base + id".into()),
                 file: "Home.razor".into(),
                 line: 12,
-                condition: None,
+                condition: archguard_engine::core::AccessState::Undeclared,
                 source: "t".into(),
             }],
             endpoints: vec![EndpointAccess {

@@ -190,7 +190,7 @@ async fn ui_flow_simulates_anonymous_and_roles() {
     let (_dir, tools) = project();
     let (last, anon) = all_rows(&tools, "ui_flow", json!({"anonymous": true})).await;
     assert_eq!(last["metadata"]["simulation"]["anonymous"], true);
-    assert_eq!(screen(&anon, "/")["reach"], "sure");
+    assert_eq!(screen(&anon, "/")["reach"], "undeclared");
     assert_eq!(screen(&anon, "/orders")["reach"], "denied");
     let item = screen(&anon, "/item/{id:int}");
     assert_eq!(item["reach"], "no_known_path");
@@ -199,7 +199,7 @@ async fn ui_flow_simulates_anonymous_and_roles() {
     assert_eq!(endpoint(&anon, "health")["simulated"], "unknown");
 
     let (_, clerk) = all_rows(&tools, "ui_flow", json!({"roles": ["Clerk"]})).await;
-    assert_eq!(screen(&clerk, "/orders")["reach"], "sure");
+    assert_eq!(screen(&clerk, "/orders")["reach"], "undeclared");
     assert_eq!(endpoint(&clerk, "orders")["simulated"], "allowed");
     assert_eq!(endpoint(&clerk, "health")["simulated"], "unknown");
 

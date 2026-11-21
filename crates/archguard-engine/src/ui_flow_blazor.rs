@@ -207,12 +207,16 @@ fn navigation(flow: &mut UiFlow, c: &Component, components: &[Component], index:
                 }
                 flow.transitions
                     .extend(targets.into_iter().map(|target| Transition {
+                        weak: false,
                         from: from.clone(),
                         target,
                         trigger: trigger.clone(),
                         file: file.clone(),
                         line,
-                        condition: condition.clone(),
+                        condition: archguard_core::AccessState::from_parts(
+                            condition.clone(),
+                            false,
+                        ),
                         source: SOURCE.into(),
                     }));
             }
@@ -271,6 +275,7 @@ fn component(
         let name = inner.rsplit('/').next().unwrap_or(inner);
         let access = access(&texts, flow);
         flow.screens.push(Screen {
+            weak: false,
             id: id.clone(),
             name: name.trim_end_matches(".razor").into(),
             kind: ScreenKind::Page,
@@ -278,7 +283,7 @@ fn component(
             application: application.clone(),
             file: file.clone(),
             line: first,
-            access,
+            access: archguard_core::AccessState::from_parts(access, false),
             source: SOURCE.into(),
         });
     }
@@ -479,12 +484,13 @@ fn http(flow: &mut UiFlow, c: &Component, (n, file): (usize, &str), text: &str, 
         let trigger = c.triggers.at(n, at);
         for (screen, condition) in c.placed(condition) {
             flow.actions.push(Action {
+                weak: false,
                 screen,
                 trigger: trigger.clone(),
                 call: call.clone(),
                 file: file.into(),
                 line,
-                condition,
+                condition: archguard_core::AccessState::from_parts(condition, false),
                 source: SOURCE.into(),
             });
         }
@@ -1462,12 +1468,13 @@ mod services {
                     let condition = guard(text, &views, at, file, flow);
                     for (screen, condition) in c.placed(condition) {
                         flow.actions.push(Action {
+                            weak: false,
                             screen,
                             trigger: trigger.clone(),
                             call: call.clone(),
                             file: file.clone(),
                             line,
-                            condition,
+                            condition: archguard_core::AccessState::from_parts(condition, false),
                             source: SOURCE.into(),
                         });
                     }
@@ -2621,24 +2628,32 @@ mod tests {
         let access = |id: &str| screen(&flow, id).access.clone();
         assert_eq!(
             access("Shop:Pages/Cart.razor"),
-            Some(Condition::Authenticated)
+            archguard_core::AccessState::Protected(Condition::Authenticated)
         );
         assert_eq!(
             access("Shop:Pages/Item.razor"),
-            Some(Condition::Any(vec![
+            archguard_core::AccessState::Protected(Condition::Any(vec![
                 Condition::Role("Admin".into()),
                 Condition::Role("Buyer".into())
             ]))
         );
         assert_eq!(
             access("Shop:Pages/Admin.razor"),
-            Some(Condition::Policy("AdminOnly".into()))
+            archguard_core::AccessState::Protected(Condition::Policy("AdminOnly".into()))
         );
-        assert_eq!(access("Shop:Pages/Login.razor"), None);
-        assert_eq!(access("Shop:Pages/Home.razor"), None);
+        assert_eq!(
+            access("Shop:Pages/Login.razor"),
+            archguard_core::AccessState::Undeclared
+        );
+        assert_eq!(
+            access("Shop:Pages/Home.razor"),
+            archguard_core::AccessState::Undeclared
+        );
         assert_eq!(
             access("Shop:Pages/Weird.razor"),
-            Some(Condition::Unknown("Roles = RoleNames.Admin".into()))
+            archguard_core::AccessState::Protected(Condition::Unknown(
+                "Roles = RoleNames.Admin".into()
+            ))
         );
         assert!(
             flow.diagnostics
@@ -2665,7 +2680,7 @@ mod tests {
         );
         assert_eq!(home[0].line, 4);
         assert_eq!(home[0].source, "blazor");
-        assert_eq!(home[0].condition, None);
+        assert_eq!(home[0].condition, archguard_core::AccessState::Undeclared);
     }
 
     #[test]
@@ -2732,7 +2747,7 @@ mod tests {
         let menu = from(&flow, &shop);
         let found: Vec<(&Target, Option<&Condition>, Option<&str>)> = menu
             .iter()
-            .map(|t| (&t.target, t.condition.as_ref(), t.trigger.as_deref()))
+            .map(|t| (&t.target, t.condition.condition(), t.trigger.as_deref()))
             .collect();
         assert_eq!(
             found,
@@ -3310,7 +3325,7 @@ mod usage_tests {
         let mut flow = extract(fixture().path());
         let placed: Vec<(&Origin, Option<&Condition>)> = (actions(&flow, "App/Parts/Hooks.razor"))
             .into_iter()
-            .map(|a| (&a.screen, a.condition.as_ref()))
+            .map(|a| (&a.screen, a.condition.condition()))
             .collect();
         assert_eq!(placed, [(&page("Home"), Some(&Condition::Authenticated))]);
         flow.endpoints.push(EndpointAccess {
@@ -3335,7 +3350,7 @@ mod usage_tests {
         let flow = extract(fixture().path());
         let placed: Vec<(&Origin, Option<&Condition>)> = (actions(&flow, "App/Parts/Shared.razor"))
             .into_iter()
-            .map(|a| (&a.screen, a.condition.as_ref()))
+            .map(|a| (&a.screen, a.condition.condition()))
             .collect();
         assert_eq!(placed, [(&page("Home"), None), (&page("Other"), None)]);
     }
@@ -3346,7 +3361,7 @@ mod usage_tests {
         let menu = transitions(&flow, "App/Layout/AdminMenu.razor");
         let placed: Vec<(&Origin, Option<&Condition>)> = menu
             .iter()
-            .map(|t| (&t.from, t.condition.as_ref()))
+            .map(|t| (&t.from, t.condition.condition()))
             .collect();
         assert_eq!(placed, [(&any(), Some(&Condition::Role("Admin".into())))]);
         assert!(notes(&flow, "App/Layout/MainLayout.razor").is_empty());
@@ -3359,7 +3374,7 @@ mod usage_tests {
         let widget = transitions(&flow, "App/Parts/Widget.razor");
         let placed: Vec<(&Origin, Option<&Condition>)> = widget
             .iter()
-            .map(|t| (&t.from, t.condition.as_ref()))
+            .map(|t| (&t.from, t.condition.condition()))
             .collect();
         let joined = Condition::All(vec![
             Condition::Role("Admin".into()),
@@ -3369,7 +3384,7 @@ mod usage_tests {
         assert_eq!(placed, [(&page("Deep"), Some(&joined))]);
         let remove = actions(&flow, "App/Parts/Widget.razor");
         let placed: Vec<(&Origin, Option<&Condition>, Option<&str>)> = (remove.iter())
-            .map(|a| (&a.screen, a.condition.as_ref(), a.trigger.as_deref()))
+            .map(|a| (&a.screen, a.condition.condition(), a.trigger.as_deref()))
             .collect();
         let outer = Condition::All(vec![
             Condition::Role("Admin".into()),
@@ -3384,7 +3399,10 @@ mod usage_tests {
         let flow = extract(fixture().path());
         let lonely = transitions(&flow, "App/Parts/Lonely.razor");
         assert_eq!(lonely.len(), 1);
-        assert_eq!((&lonely[0].from, &lonely[0].condition), (&any(), &None));
+        assert_eq!(
+            (&lonely[0].from, lonely[0].condition.condition()),
+            (&any(), None)
+        );
         let notes = notes(&flow, "App/Parts/Lonely.razor");
         assert!(
             notes

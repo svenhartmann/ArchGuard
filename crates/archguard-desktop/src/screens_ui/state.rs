@@ -198,12 +198,18 @@ fn simulable(flow: &UiFlow) -> UiFlow {
         }
     }
     let mut f = flow.clone();
-    let screens = f.screens.iter_mut().filter_map(|s| s.access.as_mut());
+    let screens = f
+        .screens
+        .iter_mut()
+        .filter_map(|s| s.access.condition_mut());
     let transitions = f
         .transitions
         .iter_mut()
-        .filter_map(|t| t.condition.as_mut());
-    let actions = f.actions.iter_mut().filter_map(|a| a.condition.as_mut());
+        .filter_map(|t| t.condition.condition_mut());
+    let actions = f
+        .actions
+        .iter_mut()
+        .filter_map(|a| a.condition.condition_mut());
     let endpoints = f.endpoints.iter_mut().filter_map(|e| match &mut e.access {
         AccessState::Protected(c) => Some(c),
         _ => None,
@@ -218,9 +224,12 @@ fn simulable(flow: &UiFlow) -> UiFlow {
 
 /// Every condition of the flow: screens, transitions, actions, endpoints.
 fn conditions(flow: &UiFlow) -> impl Iterator<Item = &Condition> {
-    let screens = flow.screens.iter().filter_map(|s| s.access.as_ref());
-    let transitions = flow.transitions.iter().filter_map(|t| t.condition.as_ref());
-    let actions = flow.actions.iter().filter_map(|a| a.condition.as_ref());
+    let screens = flow.screens.iter().filter_map(|s| s.access.condition());
+    let transitions = flow
+        .transitions
+        .iter()
+        .filter_map(|t| t.condition.condition());
+    let actions = flow.actions.iter().filter_map(|a| a.condition.condition());
     let endpoints = flow.endpoints.iter().filter_map(|e| match &e.access {
         AccessState::Protected(c) => Some(c),
         _ => None,
@@ -516,6 +525,7 @@ mod tests {
 
     fn screen(id: &str, access: Option<Condition>) -> Screen {
         Screen {
+            weak: false,
             id: id.into(),
             name: id.into(),
             kind: ScreenKind::Page,
@@ -523,7 +533,7 @@ mod tests {
             application: Some("App".into()),
             file: format!("{id}.razor"),
             line: 1,
-            access,
+            access: archguard_engine::core::AccessState::from_parts(access, false),
             source: "test".into(),
         }
     }
@@ -591,6 +601,7 @@ mod tests {
     fn the_catalog_fills_the_roles_and_resolves_hierarchy_and_policies() {
         use archguard_engine::core::{PolicyDef, RoleDef, RoleKind};
         let def = |name: &str, includes: &[&str]| RoleDef {
+            application: None,
             name: name.into(),
             kind: RoleKind::Role,
             includes: includes.iter().map(|s| s.to_string()).collect(),
@@ -601,6 +612,7 @@ mod tests {
         let mut f = flow();
         f.roles = vec![def("Admin", &["Clerk"]), def("Auditor", &[])];
         f.policies = vec![PolicyDef {
+            application: None,
             name: "Locked".into(),
             requires: Condition::Role("Auditor".into()),
             file: "P.cs".into(),
@@ -628,8 +640,10 @@ mod tests {
     fn a_spring_role_prefix_joins_the_catalog_role() {
         use archguard_engine::core::{RoleDef, RoleKind};
         let mut f = flow();
-        f.screens[2].access = Some(Condition::Role("ROLE_ADMIN".into()));
+        f.screens[2].access =
+            archguard_engine::core::AccessState::Protected(Condition::Role("ROLE_ADMIN".into()));
         f.roles = vec![RoleDef {
+            application: None,
             name: "ADMIN".into(),
             kind: RoleKind::Role,
             includes: vec![],

@@ -321,6 +321,7 @@ mod tests {
 
     fn screen(id: &str) -> Screen {
         Screen {
+            weak: false,
             id: id.into(),
             name: id.into(),
             kind: ScreenKind::Page,
@@ -328,19 +329,20 @@ mod tests {
             application: Some("web".into()),
             file: format!("{id}.ts"),
             line: 1,
-            access: None,
+            access: archguard_engine::core::AccessState::Undeclared,
             source: "test".into(),
         }
     }
 
     fn go(from: Origin, to: Target, trigger: &str) -> Transition {
         Transition {
+            weak: false,
             from,
             target: to,
             trigger: (!trigger.is_empty()).then(|| trigger.to_string()),
             file: "x.ts".into(),
             line: 1,
-            condition: None,
+            condition: archguard_engine::core::AccessState::Undeclared,
             source: "test".into(),
         }
     }

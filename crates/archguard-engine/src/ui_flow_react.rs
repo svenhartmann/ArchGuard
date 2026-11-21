@@ -332,6 +332,7 @@ impl App {
 
     fn screen(&self, route: String, name: String, file: &str, line: u32) -> Screen {
         Screen {
+            weak: false,
             id: format!("{}:{route}", self.name),
             name,
             kind: ScreenKind::Page,
@@ -339,7 +340,7 @@ impl App {
             application: Some(self.name.clone()),
             file: file.into(),
             line,
-            access: None,
+            access: archguard_core::AccessState::Undeclared,
             source: SOURCE.into(),
         }
     }
@@ -807,10 +808,12 @@ mod next {
         let mw = Condition::Custom("middleware".into());
         for (screen, _) in screens.iter_mut() {
             if screen.route.as_deref().is_some_and(hits) {
-                screen.access = Some(match screen.access.take() {
-                    None => mw.clone(),
-                    Some(c) => Condition::All(vec![c, mw.clone()]),
-                });
+                screen.access = archguard_core::AccessState::Protected(
+                    match screen.access.condition().cloned() {
+                        None => mw.clone(),
+                        Some(c) => Condition::All(vec![c, mw.clone()]),
+                    },
+                );
             }
         }
         for e in endpoints.iter_mut().filter(|e| hits(&e.path)) {
@@ -1852,9 +1855,9 @@ mod router {
             .app
             .screen(format!("/{full}"), name.clone(), ctx.file, line);
         screen.access = match guards {
-            [] => None,
-            [one] => Some(one.clone()),
-            all => Some(Condition::All(all.to_vec())),
+            [] => archguard_core::AccessState::Undeclared,
+            [one] => archguard_core::AccessState::Protected(one.clone()),
+            all => archguard_core::AccessState::Protected(Condition::All(all.to_vec())),
         };
         ctx.screens.push((screen, Owner::Component(name)));
     }
@@ -2234,12 +2237,13 @@ mod nav {
                     continue;
                 };
                 flow.transitions.push(Transition {
+                    weak: false,
                     from: from.clone(),
                     target,
                     trigger: nav.trigger.clone(),
                     file: file.into(),
                     line: nav.line,
-                    condition: None,
+                    condition: archguard_core::AccessState::Undeclared,
                     source: SOURCE.into(),
                 });
             }
@@ -2792,7 +2796,7 @@ mod tanstack {
                 .filter(|n| !n.is_empty())
                 .map_or_else(|| m.file.to_string(), str::to_string);
             let mut screen = app.screen(route_of(&m.id), name, m.file, line_of(m.text, m.at));
-            screen.access = all(conditions);
+            screen.access = archguard_core::AccessState::from_parts(all(conditions), false);
             screens.push((screen, Owner::File(m.file.to_string())));
         }
         !mods.is_empty()
@@ -3212,12 +3216,13 @@ mod http {
         for (from, _) in froms {
             for (line, call) in &calls {
                 flow.actions.push(Action {
+                    weak: false,
                     screen: from.clone(),
                     trigger: None,
                     call: call.clone(),
                     file: file.into(),
                     line: *line,
-                    condition: None,
+                    condition: archguard_core::AccessState::Undeclared,
                     source: SOURCE.into(),
                 });
             }
@@ -3286,7 +3291,7 @@ mod tests {
     fn screens(flow: &UiFlow) -> Vec<(String, String, Option<Condition>)> {
         flow.screens
             .iter()
-            .map(|s| (s.id.clone(), s.name.clone(), s.access.clone()))
+            .map(|s| (s.id.clone(), s.name.clone(), s.access.condition().cloned()))
             .collect()
     }
 
@@ -3831,7 +3836,7 @@ import { Link as RouterLink } from '@tanstack/react-router'
         let got: Vec<_> = flow
             .screens
             .iter()
-            .map(|s| (s.id.clone(), s.name.clone(), s.access.clone()))
+            .map(|s| (s.id.clone(), s.name.clone(), s.access.condition().cloned()))
             .collect();
         assert_eq!(
             got,
@@ -3848,7 +3853,7 @@ import { Link as RouterLink } from '@tanstack/react-router'
         let flow = extract(custom.path());
         assert_eq!(
             flow.screens[0].access,
-            Some(Condition::Custom("isLoggedIn".into()))
+            archguard_core::AccessState::Protected(Condition::Custom("isLoggedIn".into()))
         );
     }
 
@@ -4054,7 +4059,8 @@ function X() { S.a(); S.b(); S.c(); S.d(); }
             .find(|s| s.id == "fe:/x")
             .unwrap()
             .access
-            .clone();
+            .condition()
+            .cloned();
         (access, flow)
     }
 
@@ -4909,7 +4915,11 @@ export function Page() { items.map((i) => i); load(); return null; }
             format!("export function App() {{ return user && {routes}; }}\n"),
         ] {
             let flow = one_file(&text);
-            let access: Vec<_> = flow.screens.iter().map(|s| s.access.clone()).collect();
+            let access: Vec<_> = flow
+                .screens
+                .iter()
+                .map(|s| s.access.condition().cloned())
+                .collect();
             assert_eq!(flow.screens.len(), 1, "{text}: {:?}", flow.diagnostics);
             assert!(unknown(&access[0]), "{text}: {access:?}");
             assert!(!flow.diagnostics.is_empty(), "{text}");

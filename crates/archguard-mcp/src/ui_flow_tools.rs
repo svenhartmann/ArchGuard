@@ -261,7 +261,7 @@ fn flow_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData> {
             "incomplete"
         },
         json!({"definition":flow.definition,"revision":rev,"summary":ui_flow_summary(flow),"application":app,"simulation":simulation,"roles":catalog["roles"],"policies":catalog["policies"],
-            "limitations":"Static evidence from rules over the code (ADR 0021), no running application. undeclared means no declaration was found and is never allowed. A role implies the roles it includes (hierarchy) and the permission ids it covers; a policy defined in code resolves to what it requires, an explicit switch wins; custom checks and undefined policies stay unknown. Reach from the start screens (marked as start by the extractor, e.g. MAUI Shell or WPF StartupUri, or routed `/`): sure = every guard allowed, possible = some guard unknown, denied = the screen's own access denies, no_known_path = not denied but no resolved path (unresolved_transitions_in_application counts links the rules could not read, so the gap may be ours), no_start_screen = the application has no start screen."}),
+            "limitations":"Static evidence from rules over the code (ADR 0021), no running application. undeclared means no declaration was found and is never allowed. A role implies the roles it includes (hierarchy) and the permission ids it covers; a policy defined in code resolves to what it requires, an explicit switch wins; custom checks and undefined policies stay unknown. Reach from the start screens (marked as start by the extractor, e.g. MAUI Shell or WPF StartupUri, or routed `/`): sure = every guard allowed, possible = some guard unknown, undeclared = not denied, but a screen or link on the way declares no access (not open), denied = the screen's own access denies, no_known_path = not denied but no resolved path (unresolved_transitions_in_application counts links the rules could not read, so the gap may be ours), no_start_screen = the application has no start screen."}),
         rows.iter()
             .filter(|r| q.is_empty() || r.to_string().to_lowercase().contains(&q)),
         &p.page,
@@ -272,7 +272,7 @@ fn flow_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData> {
 #[tool_router(router = ui_flow_router, vis = "pub(crate)")]
 impl ArchguardTools {
     #[tool(
-        description = "Read the UI flow from code (ADR 0021): screens (route, name, access, file, line), navigation transitions, actions with their HTTP calls, backend endpoint access (protected/open/undeclared), frontend/backend mismatch findings, summary and gap diagnostics. Built-in rules for Blazor, Angular, ASP.NET and Spring plus .archguard/ui-flow.json. Also the roles, permissions and policies the code defines (metadata roles/policies; role and policy rows with file:line). With roles or anonymous: true it simulates that user (role hierarchy and policy definitions applied): each screen sure/possible/denied/no_known_path/no_start_screen from the start screens (marked or routed `/`) and each endpoint allowed/denied/unknown. Static evidence, not a running application; undeclared never means allowed. application narrows screens, transitions and actions. view: \"matrix\" (kind screens|endpoints|both) returns instead the permission matrix: rows of screens/endpoints with an allowed/denied/unknown cell per role (anonymous, signed in, each defined role). Read-only; flattened 4 KiB pages, follow next_offset with metadata.revision as expected_revision."
+        description = "Read the UI flow from code (ADR 0021): screens (route, name, access, file, line), navigation transitions, actions with their HTTP calls, backend endpoint access (protected/open/undeclared), frontend/backend mismatch findings, summary and gap diagnostics. Built-in rules for Blazor, Angular, ASP.NET and Spring plus .archguard/ui-flow.json. Also the roles, permissions and policies the code defines (metadata roles/policies; role and policy rows with file:line). With roles or anonymous: true it simulates that user (role hierarchy and policy definitions applied): each screen sure/possible/undeclared/denied/no_known_path/no_start_screen from the start screens (marked or routed `/`) and each endpoint allowed/denied/unknown. Static evidence, not a running application; undeclared never means allowed. application narrows screens, transitions and actions. view: \"matrix\" (kind screens|endpoints|both) returns instead the permission matrix: rows of screens/endpoints with an allowed/denied/unknown cell per role (anonymous, signed in, each defined role). Read-only; flattened 4 KiB pages, follow next_offset with metadata.revision as expected_revision."
     )]
     pub(crate) async fn ui_flow(
         &self,
@@ -301,6 +301,7 @@ mod tests {
 
     fn screen(id: &str, route: &str, access: Option<Condition>) -> Screen {
         Screen {
+            weak: false,
             id: id.into(),
             name: id.into(),
             kind: ScreenKind::Page,
@@ -308,7 +309,7 @@ mod tests {
             application: None,
             file: format!("{id}.razor"),
             line: 1,
-            access,
+            access: archguard_engine::core::AccessState::from_parts(access, false),
             source: "test".into(),
         }
     }
@@ -324,15 +325,17 @@ mod tests {
                 ),
             ],
             transitions: vec![Transition {
+                weak: false,
                 from: Origin::Screen("home".into()),
                 target: Target::Screen("purge".into()),
                 trigger: None,
                 file: "home.razor".into(),
                 line: 2,
-                condition: None,
+                condition: archguard_engine::core::AccessState::Undeclared,
                 source: "test".into(),
             }],
             roles: vec![RoleDef {
+                application: None,
                 name: "Owner".into(),
                 kind: RoleKind::Role,
                 includes: vec!["Administrator".into()],
@@ -341,6 +344,7 @@ mod tests {
                 source: "aspnet".into(),
             }],
             policies: vec![PolicyDef {
+                application: None,
                 name: "CanPurge".into(),
                 requires: Condition::Role("Administrator".into()),
                 file: "Program.cs".into(),
@@ -382,7 +386,7 @@ mod tests {
         assert!(items.iter().any(|r| r["kind"] == "policy"));
 
         let owner = page(Some(&["Owner"]));
-        assert_eq!(purge_reach(&owner), "sure");
+        assert_eq!(purge_reach(&owner), "undeclared");
         let simulation = &owner["metadata"]["simulation"];
         assert_eq!(simulation["implied_roles"], json!(["Administrator"]));
         assert_eq!(simulation["policies"]["CanPurge"], true);
@@ -433,6 +437,7 @@ mod tests {
     fn a_role_named_like_a_fixed_column_does_not_overwrite_it() {
         let mut f = flow();
         f.roles.push(RoleDef {
+            application: None,
             name: "anonymous".into(),
             kind: RoleKind::Role,
             includes: vec![],
@@ -440,7 +445,8 @@ mod tests {
             line: 1,
             source: "test".into(),
         });
-        f.screens[1].access = Some(Condition::Authenticated);
+        f.screens[1].access =
+            archguard_engine::core::AccessState::Protected(Condition::Authenticated);
         let params = UiFlowParams {
             view: Some("matrix".into()),
             kind: Some("screens".into()),

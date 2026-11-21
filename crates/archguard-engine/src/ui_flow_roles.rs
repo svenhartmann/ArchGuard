@@ -8,7 +8,7 @@
 //!   Classes named `Roles`, `RoleNames`, `AuthoritiesConstants` give role defs,
 //!   `Permissions`, `PermissionIds`, `PermissionNames` permission defs (Squidex
 //!   ids such as `squidex.apps.{app}.contents.*` cover each other by
-//!   `archguard_core::permission_covers`; no role is assigned permissions here).
+//!   `PermissionFormat::Dotted`; no role is assigned permissions here).
 //! - ASP.NET: `AddPolicy(name, …)` (also on `AddAuthorizationBuilder()`) and
 //!   `DefaultPolicy`/`FallbackPolicy = new AuthorizationPolicyBuilder()…` give
 //!   policy defs: `RequireAuthenticatedUser` = signed in, `RequireRole(a, b)` =
@@ -27,7 +27,8 @@
 use crate::extract_ctx::{ExtractContext, read_text, walk, with_root_config};
 use crate::services::support::test_path;
 use archguard_core::{
-    Condition, DiagnosticSeverity, PolicyDef, RoleDef, RoleKind, UiFlow, UiFlowDiagnostic,
+    Condition, ConventionOrigin, DiagnosticSeverity, PermissionFormat, PolicyDef, RoleConvention,
+    RoleDef, RoleKind, UiFlow, UiFlowDiagnostic,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -80,6 +81,21 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     };
     flow.roles.sort();
     flow.roles.dedup();
+    if flow.roles.iter().any(|d| d.kind == RoleKind::Permission) {
+        // Dotted permission ids cover each other (the former built-in rule).
+        flow.role_conventions.push(RoleConvention {
+            permissions: PermissionFormat::Dotted {
+                wildcard: "*".into(),
+            },
+            origins: vec![ConventionOrigin {
+                field: "permissions".into(),
+                file: String::new(),
+                line: 0,
+                source: "built-in rule for dotted permission ids".into(),
+            }],
+            ..RoleConvention::default()
+        });
+    }
     flow.policies.sort();
     flow.policies.dedup();
     flow.diagnostics.sort();
@@ -200,6 +216,7 @@ impl Out {
             .to_string()
         };
         self.roles.push(RoleDef {
+            application: None,
             name: strip(name),
             kind,
             includes: includes.iter().map(|n| strip(n)).collect(),
@@ -210,6 +227,7 @@ impl Out {
     }
     fn policy(&mut self, src: &Source, line: u32, name: String, requires: Condition) {
         self.policies.push(PolicyDef {
+            application: None,
             name,
             requires,
             file: src.rel.clone(),

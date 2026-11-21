@@ -72,10 +72,10 @@ fn screen_card(
     c.path = screen.file.as_str().into();
     c.line = screen.line as i32;
     let (state, note) = match reaches.get(&screen.id) {
-        Some(ScreenReach::Sure) => (0, String::new()),
+        Some(ScreenReach::Sure | ScreenReach::Undeclared) => (0, String::new()),
         Some(ScreenReach::Possible) => (1, texts.t("only if an open condition holds").into()),
         Some(ScreenReach::Denied) => {
-            let needs = words::access(texts, screen.access.as_ref());
+            let needs = words::access(texts, screen.access.condition());
             (2, texts.f("needs: {name}", &[("name", needs)]))
         }
         Some(ScreenReach::NoKnownPath {

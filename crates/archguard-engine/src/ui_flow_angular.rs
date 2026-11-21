@@ -1026,23 +1026,25 @@ impl<'f> Flows<'f, '_> {
                     _ => self.target(link, base, &mut flow.diagnostics),
                 };
                 flow.transitions.push(Transition {
+                    weak: false,
                     from: from.clone(),
                     target,
                     trigger: link.trigger.clone(),
                     file: link.file.clone(),
                     line: link.line,
-                    condition: None,
+                    condition: archguard_core::AccessState::Undeclared,
                     source: SOURCE.into(),
                 });
             }
             for call in own_calls.iter().chain(injected.iter().copied()) {
                 flow.actions.push(Action {
+                    weak: false,
                     screen: from.clone(),
                     trigger: None,
                     call: call.call.clone(),
                     file: call.file.clone(),
                     line: call.line,
-                    condition: None,
+                    condition: archguard_core::AccessState::Undeclared,
                     source: SOURCE.into(),
                 });
             }
@@ -1286,6 +1288,7 @@ impl<'w> Walk<'w> {
             all => Some(Condition::All(all.to_vec())),
         };
         let screen = Screen {
+            weak: false,
             id: format!("{app}:{route}"),
             name: name.clone(),
             kind: ScreenKind::Page,
@@ -1293,7 +1296,7 @@ impl<'w> Walk<'w> {
             application: Some(app.clone()),
             file: src.file.into(),
             line: line_of(src.text, item.at),
-            access,
+            access: archguard_core::AccessState::from_parts(access, false),
             source: SOURCE.into(),
         };
         (screen, name)
@@ -2291,7 +2294,7 @@ export const routes: Routes = [
         assert_eq!(order.kind, ScreenKind::Page);
         assert_eq!(order.file, "web/src/app/app.routes.ts");
         assert_eq!(order.line, 5);
-        assert_eq!(order.access, None);
+        assert_eq!(order.access, archguard_core::AccessState::Undeclared);
         assert!(flow.screens.iter().all(|s| s.source == "angular"));
         assert!(flow.complete, "{:?}", flow.diagnostics);
     }
@@ -2330,7 +2333,7 @@ export class AppRoutingModule {}
             .unwrap();
         assert_eq!(
             users.access,
-            Some(Condition::All(vec![
+            archguard_core::AccessState::Protected(Condition::All(vec![
                 auth.clone(),
                 Condition::Custom("adminGuard".into())
             ]))
@@ -2340,7 +2343,7 @@ export class AppRoutingModule {}
             .iter()
             .find(|s| s.name == "AdminHomeComponent")
             .unwrap();
-        assert_eq!(home.access, Some(auth));
+        assert_eq!(home.access, archguard_core::AccessState::Protected(auth));
         assert!(flow.complete, "{:?}", flow.diagnostics);
     }
 
@@ -2380,7 +2383,10 @@ import { routes } from './app.routes';
             ])
         );
         let checkout = &flow.screens[1];
-        assert_eq!(checkout.access, Some(Condition::Custom("authGuard".into())));
+        assert_eq!(
+            checkout.access,
+            archguard_core::AccessState::Protected(Condition::Custom("authGuard".into()))
+        );
         assert_eq!(checkout.file, "shop/src/app/cart/cart.routes.ts");
         assert!(!flow.complete);
         assert_eq!(flow.diagnostics.len(), 1, "{:?}", flow.diagnostics);
@@ -2570,7 +2576,7 @@ export class OrderService {
         screen
             .unwrap_or_else(|| panic!("no {id} in {:?}", screens(flow)))
             .access
-            .as_ref()
+            .condition()
     }
 
     fn calls(flow: &UiFlow) -> BTreeSet<(Origin, Call)> {

@@ -356,12 +356,13 @@ fn file_transitions(
         let context = origin(ix, ci, at, flow);
         for trigger in triggers(ix, ci, methods, at, &context) {
             transitions.push(Transition {
+                weak: false,
                 from: context.0.clone(),
                 target: target.clone(),
                 trigger,
                 file: file.clone(),
                 line,
-                condition: guard(text, methods, at),
+                condition: archguard_core::AccessState::from_parts(guard(text, methods, at), false),
                 source: SOURCE.into(),
             });
         }
@@ -403,6 +404,7 @@ fn screens(ix: &Index, opened: &Opened, flow: &mut UiFlow) {
             note(flow, &doc.file, doc.line, message);
         }
         flow.screens.push(Screen {
+            weak: false,
             id: doc.id.clone(),
             name: doc.class.clone(),
             kind,
@@ -410,7 +412,7 @@ fn screens(ix: &Index, opened: &Opened, flow: &mut UiFlow) {
             application: Some(app.name.clone()),
             file: doc.file.clone(),
             line: doc.line,
-            access: None,
+            access: archguard_core::AccessState::Undeclared,
             source: SOURCE.into(),
         });
     }
@@ -1257,12 +1259,13 @@ mod actions {
             let condition = guard(text, methods, at);
             for trigger in triggers(ix, ci, methods, at, &context) {
                 let action = Action {
+                    weak: false,
                     screen: context.0.clone(),
                     trigger,
                     call: call.clone(),
                     file: call_file.clone(),
                     line,
-                    condition: condition.clone(),
+                    condition: archguard_core::AccessState::from_parts(condition.clone(), false),
                     source: SOURCE.into(),
                 };
                 if !flow.actions.contains(&action) {
@@ -1853,9 +1856,9 @@ public class MauiNavigationService : INavigationService
             .unwrap();
         assert_eq!(
             guarded.condition,
-            Some(Condition::Custom("IsAuthenticated".into()))
+            archguard_core::AccessState::Protected(Condition::Custom("IsAuthenticated".into()))
         );
-        assert_eq!(back.condition, None);
+        assert_eq!(back.condition, archguard_core::AccessState::Undeclared);
     }
 
     #[test]
@@ -1866,7 +1869,7 @@ public class MauiNavigationService : INavigationService
             from(&flow, "Shop:Views/CatalogPage.xaml")
                 .into_iter()
                 .filter(|t| t.file == vm)
-                .map(|t| (&t.target, t.trigger.as_deref(), t.condition.as_ref()))
+                .map(|t| (&t.target, t.trigger.as_deref(), t.condition.condition()))
                 .collect();
         assert_eq!(
             found,
@@ -2097,7 +2100,10 @@ public class MauiNavigationService : INavigationService
         let flow = extract(maui().path());
         assert_eq!(flow.start_screens, ["Shop:Views/LoginPage.xaml"]);
         let reaches = screen_reaches(&flow, &anonymous);
-        assert_eq!(reaches["Shop:Views/LoginPage.xaml"], ScreenReach::Sure);
+        assert_eq!(
+            reaches["Shop:Views/LoginPage.xaml"],
+            ScreenReach::Undeclared
+        );
         assert!(!reaches.values().any(|r| *r == ScreenReach::NoStartScreen));
         // WPF: `StartupUri` of App.xaml.
         let dir = wpf();
@@ -2111,10 +2117,10 @@ public class MauiNavigationService : INavigationService
         let main = format!("{app}:MainWindow.xaml");
         assert_eq!(flow.start_screens, std::slice::from_ref(&main));
         let reaches = screen_reaches(&flow, &anonymous);
-        assert_eq!(reaches[&main], ScreenReach::Sure);
+        assert_eq!(reaches[&main], ScreenReach::Undeclared);
         assert_eq!(
             reaches[&format!("{app}:SettingsWindow.xaml")],
-            ScreenReach::Sure
+            ScreenReach::Undeclared
         );
         // Avalonia and WinUI: the window created in the startup override.
         let avalonia = write(&[

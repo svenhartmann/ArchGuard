@@ -123,11 +123,14 @@ fn center(s: &ScreensState, i: usize, reaches: &Reaches, texts: &Texts) -> FlowC
         _ => status(c.state, &c.note, texts).into(),
     };
     let needs = match &screen.access {
-        Some(a) => texts.f(
+        archguard_engine::core::AccessState::Protected(a) => texts.f(
             "needs: {name}",
             &[("name", short(&words::condition(texts, a)))],
         ),
-        None => texts.t("needs no sign-in or role").into(),
+        archguard_engine::core::AccessState::Open
+        | archguard_engine::core::AccessState::Undeclared => {
+            texts.t("needs no sign-in or role").into()
+        }
     };
     let from = inspector::meaning(s, screen, texts).2;
     c.detail = format!("{needs}\n{from}").trim_end().into();

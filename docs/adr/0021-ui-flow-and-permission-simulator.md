@@ -509,3 +509,41 @@ Open:
 - Mutation probes of the shared TS helpers left four survivors (first fetch
   call, `export async`, fixed `policy:` meaning, non-arrow exports); these
   gaps predate the move.
+
+### 2026-11-21: three access states on screens, links and actions; role conventions
+
+Change (a) of the access-logic work, model only (no extractor reads more than
+before):
+
+- `Screen.access`, `Transition.condition` and `Action.condition` are an
+  `AccessState` like endpoints: `Protected(Condition)`, `Open`, `Undeclared`.
+  A missing field or `null` in a file reads as `Undeclared`, a bare condition
+  of older files as `Protected`, `"open"` as `Open`. These three fields keep
+  writing a protected state as the bare condition, so files stay as they were. Extractors build it with
+  `AccessState::from_parts(condition, false)`; nothing produces `Open` for
+  these elements yet. `and` (both layers hold; `Undeclared` is the identity)
+  and `or_default` (fallback applies only when nothing was declared) are the
+  only combinators in the core.
+- The simulator no longer reads "no condition" as allowed: `Reach::Undeclared`
+  is its own stage (`ScreenReach::Undeclared` in `screen_reaches`), ordered
+  between `Sure` and `Possible` so a path is as weak as its weakest step. The
+  findings and the desktop still treat an undeclared step like an unguarded
+  one, so their output does not change; showing it is change (c).
+- `weak: bool` on screens, links and actions marks a guard that only holds as a
+  rule of thumb (layout load, parent loader). `Protected(Condition::Never)`
+  stays the condition for a read deny; the rules that produce it follow with
+  the extractors.
+- `RoleConvention` (per application, `UiFlow.role_conventions`) says how names
+  are written and compared: `role_prefix`, `scope_prefix`, `role_claim`,
+  `role_case`, `policy_case`, `PermissionFormat` (`Exact`, `Dotted`,
+  `ActionSubject`), aliases and origins. `holds`, `canonical` and `label` are
+  the one place with comparison logic; hierarchy stays in
+  `resolve_assignment`, which now also fills `Assignment.convention`
+  (`resolve_assignment_for` takes the application). The built-in
+  `permission_covers` became `PermissionFormat::Dotted`; the role catalog
+  extractor emits that convention when it finds permission ids.
+- `RoleKind::Scope`; `RoleDef` and `PolicyDef` carry `application`.
+
+Open: no extractor emits a convention except the dotted one, and policy atoms
+are still switches (only `policy_case` applies to them); the fixed `ROLE_`
+handling in the desktop and CLI goes with change (c).
