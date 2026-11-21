@@ -1927,7 +1927,7 @@ mod spring {
 
     /// Which scoping-name calls are rules of the authorization block.
     mod rule_calls {
-        use super::super::lex::skip_ws_back;
+        use super::super::lex::{skip_ws, skip_ws_back};
         use super::super::*;
         use super::chain_span;
 
@@ -1968,9 +1968,15 @@ mod spring {
         fn rooted_in_rules(src: &Source, mut dot: usize, lambdas: &Lambdas) -> bool {
             let b = src.bytes();
             while let Some((start, name, call)) = link_before(src, dot) {
+                // Only the empty-parentheses form returns the rule registry; the
+                // lambda form returns the HttpSecurity.
+                let open = skip_ws(b, start + name.len());
+                let empty = src
+                    .pair(open)
+                    .is_some_and(|c| src.text[open + 1..c].trim().is_empty());
                 match (call, name) {
                     (true, "and") => return false,
-                    (true, "authorizeRequests" | "authorizeHttpRequests") => return true,
+                    (true, "authorizeRequests" | "authorizeHttpRequests") if empty => return true,
                     _ => {}
                 }
                 let before = skip_ws_back(b, start);
@@ -5241,6 +5247,11 @@ public class TicketController {
             );
         }
         let kt = "class C : WebSecurityConfigurerAdapter() {\n    override fun configure(http: HttpSecurity) {\n        http.authorizeRequests({ a -> a.antMatchers(\"/api/v1/open/**\").permitAll(); a.anyRequest().authenticated(); getHttp().antMatcher(\"/api/**\") })\n    }\n}\n";
+        assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", kt)]));
+        // The lambda form of authorizeHttpRequests returns the HttpSecurity, not the rules.
+        let text = "public class C { @Bean SecurityFilterChain api(HttpSecurity http) throws Exception { http.authorizeHttpRequests(a -> a.anyRequest().permitAll()).antMatcher(\"/public/**\"); return http.build(); } }";
+        assert_not_evaluated(&configured(&[("src/main/java/app/C.java", text)]));
+        let kt = "class C : WebSecurityConfigurerAdapter() {\n    override fun configure(http: HttpSecurity) {\n        http.authorizeRequests { a -> a.anyRequest().permitAll() }.antMatcher(\"/public/**\")\n    }\n}\n";
         assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", kt)]));
         // Kotlin statements separated by newlines only.
         for x in [
