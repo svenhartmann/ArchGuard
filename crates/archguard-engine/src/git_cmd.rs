@@ -53,7 +53,11 @@ mod tests {
             .map(|(key, _)| key)
             .collect();
         // A pre-commit hook's temporary index and CI's GIT_CONFIG_* safe.directory must stay.
-        for kept in ["GIT_INDEX_FILE", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"] {
+        for kept in [
+            "GIT_INDEX_FILE",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_PARAMETERS",
+        ] {
             assert!(!removed.contains(&OsStr::new(kept)), "{kept} removed");
         }
         assert!(removed.contains(&OsStr::new("GIT_DIR")));

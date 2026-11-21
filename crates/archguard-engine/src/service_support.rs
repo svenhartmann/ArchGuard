@@ -118,8 +118,9 @@ impl Discovery {
             if std::fs::symlink_metadata(root.join(name)).is_err() {
                 continue;
             }
-            match crate::project_files::read_manifest(root, Path::new(name))
+            match crate::project_files::read_repo_file(root, Path::new(name), 1024 * 1024)
                 .map_err(|error| error.to_string())
+                .and_then(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()))
                 .and_then(|text| {
                     text.parse::<toml::Table>()
                         .map_err(|error| error.to_string())
@@ -186,6 +187,19 @@ impl Discovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_analysis_root_still_reads_its_config() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).expect("mkdir");
+        std::fs::write(real.join("archguard.toml"), "[project]\nexclude = []\n").expect("write");
+        std::os::unix::fs::symlink(&real, dir.path().join("link")).expect("symlink");
+        let mut report = ServiceTopology::default();
+        Discovery::new(&dir.path().join("link"), &mut report).expect("discovery");
+        assert!(report.diagnostics.is_empty(), "{report:?}");
+    }
 
     #[cfg(unix)]
     #[test]
