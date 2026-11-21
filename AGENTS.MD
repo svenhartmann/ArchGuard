@@ -26,3 +26,28 @@
   already lists.
 - Message another session only to resolve a conflict over a file, not for status
   updates. Every message costs that session a model round.
+
+## Agent loop
+
+Larger requests run through the global agent loop: skill `agent-loop`, model in
+`~/.claude/skills/agent-loop/BLUEPRINT.md`. Specs and tickets live in `.scratch/<effort>/`
+(local, excluded via `.git/info/exclude`, see `docs/agents/issue-tracker.md`). A global hook
+blocks `git merge` of commits without an Opus review approval.
+
+- Base branch: `main`. Integration branch: `integ/<effort>`; merging it into `main` needs the user.
+- Gate commands, run in the ticket worktree, all must exit 0:
+  - `cargo fmt --all -- --check`
+  - `cargo clippy --workspace --all-targets --locked -- -D warnings`
+  - `cargo test --workspace --locked`
+  - `python3 -m unittest discover -s scripts/checks -p 'test_*.py'`
+- Review also checks: golden files byte-identical, no weakened or skipped tests,
+  no new archguard findings against `main`.
+
+## Context before code
+
+Use the archguard MCP server before reading or grepping widely; it answers structure from
+the graph in bounded pages. The server's own instructions name the tools.
+
+- Before the first edit: `change_context` with the files or symbols you will touch.
+- Grep for text the graph cannot answer, not to find callers or dependencies.
+- After editing: the gate commands, then `check` and `compare` against your base branch.
