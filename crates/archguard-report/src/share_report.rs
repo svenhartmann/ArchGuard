@@ -103,8 +103,11 @@ fn health(report: &Report) -> String {
                 z.zone_of_pain, z.zone_of_uselessness, z.main_sequence
             ));
         }
-        if let Some(per_kloc) = k.debt.as_ref().and_then(|d| d.per_kloc) {
-            lines.push(format!("Debt markers {per_kloc:.1} per 1000 lines"));
+        if let Some(d) = &k.debt {
+            lines.push(format!("{} lines of code scanned", d.loc));
+            if let Some(per_kloc) = d.per_kloc {
+                lines.push(format!("Debt markers {per_kloc:.1} per 1000 lines"));
+            }
         }
     }
     format!("## Health and KPIs\n\n{}\n\n", bullets(&lines))

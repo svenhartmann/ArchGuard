@@ -259,10 +259,14 @@ export component AppWindow inherits Window {
         Theme.dark = dark;
         Palette.color-scheme = dark ? ColorScheme.dark : ColorScheme.light;
     }
+    // True until a theme is chosen (menu, settings, environment); "System
+    // theme" sets it again. The Theme menu checks its entry by it.
+    property <bool> follows-system: true;
     // 0 standard, 1 Solarized (theme.slint).
     public function set-look(family: int, dark: bool) {
         Theme.family = family;
         root.set-dark(dark);
+        root.follows-system = false;
     }
 
     // Native on macOS and Windows, drawn by Slint elsewhere. Control is
@@ -422,27 +426,32 @@ export component AppWindow inherits Window {
                 title: @tr("Theme");
                 MenuItem {
                     title: @tr("Dark theme");
-                    checked: Theme.family == 0 && Theme.dark == true;
+                    checked: !root.follows-system && Theme.family == 0 && Theme.dark == true;
                     activated => { root.set-look(0, true); root.choose-theme(0, true); }
                 }
                 MenuItem {
                     title: @tr("Light theme");
-                    checked: Theme.family == 0 && Theme.dark == false;
+                    checked: !root.follows-system && Theme.family == 0 && Theme.dark == false;
                     activated => { root.set-look(0, false); root.choose-theme(0, false); }
                 }
                 MenuItem {
                     title: @tr("Solarized Light");
-                    checked: Theme.family == 1 && Theme.dark == false;
+                    checked: !root.follows-system && Theme.family == 1 && Theme.dark == false;
                     activated => { root.set-look(1, false); root.choose-theme(1, false); }
                 }
                 MenuItem {
                     title: @tr("Solarized Dark");
-                    checked: Theme.family == 1 && Theme.dark == true;
+                    checked: !root.follows-system && Theme.family == 1 && Theme.dark == true;
                     activated => { root.set-look(1, true); root.choose-theme(1, true); }
                 }
                 MenuItem {
                     title: @tr("System theme");
-                    activated => { root.set-look(0, root.system-dark); root.follow-system-theme(); }
+                    checked: root.follows-system;
+                    activated => {
+                        root.set-look(0, root.system-dark);
+                        root.follows-system = true;
+                        root.follow-system-theme();
+                    }
                 }
             }
             MenuSeparator { }
@@ -635,7 +644,7 @@ export component AppWindow inherits Window {
                     icon: Theme.dark ? Icons.sun : Icons.moon;
                     tip: Theme.dark ? @tr("Light theme") : @tr("Dark theme");
                     clicked => {
-                        root.set-dark(!Theme.dark);
+                        root.set-look(Theme.family, !Theme.dark);
                         root.choose-theme(Theme.family, Theme.dark);
                     }
                 }
@@ -657,7 +666,7 @@ export component AppWindow inherits Window {
                         MenuItem {
                             title: Theme.dark ? @tr("Light theme") : @tr("Dark theme");
                             activated => {
-                                root.set-dark(!Theme.dark);
+                                root.set-look(Theme.family, !Theme.dark);
                                 root.choose-theme(Theme.family, Theme.dark);
                             }
                         }
