@@ -133,6 +133,10 @@ pub struct Relation {
     /// The field of `from` that holds the relation.
     pub via: String,
     pub source: String,
+    /// `to` is a framework model outside the scanned sources (e.g. Django's
+    /// `django.contrib.auth.User`), not an entity of this model.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub external: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -753,6 +757,7 @@ mod tests {
                 kind: RelationKind::HasMany,
                 via: "OrderItems".into(),
                 source: "csharp".into(),
+                external: false,
             }],
             use_cases: vec![UseCase {
                 id: "Ordering.SetPaidOrderStatusCommandHandler".into(),
