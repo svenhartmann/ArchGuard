@@ -707,6 +707,50 @@ public class AdminController : ControllerBase
         );
     }
 
+    /// Two applications: `api` (Spring, role_prefix ROLE_) and `web` (no
+    /// convention). Held `ADMIN` meets the stored `ROLE_ADMIN` in `api` only.
+    #[test]
+    fn rights_differ_per_application_convention() {
+        use archguard_core::{Condition, RoleConvention};
+        let (mut flow, model) = analyzed_with(MORE);
+        for e in &mut flow.endpoints {
+            if e.path == "/api/admin/cancel" {
+                e.access = AccessState::Protected(Condition::Role("ROLE_ADMIN".into()));
+                e.application = Some("api".into());
+            } else {
+                e.application = Some("web".into());
+            }
+        }
+        flow.role_conventions = vec![RoleConvention {
+            application: Some("api".into()),
+            role_prefix: Some("ROLE_".into()),
+            ..RoleConvention::default()
+        }];
+        let cancelled = triggers_of_state(&flow, &model, "Order", "Cancelled");
+        let at = cancelled
+            .iter()
+            .position(|c| c.endpoint().is_some_and(|e| e.path == "/api/admin/cancel"))
+            .expect("admin chain");
+        let held = Assignment {
+            authenticated: true,
+            roles: ["ADMIN".to_string()].into(),
+            ..Assignment::default()
+        };
+        assert_eq!(
+            rights(&flow, &cancelled, &held)[at].reasons[0],
+            "endpoint PUT /api/admin/cancel needs role ROLE_ADMIN: allowed"
+        );
+        // the same requirement in `web` (no prefix convention) stays denied
+        flow.endpoints
+            .iter_mut()
+            .for_each(|e| e.application = Some("web".into()));
+        let cancelled = triggers_of_state(&flow, &model, "Order", "Cancelled");
+        assert_eq!(
+            rights(&flow, &cancelled, &held)[at].reasons[0],
+            "endpoint PUT /api/admin/cancel needs role ROLE_ADMIN: denied"
+        );
+    }
+
     #[test]
     fn rights_per_role_along_the_chain() {
         let (flow, model) = analyzed_with(MORE);
