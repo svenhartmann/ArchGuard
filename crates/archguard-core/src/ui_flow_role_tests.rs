@@ -1,6 +1,65 @@
 //! Role and policy catalog in the simulation (ADR 0021, roles entry).
 use crate::ui_flow::*;
 
+fn prefixed(app: &str, prefix: &str, source: &str, line: u32) -> RoleConvention {
+    RoleConvention {
+        application: Some(app.into()),
+        role_prefix: Some(prefix.into()),
+        origins: vec![ConventionOrigin {
+            field: "role_prefix".into(),
+            file: if line == 0 {
+                String::new()
+            } else {
+                "Sec.java".into()
+            },
+            line,
+            source: source.into(),
+        }],
+        ..RoleConvention::default()
+    }
+}
+
+fn flow_of(conventions: Vec<RoleConvention>) -> UiFlow {
+    UiFlow {
+        role_conventions: conventions,
+        ..UiFlow::default()
+    }
+}
+
+#[test]
+fn a_read_convention_beats_a_framework_default_in_one_entry_per_application() {
+    let a = flow_of(vec![prefixed(
+        "app",
+        "ROLE_",
+        "framework default spring",
+        0,
+    )]);
+    let b = flow_of(vec![prefixed("app", "SCOPE_", "withRolePrefix", 3)]);
+    for flow in [merge_ui_flows(a.clone(), b.clone()), merge_ui_flows(b, a)] {
+        assert_eq!(
+            flow.role_conventions.len(),
+            1,
+            "{:?}",
+            flow.role_conventions
+        );
+        let prefix = flow.convention(Some("app")).role_prefix;
+        assert_eq!(prefix.as_deref(), Some("SCOPE_"));
+        assert!(flow.complete && flow.diagnostics.is_empty());
+    }
+}
+
+#[test]
+fn two_different_read_values_are_a_gap_and_fall_back_to_exact() {
+    let a = flow_of(vec![prefixed("app", "A_", "withRolePrefix", 3)]);
+    let b = flow_of(vec![prefixed("app", "B_", "withRolePrefix", 9)]);
+    let flow = merge_ui_flows(a, b);
+    assert_eq!(flow.role_conventions.len(), 1);
+    assert_eq!(flow.convention(Some("app")).role_prefix, None);
+    assert!(!flow.complete);
+    assert_eq!(flow.diagnostics.len(), 1, "{:?}", flow.diagnostics);
+    assert!(flow.diagnostics[0].message.contains("role_prefix"));
+}
+
 fn def(name: &str, kind: RoleKind, includes: &[&str]) -> RoleDef {
     RoleDef {
         application: None,

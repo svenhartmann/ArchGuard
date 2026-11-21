@@ -919,25 +919,46 @@ pub fn merge_ui_flows(a: UiFlow, b: UiFlow) -> UiFlow {
         a.dedup();
         a
     }
+    let mut diagnostics = union(a.diagnostics, b.diagnostics);
+    let (role_conventions, clashes) = crate::ui_flow_conventions::merge_conventions(union(
+        a.role_conventions,
+        b.role_conventions,
+    ));
+    let conflicts = !clashes.is_empty();
+    diagnostics.extend(
+        clashes
+            .into_iter()
+            .map(|(file, line, message)| UiFlowDiagnostic {
+                file,
+                line,
+                message,
+                severity: DiagnosticSeverity::Gap,
+            }),
+    );
+    diagnostics.sort();
+    diagnostics.dedup();
     UiFlow {
         definition: UI_FLOW_DEFINITION.into(),
         screens: union(a.screens, b.screens),
         transitions: union(a.transitions, b.transitions),
         actions: union(a.actions, b.actions),
         endpoints: union(a.endpoints, b.endpoints),
-        diagnostics: union(a.diagnostics, b.diagnostics),
-        complete: a.complete && b.complete,
+        diagnostics,
+        complete: a.complete && b.complete && !conflicts,
         start_screens: union(a.start_screens, b.start_screens),
         roles: union(a.roles, b.roles),
         policies: union(a.policies, b.policies),
         handler_sites: union(a.handler_sites, b.handler_sites),
-        role_conventions: union(a.role_conventions, b.role_conventions),
+        role_conventions,
     }
 }
 
+pub use crate::ui_flow_conventions::{
+    ConventionOrigin, NameCase, PermissionFormat, RoleConvention,
+};
 pub use roles::{
-    AtomKind, ConventionOrigin, NameCase, PermissionFormat, PolicyDef, RoleConvention, RoleDef,
-    RoleKind, canonical, holds, label, resolve_assignment, resolve_assignment_for,
+    AtomKind, PolicyDef, RoleDef, RoleKind, canonical, holds, label, resolve_assignment,
+    resolve_assignment_for,
 };
 
 /// The role and policy catalog and how the simulation applies it.
@@ -982,73 +1003,6 @@ mod roles {
         pub file: String,
         pub line: u32,
         pub source: String,
-    }
-
-    /// How ONE application writes and compares role and permission names, as
-    /// its extractor read it. Nothing read means exact comparison.
-    #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-    pub struct RoleConvention {
-        /// Same key as `Screen::application`; none is the whole flow.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub application: Option<String>,
-        /// Prefix the framework puts before role names (Spring `ROLE_`); only
-        /// used to canonicalize user input and shorten labels.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub role_prefix: Option<String>,
-        /// Prefix for token scopes and authorities (Spring `SCOPE_`).
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub scope_prefix: Option<String>,
-        /// Claim that carries the roles; information only, never compared.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub role_claim: Option<String>,
-        #[serde(default)]
-        pub role_case: NameCase,
-        #[serde(default)]
-        pub policy_case: NameCase,
-        #[serde(default)]
-        pub permissions: PermissionFormat,
-        /// Action aliases (CanCanCan `read` -> `index`, `show`).
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        pub action_aliases: Vec<(String, Vec<String>)>,
-        /// Where each field came from.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        pub origins: Vec<ConventionOrigin>,
-    }
-
-    /// Where one [`RoleConvention`] field was read: a file position or
-    /// `framework default <name> <version>` in `source`.
-    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-    pub struct ConventionOrigin {
-        pub field: String,
-        pub file: String,
-        pub line: u32,
-        pub source: String,
-    }
-
-    #[derive(
-        Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
-    )]
-    #[serde(rename_all = "snake_case")]
-    pub enum NameCase {
-        #[default]
-        Exact,
-        Insensitive,
-    }
-
-    #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    pub enum PermissionFormat {
-        #[default]
-        Exact,
-        /// Dotted ids; a held id covers `wanted` when its segments are a
-        /// prefix of `wanted`'s and each is equal or `wildcard` (Squidex:
-        /// `app.{app}.*` and `app.{app}` cover `app.{app}.contents.read`).
-        Dotted { wildcard: String },
-        /// `"<action> <subject>"` (CASL, CanCanCan).
-        ActionSubject {
-            any_action: String,
-            any_subject: String,
-        },
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

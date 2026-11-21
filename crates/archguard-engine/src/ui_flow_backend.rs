@@ -101,11 +101,14 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
         for e in &mut out.0.endpoints[first..] {
             e.application = application.clone();
         }
-        if out.0.endpoints.len() > first
-            && sources
-                .iter()
-                .any(|s| s.text.contains("org.springframework"))
-        {
+        let spring = out.0.endpoints.len() > first
+            && (sources.iter()).any(|s| s.text.contains("org.springframework"));
+        if spring && application.is_none() {
+            // A whole-flow prefix would leak into every other application.
+            let file = sources.first().map_or("", |s| s.rel.as_str());
+            let message = "Role prefix not attributed: Spring sources lie outside every build-file project".into();
+            out.diag(file, 0, message);
+        } else if spring {
             out.0.role_conventions.push(RoleConvention {
                 application: application.clone(),
                 role_prefix: Some(ROLE_PREFIX.into()),
@@ -4382,6 +4385,23 @@ class KController(private val repo: Repo) {
         assert_eq!(flow.endpoints[0].application, None);
         assert!(!flow.complete);
         assert!(extract(&dir.path().join("missing")).endpoints.is_empty());
+    }
+
+    #[test]
+    fn spring_role_prefix_outside_every_project_is_a_gap_not_a_whole_flow_entry() {
+        let dir = project(&[(
+            "A.java",
+            "import org.springframework.web.bind.annotation.*;\n@RestController class A { @GetMapping(\"/a\") void a() {} }",
+        )]);
+        let flow = extract(dir.path());
+        assert_eq!(flow.endpoints.len(), 1);
+        assert!(
+            flow.role_conventions.is_empty(),
+            "{:?}",
+            flow.role_conventions
+        );
+        assert_eq!(notes(&flow, "Role prefix not attributed"), 1);
+        assert!(!flow.complete);
     }
 
     fn notes(flow: &UiFlow, part: &str) -> usize {
