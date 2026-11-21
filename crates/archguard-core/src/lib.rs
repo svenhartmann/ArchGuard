@@ -56,6 +56,7 @@ pub use staged::{
 };
 pub mod domain_model;
 mod ui_flow;
+mod ui_flow_conventions;
 mod ui_flow_matrix;
 pub use ui_flow_matrix::{
     MatrixKind, MatrixRow, MatrixRowKind, PermissionMatrix, permission_matrix,
