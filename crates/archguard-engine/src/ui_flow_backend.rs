@@ -350,12 +350,14 @@ fn path(parts: &[&str]) -> String {
     format!("/{}", segments.join("/"))
 }
 
+#[derive(Clone)]
 struct Attr {
     name: String,
     args: String,
     at: usize,
 }
 
+#[derive(Clone)]
 struct Decl {
     class: bool,
     name: String,
@@ -408,7 +410,9 @@ fn decls(src: &Source, annotations: bool) -> Vec<Decl> {
         i = match b[i] {
             c if c.is_ascii_whitespace() => i + 1,
             b'[' if !annotations => attribute_list(src, i, &mut pending),
-            b'@' if annotations => annotation(src, i, &mut pending),
+            b'@' if annotations && !src.text[i..].starts_with("@interface") => {
+                annotation(src, i, &mut pending)
+            }
             _ => {
                 let end = header_end(src, i);
                 out.extend(declaration(src, i, end, std::mem::take(&mut pending)));
@@ -737,11 +741,26 @@ mod index {
     /// Bound for constant-to-constant and base-class hops.
     const MAX_DEPTH: usize = 8;
 
+    /// What the supertypes of a class contribute: annotation levels `(source,
+    /// attributes)` on a method and on the type, gaps, and ambiguous supertypes
+    /// that may carry a check.
+    #[derive(Default)]
+    pub(super) struct Inherited<'a> {
+        pub on_method: Vec<(&'a Source, Vec<Attr>)>,
+        pub on_type: Vec<(&'a Source, Vec<Attr>)>,
+        pub gaps: Vec<String>,
+        pub ambiguous: Vec<String>,
+    }
+
     pub(super) struct Index<'a> {
         access: BTreeMap<String, AccessMeaning>,
         /// `Class.Member` → the initializer texts found for it.
         constants: HashMap<String, BTreeSet<String>>,
         classes: HashMap<String, Vec<(&'a Source, Decl)>>,
+        /// Java/Kotlin interfaces and `@interface`s by name.
+        interfaces: HashMap<String, Vec<(&'a Source, Decl)>>,
+        /// Annotated Java/Kotlin methods by declaring type name.
+        methods: HashMap<String, Vec<(&'a Source, Decl)>>,
         /// Attribute names a pipeline behaviour reads from requests.
         enforced: BTreeSet<String>,
     }
@@ -755,10 +774,22 @@ mod index {
                 access,
                 constants: HashMap::new(),
                 classes: HashMap::new(),
+                interfaces: HashMap::new(),
+                methods: HashMap::new(),
                 enforced: BTreeSet::new(),
             };
             for src in sources {
                 let decls = decls(src, !src.rel.ends_with(".cs"));
+                if !src.rel.ends_with(".cs") {
+                    each_method(src, true, |class, m| {
+                        let list = index.methods.entry(class.name.clone()).or_default();
+                        list.push((src, m.clone()));
+                    });
+                    for d in decls.iter().filter(|d| d.class && d.flag) {
+                        let list = index.interfaces.entry(d.name.clone()).or_default();
+                        list.push((src, d.clone()));
+                    }
+                }
                 for (key, init) in constants(src, &decls) {
                     index.constants.entry(key).or_default().insert(init);
                 }
@@ -903,6 +934,70 @@ mod index {
                 base = d.bases.first();
             }
             found
+        }
+
+        /// The one declaration of annotation type `name`, for meta-annotations.
+        pub(super) fn meta(&self, name: &str) -> Option<(&'a Source, &Decl)> {
+            match self.interfaces.get(name)?.as_slice() {
+                [(s, d)] => Some((*s, d)),
+                _ => None,
+            }
+        }
+
+        /// Annotations of the supertypes of `class`, nearest first, as levels: on
+        /// its method `method` (with `arity` parameters) and on the type itself.
+        pub(super) fn inherited(&self, class: &Decl, method: &str, arity: usize) -> Inherited<'a> {
+            let mut up = Inherited::default();
+            let mut seen = BTreeSet::from([class.name.clone()]);
+            let mut todo: Vec<String> = class.bases.iter().rev().cloned().collect();
+            while let Some(name) = todo.pop() {
+                if seen.len() > MAX_DEPTH * 4 || !seen.insert(name.clone()) {
+                    continue;
+                }
+                let found: Vec<_> = [&self.classes, &self.interfaces]
+                    .into_iter()
+                    .filter_map(|m| m.get(&name))
+                    .flatten()
+                    .collect();
+                let own =
+                    |s: &Source, m: &Decl, src: &Source| std::ptr::eq(s, src) && m.name == method;
+                let [(src, d)] = found.as_slice() else {
+                    // Several types of that name: one of them may carry a check.
+                    let secured = |a: &Attr| super::spring::family(&a.name).is_some();
+                    let any = found.iter().any(|(s, t)| {
+                        t.attrs.iter().any(secured)
+                            || (self.methods.get(&name).into_iter().flatten())
+                                .any(|(ms, m)| own(ms, m, s) && m.attrs.iter().any(secured))
+                    });
+                    if any {
+                        up.ambiguous
+                            .push(format!("{name} is declared {} times", found.len()));
+                    }
+                    continue;
+                };
+                let same: Vec<_> = (self.methods.get(&name).into_iter().flatten())
+                    .filter(|(s, m)| own(s, m, src))
+                    .collect();
+                let arity_of = |s: &Source, m: &Decl| {
+                    s.pair(m.open)
+                        .map_or(0, |c| split_top(&s.text[m.open + 1..c]).len())
+                };
+                let attrs: Vec<Attr> = (same.iter())
+                    .filter(|(s, m)| arity_of(s, m) == arity)
+                    .flat_map(|(_, m)| m.attrs.clone())
+                    .collect();
+                if !same.is_empty() && attrs.is_empty() {
+                    up.gaps.push(format!("{name}.{method} has overloads with other parameter counts; their annotations are not applied"));
+                }
+                if !attrs.is_empty() {
+                    up.on_method.push((*src, attrs));
+                }
+                if !d.attrs.is_empty() {
+                    up.on_type.push((*src, d.attrs.clone()));
+                }
+                todo.extend(d.bases.iter().rev().cloned());
+            }
+            up
         }
 
         /// The declaration of class `name` in `src`.
@@ -1811,7 +1906,8 @@ mod minimal {
     /// statements until the next assignment. Unassigned (parameters, `app`) is
     /// the root, with the `var.RequireAuthorization();` statements of its block.
     fn var_group(src: &Source, out: &mut Out, var: &str, at: usize) -> Result<Chain, String> {
-        let assignments = assignments(src, var);
+        let (lo, hi) = method_scope(src, at);
+        let assignments = assignments(src, var, lo, hi);
         let Some(&(start, semi)) = assignments.iter().rev().find(|(_, semi)| *semi < at) else {
             let mods = enclosing_block(src, at).map_or_else(Vec::new, |(open, close)| {
                 statement_mods(src, out, var, open, close)
@@ -1828,17 +1924,52 @@ mod minimal {
             .iter()
             .map(|(a, _)| *a)
             .find(|a| *a > start)
-            .unwrap_or(src.text.len());
+            .unwrap_or(hi);
         chain
             .mods
             .extend(statement_mods(src, out, var, semi, until));
         Ok(chain)
     }
 
-    /// `(start, end of statement)` of each `var = …;` in the file.
-    fn assignments(src: &Source, var: &str) -> Vec<(usize, usize)> {
+    /// The body of the method around `at`: the outermost block whose header is a
+    /// parameter list (not a type, namespace or control statement). A local
+    /// variable lives only there. Top-level statements: the whole file.
+    fn method_scope(src: &Source, at: usize) -> (usize, usize) {
+        let b = src.bytes();
+        let is_method = |open: usize| {
+            let from = b[..open]
+                .iter()
+                .rposition(|c| matches!(c, b';' | b'{' | b'}'))
+                .map_or(0, |p| p + 1);
+            let header = src.text[from..open].trim();
+            let first = header.split(|c: char| !c.is_ascii_alphanumeric()).next();
+            let keywords = [
+                "class",
+                "struct",
+                "interface",
+                "record",
+                "namespace",
+                "enum",
+            ];
+            let control = [
+                "if", "for", "foreach", "while", "switch", "using", "lock", "catch", "fixed",
+            ];
+            header.ends_with(')')
+                && !keywords.iter().any(|k| words(header, k).next().is_some())
+                && !first.is_some_and(|f| control.contains(&f))
+        };
+        (0..at)
+            .filter(|&k| b[k] == b'{')
+            .filter_map(|k| src.pair(k).filter(|c| *c > at).map(|c| (k, c)))
+            .find(|(open, _)| is_method(*open))
+            .unwrap_or((0, src.text.len()))
+    }
+
+    /// `(start, end of statement)` of each `var = …;` within `lo..hi`.
+    fn assignments(src: &Source, var: &str, lo: usize, hi: usize) -> Vec<(usize, usize)> {
         let b = src.bytes();
         words(&src.text, var)
+            .filter(|&p| p >= lo && p < hi)
             .filter(|&p| {
                 let eq = skip_ws(b, p + var.len());
                 let prev = skip_ws_back(b, p);
@@ -2862,6 +2993,10 @@ mod spring {
 
         fn segment(rule: &str, path: &str) -> Hit {
             let param = |s: &str| s.starts_with('{') && s.ends_with('}');
+            // `{id:\d+}`: the regex is not evaluated, so it may or may not match.
+            if param(rule) && rule.contains(':') {
+                return Hit::Part;
+            }
             match (param(rule) || rule == "*", param(path)) {
                 (true, _) => Hit::Full,
                 (false, true) => Hit::Part,
@@ -2894,9 +3029,22 @@ mod spring {
             let Some(paths) = paths(src, out, a) else {
                 continue;
             };
-            let access = level(src, index, out, &d.attrs)
-                .or_else(|| level(src, index, out, &class.attrs))
-                .unwrap_or(AccessState::Undeclared);
+            let arity = src
+                .pair(d.open)
+                .map_or(0, |c| split_top(&src.text[d.open + 1..c]).len());
+            let up = index.inherited(class, &d.name, arity);
+            let mut levels: Vec<(&Source, &[Attr])> = vec![(src, &d.attrs)];
+            levels.extend(up.on_method.iter().map(|(s, a)| (*s, a.as_slice())));
+            levels.push((src, &class.attrs));
+            levels.extend(up.on_type.iter().map(|(s, a)| (*s, a.as_slice())));
+            let mut access = layer(index, out, &levels).unwrap_or(AccessState::Undeclared);
+            for g in &up.gaps {
+                out.at(src, d.open, g.clone());
+            }
+            for text in &up.ambiguous {
+                let unknown = out.unknown(src, d.open, text);
+                access = require(&access, unknown);
+            }
             let full: Vec<String> = bases
                 .iter()
                 .flat_map(|b| paths.iter().map(move |p| path(&[b, p])))
@@ -2966,23 +3114,74 @@ mod spring {
         })
     }
 
-    /// Access declared by one level's annotations; `None` when there is none.
-    fn level(src: &Source, index: &Index, out: &mut Out, attrs: &[Attr]) -> Option<AccessState> {
-        let items: Vec<Option<Condition>> = attrs
-            .iter()
-            .filter_map(|a| item(src, index, out, a))
-            .collect();
-        if items.is_empty() {
+    /// The security annotation family of `name`: Spring overrides per family
+    /// (a method's annotation replaces the class's of the same family) and
+    /// checks every family in turn.
+    pub(super) fn family(name: &str) -> Option<&'static str> {
+        Some(match name {
+            "PreAuthorize" => "PreAuthorize",
+            "PostAuthorize" => "PostAuthorize",
+            "Secured" => "Secured",
+            "RolesAllowed" | "PermitAll" | "DenyAll" => "jsr250",
+            _ => return None,
+        })
+    }
+
+    type Families = BTreeMap<String, Vec<Option<Condition>>>;
+
+    /// Access declared by the annotation `levels`, most specific first (method,
+    /// the method in supertypes, class, supertypes): per family the first level
+    /// with one wins, the families are ANDed. `None` when there is none.
+    fn layer(index: &Index, out: &mut Out, levels: &[(&Source, &[Attr])]) -> Option<AccessState> {
+        let mut families = Families::new();
+        for (src, attrs) in levels {
+            let mut here = Families::new();
+            collect(src, index, out, attrs, 0, &mut here);
+            for (f, items) in here {
+                families.entry(f).or_insert(items);
+            }
+        }
+        if families.is_empty() {
             return None;
         }
-        let open = items.contains(&None);
-        Some(
-            match combine(items.into_iter().flatten().collect(), Condition::All) {
-                Some(c) => AccessState::Protected(c),
-                None if open => AccessState::Open,
-                None => AccessState::Undeclared,
-            },
-        )
+        let conditions = families.into_values().flatten().flatten().collect();
+        Some(match combine(conditions, Condition::All) {
+            Some(c) => AccessState::Protected(c),
+            None => AccessState::Open,
+        })
+    }
+
+    /// Items of `attrs` by family; an unknown annotation is followed into its
+    /// declaration (meta-annotation).
+    fn collect(
+        src: &Source,
+        index: &Index,
+        out: &mut Out,
+        attrs: &[Attr],
+        depth: usize,
+        into: &mut Families,
+    ) {
+        for a in attrs {
+            let fam = family(&a.name);
+            // `{value}` of an annotation template is filled by the use site: not read.
+            let found = if depth > 0 && fam.is_some() && a.args.contains('{') {
+                Some(Some(out.unknown(src, a.at, &a.args)))
+            } else {
+                item(src, index, out, a)
+            };
+            match found {
+                Some(item) => into
+                    .entry(fam.unwrap_or(&a.name).to_string())
+                    .or_default()
+                    .push(item),
+                None if depth < 4 => {
+                    if let Some((s, d)) = index.meta(&a.name) {
+                        collect(s, index, out, &d.attrs, depth + 1, into);
+                    }
+                }
+                None => {}
+            }
+        }
     }
 
     /// One security annotation: `Some(None)` declares open access.
@@ -2992,6 +3191,11 @@ mod spring {
             .unwrap_or("");
         match a.name.as_str() {
             "PreAuthorize" => Some(pre_authorize(src, index, out, a, raw)),
+            "PostAuthorize" => {
+                let message = "`@PostAuthorize` is checked after the call: its side effects have already happened.";
+                out.note(&src.rel, src.line(a.at), message.into());
+                Some(pre_authorize(src, index, out, a, raw))
+            }
             "Secured" | "RolesAllowed" => {
                 let roles = literals(raw)
                     .and_then(|r| combine(r.iter().map(|x| role(x)).collect(), Condition::Any));
@@ -5638,5 +5842,278 @@ public class ApiOnlyController : Controller
         assert_eq!(login.handler.as_deref(), Some("AccountController.Login"));
         assert_eq!(notes(&flow, "Routes.Dynamic"), 1, "{:#?}", flow.diagnostics);
         assert_eq!(flow.diagnostics.len(), 1, "{:#?}", flow.diagnostics);
+    }
+    const PERMIT_CHAIN: &str = r#"
+@Configuration
+public class SecurityConfig {
+    @Bean SecurityFilterChain chain(HttpSecurity http) throws Exception {
+        http.authorizeHttpRequests(a -> a.anyRequest().permitAll());
+        return http.build();
+    }
+}
+"#;
+
+    fn spring_flow(files: &[(&str, &str)]) -> UiFlow {
+        let mut all = vec![("pom.xml", "<project/>")];
+        all.extend(files.iter().map(|(n, t)| (*n, *t)));
+        extract(project(&all).path())
+    }
+
+    fn controller(body: &str) -> String {
+        format!("@RestController\n{body}\n")
+    }
+
+    // F01-F05: annotation families override per family, different families AND.
+    #[test]
+    fn spring_annotation_families_override_per_family() {
+        let flow = spring_flow(&[(
+            "src/main/java/A.java",
+            &controller(
+                r#"@RestController @PreAuthorize("hasRole('ADMIN')")
+class A {
+    @PermitAll @GetMapping("/f01") void a() {}
+    @PreAuthorize("permitAll()") @GetMapping("/f02") void b() {}
+    @Secured("ROLE_USER") @GetMapping("/f03") void c() {}
+    @PreAuthorize("hasRole('USER')") @GetMapping("/f04") void d() {}
+}
+@RestController @Secured("ROLE_ADMIN")
+class B { @PreAuthorize("permitAll()") @GetMapping("/f02b") void b() {} }
+@RestController @RolesAllowed("ADMIN")
+class C { @PermitAll @GetMapping("/f05") void e() {} }"#,
+            ),
+        )]);
+        let admin = protected(role("ROLE_ADMIN"));
+        assert_eq!(access(&flow, "GET", "/f01"), &admin);
+        assert_eq!(access(&flow, "GET", "/f02b"), &admin);
+        assert_eq!(
+            access(&flow, "GET", "/f03"),
+            &protected(Condition::All(vec![role("ROLE_ADMIN"), role("ROLE_USER")]))
+        );
+        assert_eq!(access(&flow, "GET", "/f04"), &protected(role("ROLE_USER")));
+        assert_eq!(access(&flow, "GET", "/f05"), &AccessState::Open);
+    }
+
+    // F06: `@PostAuthorize` protects, with a note; a chain `permitAll` stays no lift.
+    #[test]
+    fn spring_post_authorize_protects_with_a_note() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/A.java",
+                &controller(
+                    r#"class A { @PostAuthorize("hasRole('ADMIN')") @GetMapping("/f06") void a() {} }"#,
+                ),
+            ),
+        ]);
+        assert_eq!(access(&flow, "GET", "/f06"), &protected(role("ROLE_ADMIN")));
+        assert_eq!(notes(&flow, "after the call"), 1, "{:#?}", flow.diagnostics);
+    }
+
+    // F07: meta-annotation; a template placeholder is never guessed.
+    #[test]
+    fn spring_meta_annotations_are_resolved() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/IsAdmin.java",
+                "@PreAuthorize(\"hasRole('ADMIN')\")\n@interface IsAdmin {}\n",
+            ),
+            (
+                "src/main/java/HasRole.java",
+                "@PreAuthorize(\"hasRole('{value}')\")\npublic @interface HasRole { String value(); }\n",
+            ),
+            (
+                "src/main/java/A.java",
+                &controller(
+                    r#"class A {
+    @IsAdmin @GetMapping("/f07") void a() {}
+    @HasRole("ADMIN") @GetMapping("/tpl") void b() {}
+}"#,
+                ),
+            ),
+        ]);
+        assert_eq!(access(&flow, "GET", "/f07"), &protected(role("ROLE_ADMIN")));
+        assert!(matches!(
+            access(&flow, "GET", "/tpl"),
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+        assert!(!flow.complete);
+    }
+
+    // F08: annotation on the interface method and on the superclass.
+    #[test]
+    fn spring_interface_and_superclass_annotations_apply() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Api.java",
+                "interface Api {\n    @PreAuthorize(\"hasRole('ADMIN')\")\n    void a();\n}\n",
+            ),
+            (
+                "src/main/java/Base.java",
+                "@PreAuthorize(\"hasRole('BASE')\")\nclass Base {}\n",
+            ),
+            (
+                "src/main/java/A.java",
+                &controller(
+                    r#"class A implements Api { @GetMapping("/f08") public void a() {} }
+@RestController class D extends Base { @GetMapping("/sup") void d() {} }"#,
+                ),
+            ),
+        ]);
+        assert_eq!(access(&flow, "GET", "/f08"), &protected(role("ROLE_ADMIN")));
+        assert_eq!(access(&flow, "GET", "/sup"), &protected(role("ROLE_BASE")));
+    }
+
+    // F26: a regex path variable may not match the endpoint: no lift to Open.
+    #[test]
+    fn spring_regex_path_variable_is_a_partial_match() {
+        let chain = PERMIT_CHAIN.replace(
+            "a.anyRequest().permitAll()",
+            "a.requestMatchers(\"/u/{id:\\\\d+}\").permitAll()",
+        );
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", &chain),
+            (
+                "src/main/java/A.java",
+                &controller(r#"class A { @GetMapping("/u/me") void a() {} }"#),
+            ),
+        ]);
+        assert_eq!(access(&flow, "GET", "/u/me"), &AccessState::Undeclared);
+        assert_eq!(
+            notes(&flow, "only some requests"),
+            1,
+            "{:#?}",
+            flow.diagnostics
+        );
+    }
+    fn minimal_flow(text: &str) -> UiFlow {
+        extract(project(&[("Api/Api.csproj", "<Project />"), ("Api/Program.cs", text)]).path())
+    }
+
+    // C.6 #1: a variable of the same name in another method is not this one.
+    #[test]
+    fn minimal_group_variable_is_scoped_to_its_method() {
+        let flow = minimal_flow(
+            r#"
+static class Routes {
+    static void A(WebApplication app) {
+        var group = app.MapGroup("/secure").RequireAuthorization("Admin");
+        group.MapGet("/a", () => 1);
+    }
+    static void B(RouteGroupBuilder group) {
+        group.MapGet("/b", () => 2);
+        group.AllowAnonymous();
+    }
+}
+"#,
+        );
+        assert_eq!(
+            access(&flow, "GET", "/secure/a"),
+            &protected(policy("Admin"))
+        );
+        assert_eq!(access(&flow, "GET", "/b"), &AccessState::Open);
+    }
+
+    // C.6 #2: two locals of one name in two methods.
+    #[test]
+    fn minimal_same_local_name_in_two_methods() {
+        let flow = minimal_flow(
+            r#"
+static class Routes {
+    static void M1(WebApplication app) {
+        var g = app.MapGroup("/x").RequireAuthorization();
+        g.MapGet("/1", () => 1);
+    }
+    static void M2(WebApplication app) {
+        var g = app.MapGroup("/y");
+        g.MapGet("/2", () => 1);
+    }
+}
+"#,
+        );
+        assert_eq!(
+            access(&flow, "GET", "/x/1"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(access(&flow, "GET", "/y/2"), &AccessState::Undeclared);
+    }
+
+    // C.6 #3: a lambda parameter named like a variable of another method.
+    #[test]
+    fn minimal_lambda_parameter_is_not_an_unrelated_variable() {
+        let flow = minimal_flow(
+            r#"
+static class Routes {
+    static void M1(WebApplication app) {
+        var group = app.MapGroup("/secure").RequireAuthorization("Admin");
+        group.MapGet("/a", () => 1);
+    }
+    static void M2(WebApplication app) {
+        app.MapGroup("/z").RequireAuthorization().Also(group => group.MapGet("/q", () => 1));
+    }
+}
+"#,
+        );
+        assert_eq!(
+            access(&flow, "GET", "/secure/a"),
+            &protected(policy("Admin"))
+        );
+        assert_eq!(access(&flow, "GET", "/q"), &AccessState::Undeclared);
+    }
+
+    // C.6 #4 (order independence), kept as a guard for the scoping change.
+    #[test]
+    fn minimal_group_modifier_after_the_endpoint_still_counts() {
+        let flow = minimal_flow(
+            r#"
+var app = builder.Build();
+var g = app.MapGroup("/t");
+g.MapGet("/", () => 1);
+g.RequireAuthorization("P");
+"#,
+        );
+        assert_eq!(access(&flow, "GET", "/t"), &protected(policy("P")));
+    }
+    // Review 1: a supertype method with another parameter count is no override.
+    #[test]
+    fn spring_inherited_overload_with_other_arity_is_not_applied() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Api.java",
+                "interface Api {\n    @PermitAll\n    void a(int x);\n}\n",
+            ),
+            (
+                "src/main/java/A.java",
+                r#"@RestController @RolesAllowed("ADMIN")
+class A implements Api { @GetMapping("/ov") public void a() {} }"#,
+            ),
+        ]);
+        assert_eq!(access(&flow, "GET", "/ov"), &protected(role("ADMIN")));
+        assert!(!flow.complete);
+    }
+
+    // Review 2: an ambiguous supertype that may carry a check is never read as none.
+    #[test]
+    fn spring_ambiguous_supertype_with_a_check_is_unknown() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/D1.java",
+                "@PreAuthorize(\"hasRole('X')\")\nclass Dup {}\n",
+            ),
+            ("src/main/java/D2.java", "class Dup {}\n"),
+            (
+                "src/main/java/A.java",
+                r#"@RestController
+class A extends Dup { @GetMapping("/dup") void a() {} }"#,
+            ),
+        ]);
+        assert!(matches!(
+            access(&flow, "GET", "/dup"),
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+        assert!(!flow.complete);
     }
 }
