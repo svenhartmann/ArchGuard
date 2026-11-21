@@ -741,8 +741,16 @@ mod index {
     /// Bound for constant-to-constant and base-class hops.
     const MAX_DEPTH: usize = 8;
 
-    /// Annotation levels `(source, attributes)` of supertypes: on a method, on the type.
-    pub(super) type Inherited<'a> = (Vec<(&'a Source, Vec<Attr>)>, Vec<(&'a Source, Vec<Attr>)>);
+    /// What the supertypes of a class contribute: annotation levels `(source,
+    /// attributes)` on a method and on the type, gaps, and ambiguous supertypes
+    /// that may carry a check.
+    #[derive(Default)]
+    pub(super) struct Inherited<'a> {
+        pub on_method: Vec<(&'a Source, Vec<Attr>)>,
+        pub on_type: Vec<(&'a Source, Vec<Attr>)>,
+        pub gaps: Vec<String>,
+        pub ambiguous: Vec<String>,
+    }
 
     pub(super) struct Index<'a> {
         access: BTreeMap<String, AccessMeaning>,
@@ -937,38 +945,59 @@ mod index {
         }
 
         /// Annotations of the supertypes of `class`, nearest first, as levels: on
-        /// its method `method` and on the type itself.
-        pub(super) fn inherited(&self, class: &Decl, method: &str) -> Inherited<'a> {
-            let (mut on_method, mut on_type) = (Vec::new(), Vec::new());
+        /// its method `method` (with `arity` parameters) and on the type itself.
+        pub(super) fn inherited(&self, class: &Decl, method: &str, arity: usize) -> Inherited<'a> {
+            let mut up = Inherited::default();
             let mut seen = BTreeSet::from([class.name.clone()]);
             let mut todo: Vec<String> = class.bases.iter().rev().cloned().collect();
             while let Some(name) = todo.pop() {
                 if seen.len() > MAX_DEPTH * 4 || !seen.insert(name.clone()) {
                     continue;
                 }
-                // shortcut: an ambiguous or unscanned supertype is skipped silently, extend with a note when it matters
                 let found: Vec<_> = [&self.classes, &self.interfaces]
                     .into_iter()
                     .filter_map(|m| m.get(&name))
                     .flatten()
                     .collect();
+                let own =
+                    |s: &Source, m: &Decl, src: &Source| std::ptr::eq(s, src) && m.name == method;
                 let [(src, d)] = found.as_slice() else {
+                    // Several types of that name: one of them may carry a check.
+                    let secured = |a: &Attr| super::spring::family(&a.name).is_some();
+                    let any = found.iter().any(|(s, t)| {
+                        t.attrs.iter().any(secured)
+                            || (self.methods.get(&name).into_iter().flatten())
+                                .any(|(ms, m)| own(ms, m, s) && m.attrs.iter().any(secured))
+                    });
+                    if any {
+                        up.ambiguous
+                            .push(format!("{name} is declared {} times", found.len()));
+                    }
                     continue;
                 };
-                // shortcut: overloads are not told apart (the name decides)
-                let attrs: Vec<Attr> = (self.methods.get(&name).into_iter().flatten())
-                    .filter(|(s, m)| std::ptr::eq(*s, *src) && m.name == method)
+                let same: Vec<_> = (self.methods.get(&name).into_iter().flatten())
+                    .filter(|(s, m)| own(s, m, src))
+                    .collect();
+                let arity_of = |s: &Source, m: &Decl| {
+                    s.pair(m.open)
+                        .map_or(0, |c| split_top(&s.text[m.open + 1..c]).len())
+                };
+                let attrs: Vec<Attr> = (same.iter())
+                    .filter(|(s, m)| arity_of(s, m) == arity)
                     .flat_map(|(_, m)| m.attrs.clone())
                     .collect();
+                if !same.is_empty() && attrs.is_empty() {
+                    up.gaps.push(format!("{name}.{method} has overloads with other parameter counts; their annotations are not applied"));
+                }
                 if !attrs.is_empty() {
-                    on_method.push((*src, attrs));
+                    up.on_method.push((*src, attrs));
                 }
                 if !d.attrs.is_empty() {
-                    on_type.push((*src, d.attrs.clone()));
+                    up.on_type.push((*src, d.attrs.clone()));
                 }
                 todo.extend(d.bases.iter().rev().cloned());
             }
-            (on_method, on_type)
+            up
         }
 
         /// The declaration of class `name` in `src`.
@@ -3000,12 +3029,22 @@ mod spring {
             let Some(paths) = paths(src, out, a) else {
                 continue;
             };
-            let (up_method, up_type) = index.inherited(class, &d.name);
+            let arity = src
+                .pair(d.open)
+                .map_or(0, |c| split_top(&src.text[d.open + 1..c]).len());
+            let up = index.inherited(class, &d.name, arity);
             let mut levels: Vec<(&Source, &[Attr])> = vec![(src, &d.attrs)];
-            levels.extend(up_method.iter().map(|(s, a)| (*s, a.as_slice())));
+            levels.extend(up.on_method.iter().map(|(s, a)| (*s, a.as_slice())));
             levels.push((src, &class.attrs));
-            levels.extend(up_type.iter().map(|(s, a)| (*s, a.as_slice())));
-            let access = layer(index, out, &levels).unwrap_or(AccessState::Undeclared);
+            levels.extend(up.on_type.iter().map(|(s, a)| (*s, a.as_slice())));
+            let mut access = layer(index, out, &levels).unwrap_or(AccessState::Undeclared);
+            for g in &up.gaps {
+                out.at(src, d.open, g.clone());
+            }
+            for text in &up.ambiguous {
+                let unknown = out.unknown(src, d.open, text);
+                access = require(&access, unknown);
+            }
             let full: Vec<String> = bases
                 .iter()
                 .flat_map(|b| paths.iter().map(move |p| path(&[b, p])))
@@ -3078,7 +3117,7 @@ mod spring {
     /// The security annotation family of `name`: Spring overrides per family
     /// (a method's annotation replaces the class's of the same family) and
     /// checks every family in turn.
-    fn family(name: &str) -> Option<&'static str> {
+    pub(super) fn family(name: &str) -> Option<&'static str> {
         Some(match name {
             "PreAuthorize" => "PreAuthorize",
             "PostAuthorize" => "PostAuthorize",
@@ -6035,5 +6074,46 @@ g.RequireAuthorization("P");
 "#,
         );
         assert_eq!(access(&flow, "GET", "/t"), &protected(policy("P")));
+    }
+    // Review 1: a supertype method with another parameter count is no override.
+    #[test]
+    fn spring_inherited_overload_with_other_arity_is_not_applied() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Api.java",
+                "interface Api {\n    @PermitAll\n    void a(int x);\n}\n",
+            ),
+            (
+                "src/main/java/A.java",
+                r#"@RestController @RolesAllowed("ADMIN")
+class A implements Api { @GetMapping("/ov") public void a() {} }"#,
+            ),
+        ]);
+        assert_eq!(access(&flow, "GET", "/ov"), &protected(role("ADMIN")));
+        assert!(!flow.complete);
+    }
+
+    // Review 2: an ambiguous supertype that may carry a check is never read as none.
+    #[test]
+    fn spring_ambiguous_supertype_with_a_check_is_unknown() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/D1.java",
+                "@PreAuthorize(\"hasRole('X')\")\nclass Dup {}\n",
+            ),
+            ("src/main/java/D2.java", "class Dup {}\n"),
+            (
+                "src/main/java/A.java",
+                r#"@RestController
+class A extends Dup { @GetMapping("/dup") void a() {} }"#,
+            ),
+        ]);
+        assert!(matches!(
+            access(&flow, "GET", "/dup"),
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+        assert!(!flow.complete);
     }
 }
