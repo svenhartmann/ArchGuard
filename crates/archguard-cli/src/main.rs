@@ -32,7 +32,6 @@ mod output;
 mod args;
 mod suggest_cmd;
 use args::{BaselineAction, Cli, Command, Format, format_label};
-use check_cmd::read_baseline;
 use cycle_view::{cycle_findings, cyclic_edges};
 use export_cmd::doc;
 use output::{EXIT_FOUND, EXIT_OK, EXIT_USAGE, analysis_error, emit, to_pretty_json, usage};
@@ -810,9 +809,7 @@ fn baseline(
             EXIT_OK
         }
         BaselineAction::Diff { file, .. } => {
-            let baseline = match check_cmd::baseline_path(root, loaded, file.as_deref())
-                .and_then(|file| read_baseline(&file))
-            {
+            let baseline = match check_cmd::load_baseline(root, loaded, file.as_deref()) {
                 Ok(baseline) => baseline,
                 Err(err) => return analysis_error(err),
             };

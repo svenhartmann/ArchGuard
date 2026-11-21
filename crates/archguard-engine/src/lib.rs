@@ -130,7 +130,7 @@ pub use cache::{fingerprint, load_graph_if_fresh, save_graph, source_fingerprint
 pub use change_context::{ChangeContext, ChangeContextOptions, build_change_context};
 pub use check_gate::{
     accepted_by_baseline, check_gate_findings, empty_analysis_error, gate_fails, read_baseline,
-    review_gate_findings,
+    read_repo_baseline, review_gate_findings,
 };
 pub use co_change::{CoChangeFile, CoChangeOptions, CoChangePair, CoChangeReport, co_change};
 pub use cohesion::{

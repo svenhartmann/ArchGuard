@@ -81,7 +81,7 @@ pub(crate) fn run(
     } else {
         Default::default()
     };
-    let baseline = baseline.map(|file| baseline_path(root, loaded, file));
+    let baseline = baseline.map(|file| load_baseline(root, loaded, file));
     check(cli, baseline, &checked, comparison.as_ref(), &paths)
 }
 
@@ -99,8 +99,6 @@ pub(crate) fn baseline_path(
     }
     let configured = Path::new(&loaded.config.rules.baseline);
     let mut path = root.to_path_buf();
-    // shortcut: check-then-read, not descriptor-relative; `baseline write` itself
-    // uses write_project_file. Upgrade once engine exports read_repo_file.
     for part in configured.components() {
         if !matches!(part, std::path::Component::Normal(_)) {
             return Err(format!(
@@ -117,6 +115,22 @@ pub(crate) fn baseline_path(
         }
     }
     Ok(path)
+}
+
+/// The baseline [`baseline_path`] names; the configured one is read
+/// descriptor-relative, so a symlink swapped in after the check is not followed.
+pub(crate) fn load_baseline(
+    root: &Path,
+    loaded: &LoadedConfig,
+    file: Option<&Path>,
+) -> Result<archguard_engine::analysis::Baseline, String> {
+    let path = baseline_path(root, loaded, file)?;
+    match file {
+        Some(_) => read_baseline(&path),
+        None => {
+            archguard_engine::read_repo_baseline(root, Path::new(&loaded.config.rules.baseline))
+        }
+    }
 }
 
 /// `baseline write`: an operator `file` is written as given; the
@@ -174,7 +188,7 @@ fn precondition_error(
 /// or unparsable baseline file is an IO error (exit 3).
 pub(crate) fn check(
     cli: &Cli,
-    baseline: Option<Result<PathBuf, String>>,
+    baseline: Option<Result<archguard_engine::analysis::Baseline, String>>,
     report: &Report,
     comparison: Option<&archguard_engine::Comparison>,
     source_paths: &BTreeMap<String, String>,
@@ -187,7 +201,7 @@ pub(crate) fn check(
     }
     let baseline = match baseline {
         None => None,
-        Some(path) => match path.and_then(|path| read_baseline(&path)) {
+        Some(loaded) => match loaded {
             Ok(baseline) => Some(baseline),
             Err(err) => return analysis_error(err),
         },
