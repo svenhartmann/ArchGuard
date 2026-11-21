@@ -11,6 +11,7 @@ mod entities;
 mod flow;
 mod focus;
 mod ids;
+mod overview;
 mod services;
 mod state;
 mod states;
@@ -43,6 +44,8 @@ pub fn wire(ui: &AppWindow) {
     d.on_select_service(a.on(|s, _, i: i32| s.select_service(index(i).unwrap_or(0))));
     d.on_toggle_group(a.on(|s, _, k: slint::SharedString| s.toggle_group(&k)));
     d.on_set_whole(a.on(|s, _, w: bool| s.whole = w));
+    d.on_open_module(a.on(|s, _, i: i32| s.open_module(index(i).unwrap_or(usize::MAX))));
+    d.on_close_module(a.on0(|s, _| s.module = None));
     d.on_set_details_open(a.on(|s, _, open: bool| s.details_open = open));
     d.on_close_details(a.on0(|s, _| {
         s.note_for = None;
@@ -131,7 +134,8 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
 /// `ARCHGUARD_DESKTOP_DOMAIN_ENTITY=<name>` focuses an entity,
 /// `…_DOMAIN_EVENT=<type>` an integration or domain event,
 /// `…_DOMAIN_STATE=<state>` a state of the entity, `…_DOMAIN_SERVICE=<name>`
-/// the service, `…_DOMAIN_WHOLE=1` the whole model,
+/// the service, `…_DOMAIN_WHOLE=1` the whole model, `…_DOMAIN_MODULE=<name>`
+/// its drill-down into that module,
 /// `…_DOMAIN_NOTE=<rule index of the entity>` the note form of that rule,
 /// `…_DOMAIN_CODE=<file>:<line>` the code overlay, and
 /// `ARCHGUARD_DESKTOP_FLOW_ROLE=<index>` the simulated user for snapshot runs.
@@ -169,6 +173,7 @@ fn snapshot_overrides(s: &mut DomainState) {
         s.select_state(&state);
     }
     s.whole = var("WHOLE").is_some();
+    s.module = var("MODULE");
     if let (Some(k), Some(e)) = (
         var("NOTE").and_then(|k| k.parse::<usize>().ok()),
         s.selected(),

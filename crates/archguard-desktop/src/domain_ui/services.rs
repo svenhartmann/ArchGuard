@@ -143,6 +143,7 @@ mod tests {
             file: file.into(),
             line: 1,
             source: "t".into(),
+            module: String::new(),
         };
         let d = DomainModel {
             entities: vec![

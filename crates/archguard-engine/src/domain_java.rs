@@ -326,6 +326,7 @@ impl Extractor {
                     file: self.files[d.file].rel.clone(),
                     line: line(&self.files[d.file].text, d.pos),
                     source: SOURCE.into(),
+                    module: d.scope.clone(),
                 }
             })
             .collect();
@@ -3083,6 +3084,24 @@ public class PaymentListener {
                 UseCaseKind::Command,
                 s(&["Trip.start"])
             )]
+        );
+    }
+
+    #[test]
+    fn module_is_the_package() {
+        let model = run(&java_files());
+        let m = |n: &str| {
+            model
+                .entities
+                .iter()
+                .find(|e| e.name == n)
+                .unwrap()
+                .module
+                .clone()
+        };
+        assert_eq!(
+            (m("Order"), m("Customer")),
+            ("shop.sales".into(), "shop.customers".into())
         );
     }
 

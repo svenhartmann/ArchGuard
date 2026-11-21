@@ -528,6 +528,7 @@ impl Extractor {
             self.gap(&file, line, message);
         }
         self.model.relations.extend(rels);
+        let module = Names(self).module(&file);
         self.model.entities.push(Entity {
             id: id.clone(),
             name: self.classes[c].name.clone(),
@@ -536,6 +537,7 @@ impl Extractor {
             file,
             line,
             source: SOURCE.into(),
+            module,
         });
         self.methods(c, &id, fw);
     }
@@ -1076,6 +1078,14 @@ mod names {
                 }
             }
             None
+        }
+
+        /// The app label of the file's Django app, else the file's directory.
+        pub(super) fn module(&self, rel: &str) -> String {
+            match self.app_dir(rel).as_str() {
+                "" => rel.rsplit_once('/').map_or("", |d| d.0).to_string(),
+                app => self.label(app),
+            }
         }
 
         /// The directory of the Django app `rel` belongs to: the nearest
@@ -1909,6 +1919,35 @@ class Order(models.Model):
         assert!(
             msgs.iter().any(|x| x.contains("Order.other_app")),
             "{msgs:?}"
+        );
+    }
+
+    #[test]
+    fn module_is_the_django_app_label() {
+        let apps = "from django.apps import AppConfig\nclass RetailConfig(AppConfig):\n    label = 'retail'\n";
+        let models = "from django.db import models\nclass ";
+        let m = model(&[
+            ("store/shop/apps.py", apps),
+            (
+                "store/shop/models.py",
+                &format!("{models}Product(models.Model):\n    pass\n"),
+            ),
+            (
+                "billing/models.py",
+                &format!("{models}Invoice(models.Model):\n    pass\n"),
+            ),
+        ]);
+        let of = |n: &str| {
+            m.entities
+                .iter()
+                .find(|e| e.name == n)
+                .unwrap()
+                .module
+                .clone()
+        };
+        assert_eq!(
+            (of("Product"), of("Invoice")),
+            ("retail".into(), "billing".into())
         );
     }
 

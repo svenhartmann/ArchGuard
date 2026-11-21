@@ -109,6 +109,11 @@ pub struct Entity {
     pub line: u32,
     /// Extractor name, or `import`.
     pub source: String,
+    /// The module of the entity, by fixed rules per reader: Django app
+    /// label, Java/Kotlin package, C# namespace, else the file's directory.
+    /// Empty in models written before this field existed.
+    #[serde(default)]
+    pub module: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -627,6 +632,7 @@ mod tests {
             file: "a.cs".into(),
             line: 1,
             source: "csharp".into(),
+            module: String::new(),
         };
         let a = DomainModel {
             entities: vec![entity("b"), entity("a")],
@@ -739,6 +745,7 @@ mod tests {
                 file: "Order.cs".into(),
                 line: 5,
                 source: "csharp".into(),
+                module: "Ordering".into(),
             }],
             relations: vec![Relation {
                 from: "Ordering.Order".into(),
@@ -870,5 +877,12 @@ mod tests {
         for key in ["rules", "validations", "integration_events"] {
             assert!(!empty.contains(key), "{empty}");
         }
+    }
+
+    #[test]
+    fn an_entity_without_module_reads_as_empty() {
+        let json = r#"{"id":"A","name":"A","kind":"entity","file":"a.cs","line":1,"source":"t"}"#;
+        let e: Entity = serde_json::from_str(json).unwrap();
+        assert_eq!(e.module, "");
     }
 }

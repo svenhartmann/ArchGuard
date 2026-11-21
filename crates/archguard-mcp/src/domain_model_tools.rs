@@ -296,6 +296,7 @@ mod tests {
             file: format!("{id}.cs"),
             line: 1,
             source: "csharp".into(),
+            module: String::new(),
         };
         let rule = |entity: &str, method: &str| DomainRule {
             entity: entity.into(),

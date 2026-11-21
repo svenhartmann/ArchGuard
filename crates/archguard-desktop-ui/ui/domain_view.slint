@@ -10,7 +10,7 @@ import { EmptyState, SectionHeading, Legend, Disclosure, TipArea } from "widgets
 import { Fmt } from "format.slint";
 import { Para, Segments, BarLabel, RoleChoice } from "flow_parts.slint";
 import { ComboBox } from "combo.slint";
-import { EntityCanvas, DomCard, DomArrow, DomBand, DomState, DomStateArrow } from "domain_canvas.slint";
+import { EntityCanvas, DomCard, DomArrow, DomBand, DomBox, DomHubChip, DomState, DomStateArrow } from "domain_canvas.slint";
 import { ScreensInspector } from "screens_inspector.slint";
 import { CodeOverlay } from "code_overlay.slint";
 import { GraphPanels, SideHandles } from "graph_panels.slint";
@@ -222,16 +222,21 @@ export component DomainView inherits Rectangle {
                     if m.problem != "": Text { text: m.problem; color: Theme.danger; font-size: Theme.font-small; vertical-alignment: center; overflow: elide; }
                 }
                 Rectangle { height: 1px; background: Theme.border; }
-                if m.whole && m.cards.length == 0: EmptyState {
+                if m.whole && m.cards.length == 0 && m.boxes.length == 0: EmptyState {
                     vertical-stretch: 1;
                     title: @tr("No entities found.");
                     reason: @tr("Entities come from ORM mappings, aggregate markers and the import file .archguard/domain-model.json.");
                 }
-                if m.whole && m.cards.length > 0: EntityCanvas {
+                if m.whole && (m.cards.length > 0 || m.boxes.length > 0): EntityCanvas {
                     vertical-stretch: 1;
                     cards: m.cards;
                     arrows: m.arrows;
                     bands: m.bands;
+                    boxes: m.boxes;
+                    hubs: m.hubs;
+                    module: m.module;
+                    open-module(i) => { DomainData.open-module(i); }
+                    back => { DomainData.close-module(); }
                     canvas-w: m.width;
                     canvas-h: m.height;
                     select(i) => { DomainData.select(0, i); }
