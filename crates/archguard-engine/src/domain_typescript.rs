@@ -13,8 +13,9 @@
 //!   MikroORM) → `entity`; `@Embeddable()` (MikroORM) → `value_object`; a
 //!   Prisma `model X { … }` → `entity`. `id` is the class name, qualified with
 //!   the folder when two entities share a name (with a diagnostic). A class
-//!   decorated `@Table(…)` (sequelize-typescript, `@immich/sql-tools`) is an
-//!   `entity` too; a class merely named `*Entity` is not.
+//!   decorated `@Table(…)` imported from sequelize-typescript,
+//!   `@immich/sql-tools` or typeorm is an `entity` too; a class merely named
+//!   `*Entity`, or a `@Table` from another module, is not.
 //! - Fields: class properties with a type (`x: T`, `x?: T | null`, `x!: T`) or
 //!   an initializer `new T<…>(…)` / `E.V`; Prisma `name Type[?|[]]` lines. `T[]`,
 //!   `Array`, `ReadonlyArray`, `Set`, `Collection`, `List`, `Iterable` and a
@@ -57,8 +58,11 @@
 //!   unique entity is a diagnostic and makes the model incomplete.
 //!   Docs: <https://typeorm.io/relations>, <https://www.prisma.io/docs/orm/prisma-schema/data-model/relations>.
 //!
-//! Not recognized: Kysely `interface DB` row maps and Drizzle `pgTable(…)`
-//! (immich declares its tables as `@Table` classes, which are read),
+//! Not read, with one diagnostic per app (first importing file): Kysely
+//! `interface DB` row maps (`import … from 'kysely'`) and Drizzle
+//! `pgTable/mysqlTable/sqliteTable(…)` (`import … from 'drizzle-orm…'`).
+//!
+//! Not recognized:
 //! constructor parameter properties as fields, properties
 //! without a type and with another initializer, inline literal unions as
 //! field types, `state = …` without `this.`, `??=`, `switch` guards,
@@ -83,9 +87,15 @@ const AGGREGATE_MARKERS: [&str; 1] = ["AggregateRoot"];
 const ENTITY_DECORATOR: &str = "Entity";
 const VALUE_OBJECT_DECORATOR: &str = "Embeddable";
 const TO_MANY: [&str; 2] = ["OneToMany", "ManyToMany"];
-/// Entity decorator besides `@Entity`: `@Table` (sequelize-typescript,
-/// `@immich/sql-tools`).
+/// Entity decorator besides `@Entity`; counts only when the file imports it
+/// from one of [`TABLE_PACKAGES`], so a UI library's `@Table` is no entity.
 const TABLE_DECORATOR: &str = "Table";
+/// Packages exporting an entity `@Table`: sequelize-typescript
+/// (<https://github.com/sequelize/sequelize-typescript>), `@immich/sql-tools`
+/// and TypeORM (<https://typeorm.io/decorator-reference>).
+const TABLE_PACKAGES: [&str; 3] = ["sequelize-typescript", "@immich/sql-tools", "typeorm"];
+/// Table builders of Drizzle (<https://orm.drizzle.team/docs/sql-schema-declaration>).
+const DRIZZLE_BUILDERS: [&str; 3] = ["pgTable", "mysqlTable", "sqliteTable"];
 /// Field decorators whose first argument `() => X` names the related entity
 /// when the field type does not (`Relation<X>`, `string` foreign keys).
 const ARROW_RELATIONS: [&str; 5] = [
@@ -273,10 +283,32 @@ impl Extractor {
             .extend(found.into_iter().map(|d| Decl { file: f, ..d }));
     }
 
+    /// Kysely and Drizzle schemas are not read: one gap each for the app.
+    fn unread_schemas(&mut self) {
+        let kysely = (self.files.iter())
+            .find(|s| imports(&s.shown, |m| m == "kysely", &[]))
+            .map(|s| s.rel.clone());
+        let drizzle = (self.files.iter())
+            .find(|s| {
+                let module = |m: &str| m == "drizzle-orm" || m.starts_with("drizzle-orm/");
+                imports(&s.shown, module, &DRIZZLE_BUILDERS)
+            })
+            .map(|s| s.rel.clone());
+        if let Some(rel) = kysely {
+            let msg = "Kysely database types (`interface DB`) are not read; first import here";
+            self.push_diag(&rel, msg.into());
+        }
+        if let Some(rel) = drizzle {
+            let msg = "Drizzle table definitions are not read; first import here";
+            self.push_diag(&rel, msg.into());
+        }
+    }
+
     fn entities(&mut self) {
+        self.unread_schemas();
         let mut ents: Vec<Ent> = (self.decls.iter().enumerate())
             .filter_map(|(d, decl)| {
-                marker_kind(decl).map(|kind| Ent {
+                marker_kind(decl, &self.files[decl.file].shown).map(|kind| Ent {
                     id: decl.name.clone(),
                     name: decl.name.clone(),
                     kind,
@@ -670,7 +702,38 @@ fn arrow_target(args: &str) -> Option<String> {
     (!id.is_empty() && (after.is_empty() || after.starts_with(','))).then_some(id)
 }
 
-fn marker_kind(decl: &Decl) -> Option<EntityKind> {
+/// Whether `shown` has an `import … from 'm'` with `module(m)` that names one
+/// of `names` (any name when empty).
+fn imports(shown: &str, module: impl Fn(&str) -> bool, names: &[&str]) -> bool {
+    let mut from = 0;
+    while let Some(i) = shown[from..].find("from") {
+        let at = from + i;
+        from = at + 4;
+        let rest = shown[from..].trim_start();
+        let Some(q) = rest.chars().next().filter(|c| matches!(c, '\'' | '"')) else {
+            continue;
+        };
+        let Some(end) = rest[1..].find(q) else {
+            continue;
+        };
+        if !module(&rest[1..1 + end]) {
+            continue;
+        }
+        let Some(start) = shown[..at].rfind("import") else {
+            continue;
+        };
+        let clause = &shown[start + 6..at];
+        if names.is_empty()
+            || (clause.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$')))
+                .any(|w| names.contains(&w))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn marker_kind(decl: &Decl, shown: &str) -> Option<EntityKind> {
     if decl.kw == "model" {
         return Some(EntityKind::Entity);
     }
@@ -680,7 +743,10 @@ fn marker_kind(decl: &Decl) -> Option<EntityKind> {
     let based = (decl.bases.iter()).any(|b| AGGREGATE_MARKERS.contains(&simple(b).as_str()));
     if based || AGGREGATE_MARKERS.iter().any(|m| decl.deco(m).is_some()) {
         Some(EntityKind::AggregateRoot)
-    } else if decl.deco(ENTITY_DECORATOR).is_some() || decl.deco(TABLE_DECORATOR).is_some() {
+    } else if decl.deco(ENTITY_DECORATOR).is_some()
+        || (decl.deco(TABLE_DECORATOR).is_some()
+            && imports(shown, |m| TABLE_PACKAGES.contains(&m), &[TABLE_DECORATOR]))
+    {
         Some(EntityKind::Entity)
     } else if decl.deco(VALUE_OBJECT_DECORATOR).is_some() {
         Some(EntityKind::ValueObject)
@@ -2263,11 +2329,11 @@ enum InvoiceStatus {
     const TABLES: [(&str, &str); 3] = [
         (
             "t/user.table.ts",
-            "@Table('user')\nexport class UserTable {\n  @PrimaryGeneratedColumn() id!: string;\n}\n",
+            "import { Table } from '@immich/sql-tools';\n@Table('user')\nexport class UserTable {\n  @PrimaryGeneratedColumn() id!: string;\n}\n",
         ),
         (
             "t/album.table.ts",
-            "@Table('album')\nexport class AlbumTable {\n  @PrimaryGeneratedColumn() id!: string;\n  @ForeignKeyColumn(() => UserTable, { onDelete: 'CASCADE' })\n  ownerId!: string;\n}\n",
+            "import { Table } from '@immich/sql-tools';\n@Table('album')\nexport class AlbumTable {\n  @PrimaryGeneratedColumn() id!: string;\n  @ForeignKeyColumn(() => UserTable, { onDelete: 'CASCADE' })\n  ownerId!: string;\n}\n",
         ),
         (
             "t/fake.ts",
@@ -2297,6 +2363,43 @@ enum InvoiceStatus {
         )]);
         assert!(model.relations.is_empty());
         assert!(has_diag(&model, "A.m (@ManyToOne)"));
+        assert!(!model.complete);
+    }
+
+    #[test]
+    fn table_from_a_non_orm_module_is_not_an_entity() {
+        let model = run(&[(
+            "ui.ts",
+            "import { Table } from 'antd';\n@Table('x')\nexport class Grid {\n  @Column() a: string;\n}\n",
+        )]);
+        assert!(model.entities.is_empty());
+    }
+
+    #[test]
+    fn table_from_an_orm_package_is_an_entity() {
+        let model = run(&[(
+            "t.ts",
+            "import {\n  Column,\n  Table,\n} from '@immich/sql-tools';\n@Table('x')\nexport class XTable {}\n",
+        )]);
+        assert_eq!(model.entities.len(), 1);
+    }
+
+    #[test]
+    fn kysely_and_drizzle_imports_are_one_gap_each() {
+        let model = run(&[
+            (
+                "a.ts",
+                "import { Kysely } from 'kysely';\nexport interface DB {}\n",
+            ),
+            ("b.ts", "import { Kysely } from 'kysely';\n"),
+            (
+                "c.ts",
+                "import { pgTable, text } from 'drizzle-orm/pg-core';\nexport const u = pgTable('u', { a: text('a') });\n",
+            ),
+        ]);
+        assert!(has_diag(&model, "Kysely"));
+        assert!(has_diag(&model, "Drizzle"));
+        assert_eq!(model.diagnostics.len(), 2);
         assert!(!model.complete);
     }
 }
