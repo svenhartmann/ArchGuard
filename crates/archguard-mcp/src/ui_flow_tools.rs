@@ -47,6 +47,9 @@ pub fn validate(p: &UiFlowParams) -> Result<(), ErrorData> {
             "roles (at most 64), application and expected_revision must be 1..=256 bytes without NUL",
         ));
     }
+    if p.kind.is_some() && p.view.is_none() {
+        return Err(crate::tools::invalid_params("kind requires view: matrix"));
+    }
     if p.view.as_deref().is_some_and(|v| v != "matrix")
         || p.kind
             .as_deref()
@@ -403,7 +406,7 @@ mod tests {
         assert_eq!(first["next_offset"], 1);
         assert_eq!(
             first["metadata"]["roles"],
-            json!(["anonymous", "signed in", "Owner"])
+            json!(["anonymous", "signed in", "role:Owner"])
         );
         assert_eq!(first["items"][0]["label"], "/");
         assert_eq!(first["items"][0]["cells"]["anonymous"], "allowed");
@@ -415,7 +418,7 @@ mod tests {
             (
                 purge["anonymous"].as_str(),
                 purge["signed in"].as_str(),
-                purge["Owner"].as_str()
+                purge["role:Owner"].as_str()
             ),
             (Some("denied"), Some("denied"), Some("allowed"))
         );
@@ -424,5 +427,33 @@ mod tests {
             ..UiFlowParams::default()
         };
         assert!(validate(&bad).is_err());
+    }
+
+    #[test]
+    fn a_role_named_like_a_fixed_column_does_not_overwrite_it() {
+        let mut f = flow();
+        f.roles.push(RoleDef {
+            name: "anonymous".into(),
+            kind: RoleKind::Role,
+            includes: vec![],
+            file: "R.cs".into(),
+            line: 1,
+            source: "test".into(),
+        });
+        f.screens[1].access = Some(Condition::Authenticated);
+        let params = UiFlowParams {
+            view: Some("matrix".into()),
+            kind: Some("screens".into()),
+            ..UiFlowParams::default()
+        };
+        let v = ui_flow_value(&f, &params).unwrap();
+        let cells = &v["items"][1]["cells"];
+        assert_eq!(cells["anonymous"], "denied");
+        assert_eq!(cells["role:anonymous"], "allowed");
+        let no_view = UiFlowParams {
+            kind: Some("both".into()),
+            ..UiFlowParams::default()
+        };
+        assert!(validate(&no_view).is_err());
     }
 }

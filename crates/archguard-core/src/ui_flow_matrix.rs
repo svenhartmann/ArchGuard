@@ -43,8 +43,7 @@ pub struct PermissionMatrix {
 /// Columns: `anonymous`, `signed in`, then the catalog's roles and groups
 /// (not its permission ids: a project can define over a hundred). A role
 /// column is a signed-in user holding exactly that role, with the catalog's
-/// hierarchy and policies applied as in the simulation, and holding both `X`
-/// and `ROLE_X` (Spring's prefix). Screens are judged by
+/// hierarchy and policies applied as in the simulation. Screens are judged by
 /// their own access (no guard allowed), not by a navigation path; an
 /// undeclared endpoint and every unreadable condition stay `unknown`.
 pub fn permission_matrix(flow: &UiFlow, kind: MatrixKind) -> PermissionMatrix {
@@ -57,20 +56,16 @@ pub fn permission_matrix(flow: &UiFlow, kind: MatrixKind) -> PermissionMatrix {
             flow,
             &Assignment {
                 authenticated,
-                // Spring writes the role `ADMIN` as `ROLE_ADMIN` in guards; either spelling is held.
-                roles: (roles.iter())
-                    .flat_map(|r| [r.to_string(), format!("ROLE_{r}")])
-                    .collect(),
+                roles: roles.iter().map(|r| r.to_string()).collect(),
                 ..Assignment::default()
             },
         )
     };
     let mut assignments = vec![assignment(false, &[]), assignment(true, &[])];
     assignments.extend(names.iter().map(|n| assignment(true, &[n])));
-    let roles = ["anonymous", "signed in"]
-        .into_iter()
-        .chain(names.iter().copied())
-        .map(String::from)
+    // `role:` keeps a role named `anonymous` apart from the fixed columns.
+    let roles = (["anonymous".to_string(), "signed in".to_string()].into_iter())
+        .chain(names.iter().map(|n| format!("role:{n}")))
         .collect();
     let mut rows = Vec::new();
     if kind != MatrixKind::Endpoints {
@@ -168,6 +163,7 @@ mod tests {
                 screen("/purge", Some(Condition::Policy("CanPurge".into()))),
                 screen("/odd", Some(Condition::Unknown("x()".into()))),
                 screen("/spring", Some(Condition::Role("ROLE_admin".into()))),
+                screen("/anon", Some(Condition::Role("anonymous".into()))),
             ],
             endpoints: vec![
                 endpoint("/open", AccessState::Open),
@@ -193,7 +189,10 @@ mod tests {
         };
         let m = permission_matrix(&flow, MatrixKind::Both);
         // permissions are no columns
-        assert_eq!(m.roles, ["anonymous", "signed in", "admin", "user"]);
+        assert_eq!(
+            m.roles,
+            ["anonymous", "signed in", "role:admin", "role:user"]
+        );
         let cells: Vec<(&str, Vec<Outcome>)> = m
             .rows
             .iter()
@@ -207,17 +206,69 @@ mod tests {
                 ("/admin", vec![D, D, A, D]),
                 ("/purge", vec![D, D, A, D]),
                 ("/odd", vec![U, U, U, U]),
-                ("/spring", vec![D, D, A, D]),
+                // no prefix alias: `admin` does not hold `ROLE_admin`
+                ("/spring", vec![D, D, D, D]),
+                ("/anon", vec![D, D, D, D]),
                 ("GET /open", vec![A, A, A, A]),
                 ("GET /legacy", vec![U, U, U, U]),
                 ("GET /api", vec![U, U, U, U]),
             ]
         );
-        assert_eq!(m.rows[8].requires, "custom tenant");
+        assert_eq!(m.rows[9].requires, "custom tenant");
         let only = |k| permission_matrix(&flow, k).rows.len();
         assert_eq!(
             (only(MatrixKind::Screens), only(MatrixKind::Endpoints)),
-            (6, 3)
+            (7, 3)
         );
+    }
+
+    #[test]
+    fn every_cell_equals_the_simulator_outcome() {
+        let flow = UiFlow {
+            screens: vec![
+                screen("/a", Some(Condition::Role("ADMIN".into()))),
+                screen("/b", Some(Condition::Role("ROLE_ADMIN".into()))),
+                screen("/c", Some(Condition::Policy("P".into()))),
+            ],
+            roles: vec![
+                def("ADMIN", RoleKind::Role, &[]),
+                def("USER", RoleKind::Role, &[]),
+            ],
+            policies: vec![PolicyDef {
+                name: "P".into(),
+                requires: Condition::Role("USER".into()),
+                file: "P.cs".into(),
+                line: 1,
+                source: "test".into(),
+            }],
+            ..UiFlow::default()
+        };
+        let m = permission_matrix(&flow, MatrixKind::Screens);
+        let held: [(bool, &[&str]); 4] = [
+            (false, &[]),
+            (true, &[]),
+            (true, &["ADMIN"]),
+            (true, &["USER"]),
+        ];
+        for (row, s) in m.rows.iter().zip(&flow.screens) {
+            for (cell, (authenticated, roles)) in row.cells.iter().zip(held) {
+                let a = resolve_assignment(
+                    &flow,
+                    &Assignment {
+                        authenticated,
+                        roles: roles.iter().map(|r| r.to_string()).collect(),
+                        ..Assignment::default()
+                    },
+                );
+                assert_eq!(
+                    *cell,
+                    evaluate_condition(s.access.as_ref().unwrap(), &a),
+                    "{}",
+                    row.label
+                );
+            }
+        }
+        // .NET: role ADMIN is not ROLE_ADMIN
+        assert_eq!(m.rows[1].cells, [D, D, D, D]);
     }
 }
