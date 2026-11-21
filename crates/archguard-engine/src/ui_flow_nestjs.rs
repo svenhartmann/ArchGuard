@@ -774,28 +774,53 @@ mod declared {
         })
     }
 
+    /// The access-deciding methods (`canActivate`, `handleRequest`) a class
+    /// overrides, with their bodies; none when it does not extend `AuthGuard(…)`.
+    pub(super) fn overrides(
+        src: &Src,
+        class: &structure::Class,
+    ) -> Option<Vec<(&'static str, (usize, usize))>> {
+        let head = &src.code[..class.body.0];
+        let header = (head.rfind(&format!("class {}", class.name))).map_or("", |p| &head[p..]);
+        header.contains("extends AuthGuard").then_some(())?;
+        let b = src.code.as_bytes();
+        let mut found = Vec::new();
+        for m in ["canActivate", "handleRequest"] {
+            for p in words(&src.code[class.body.0..class.body.1], m) {
+                let at = class.body.0 + p;
+                let open = skip_ws(b, at + m.len());
+                if b.get(open) != Some(&b'(') || src.code[..at].trim_end().ends_with('.') {
+                    continue;
+                }
+                let from = close(&src.code, open);
+                let start = from + src.code[from..].find('{').unwrap_or(0);
+                found.push((m, (start, block_end(&src.code, start, b'{', b'}'))));
+            }
+        }
+        Some(found)
+    }
+
+    /// Whether a lookup at `at` in `class` is a guard read: in a passport
+    /// subclass that overrides access methods only inside those methods.
+    pub(super) fn reads(src: &Src, class: &structure::Class, at: usize) -> bool {
+        let Some(over) = src.passport.then(|| overrides(src, class)).flatten() else {
+            return true;
+        };
+        over.is_empty() || over.iter().any(|(_, (a, b))| *a <= at && at < *b)
+    }
+
     /// For `class NAME extends AuthGuard(…)` (passport imported) the methods
     /// it overrides that decide access; none when `name` is no such class.
     pub(super) fn passport(scan: &Scan, name: &str) -> Option<Vec<&'static str>> {
         let mut found: Option<Vec<&'static str>> = None;
         for src in scan.app.files.iter().filter(|s| s.passport) {
             for class in structure::classes(src).iter().filter(|c| c.name == name) {
-                let head = &src.code[..class.body.0];
-                let header = head
-                    .rfind(&format!("class {name}"))
-                    .map_or("", |p| &head[p..]);
-                if !header.contains("extends AuthGuard") {
+                let Some(over) = overrides(src, class) else {
                     continue;
-                }
-                let body = &src.code[class.body.0..class.body.1];
-                let own = |m: &&'static str| {
-                    words(body, m).into_iter().any(|p| {
-                        let after = body[p + m.len()..].trim_start();
-                        after.starts_with('(') && !body[..p].trim_end().ends_with('.')
-                    })
                 };
-                let overridden = ["canActivate", "handleRequest"].into_iter().filter(own);
-                found.get_or_insert_with(Vec::new).extend(overridden);
+                found
+                    .get_or_insert_with(Vec::new)
+                    .extend(over.into_iter().map(|(m, _)| m));
             }
         }
         found
@@ -805,6 +830,9 @@ mod declared {
 /// Composite decorators: definitions and their use.
 mod composite {
     use super::*;
+
+    /// How many composites may nest below the one used; deeper ones are a gap.
+    const MAX_NEST: u8 = 2;
 
     /// A composite use: its name, the use site's arguments, nesting depth.
     struct Use<'a> {
@@ -817,10 +845,18 @@ mod composite {
 
     /// Every `const D = (p) => …` / `function D(p) {…}` of the application whose
     /// body calls a part or a `[views.access]` name, by `D`.
-    /// A second pass also takes composites that only call composites (two levels).
+    /// Further passes also take composites that only call composites, to a fixpoint
+    /// (a bounded 8 passes); `nest` bounds how deep a use follows.
     pub(super) fn definitions(scan: &Scan) -> HashMap<String, Vec<Composite>> {
-        let first = collect(scan, &HashSet::new());
-        collect(scan, &first.keys().cloned().collect())
+        let mut defs = collect(scan, &HashSet::new());
+        for _ in 0..8 {
+            let next = collect(scan, &defs.keys().cloned().collect());
+            if next.len() == defs.len() {
+                break;
+            }
+            defs = next;
+        }
+        defs
     }
 
     fn collect(scan: &Scan, known: &HashSet<String>) -> HashMap<String, Vec<Composite>> {
@@ -1000,14 +1036,11 @@ mod composite {
                 continue;
             }
             if scan.composites.contains_key(name.as_str()) {
-                nest(
-                    scan,
-                    out,
-                    site,
-                    src,
-                    (u, name),
-                    (args.iter().any(is_param), level),
-                );
+                // Handed the parameter: the use site's arguments; no arguments: none.
+                let given = (args.iter().any(is_param))
+                    .then_some(u.args)
+                    .or(args.is_empty().then_some(&[][..]));
+                nest(scan, out, site, src, (u, name), (given, level));
                 continue;
             }
             let key = args.first().and_then(|k| scan.consts.text(k));
@@ -1052,15 +1085,15 @@ mod composite {
         site: &Site,
         src: &Src,
         (u, name): (&Use, &str),
-        (handed, level): (bool, &mut Level),
+        (given, level): (Option<&[Item]>, &mut Level),
     ) {
-        if !handed || u.depth >= 2 {
+        let Some(args) = given.filter(|_| u.depth < MAX_NEST) else {
             let message = format!("Decorator @{name} nested in @{} is not followed.", u.name);
             return gap(out, site.file, site.line, message);
-        }
+        };
         let inner = Use {
             name,
-            args: u.args,
+            args,
             depth: u.depth + 1,
         };
         apply_to(scan, out, site, src, (&inner, level));
@@ -2061,7 +2094,7 @@ mod meta {
         let body = &src.code[class.body.0..class.body.1];
         let opens: Vec<usize> = (words(body, &h.name).iter())
             .map(|p| skip_ws(b, class.body.0 + p + h.name.len()))
-            .filter(|&o| b.get(o) == Some(&b'('))
+            .filter(|&o| b.get(o) == Some(&b'(') && declared::reads(src, class, o))
             .collect();
         let covers = |open: usize| {
             let targets = match &h.targets {
@@ -2107,6 +2140,9 @@ mod meta {
             let classes = structure::classes(src);
             for f in lookups(scan, src) {
                 let owner = classes.iter().find(|c| c.body.0 <= f.at && f.at < c.body.1);
+                if owner.is_some_and(|c| !declared::reads(src, c, f.at)) {
+                    continue;
+                }
                 if let Some(c) = owner {
                     let l = lookup(f.merge, &f.targets);
                     readers.entry(f.key).or_default().push((c.name.clone(), l));
@@ -3167,6 +3203,79 @@ export class JwtAuthGuard implements CanActivate {
         assert_eq!(
             ep(&flow, "GET", "/a").access,
             prot(Condition::All(vec![custom("RolesGuard"), role("admin")]))
+        );
+    }
+
+    #[test]
+    fn a_passport_subclass_reads_a_marker_only_in_the_methods_it_overrides() {
+        let guard = |body: &str| {
+            run(
+                &[
+                    ("package.json", PKG),
+                    (
+                        "src/jwt.ts",
+                        &format!(
+                            "{PASSPORT}export const Public = () => SetMetadata('pub', true);\n\
+                             export class JwtAuthGuard extends AuthGuard('jwt') {{ {body} }}\n"
+                        ),
+                    ),
+                    (
+                        "src/a.ts",
+                        "@Controller('a')\n@UseGuards(JwtAuthGuard)\nclass A { @Public() @Get() f() {} }\n",
+                    ),
+                ],
+                "Public = \"open\"\n",
+            )
+        };
+        let read = "this.reflector.getAllAndOverride('pub', [c.getHandler(), c.getClass()])";
+        let flow = guard(&format!(
+            "canActivate(c) {{ return super.canActivate(c); }} unused(c) {{ return {read}; }}"
+        ));
+        assert!(matches!(
+            ep(&flow, "GET", "/a").access,
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+        let flow = guard(&format!(
+            "canActivate(c) {{ if ({read}) return true; return super.canActivate(c); }}"
+        ));
+        assert_eq!(ep(&flow, "GET", "/a").access, AccessState::Open);
+    }
+
+    #[test]
+    fn composites_nest_to_the_limit_and_deeper_ones_are_a_gap() {
+        let run_with = |defs: &str| {
+            run(
+                &[
+                    ("package.json", PKG),
+                    ("src/auth.ts", &format!("{PASSPORT}{defs}")),
+                    (
+                        "src/a.ts",
+                        "@Controller('a')\nclass A { @Top() @Get() f() {} }\n",
+                    ),
+                ],
+                "",
+            )
+        };
+        let flow = run_with(
+            "export const Top = () => applyDecorators(Mid());\n\
+             export const Mid = () => applyDecorators(Inner());\n\
+             export const Inner = () => applyDecorators(UseGuards(AuthGuard('jwt')));\n",
+        );
+        assert_eq!(
+            ep(&flow, "GET", "/a").access,
+            prot(Condition::Authenticated)
+        );
+        let flow = run_with(
+            "export const Top = () => applyDecorators(Mid());\n\
+             export const Mid = () => applyDecorators(Inner());\n\
+             export const Inner = () => applyDecorators(Deep());\n\
+             export const Deep = () => applyDecorators(UseGuards(AuthGuard('jwt')));\n",
+        );
+        assert_eq!(ep(&flow, "GET", "/a").access, AccessState::Undeclared);
+        assert!(
+            gaps(&flow).iter().any(|m| m.contains("nested")),
+            "{:?}",
+            gaps(&flow)
         );
     }
 }
