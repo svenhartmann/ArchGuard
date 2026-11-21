@@ -667,6 +667,24 @@ mod access {
     }
 
     const STAFF: &str = "is_staff";
+
+    /// Decorators that perform no access check; every other unread one is unknown (D1).
+    /// Django: https://docs.djangoproject.com/en/stable/topics/http/decorators/ and
+    /// https://docs.djangoproject.com/en/stable/ref/csrf/ ; DRF: https://www.django-rest-framework.org/api-guide/views/
+    const NO_ACCESS_CHECK: [&str; 12] = [
+        "csrf_exempt",
+        "csrf_protect",
+        "cache_page",
+        "never_cache",
+        "vary_on_headers",
+        "vary_on_cookie",
+        "renderer_classes",
+        "parser_classes",
+        "throttle_classes",
+        "schema",
+        "condition",
+        "etag",
+    ];
     const SAFE: [&str; 3] = ["GET", "HEAD", "OPTIONS"];
 
     fn any(mut c: Vec<Condition>) -> Condition {
@@ -724,7 +742,7 @@ mod access {
                 },
                 _ => {
                     let Some(m) = self.access.get(name) else {
-                        if matches!(self.resolve(f, callee), Sym::Def(..)) {
+                        if !NO_ACCESS_CHECK.contains(&name) {
                             fx.decl.unresolved.push(name.to_string());
                             let line = p.line(at);
                             (self.unresolved.borrow_mut()).insert((f, line, name.to_string()));
@@ -1936,7 +1954,7 @@ mod views {
             r: &Route,
             slash: &str,
             basename: Option<&str>,
-            (outer, mapping): (Decl, Option<(usize, (usize, usize))>),
+            (outer, mapping): (Decl, Option<FileSpan>),
             flow: &mut UiFlow,
         ) -> Vec<Ep> {
             let Some(vs) = self.viewset_context(r, slash, basename, outer) else {
@@ -2135,6 +2153,9 @@ mod views {
             out
         }
     }
+
+    /// A file and the byte range in it.
+    type FileSpan = (usize, (usize, usize));
 
     /// What one ViewSet's routes share.
     struct Vs<'r> {
@@ -3455,6 +3476,9 @@ from rest_framework.views import APIView
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from .deco import some_project_decorator
+from vendor.auth import api_key_required
+from django.views.decorators.csrf import csrf_exempt
+from rest_framework.decorators import api_view, permission_classes
 
 
 @some_project_decorator
@@ -3466,6 +3490,20 @@ def guarded(request):
 @some_project_decorator
 @permission_classes([AllowAny])
 def unknown_only(request):
+    pass
+
+
+@api_key_required
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def ext(request):
+    pass
+
+
+@csrf_exempt
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def plain_open(request):
     pass
 
 
@@ -3505,7 +3543,7 @@ class VS(viewsets.ViewSet):
                 ("w/w/settings.py", "ROOT_URLCONF = \"w.urls\"\n"),
                 (
                     "w/w/urls.py",
-                    "from django.urls import path\nfrom django.contrib.auth.decorators import login_required\nfrom rest_framework.routers import DefaultRouter\nfrom app import views\n\nrouter = DefaultRouter()\nrouter.register('vs', views.VS, basename='vs')\nurlpatterns = [\n    path('g/', views.guarded),\n    path('u/', views.unknown_only),\n    path('pub/', views.Pub.as_view()),\n    path('wrapped/', login_required(views.Pub.as_view())),\n    path('mixed/', views.Mixed.as_view()),\n] + router.urls\n",
+                    "from django.urls import path\nfrom django.contrib.auth.decorators import login_required\nfrom rest_framework.routers import DefaultRouter\nfrom app import views\n\nrouter = DefaultRouter()\nrouter.register('vs', views.VS, basename='vs')\nurlpatterns = [\n    path('g/', views.guarded),\n    path('u/', views.unknown_only),\n    path('pub/', views.Pub.as_view()),\n    path('wrapped/', login_required(views.Pub.as_view())),\n    path('mixed/', views.Mixed.as_view()),\n    path('ext/', views.ext),\n    path('po/', views.plain_open),\n] + router.urls\n",
                 ),
                 ("w/app/__init__.py", ""),
                 (
@@ -3533,6 +3571,19 @@ class VS(viewsets.ViewSet):
             .count();
         assert!(gaps >= 1, "{:#?}", flow.diagnostics);
         assert!(!matches!(endpoint(&flow, "ANY", "/u/"), AccessState::Open));
+    }
+
+    #[test]
+    fn w1_external_decorator_is_unknown_never_open() {
+        let flow = extract(w1().path());
+        let unknown = AccessState::Protected(Condition::Unknown("api_key_required".into()));
+        assert_eq!(endpoint(&flow, "GET", "/ext/"), unknown);
+        let gap = (flow.diagnostics.iter()).any(|d| {
+            d.severity == DiagnosticSeverity::Gap && d.message.contains("api_key_required")
+        });
+        assert!(gap, "{:#?}", flow.diagnostics);
+        // A decorator that checks no access leaves the explicit marker alone.
+        assert_eq!(endpoint(&flow, "GET", "/po/"), AccessState::Open);
     }
 
     #[test]
