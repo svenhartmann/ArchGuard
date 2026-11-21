@@ -365,6 +365,13 @@ fn all(mut conditions: Vec<Condition>) -> Option<Condition> {
     }
 }
 
+/// Whether a binding's initializer awaits or calls anything; `useUserSession()` is the
+/// one call read (as `loggedIn`).
+fn calls(binding: &str) -> bool {
+    let init = binding.split_once('=').map_or("", |(_, r)| r).trim();
+    init != "useUserSession()" && (init.contains('(') || !words(init, "await").is_empty())
+}
+
 /// A string literal or an array of string literals.
 fn strings(value: &Value) -> Option<Vec<String>> {
     match value {
@@ -1542,8 +1549,12 @@ mod shape {
                 out.push(rule);
                 i = after;
             } else if matches!(ident_at(body, i), "const" | "let" | "var") {
-                // A binding blocks nothing; a check on it is read by name.
-                i = skip_noise(body, stmt_end(body, i));
+                // A pure binding blocks nothing; a call may throw or redirect, so it is unread.
+                let end = stmt_end(body, i);
+                if calls(&body[i..end]) {
+                    return None;
+                }
+                i = skip_noise(body, end);
             } else {
                 let end = stmt_end(body, i);
                 if !matches!(classify(&body[i..end])?, Kind::Pass) {
@@ -3337,5 +3348,36 @@ export default router",
         ]);
         assert!(is_unknown(&state(&flow, "/a")), "{:?}", state(&flow, "/a"));
         assert!(gap_count(&flow) >= 1);
+    }
+
+    #[test]
+    fn binding_with_a_call_makes_the_guard_unreadable() {
+        let flow = nuxt_app(&[
+            (
+                "middleware/a.global.ts",
+                "export default defineNuxtRouteMiddleware(async (to) => {\n  const u = await check(to)\n  if (!loggedIn.value && to.path !== '/login') return navigateTo('/login')\n})\n",
+            ),
+            ("pages/login.vue", PAGE),
+            ("pages/a.vue", PAGE),
+        ]);
+        assert!(
+            is_unknown(&state(&flow, "/login")),
+            "{:?}",
+            state(&flow, "/login")
+        );
+        assert!(is_unknown(&state(&flow, "/a")));
+        assert_eq!(gap_count(&flow), 1, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn pure_bindings_stay_readable() {
+        let flow = nuxt_app(&[
+            (
+                "middleware/a.global.ts",
+                "export default defineNuxtRouteMiddleware((to) => {\n  const p = to.path\n  const { meta } = to\n  if (!loggedIn.value && to.path !== '/login') return navigateTo('/login')\n})\n",
+            ),
+            ("pages/login.vue", PAGE),
+        ]);
+        assert_eq!(state(&flow, "/login"), AccessState::Open);
     }
 }
