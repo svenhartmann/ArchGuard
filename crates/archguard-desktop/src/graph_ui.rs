@@ -371,7 +371,11 @@ fn request_findings(ui: &AppWindow, analysis: Arc<Analysis>) {
             (&run.graph, &run.source_names),
         );
         let _ = weak.upgrade_in_event_loop(move |ui| {
-            LOADING.with_borrow_mut(|l| *l = None);
+            LOADING.with_borrow_mut(|l| {
+                if l.as_ref().is_some_and(|a| Arc::ptr_eq(a, &analysis)) {
+                    *l = None;
+                }
+            });
             let current = with_store(|s| s.active()?.analysis.clone());
             if !current.is_some_and(|a| Arc::ptr_eq(&a, &analysis)) {
                 return;

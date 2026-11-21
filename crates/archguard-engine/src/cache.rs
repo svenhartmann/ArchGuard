@@ -145,6 +145,9 @@ pub fn source_stamp(root: &Path, config: &Config) -> Result<String, ArchguardErr
     let mut hash = Sha256::new();
     for file in &files {
         hash.update(file.rel_path.as_bytes());
+        hash.update(b"\0");
+        hash.update(file.project.as_bytes());
+        hash.update(b"\0");
         match file_stamp(&file.path) {
             FileStamp::Missing => hash.update(b"-"),
             FileStamp::Stamped { secs, nanos, len } => {
@@ -155,6 +158,15 @@ pub fn source_stamp(root: &Path, config: &Config) -> Result<String, ArchguardErr
         }
         hash.update(b"\n");
     }
+    // A few small Cargo.toml reads: edits to them must change the stamp too.
+    pipeline::hash_manifests(
+        root,
+        files
+            .iter()
+            .filter(|file| file.lang == archguard_extract::Lang::Rust)
+            .map(|file| file.rel_path.as_str()),
+        &mut hash,
+    );
     Ok(format!("{:x}", hash.finalize()))
 }
 
@@ -580,6 +592,33 @@ mod tests {
         set_mtime();
         assert_ne!(stamp(), s1, "size change with same mtime");
         assert_ne!(content(), c0, "edit changes content hash");
+    }
+
+    #[test]
+    fn stamp_follows_cargo_manifests_and_project_assignment() {
+        let dir = fixture(&[
+            ("src/lib.rs", "pub fn a() {}\n"),
+            ("Cargo.toml", "[package]\nname = \"a\"\n"),
+        ]);
+        let mut config = Config::default();
+        config.project.source_roots = vec!["src".into()];
+        let stamp = |c: &Config| source_stamp(dir.path(), c).unwrap();
+        let s0 = stamp(&config);
+        fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"b\"\n").unwrap();
+        let s1 = stamp(&config);
+        assert_ne!(s1, s0, "manifest edit");
+
+        // A new build file only renames the project of a source file.
+        let dir = fixture(&[("svc/src/main/scala/A.scala", "class A\n")]);
+        let mut config = Config::default();
+        config.project.source_roots = vec!["svc".into()];
+        let before = source_stamp(dir.path(), &config).unwrap();
+        fs::write(dir.path().join("svc/build.sbt"), "name := \"svc\"\n").unwrap();
+        assert_ne!(
+            source_stamp(dir.path(), &config).unwrap(),
+            before,
+            "project"
+        );
     }
 
     #[test]
