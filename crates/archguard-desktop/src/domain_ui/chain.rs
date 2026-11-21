@@ -175,7 +175,7 @@ fn start(cx: Ctx, c: &Chain, depth: i32, out: &mut Vec<DrillStep>) {
     }
     match &c.start {
         ChainStart::Endpoint { endpoint: e, .. } => {
-            let outcome = evaluate_access(&e.access, cx.a);
+            let outcome = evaluate_access(&e.access, cx.a.in_app(e.application.as_deref()));
             let text = format!(
                 "{} {} · {} · {}",
                 e.method,

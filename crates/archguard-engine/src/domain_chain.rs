@@ -28,7 +28,8 @@ use archguard_core::domain_model::{
 };
 use archguard_core::{
     AccessState, Action, Assignment, EndpointAccess, Origin, Outcome, ScreenReach, UiFlow,
-    evaluate_access, evaluate_condition, join_actions_to_endpoints, screen_reaches,
+    evaluate_access, evaluate_condition, join_actions_to_endpoints, resolve_assignment,
+    screen_reaches,
 };
 use serde::Serialize;
 
@@ -230,6 +231,8 @@ pub struct ChainRight {
 /// `undeclared` access is unknown, never allowed (ADR 0021 decision 2).
 pub fn rights(flow: &UiFlow, chains: &[Chain], assignment: &Assignment) -> Vec<ChainRight> {
     let reaches = screen_reaches(flow, assignment);
+    // each step is judged under its own application's convention
+    let resolved = resolve_assignment(flow, assignment);
     (chains.iter())
         .map(|c| match c.start {
             ChainStart::Message { message_handler } => ChainRight {
@@ -240,11 +243,13 @@ pub fn rights(flow: &UiFlow, chains: &[Chain], assignment: &Assignment) -> Vec<C
                 )],
             },
             ChainStart::Endpoint { action, endpoint } => {
-                let mut parts = vec![endpoint_part(endpoint, assignment)];
+                let at = resolved.in_app(endpoint.application.as_deref());
+                let mut parts = vec![endpoint_part(endpoint, at)];
                 if let Some(action) = action {
                     parts.push(screen_part(flow, action, &reaches));
                     if let archguard_core::AccessState::Protected(condition) = &action.condition {
-                        let outcome = evaluate_condition(condition, assignment);
+                        let app = action_application(flow, action);
+                        let outcome = evaluate_condition(condition, resolved.in_app(app));
                         let text = format!("action needs {}", condition.text());
                         parts.push((outcome, text));
                     }
@@ -281,6 +286,16 @@ fn endpoint_part(e: &EndpointAccess, assignment: &Assignment) -> (Outcome, Strin
     };
     let text = format!("endpoint {} {} {access}", e.method, e.path);
     (evaluate_access(&e.access, assignment), text)
+}
+
+/// The application an action belongs to, by its screen.
+fn action_application<'a>(flow: &'a UiFlow, action: &'a Action) -> Option<&'a str> {
+    match &action.screen {
+        Origin::Screen(id) => {
+            (flow.screens.iter().find(|s| s.id == *id)).and_then(|s| s.application.as_deref())
+        }
+        Origin::AnyScreen { application } => Some(application.as_str()),
+    }
 }
 
 /// The action's screen reach; for an `any_screen` action the best screen of
@@ -646,6 +661,50 @@ public class AdminController : ControllerBase
         let json = serde_json::to_value(&paid[0]).unwrap();
         assert_eq!(json["endpoint"]["path"], "/api/orders/pay");
         assert!(json.get("message_handler").is_none());
+    }
+
+    /// An application's convention judges its own steps: dotted permissions
+    /// inherited from the whole-flow entry, never another application's prefix.
+    #[test]
+    fn rights_judge_each_step_under_its_applications_convention() {
+        use archguard_core::{PermissionFormat, RoleConvention};
+        let (mut flow, model) = analyzed_with(MORE);
+        let admin = flow
+            .endpoints
+            .iter_mut()
+            .find(|e| e.path == "/api/admin/cancel")
+            .expect("admin endpoint");
+        admin.access =
+            AccessState::Protected(archguard_core::Condition::Role("orders.read".into()));
+        admin.application = Some("api".into());
+        flow.role_conventions = vec![
+            RoleConvention {
+                permissions: PermissionFormat::Dotted {
+                    wildcard: "*".into(),
+                },
+                ..RoleConvention::default()
+            },
+            RoleConvention {
+                application: Some("api".into()),
+                role_prefix: Some("ROLE_".into()),
+                ..RoleConvention::default()
+            },
+        ];
+        let cancelled = triggers_of_state(&flow, &model, "Order", "Cancelled");
+        let at = cancelled
+            .iter()
+            .position(|c| c.endpoint().is_some_and(|e| e.path == "/api/admin/cancel"))
+            .expect("admin chain");
+        let held = Assignment {
+            authenticated: true,
+            roles: ["orders.*".to_string()].into(),
+            ..Assignment::default()
+        };
+        let right = &rights(&flow, &cancelled, &held)[at];
+        assert_eq!(
+            right.reasons[0],
+            "endpoint PUT /api/admin/cancel needs role orders.read: allowed"
+        );
     }
 
     #[test]

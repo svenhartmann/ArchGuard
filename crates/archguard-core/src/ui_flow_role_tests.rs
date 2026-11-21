@@ -518,3 +518,36 @@ fn access_state_layers_and_defaults() {
         Protected(Condition::Never)
     );
 }
+
+#[test]
+fn an_applications_convention_inherits_the_whole_flow_permissions_not_its_prefix() {
+    let app_screen = |id: &str, app: &str, need: &str| {
+        let mut s = screen(id, AccessState::Protected(Condition::Role(need.into())));
+        s.application = Some(app.into());
+        s
+    };
+    let flow = UiFlow {
+        screens: vec![
+            app_screen("api", "api", "orders.read"),
+            app_screen("node", "web", "ROLE_X"),
+        ],
+        start_screens: vec!["api".into(), "node".into()],
+        role_conventions: vec![
+            RoleConvention {
+                role_prefix: Some("ROLE_".into()),
+                ..dotted()
+            },
+            spring("api"),
+        ],
+        ..UiFlow::default()
+    };
+    let api = flow.convention(Some("api"));
+    assert_eq!(api.permissions, dotted().permissions, "dotted inherited");
+    assert_eq!(api.role_prefix.as_deref(), Some("ROLE_"), "its own");
+    let node = flow.convention(Some("web"));
+    assert_eq!(node.permissions, dotted().permissions);
+    assert_eq!(node.role_prefix, None, "no prefix into another application");
+    let reach = screen_reaches(&flow, &holding(&["orders.*", "X"]));
+    assert_eq!(reach["api"], ScreenReach::Sure);
+    assert_eq!(reach["node"], ScreenReach::Denied, "X is not ROLE_X there");
+}

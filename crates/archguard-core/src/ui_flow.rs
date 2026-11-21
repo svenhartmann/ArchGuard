@@ -65,37 +65,48 @@ impl Default for UiFlow {
 
 impl UiFlow {
     /// The convention an element of `application` is evaluated under: its own
-    /// entry, else the whole-flow entry. An element without application uses
-    /// the whole-flow entry, or the only application's entry when the flow has
-    /// exactly one application. Another application's convention never
-    /// applies; default (exact) when nothing was read.
+    /// entry (an element without application: the only application's, when
+    /// the flow has exactly one), with the whole-flow entry filling what the
+    /// own one did not read. Permission format and action aliases always
+    /// inherit; prefixes, claim and case only when the flow has a single
+    /// application, so no application's prefix reaches another's elements.
+    /// Default (exact) when nothing was read.
     pub fn convention(&self, application: Option<&str>) -> RoleConvention {
         let entry = |app: Option<&str>| {
             (self.role_conventions.iter()).find(|c| c.application.as_deref() == app)
         };
-        if application.is_some() {
-            return entry(application)
-                .or_else(|| entry(None))
-                .cloned()
-                .unwrap_or_default();
-        }
         let apps = self.applications();
-        let only = match apps.as_slice() {
-            [one] => entry(Some(one.as_str())),
+        let single = apps.len() <= 1;
+        let own = match (application, apps.as_slice()) {
+            (Some(a), _) => entry(Some(a)),
+            (None, [one]) => entry(Some(one.as_str())),
             _ => None,
         };
-        let whole = entry(None);
-        match (only, whole) {
-            (Some(o), Some(w)) => {
-                let mut c = o.clone();
-                if w.permissions != PermissionFormat::Exact {
-                    c.permissions = w.permissions.clone();
-                }
-                c
-            }
-            (Some(o), None) => o.clone(),
-            (None, w) => w.cloned().unwrap_or_default(),
+        let mut c = own.cloned().unwrap_or_default();
+        let Some(w) = entry(None) else {
+            return c;
+        };
+        if own.is_none() && single {
+            return w.clone();
         }
+        if c.permissions == PermissionFormat::Exact {
+            c.permissions = w.permissions.clone();
+        }
+        if c.action_aliases.is_empty() {
+            c.action_aliases = w.action_aliases.clone();
+        }
+        if single {
+            c.role_prefix = c.role_prefix.or_else(|| w.role_prefix.clone());
+            c.scope_prefix = c.scope_prefix.or_else(|| w.scope_prefix.clone());
+            c.role_claim = c.role_claim.or_else(|| w.role_claim.clone());
+            if c.role_case == NameCase::Exact {
+                c.role_case = w.role_case;
+            }
+            if c.policy_case == NameCase::Exact {
+                c.policy_case = w.policy_case;
+            }
+        }
+        c
     }
 
     /// The applications of screens and endpoints, sorted.

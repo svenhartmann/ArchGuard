@@ -329,11 +329,17 @@ impl ScreensState {
             Unknown::AllHold => true,
             Unknown::NoneHold => false,
         };
-        for (atom, _) in atoms {
-            atom_map(&mut a, atom)
-                .entry(atom.name.clone())
-                .or_insert(fallback);
-        }
+        // the per-application copies the views read get the same fallback
+        let atoms: Vec<&Atom> = atoms.map(|(atom, _)| atom).collect();
+        let mut fill = |x: &mut Assignment| {
+            for atom in &atoms {
+                atom_map(x, atom)
+                    .entry(atom.name.clone())
+                    .or_insert(fallback);
+            }
+        };
+        fill(&mut a);
+        a.by_app.values_mut().for_each(fill);
         a
     }
 
@@ -549,6 +555,20 @@ mod tests {
         assert_eq!(roles, ["Admin", "Clerk"]);
         let names: Vec<(bool, &str)> = atoms.iter().map(|a| (a.policy, a.name.as_str())).collect();
         assert_eq!(names, [(false, "beta"), (true, "Locked")]);
+    }
+
+    #[test]
+    fn the_unknown_fallback_reaches_every_applications_copy() {
+        let mut f = flow();
+        for screen in &mut f.screens {
+            screen.application = Some("App".into());
+        }
+        let mut s = build_from(Ok(f));
+        s.set_unknown(1);
+        let a = s.assignment();
+        assert!(!a.custom.is_empty() || !a.policies.is_empty());
+        let copy = a.in_app(Some("App"));
+        assert_eq!((&copy.custom, &copy.policies), (&a.custom, &a.policies));
     }
 
     #[test]
