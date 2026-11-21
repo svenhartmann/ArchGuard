@@ -853,18 +853,78 @@ public class ShipOrderCommandHandler
     }
 
     #[test]
-    fn endpoint_called_is_not_evaluated_while_a_frontend_has_no_resolved_call() {
-        let no_calls = r#"{"definition":"ui-flow/v1","complete":true,
-"screens":[{"id":"home","name":"Home","kind":"page","route":"/","application":"web","file":"Web/Home.razor","line":1,"source":"x"}],
-"endpoints":[{"method":"GET","path":"/api/x","access":"open","file":"Api/X.cs","line":1,"source":"x"}]}"#;
-        let findings = run(linked(no_calls).path(), &["endpoint_called"]);
+    fn endpoint_called_is_not_evaluated_while_a_frontend_has_an_unread_client() {
+        let gap = diag(
+            "Web/Api.razor",
+            2,
+            "HTTP client import not read; its calls are unknown.",
+        );
+        let flow = flow_with(
+            &[gap],
+            "",
+            r#",{"method":"GET","path":"/api/x","access":"open","file":"Api/X.cs","line":1,"source":"x"}"#,
+        );
+        let findings = run(linked(&flow).path(), &["endpoint_called"]);
         assert_eq!(findings.len(), 1, "{findings:#?}");
         assert!(
             findings[0]
                 .message
                 .as_deref()
                 .unwrap()
-                .contains("web has 0 resolved")
+                .contains("web has 1 unresolved/unread")
+        );
+    }
+
+    #[test]
+    fn navigation_resolves_counts_a_link_to_a_get_or_any_endpoint_as_resolved() {
+        let get = r#",{"method":"GET","path":"/account/login","access":"open","file":"Api/A.cs","line":3,"source":"x"}"#;
+        let any = r#",{"method":"ANY","path":"/api/linked","access":"open","file":"Api/B.cs","line":4,"source":"x"}"#;
+        let post = r#",{"method":"POST","path":"/api/post","access":"open","file":"Api/C.cs","line":5,"source":"x"}"#;
+        let flow = flow_with(
+            &[
+                diag(
+                    "Web/Home.razor",
+                    3,
+                    "Navigation target /account/login matches no route of application web.",
+                ),
+                diag(
+                    "Web/Home.razor",
+                    4,
+                    "Navigation target /api/linked matches no route of application web.",
+                ),
+                diag(
+                    "Web/Home.razor",
+                    5,
+                    "Navigation target /api/post matches no route of application web.",
+                ),
+            ],
+            "",
+            &format!("{get}{any}{post}"),
+        );
+        let findings = run(linked(&flow).path(), &["navigation_resolves"]);
+        let ids: Vec<&str> = findings.iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["view-navigation_resolves:Web/Home.razor:/api/post"],
+            "{ids:?}"
+        );
+    }
+
+    #[test]
+    fn endpoint_called_ignores_a_fully_read_app_without_http_calls() {
+        let docs = r#"{"id":"docs","name":"Docs","kind":"page","route":"/docs","application":"docs","file":"Docs/Docs.razor","line":1,"source":"x"}"#;
+        let unused = r#",{"method":"GET","path":"/api/unused","access":"open","file":"Api/U.cs","line":3,"source":"x"}"#;
+        let flow = flow_with(&[], "", unused).replacen(
+            r#""screens":["#,
+            &format!(r#""screens":[{docs},"#),
+            1,
+        );
+        let findings = run(linked(&flow).path(), &["endpoint_called"]);
+        let ids: Vec<&str> = findings.iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["view-endpoint_called:Api/U.cs:GET /api/unused"],
+            "{findings:#?}"
         );
     }
 

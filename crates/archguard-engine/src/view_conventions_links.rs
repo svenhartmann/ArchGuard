@@ -153,6 +153,11 @@ fn literal(root: &Path, file: &str, line: u32, text: &str, base: &str) -> Option
     })
 }
 
+/// Whether a link to `path` opens the endpoint (a browser sends GET).
+fn link_reaches(e: &EndpointAccess, path: &str) -> bool {
+    (e.method == "GET" || e.method == ANY_METHOD) && path_patterns_match(&e.path, path)
+}
+
 type Misses<'a> = BTreeMap<String, Vec<(&'a UiFlowDiagnostic, String)>>;
 
 /// The literal navigation targets that match no route, by application.
@@ -177,7 +182,9 @@ fn misses<'a>(root: &Path, flow: &'a UiFlow) -> Misses<'a> {
             } else {
                 continue;
             };
-        misses.entry(app).or_default().push((d, target));
+        if !flow.endpoints.iter().any(|e| link_reaches(e, &target)) {
+            misses.entry(app).or_default().push((d, target));
+        }
     }
     misses
 }
@@ -213,18 +220,12 @@ pub(super) fn endpoint_called(root: &Path, flow: &UiFlow) -> Vec<Finding> {
     let mut unread = Vec::new();
     for app in frontends {
         let calls = (flow.actions.iter()).filter(|a| application_of(flow, &a.screen) == app);
-        let (mut resolved, mut unresolved) = (0, 0);
-        for a in calls {
-            match a.call {
-                Call::Http { .. } => resolved += 1,
-                Call::Unresolved(_) => unresolved += 1,
-                _ => {}
-            }
-        }
+        let unresolved = calls
+            .filter(|a| matches!(a.call, Call::Unresolved(_)))
+            .count();
         let unseen = gaps(flow, app, &["call", "client", "import", "url"]).count();
-        if resolved == 0 {
-            unread.push(format!("{app} has 0 resolved calls"));
-        } else if unresolved + unseen > 0 {
+        // An app that is fully read and calls nothing over HTTP hides no caller.
+        if unresolved + unseen > 0 {
             let n = unresolved + unseen;
             unread.push(format!("{app} has {n} unresolved/unread calls"));
         }
@@ -256,9 +257,7 @@ pub(super) fn endpoint_called(root: &Path, flow: &UiFlow) -> Vec<Finding> {
         })
         .collect();
     let reached = |e: &EndpointAccess| {
-        called.contains(&(e as *const _))
-            || ((e.method == "GET" || e.method == ANY_METHOD)
-                && links.iter().any(|p| path_patterns_match(&e.path, p)))
+        called.contains(&(e as *const _)) || links.iter().any(|p| link_reaches(e, p))
     };
     (flow.endpoints.iter()).filter(|e| !reached(e)).map(|e| {
         let subject = format!("{} {}", e.method, e.path);
