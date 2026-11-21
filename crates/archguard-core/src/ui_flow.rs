@@ -64,11 +64,14 @@ impl Default for UiFlow {
 }
 
 impl UiFlow {
-    /// The convention of `application` (`None`: the entry for the whole flow);
-    /// default (exact) when nothing was read.
+    /// The convention of `application`, else the entry for the whole flow
+    /// (`application` none); default (exact) when nothing was read.
     pub fn convention(&self, application: Option<&str>) -> RoleConvention {
-        (self.role_conventions.iter())
-            .find(|c| c.application.as_deref() == application)
+        let entry = |app: Option<&str>| {
+            (self.role_conventions.iter()).find(|c| c.application.as_deref() == app)
+        };
+        entry(application)
+            .or_else(|| entry(None))
             .cloned()
             .unwrap_or_default()
     }
@@ -1841,6 +1844,19 @@ mod tests {
         let e: EndpointAccess = serde_json::from_str(old).unwrap();
         assert_eq!(e, endpoint("GET", "/a", AccessState::Undeclared));
         assert_eq!(serde_json::to_string(&e).unwrap(), old);
+    }
+
+    #[test]
+    fn garbage_access_is_rejected_not_read_as_open() {
+        for bad in [r#""foo""#, "{}"] {
+            let json = format!(
+                r#"{{"method":"GET","path":"/a","access":{bad},"file":"Api.cs","line":3,"source":"test"}}"#
+            );
+            assert!(
+                serde_json::from_str::<EndpointAccess>(&json).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

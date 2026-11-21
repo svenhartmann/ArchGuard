@@ -182,12 +182,12 @@ fn spring_constants_hierarchy_and_kotlin_objects() {
     assert_eq!(
         roles(&flow),
         [
-            "ADMIN role src/main/java/x/AuthoritiesConstants.java:5 []".into(),
-            format!("ADMIN role {sec}:4 [\"STAFF\"]"),
-            "AUDITOR role src/main/java/x/Perms.java:2 []".into(),
-            "EDITOR role src/main/kotlin/x/Roles.kt:2 []".into(),
-            format!("STAFF role {sec}:4 [\"USER\"]"),
-            "USER role src/main/java/x/AuthoritiesConstants.java:7 []".into(),
+            "ROLE_ADMIN role src/main/java/x/AuthoritiesConstants.java:5 []".into(),
+            format!("ROLE_ADMIN role {sec}:4 [\"ROLE_STAFF\"]"),
+            "ROLE_AUDITOR role src/main/java/x/Perms.java:2 []".into(),
+            "ROLE_EDITOR role src/main/kotlin/x/Roles.kt:2 []".into(),
+            format!("ROLE_STAFF role {sec}:4 [\"ROLE_USER\"]"),
+            "ROLE_USER role src/main/java/x/AuthoritiesConstants.java:7 []".into(),
         ],
         "{}",
         notes(&flow)
@@ -199,8 +199,8 @@ fn spring_constants_hierarchy_and_kotlin_objects() {
         "{}",
         notes(&flow)
     );
-    let resolved = resolve_assignment(&flow, &holding("ADMIN"));
-    assert!(resolved.roles.contains("USER"), "{resolved:?}");
+    let resolved = resolve_assignment(&flow, &holding("ROLE_ADMIN"));
+    assert!(resolved.roles.contains("ROLE_USER"), "{resolved:?}");
 }
 
 #[test]
@@ -227,7 +227,7 @@ fn frontend_enums_and_const_objects_used_in_code() {
     assert_eq!(
         roles(&flow),
         [
-            "ADMIN role web/app/constants.ts:3 []",
+            "ROLE_ADMIN role web/app/constants.ts:3 []",
             "orders.read permission web/app/permissions.ts:2 []",
         ],
         "{}",

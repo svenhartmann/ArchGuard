@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use archguard_engine::core::{
-    ArchguardError, Assignment, Condition, MatrixKind, PermissionMatrix, UiFlow, evaluate_access,
-    merge_ui_flows, permission_matrix, resolve_assignment, screen_reaches, ui_flow_findings,
-    ui_flow_summary,
+    ArchguardError, Assignment, AtomKind, Condition, MatrixKind, PermissionMatrix, UiFlow,
+    canonical, evaluate_access, merge_ui_flows, permission_matrix, resolve_assignment,
+    screen_reaches, ui_flow_findings, ui_flow_summary,
 };
 use archguard_engine::extract_ctx::{ExtractContext, with_root_config};
 use serde_json::{Value, json};
@@ -75,20 +75,19 @@ pub(crate) fn assignment(roles: &[String]) -> Assignment {
     }
 }
 
-/// `--role` names as the flow defines them: `ROLE_X` reads `X` when only `X`
-/// is defined (Spring drops the prefix); an undefined name gets a warning.
+/// `--role` names in the stored form (the convention's `canonical`); a name the
+/// code does not define gets a warning.
 fn defined_names(flow: &UiFlow, roles: &[String]) -> Vec<String> {
-    let defined = |n: &str| flow.roles.iter().any(|d| d.name == n);
+    let conv = flow.convention(None);
     (roles.iter())
         .map(|role| {
-            let stripped = role.strip_prefix("ROLE_").filter(|s| defined(s));
-            let name = stripped.filter(|_| !defined(role)).unwrap_or(role);
-            if !flow.roles.is_empty() && !defined(name) {
+            let name = canonical(&conv, AtomKind::Role, role);
+            if !flow.roles.is_empty() && !flow.roles.iter().any(|d| d.name == name) {
                 eprintln!(
                     "warning: role {name:?} is not defined in the code; `archguard ui-flow roles` lists the defined ones"
                 );
             }
-            name.to_string()
+            name
         })
         .collect()
 }
@@ -329,11 +328,16 @@ fn matrix_table(m: &PermissionMatrix) -> String {
             .collect::<Vec<_>>(),
     ];
     for r in &m.rows {
-        let cells = r.cells.iter().map(label);
+        // an undeclared guard stays visible; the cell value alone would read "unknown"
+        let cells = (r.cells.iter()).map(|c| match r.requires.as_str() {
+            "undeclared" => "undeclared".to_string(),
+            _ => label(c),
+        });
+        let weak = if r.weak { " (weakly protected)" } else { "" };
         table.push(
             [
                 label(&r.kind),
-                r.label.clone(),
+                format!("{}{weak}", r.label),
                 format!("{}:{}", r.file, r.line),
             ]
             .into_iter()
@@ -380,12 +384,19 @@ fn matrix_csv(m: &PermissionMatrix) -> String {
             quote(&r.label),
             quote(&r.file),
             r.line.to_string(),
-            quote(&r.requires),
+            quote(&format!(
+                "{}{}",
+                r.requires,
+                if r.weak { " (weakly protected)" } else { "" }
+            )),
         ];
         lines.push(
             fixed
                 .into_iter()
-                .chain(r.cells.iter().map(label))
+                .chain((r.cells.iter()).map(|c| match r.requires.as_str() {
+                    "undeclared" => "undeclared".to_string(),
+                    _ => label(c),
+                }))
                 .collect::<Vec<_>>()
                 .join(","),
         );
@@ -539,15 +550,15 @@ mod tests {
         let m = permission_matrix(&flow, MatrixKind::Both);
         assert_eq!(
             matrix_table(&m),
-            "kind      row     where      anonymous  signed in\n\
-             screen    /a, b   A.razor:3  denied     allowed\n\
-             endpoint  GET /x  X.cs:9     unknown    unknown"
+            "kind      row     where      anonymous   signed in\n\
+             screen    /a, b   A.razor:3  denied      allowed\n\
+             endpoint  GET /x  X.cs:9     undeclared  undeclared"
         );
         assert_eq!(
             matrix_csv(&m),
             "kind,row,file,line,requires,anonymous,signed in\n\
              screen,\"/a, b\",A.razor,3,signed in,denied,allowed\n\
-             endpoint,GET /x,X.cs,9,undeclared,unknown,unknown"
+             endpoint,GET /x,X.cs,9,undeclared,undeclared,undeclared"
         );
     }
 
@@ -574,7 +585,7 @@ mod tests {
 
     #[test]
     fn role_names_follow_the_catalog_and_the_simulation_shows_implied_roles() {
-        use archguard_engine::core::{RoleDef, RoleKind};
+        use archguard_engine::core::{RoleConvention, RoleDef, RoleKind};
         let def = |name: &str, includes: &[&str]| RoleDef {
             application: None,
             name: name.into(),
@@ -585,16 +596,22 @@ mod tests {
             source: "spring".into(),
         };
         let flow = UiFlow {
-            roles: vec![def("ADMIN", &["USER"]), def("USER", &[])],
+            roles: vec![def("ROLE_ADMIN", &["ROLE_USER"]), def("ROLE_USER", &[])],
+            role_conventions: vec![RoleConvention {
+                role_prefix: Some("ROLE_".into()),
+                ..RoleConvention::default()
+            }],
             ..UiFlow::default()
         };
-        let names = defined_names(&flow, &["ROLE_ADMIN".into(), "Other".into()]);
-        assert_eq!(names, ["ADMIN", "Other"]);
-        let simulation = simulate(&flow, &["ADMIN".into()]);
-        assert_eq!(simulation["implied_roles"], json!(["USER"]));
+        // no alias: `ADMIN` is canonicalized through the read role_prefix
+        let given = ["ADMIN".into(), "ROLE_ADMIN".into(), "Other".into()];
+        let names = defined_names(&flow, &given);
+        assert_eq!(names, ["ROLE_ADMIN", "ROLE_ADMIN", "ROLE_Other"]);
+        let simulation = simulate(&flow, &["ROLE_ADMIN".into()]);
+        assert_eq!(simulation["implied_roles"], json!(["ROLE_USER"]));
         assert_eq!(
             assignment_text(&simulation),
-            "signed in with roles ADMIN (implies USER)"
+            "signed in with roles ROLE_ADMIN (implies ROLE_USER)"
         );
     }
 }

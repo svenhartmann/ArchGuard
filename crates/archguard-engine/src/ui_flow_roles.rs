@@ -19,11 +19,11 @@
 //! - Spring: constants named in `@PreAuthorize`, `@PostAuthorize`, `@Secured`,
 //!   `@RolesAllowed`, `.hasAuthority`, `.hasAnyAuthority`, `.hasRole`,
 //!   `.hasAnyRole` are roles; `RoleHierarchyImpl.fromHierarchy` / `setHierarchy`
-//!   (`ROLE_ADMIN > ROLE_USER`) give `includes`. `ROLE_` is dropped, as in the
-//!   Spring access rules.
+//!   (`ROLE_ADMIN > ROLE_USER`) give `includes`. Names are kept as the runtime
+//!   authority (`ROLE_ADMIN`); the prefix is the convention's `role_prefix`.
 //! - TypeScript: `enum` or `const … = {…}` named `Authority`, `Role`, `Roles`
 //!   (roles) or `Permission`, `Permissions` (permissions); a member is a def only
-//!   when `Name.MEMBER` is used in a `.ts` or `.html` file. `ROLE_` is dropped.
+//!   when `Name.MEMBER` is used in a `.ts` or `.html` file. Names are kept as written.
 use crate::extract_ctx::{ExtractContext, read_text, walk, with_root_config};
 use crate::services::support::test_path;
 use archguard_core::{
@@ -81,20 +81,31 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     };
     flow.roles.sort();
     flow.roles.dedup();
+    let mut convention = RoleConvention::default();
+    if flow.roles.iter().any(|d| d.source == "spring") {
+        // Spring's default role prefix; names stay as the authority.
+        convention.role_prefix = Some("ROLE_".into());
+        convention.origins.push(ConventionOrigin {
+            field: "role_prefix".into(),
+            file: String::new(),
+            line: 0,
+            source: "framework default spring".into(),
+        });
+    }
     if flow.roles.iter().any(|d| d.kind == RoleKind::Permission) {
         // Dotted permission ids cover each other (the former built-in rule).
-        flow.role_conventions.push(RoleConvention {
-            permissions: PermissionFormat::Dotted {
-                wildcard: "*".into(),
-            },
-            origins: vec![ConventionOrigin {
-                field: "permissions".into(),
-                file: String::new(),
-                line: 0,
-                source: "built-in rule for dotted permission ids".into(),
-            }],
-            ..RoleConvention::default()
+        convention.permissions = PermissionFormat::Dotted {
+            wildcard: "*".into(),
+        };
+        convention.origins.push(ConventionOrigin {
+            field: "permissions".into(),
+            file: String::new(),
+            line: 0,
+            source: "built-in rule for dotted permission ids".into(),
         });
+    }
+    if convention != RoleConvention::default() {
+        flow.role_conventions.push(convention);
     }
     flow.policies.sort();
     flow.policies.dedup();
@@ -205,21 +216,11 @@ impl Out {
         });
     }
     fn role(&mut self, kind: RoleKind, name: &str, decl: &Decl, includes: Vec<String>) {
-        let spring = decl.source == "spring" || decl.source == "typescript";
-        let strip = |n: &str| {
-            (if spring {
-                n.strip_prefix("ROLE_")
-            } else {
-                None
-            })
-            .unwrap_or(n)
-            .to_string()
-        };
         self.roles.push(RoleDef {
             application: None,
-            name: strip(name),
+            name: name.to_string(),
             kind,
-            includes: includes.iter().map(|n| strip(n)).collect(),
+            includes,
             file: decl.file.clone(),
             line: decl.line,
             source: decl.source.into(),

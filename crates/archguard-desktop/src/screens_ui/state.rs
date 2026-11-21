@@ -262,35 +262,26 @@ pub fn atoms_of(flow: &UiFlow) -> (Vec<String>, Vec<Atom>) {
 }
 
 /// The roles to simulate: the catalog's (`flow.roles`) and every role a
-/// condition names, sorted; a condition's `ROLE_X` is the catalog's `X`
-/// when only `X` is defined (see [`with_prefix`]).
+/// condition names, sorted, in the stored form (the runtime authority).
 pub fn role_names(flow: &UiFlow) -> Vec<String> {
     let named = atoms_of(flow).0.into_iter();
     let defined = flow.roles.iter().map(|r| r.name.clone());
-    let all: BTreeSet<String> = named.chain(defined).collect();
-    (all.iter())
-        .filter(|n| prefixed_of(flow, n).is_none())
-        .cloned()
+    named
+        .chain(defined)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect()
 }
 
-/// For a `ROLE_X` the catalog does not define while it defines `X`: `X`.
-fn prefixed_of<'a>(flow: &UiFlow, name: &'a str) -> Option<&'a str> {
-    let bare = name.strip_prefix("ROLE_")?;
-    let defined = |n: &str| flow.roles.iter().any(|r| r.name == n);
-    (defined(bare) && !defined(name)).then_some(bare)
-}
-
-/// Spring's `ROLE_` prefix, as `ui-flow --role` reads it: a held role `X`
-/// also holds `ROLE_X` when a condition names that and the catalog
-/// defines only `X` (jhipster's Angular routes ask for `ROLE_ADMIN`).
+/// Brings the held roles into the stored form through the flow's convention
+/// (`canonical`); stored names stay as they are.
 pub fn with_prefix(flow: &UiFlow, a: &mut Assignment) {
-    let named = atoms_of(flow).0;
-    let extra: Vec<String> = (named.iter())
-        .filter(|n| prefixed_of(flow, n).is_some_and(|bare| a.roles.contains(bare)))
-        .cloned()
+    let conv = flow.convention(None);
+    a.roles = (a.roles.iter())
+        .map(|r| {
+            archguard_engine::core::canonical(&conv, archguard_engine::core::AtomKind::Role, r)
+        })
         .collect();
-    a.roles.extend(extra);
 }
 
 /// The simulated user the Screens and Domain tabs share, per document: each
@@ -634,17 +625,17 @@ mod tests {
         assert_eq!(s.assignment().custom.get("beta"), Some(&true));
     }
 
-    /// jhipster: the catalog defines ADMIN, the Angular route asks for
-    /// ROLE_ADMIN; the picker lists ADMIN once and it opens the route.
+    /// jhipster: catalog, route and backend all say ROLE_ADMIN; the picker lists
+    /// it once and the assignment holds it as stored, no alias.
     #[test]
-    fn a_spring_role_prefix_joins_the_catalog_role() {
+    fn a_spring_role_is_listed_once_in_its_stored_form() {
         use archguard_engine::core::{RoleDef, RoleKind};
         let mut f = flow();
         f.screens[2].access =
             archguard_engine::core::AccessState::Protected(Condition::Role("ROLE_ADMIN".into()));
         f.roles = vec![RoleDef {
             application: None,
-            name: "ADMIN".into(),
+            name: "ROLE_ADMIN".into(),
             kind: RoleKind::Role,
             includes: vec![],
             file: "AuthoritiesConstants.java".into(),
@@ -652,9 +643,9 @@ mod tests {
             source: "t".into(),
         }];
         let mut s = build_from(Ok(f));
-        assert_eq!(s.roles, ["ADMIN", "Admin"]);
-        s.select_role(2);
+        assert_eq!(s.roles, ["Admin", "ROLE_ADMIN"]);
+        s.select_role(3);
         let roles: Vec<String> = s.assignment().roles.into_iter().collect();
-        assert_eq!(roles, ["ADMIN", "ROLE_ADMIN"]);
+        assert_eq!(roles, ["ROLE_ADMIN"]);
     }
 }

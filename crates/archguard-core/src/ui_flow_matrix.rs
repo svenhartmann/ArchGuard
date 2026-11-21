@@ -1,8 +1,7 @@
 //! Permission matrix over a [`UiFlow`] (ADR 0021): one row per screen or
 //! endpoint, one column per role, each cell the simulator's own evaluation.
 use crate::ui_flow::{
-    AccessState, Assignment, Outcome, RoleKind, UiFlow, evaluate_access, evaluate_condition,
-    resolve_assignment,
+    AccessState, Assignment, Outcome, RoleKind, UiFlow, evaluate_access, resolve_assignment,
 };
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -30,6 +29,8 @@ pub struct MatrixRow {
     pub line: u32,
     /// The guard in words: `none`, `declared open`, `undeclared`, or the condition.
     pub requires: String,
+    /// The guard is a weak one (layout load, parent loader): shown as "weakly protected".
+    pub weak: bool,
     /// One outcome per [`PermissionMatrix::roles`] entry.
     pub cells: Vec<Outcome>,
 }
@@ -38,6 +39,14 @@ pub struct MatrixRow {
 pub struct PermissionMatrix {
     pub roles: Vec<String>,
     pub rows: Vec<MatrixRow>,
+}
+
+fn requires(access: &AccessState) -> String {
+    match access {
+        AccessState::Protected(c) => c.text(),
+        AccessState::Open => "declared open".into(),
+        AccessState::Undeclared => "undeclared".into(),
+    }
 }
 
 /// Columns: `anonymous`, `signed in`, then the catalog's roles and groups
@@ -75,13 +84,10 @@ pub fn permission_matrix(flow: &UiFlow, kind: MatrixKind) -> PermissionMatrix {
                 label: s.route.clone().unwrap_or_else(|| s.name.clone()),
                 file: s.file.clone(),
                 line: s.line,
-                requires: s.access.condition().map_or("none".into(), |c| c.text()),
+                requires: requires(&s.access),
+                weak: s.weak,
                 cells: (assignments.iter())
-                    .map(|a| {
-                        s.access
-                            .condition()
-                            .map_or(Outcome::Allowed, |c| evaluate_condition(c, a))
-                    })
+                    .map(|a| evaluate_access(&s.access, a))
                     .collect(),
             });
         }
@@ -93,11 +99,8 @@ pub fn permission_matrix(flow: &UiFlow, kind: MatrixKind) -> PermissionMatrix {
                 label: format!("{} {}", e.method, e.path),
                 file: e.file.clone(),
                 line: e.line,
-                requires: match &e.access {
-                    AccessState::Protected(c) => c.text(),
-                    AccessState::Open => "declared open".into(),
-                    AccessState::Undeclared => "undeclared".into(),
-                },
+                requires: requires(&e.access),
+                weak: false,
                 cells: assignments
                     .iter()
                     .map(|a| evaluate_access(&e.access, a))
@@ -111,7 +114,9 @@ pub fn permission_matrix(flow: &UiFlow, kind: MatrixKind) -> PermissionMatrix {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui_flow::{Condition, EndpointAccess, PolicyDef, RoleDef, Screen, ScreenKind};
+    use crate::ui_flow::{
+        Condition, EndpointAccess, PolicyDef, RoleDef, Screen, ScreenKind, evaluate_condition,
+    };
     use Outcome::{Allowed as A, Denied as D, Unknown as U};
 
     fn screen(route: &str, access: Option<Condition>) -> Screen {
@@ -156,6 +161,22 @@ mod tests {
     }
 
     #[test]
+    fn open_and_weak_screens_are_marked() {
+        let mut open = screen("/o", None);
+        open.access = AccessState::Open;
+        let mut weak = screen("/w", Some(Condition::Authenticated));
+        weak.weak = true;
+        let flow = UiFlow {
+            screens: vec![open, weak],
+            ..UiFlow::default()
+        };
+        let m = permission_matrix(&flow, MatrixKind::Screens);
+        assert_eq!(m.rows[0].requires, "declared open");
+        assert_eq!(m.rows[0].cells, [A, A]);
+        assert!(m.rows[1].weak);
+    }
+
+    #[test]
     fn cells_follow_the_simulator_and_unknown_is_never_allowed() {
         let flow = UiFlow {
             screens: vec![
@@ -196,6 +217,8 @@ mod tests {
             m.roles,
             ["anonymous", "signed in", "role:admin", "role:user"]
         );
+        assert_eq!(m.rows[0].requires, "undeclared");
+        assert!(!m.rows[0].weak);
         let cells: Vec<(&str, Vec<Outcome>)> = m
             .rows
             .iter()
@@ -204,7 +227,8 @@ mod tests {
         assert_eq!(
             cells,
             [
-                ("/", vec![A, A, A, A]),
+                // an undeclared screen is never allowed
+                ("/", vec![U, U, U, U]),
                 ("/account", vec![D, A, A, A]),
                 ("/admin", vec![D, D, A, D]),
                 ("/purge", vec![D, D, A, D]),

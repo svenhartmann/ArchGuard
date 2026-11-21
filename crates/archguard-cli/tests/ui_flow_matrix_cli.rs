@@ -40,7 +40,8 @@ fn table_lists_screens_by_role() {
         ["kind", "row", "where", "anonymous", "signed", "in"]
     );
     let row = |route: &str| rows.iter().find(|r| r[1] == route).unwrap().clone();
-    assert_eq!(row("/")[3..], ["allowed", "allowed"]);
+    // a screen with no declared access is "undeclared", never allowed
+    assert_eq!(row("/")[3..], ["undeclared", "undeclared"]);
     assert_eq!(row("/orders")[3..], ["denied", "allowed"]);
 }
 
