@@ -1925,140 +1925,6 @@ mod spring {
 
     pub(super) use chain::central_rules;
 
-    /// Ranges whose matchers are not rules of the HttpSecurity chain. Every skip
-    /// is conservative: it applies only where the HttpSecurity cannot be involved.
-    mod ignoring {
-        use super::super::lex::{skip_ws, skip_ws_back};
-        use super::super::*;
-        use super::chain_span;
-
-        /// Qualifiers of a static request matcher factory.
-        const FACTORIES: [&str; 4] = [
-            "AntPathRequestMatcher",
-            "PathPatternRequestMatcher",
-            "RegexRequestMatcher",
-            "MvcRequestMatcher",
-        ];
-
-        /// A body (or ignoring argument) that names neither the HttpSecurity nor,
-        /// before its first `ignoring`, a scoping name.
-        fn only_ignoring(src: &Source, from: usize, to: usize) -> bool {
-            let body = &src.text[from..to];
-            let first = lex::words(body, "ignoring").next();
-            let vars = chain_span::http_vars(src);
-            let http = lex::words(body, "HttpSecurity").next().is_some()
-                || vars.iter().any(|v| lex::words(body, v).next().is_some());
-            let scoping = chain_span::SCOPING
-                .iter()
-                .any(|n| lex::words(body, n).any(|q| first.is_none_or(|f| q < f)));
-            !http && !scoping
-        }
-
-        /// The body of `WebSecurityCustomizer name(params) { … }` (no HttpSecurity
-        /// parameter) or of the Kotlin `WebSecurityCustomizer { web -> … }`. A class
-        /// body, a parameter, an annotation argument or a Kotlin function returning
-        /// the type is no such body.
-        fn customizer_body(src: &Source, p: usize) -> Option<(usize, usize)> {
-            let b = src.bytes();
-            let after = skip_ws(b, p + "WebSecurityCustomizer".len());
-            let brace = if b.get(after) == Some(&b'{') {
-                let name = skip_ws(b, after + 1);
-                let e = chain_span::ident_end(src, name);
-                let arrow = src.text[skip_ws(b, e)..].starts_with("->");
-                (e > name && arrow).then_some(after)?
-            } else {
-                let e = chain_span::ident_end(src, after);
-                let open = skip_ws(b, e);
-                (e > after && b.get(open) == Some(&b'(')).then_some(())?;
-                let close = src.pair(open)?;
-                if lex::words(&src.text[open..close], "HttpSecurity")
-                    .next()
-                    .is_some()
-                {
-                    return None;
-                }
-                let k = (close + 1..b.len()).find(|&k| matches!(b[k], b'{' | b';'))?;
-                (b[k] == b'{').then_some(k)?
-            };
-            let end = src.pair(brace)?;
-            only_ignoring(src, brace, end).then_some((brace, end))
-        }
-
-        /// Whether the argument of `ignoring…Matcher(s)(…)` is request matcher
-        /// construction only: no HttpSecurity variable, and a scoping name only
-        /// bare (static import) or qualified by a matcher factory.
-        fn plain_argument(src: &Source, from: usize, to: usize) -> bool {
-            let b = src.bytes();
-            let arg = &src.text[from..to];
-            let vars = chain_span::http_vars(src);
-            if vars.iter().any(|v| lex::words(arg, v).next().is_some()) {
-                return false;
-            }
-            chain_span::SCOPING.iter().all(|n| {
-                lex::words(arg, n).all(|q| {
-                    let dot = skip_ws_back(b, from + q);
-                    dot == 0
-                        || b[dot - 1] != b'.'
-                        || FACTORIES.contains(&chain_span::word_before(src, dot - 1))
-                })
-            })
-        }
-
-        /// Ranges whose matchers are not rules of the HttpSecurity chain:
-        /// `configure(WebSecurity)` bodies, `WebSecurityCustomizer` bodies and
-        /// the arguments of `ignoring…Matcher(s)(…)`.
-        pub(super) fn ignoring_ranges(src: &Source) -> Vec<(usize, usize)> {
-            let b = src.bytes();
-            let mut ranges = web_security_bodies(src);
-            let customizers = lex::words(&src.text, "WebSecurityCustomizer");
-            ranges.extend(customizers.filter_map(|p| customizer_body(src, p)));
-            for i in (0..b.len()).filter(|&i| i == 0 || !lex::is_ident(b[i - 1])) {
-                let e = chain_span::ident_end(src, i);
-                let name = &src.text[i..e];
-                let ignoring = name.starts_with("ignoring")
-                    && (name.ends_with("Matcher") || name.ends_with("Matchers"));
-                let open = skip_ws(b, e);
-                if ignoring
-                    && b.get(open) == Some(&b'(')
-                    && let Some(close) = src.pair(open)
-                    && plain_argument(src, open + 1, close)
-                {
-                    ranges.push((open + 1, close));
-                }
-            }
-            ranges
-        }
-
-        /// Bodies of `configure(… WebSecurity …)` methods without an HttpSecurity
-        /// parameter: their matchers (`web.ignoring().antMatchers(..)`) do not
-        /// scope the HttpSecurity chain.
-        pub(super) fn web_security_bodies(src: &Source) -> Vec<(usize, usize)> {
-            let b = src.bytes();
-            let mut found = Vec::new();
-            for p in lex::words(&src.text, "configure") {
-                let open = skip_ws(b, p + "configure".len());
-                let Some(close) = (b.get(open) == Some(&b'('))
-                    .then(|| src.pair(open))
-                    .flatten()
-                else {
-                    continue;
-                };
-                let params = &src.text[open..close];
-                let web = lex::words(params, "WebSecurity").next().is_some();
-                if !web || lex::words(params, "HttpSecurity").next().is_some() {
-                    continue;
-                }
-                let brace = (close..b.len()).find(|&k| matches!(b[k], b'{' | b';'));
-                if let Some((brace, end)) = brace.and_then(|k| Some((k, src.pair(k)?)))
-                    && b[brace] == b'{'
-                {
-                    found.push((brace, end));
-                }
-            }
-            found
-        }
-    }
-
     /// Where a call chain ends in the source text.
     mod chain_span {
         use super::super::lex::{skip_ws, skip_ws_back};
@@ -2336,10 +2202,9 @@ mod spring {
             if let Some(site) = scoped {
                 return Some(format!("A scoping matcher at {site}"));
             }
-            let handed = files.iter().find_map(|s| {
-                let ignored = super::ignoring::ignoring_ranges(s);
-                hand_off(s, &ignored).map(|p| at(s, p))
-            });
+            let handed = files
+                .iter()
+                .find_map(|s| hand_off(s, &[]).map(|p| at(s, p)));
             handed.map(|site| format!("Code at {site} hands the HttpSecurity out"))
         }
 
@@ -2421,14 +2286,16 @@ mod spring {
     ///   { }` blocks used other than as a receiver; any `.apply(…)`, `.with(…)`,
     ///   `.also(…)`, `.let(…)` or `.run(…)` call with parentheses (a configurer).
     ///
-    /// Matchers are rules (not scoping) inside the authorization block, which ends
-    /// at its first `.and()`, inside `configure(WebSecurity)` (no HttpSecurity
-    /// parameter), the body of a method/lambda returning a `WebSecurityCustomizer`
-    /// (no HttpSecurity parameter, variable or scoping name before `ignoring`) and
-    /// the arguments of `ignoring…Matcher(s)(…)` (no variable, scoping names only
-    /// bare or on a matcher factory). Other statements of an authorization block
-    /// still count as uses of the variable. Occurrences of the variable in plain
-    /// string literals are no uses; a Kotlin string with a `$` template is.
+    /// Matchers are rules (not scoping) only as the rule calls inside the
+    /// authorization block, which ends at its first `.and()`. There are no other
+    /// skips: a scoping name or hand-off anywhere else counts, also in
+    /// `configure(WebSecurity)`, a `WebSecurityCustomizer` or the arguments of
+    /// `ignoring…Matcher(s)(…)`. Accepted conservative limit: apps using
+    /// `web.ignoring().requestMatchers(..)`, `WebSecurityCustomizer`,
+    /// `csrf().ignoring…Matchers(..)` with matcher calls, or `configure(WebSecurity)`
+    /// with matchers are "not evaluated". Other statements of an authorization
+    /// block still count as uses of the variable. Occurrences of the variable in
+    /// plain string literals are no uses; a Kotlin string with a `$` template is.
     ///
     /// Limits: scoping in a file that never mentions `HttpSecurity` is not seen;
     /// `.apply(`/`.with(`/… count whatever their receiver (conservative).
@@ -2658,14 +2525,12 @@ mod spring {
         }
 
         /// Text ranges where matchers are rules, not scoping: the authorization
-        /// blocks and the `configure(WebSecurity)` bodies.
+        /// blocks.
         pub(in super::super) fn skip_ranges(src: &Source) -> Vec<(usize, usize)> {
-            let mut ranges: Vec<(usize, usize)> = (authorize_sites(src).into_iter())
+            (authorize_sites(src).into_iter())
                 .filter_map(|open| block(src, open))
                 .map(|(from, to, _)| (from, to))
-                .collect();
-            ranges.extend(super::ignoring::ignoring_ranges(src));
-            ranges
+                .collect()
         }
 
         /// The rules of every `authorizeHttpRequests`/`authorizeRequests` call in `src`.
@@ -5133,21 +4998,15 @@ public class TicketController {
     }
 
     #[test]
-    fn ignoring_matchers_and_web_security_customizers_are_no_scoping() {
+    fn ignoring_matchers_and_customizers_make_the_chain_not_evaluated() {
         let config = adapter(&format!(
             "http.csrf(c -> c.ignoringRequestMatchers(antMatcher(\"/h2-console/**\"))); {OPEN_CHAIN_JAVA}"
         ));
         let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
-        assert_eq!(
-            access(&flow, "GET", "/api/v1/open/ping"),
-            &AccessState::Open
-        );
+        assert_not_evaluated(&flow);
         let customizer = "public class SecurityConfig extends WebSecurityConfigurerAdapter {\n    @Bean public WebSecurityCustomizer customizer() { return web -> web.ignoring().requestMatchers(\"/static/**\"); }\n    protected void configure(HttpSecurity http) throws Exception { http.authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll(); }\n}\n";
         let flow = configured(&[("src/main/java/app/SecurityConfig.java", customizer)]);
-        assert_eq!(
-            access(&flow, "GET", "/api/v1/open/ping"),
-            &AccessState::Open
-        );
+        assert_not_evaluated(&flow);
         let config = adapter(OPEN_CHAIN_JAVA);
         let other_java = "class Other { void f(HttpSecurity h) {} @Bean WebSecurityCustomizer c() { return web -> web.ignoring().requestMatchers(\"/x\"); } }";
         let other_kt = "class Other { fun f(h: HttpSecurity) {}\n fun c() = WebSecurityCustomizer { web -> web.ignoring().requestMatchers(\"/x\") } }";
@@ -5157,11 +5016,7 @@ public class TicketController {
                 ("src/main/java/app/SecurityConfig.java", &config),
                 (path.as_str(), text),
             ]);
-            assert_eq!(
-                access(&flow, "GET", "/api/v1/open/ping"),
-                &AccessState::Open,
-                "{file}"
-            );
+            assert_not_evaluated(&flow);
         }
     }
 
@@ -5222,6 +5077,57 @@ public class TicketController {
     }
 
     #[test]
+    fn nothing_after_ignoring_hides_scoping() {
+        let chain = OPEN_CHAIN_JAVA;
+        let bean = format!(
+            "@Bean SecurityFilterChain api(HttpSecurity http) throws Exception {{ {chain} return http.build(); }}"
+        );
+        let adapter_cfg =
+            format!("protected void configure(HttpSecurity http) throws Exception {{ {chain} }}");
+        let java = [
+            format!(
+                "public class C {{ HttpSecurity otherHttp; @Bean WebSecurityCustomizer c() {{ return web -> {{ web.ignoring().requestMatchers(\"/x\"); otherHttp.securityMatcher(\"/api/**\"); }}; }} {bean} }}"
+            ),
+            format!(
+                "public class C {{ final HttpSecurity otherHttp = null; @Bean WebSecurityCustomizer c() {{ return web -> {{ web.ignoring().requestMatchers(\"/x\"); otherHttp.securityMatcher(\"/api/**\"); }}; }} {bean} }}"
+            ),
+            format!(
+                "public class C {{ @Bean WebSecurityCustomizer c() {{ return web -> {{ web.ignoring().requestMatchers(\"/x\"); Scopes.chain().securityMatcher(\"/api/**\"); }}; }} {bean} }}"
+            ),
+            format!(
+                "public class C extends WebSecurityConfigurerAdapter {{ @Bean WebSecurityCustomizer c() {{ return web -> {{ web.ignoring().requestMatchers(\"/x\"); getHttp().antMatcher(\"/api/**\"); }}; }} {adapter_cfg} }}"
+            ),
+            format!(
+                "public class C extends WebSecurityConfigurerAdapter {{ public void configure(WebSecurity web) {{ web.ignoring().antMatchers(\"/x\"); getHttp().antMatcher(\"/api/**\"); }} {adapter_cfg} }}"
+            ),
+            format!(
+                "public class C extends WebSecurityConfigurerAdapter {{ HttpSecurity h; public void configure(WebSecurity web) {{ web.ignoring().antMatchers(\"/x\"); h.antMatcher(\"/api/**\"); }} {adapter_cfg} }}"
+            ),
+        ];
+        for text in &java {
+            let flow = configured(&[("src/main/java/app/C.java", text)]);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared,
+                "{text}"
+            );
+        }
+        let kt_head = "class C : WebSecurityConfigurerAdapter() {\n";
+        let kt_cfg = "    override fun configure(http: HttpSecurity) {\n        http.authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll().anyRequest().authenticated()\n    }\n}\n";
+        let kotlin_bodies = [
+            "    fun c() = WebSecurityCustomizer { web -> web.ignoring().requestMatchers(\"/x\"); getHttp().antMatcher(\"/api/**\") }\n",
+            "    override fun configure(http: HttpSecurity) {\n        http.apply { csrf().ignoringRequestMatchers(securityMatcher(\"/api/**\").let { it }) }\n    }\n",
+            "    override fun configure(http: HttpSecurity) {\n        with(http) { csrf().ignoringRequestMatchers(run { antMatcher(\"/api/**\"); x }) }\n    }\n",
+        ];
+        for body in kotlin_bodies {
+            let text = format!("{kt_head}{body}{kt_cfg}");
+            let flow = configured(&[("src/main/java/app/C.kt", &text)]);
+            assert_not_evaluated(&flow);
+        }
+    }
+
+    #[test]
     fn receivers_and_scope_blocks_stay_evaluated() {
         let flow = kotlin(
             "        with(http) { authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll().anyRequest().authenticated() }",
@@ -5267,24 +5173,16 @@ public class TicketController {
     }
 
     #[test]
-    fn web_security_and_csrf_matchers_do_not_scope_the_http_chain() {
+    fn web_security_matchers_make_the_chain_not_evaluated_csrf_ignoring_names_do_not() {
         let chain = "http.csrf().ignoringAntMatchers(\"/api/v1/x\").and().csrf(c -> c.ignoringRequestMatchers(\"/y\")).authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll().anyRequest().authenticated();";
         let config = format!(
             "public class SecurityConfig extends WebSecurityConfigurerAdapter {{\n    @Override\n    public void configure(WebSecurity web) throws Exception {{\n        web.ignoring().antMatchers(\"/static/**\");\n    }}\n    protected void configure(HttpSecurity http) throws Exception {{\n        {chain}\n    }}\n    private RequestMatcher requestMatcher() {{ return null; }}\n}}\n"
         );
         let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
-        assert_eq!(
-            access(&flow, "GET", "/api/v1/open/ping"),
-            &AccessState::Open
-        );
-        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+        assert_not_evaluated(&flow);
         let kt = "class SecurityConfig : WebSecurityConfigurerAdapter() {\n    override fun configure(web: WebSecurity) {\n        web.ignoring().antMatchers(\"/static/**\")\n    }\n    override fun configure(http: HttpSecurity) {\n        http.authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll()\n    }\n}\n";
         let flow = configured(&[("src/main/java/app/SecurityConfig.kt", kt)]);
-        assert_eq!(
-            access(&flow, "GET", "/api/v1/open/ping"),
-            &AccessState::Open
-        );
-        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+        assert_not_evaluated(&flow);
     }
 
     #[test]
