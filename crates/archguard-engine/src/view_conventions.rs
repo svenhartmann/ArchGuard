@@ -10,6 +10,14 @@
 //! - `http_url_literal`: a `Call::Unresolved` action.
 //! - `frontend_backend_agree`: a `shown_but_refused` or
 //!   `hidden_but_unprotected` finding of [`ui_flow_findings`].
+//! - `navigation_resolves`: a navigation target that is readable but matches
+//!   no route of its application (the extractors' "matches no route" /
+//!   "is not a route" diagnostics, so the route matching is theirs); not for an
+//!   application with no route read at all, nor for non-path expressions.
+//! - `endpoint_called`: an endpoint no action of [`join_actions_to_endpoints`]
+//!   hits, only when the flow has a frontend (a screen or an action). No
+//!   endpoint can be marked open-for-external-use yet. `ANY` (MVC page) routes
+//!   are skipped; calls without a literal URL are named in the message.
 //! - `state_changes_in_entity`: in a C# file other than the entity's,
 //!   `x.Field = Enum.Value` for a state field of a found state machine; and
 //!   every non-literal state assignment the domain extractor reports.
@@ -27,8 +35,7 @@ use std::path::Path;
 
 use archguard_core::domain_model::DomainModel;
 use archguard_core::{
-    AccessState, Call, Config, Finding, FindingKind, Ref, Severity, Target, UiFlow,
-    UiFlowFindingKind, ui_flow_findings,
+    AccessState, Call, Config, Finding, Target, UiFlow, UiFlowFindingKind, ui_flow_findings,
 };
 
 use crate::extract_ctx::{ExtractContext, domain_sources};
@@ -39,12 +46,17 @@ use csharp::{
 
 #[path = "view_conventions_csharp.rs"]
 mod csharp;
+#[path = "view_conventions_links.rs"]
+mod links;
+use links::finding;
 
-const UI_RULES: [&str; 4] = [
+const UI_RULES: [&str; 6] = [
     "navigation_literal",
     "endpoint_access_declared",
     "http_url_literal",
     "frontend_backend_agree",
+    "navigation_resolves",
+    "endpoint_called",
 ];
 const STATE: &str = "state_changes_in_entity";
 const EVENTS: &str = "events_through_raise_function";
@@ -68,7 +80,7 @@ pub fn convention_findings_in(
     ctx.allowed_root = allowed_root;
     if UI_RULES.iter().any(|r| on.contains(r)) {
         match crate::ui_flow::analyze_with(&ctx) {
-            Ok(flow) => out.extend(ui_findings(&flow, &on)),
+            Ok(flow) => out.extend(ui_findings(root, &flow, &on)),
             Err(e) => out.push(unreadable("ui-flow", e)),
         }
     }
@@ -91,18 +103,25 @@ pub fn convention_findings_in(
 
 type UiRule = fn(&UiFlow) -> Vec<Finding>;
 
-fn ui_findings(flow: &UiFlow, on: &BTreeSet<&str>) -> Vec<Finding> {
+fn ui_findings(root: &Path, flow: &UiFlow, on: &BTreeSet<&str>) -> Vec<Finding> {
     let rules: [(&str, UiRule); 4] = [
         ("navigation_literal", navigation_literal),
         ("endpoint_access_declared", endpoint_access_declared),
         ("http_url_literal", http_url_literal),
         ("frontend_backend_agree", frontend_backend_agree),
     ];
-    rules
+    let mut out: Vec<Finding> = rules
         .into_iter()
         .filter(|(rule, _)| on.contains(rule))
         .flat_map(|(_, check)| check(flow))
-        .collect()
+        .collect();
+    if on.contains("navigation_resolves") {
+        out.extend(links::navigation_resolves(root, flow));
+    }
+    if on.contains("endpoint_called") {
+        out.extend(links::endpoint_called(root, flow));
+    }
+    out
 }
 
 fn navigation_literal(flow: &UiFlow) -> Vec<Finding> {
@@ -250,25 +269,6 @@ fn unreadable(what: &str, error: impl std::fmt::Display) -> Finding {
     )
 }
 
-fn finding(rule: &str, file: &str, line: u32, subject: &str, message: String) -> Finding {
-    Finding {
-        kind: FindingKind::Convention,
-        id: format!("view-{rule}:{file}:{subject}"),
-        severity: Severity::Error,
-        message: Some(format!("[views] {rule}: {message}")),
-        evidence: vec![Ref {
-            file: file.to_string(),
-            line,
-            raw: subject.to_string(),
-        }],
-        nodes: Vec::new(),
-        edge_count: 0,
-        cycles_sampled: 0,
-        sampling: None,
-        suggested_cuts: Vec::new(),
-    }
-}
-
 /// Appends `#2`, `#3` … to repeated ids, in finding order.
 fn distinct_ids(mut findings: Vec<Finding>) -> Vec<Finding> {
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
@@ -287,13 +287,15 @@ mod tests {
     use super::*;
     use archguard_core::{FindingKind, Severity};
 
-    const RULES: [&str; 6] = [
+    const RULES: [&str; 8] = [
         "navigation_literal",
         "endpoint_access_declared",
         "http_url_literal",
         "frontend_backend_agree",
         "state_changes_in_entity",
         "events_through_raise_function",
+        "navigation_resolves",
+        "endpoint_called",
     ];
 
     fn write(dir: &Path, files: &[(&str, &str)]) {
@@ -586,6 +588,366 @@ public class ShipOrderCommandHandler
         );
         let message = findings[0].message.as_deref().unwrap();
         assert!(message.contains("AddDomainEvent"), "{message}");
+    }
+
+    /// One lost link, one endpoint nobody calls.
+    const LINK_FLOW: &str = r#"{"definition":"ui-flow/v1","complete":true,
+"screens":[
+ {"id":"home","name":"Home","kind":"page","route":"/","application":"web","file":"Web/Home.razor","line":1,"source":"x"}],
+"transitions":[
+ {"from":{"screen":"home"},"target":{"unresolved":"/nowhere"},"file":"Web/Home.razor","line":3,"source":"x"}],
+"actions":[
+ {"screen":{"screen":"home"},"call":{"http":{"method":"GET","path":"/api/orders"}},"file":"Web/Home.razor","line":4,"source":"x"}],
+"endpoints":[
+ {"method":"GET","path":"/api/orders","access":"open","file":"Api/Orders.cs","line":7,"source":"x"},
+ {"method":"GET","path":"/api/unused","access":"open","file":"Api/Unused.cs","line":9,"source":"x"}],
+"diagnostics":[
+ {"file":"Web/Home.razor","line":3,"message":"Navigation target /nowhere matches no route of application web."},
+ {"file":"Web/Home.razor","line":5,"message":"Navigation target is not a literal: x"},
+ {"file":"Web/Home.razor","line":6,"message":"Navigation target returnUrl.ToString() is not a route of this application."},
+ {"file":"Web/Home.razor","line":7,"message":"Navigation target /x matches no route of application other."}]}"#;
+
+    fn linked(flow: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), &[(".archguard/ui-flow.json", flow)]);
+        dir
+    }
+
+    #[test]
+    fn navigation_resolves_names_the_target_without_a_route() {
+        let findings = run(linked(LINK_FLOW).path(), &["navigation_resolves"]);
+        // The app `other` has no route read: a note, not a finding.
+        assert_eq!(
+            ids_and_places(&findings),
+            [
+                (
+                    "view-conventions::navigation_resolves other".into(),
+                    "".into(),
+                    0
+                ),
+                (
+                    "view-navigation_resolves:Web/Home.razor:/nowhere".into(),
+                    "Web/Home.razor".into(),
+                    3
+                )
+            ]
+        );
+        assert!(run(kept().path(), &["navigation_resolves"]).is_empty());
+    }
+
+    #[test]
+    fn endpoint_called_names_the_endpoint_no_action_calls() {
+        let findings = run(linked(LINK_FLOW).path(), &["endpoint_called"]);
+        assert_eq!(
+            ids_and_places(&findings),
+            [(
+                "view-endpoint_called:Api/Unused.cs:GET /api/unused".into(),
+                "Api/Unused.cs".into(),
+                9
+            )]
+        );
+        assert!(run(kept().path(), &["endpoint_called"]).is_empty());
+    }
+
+    #[test]
+    fn endpoint_called_is_silent_without_a_frontend() {
+        let api = r#"{"definition":"ui-flow/v1","complete":true,
+"endpoints":[{"method":"GET","path":"/api/x","access":"open","file":"Api/X.cs","line":1,"source":"x"}]}"#;
+        assert!(run(linked(api).path(), &["endpoint_called"]).is_empty());
+    }
+
+    fn diag(file: &str, line: u32, message: &str) -> String {
+        let message = message.replace('"', "\\\"");
+        format!(r#"{{"file":"{file}","line":{line},"message":"{message}"}}"#)
+    }
+
+    /// A one-screen app `web` with `diagnostics`; the endpoint list is `endpoints`.
+    fn flow_with(diagnostics: &[String], extra_actions: &str, endpoints: &str) -> String {
+        format!(
+            r#"{{"definition":"ui-flow/v1","complete":true,
+"screens":[{{"id":"home","name":"Home","kind":"page","route":"/","application":"web","file":"Web/Home.razor","line":1,"source":"x"}}],
+"actions":[{{"screen":{{"screen":"home"}},"call":{{"http":{{"method":"GET","path":"/api/orders"}}}},"file":"Web/Home.razor","line":4,"source":"x"}}{extra_actions}],
+"endpoints":[{{"method":"GET","path":"/api/orders","access":"open","file":"Api/Orders.cs","line":7,"source":"x"}}{endpoints}],
+"diagnostics":[{}]}}"#,
+            diagnostics.join(",")
+        )
+    }
+
+    fn severities(findings: &[Finding]) -> Vec<Severity> {
+        findings.iter().map(|f| f.severity).collect()
+    }
+
+    #[test]
+    fn navigation_resolves_is_not_evaluated_for_a_partly_read_route_table() {
+        let flow = flow_with(
+            &[
+                diag(
+                    "Web/Home.razor",
+                    3,
+                    "Navigation target /cart matches no route of application web.",
+                ),
+                diag(
+                    "Web/App.jsx",
+                    19,
+                    "Route element is not a JSX component; the screen is unknown: element",
+                ),
+            ],
+            "",
+            "",
+        );
+        let findings = run(linked(&flow).path(), &["navigation_resolves"]);
+        assert_eq!(findings.len(), 1, "{findings:#?}");
+        assert_eq!(findings[0].id, "view-conventions::navigation_resolves web");
+        assert_eq!(severities(&findings), [Severity::Info]);
+        let message = findings[0].message.as_deref().unwrap();
+        assert!(message.contains("not evaluated for web"), "{message}");
+        assert!(message.contains("1 literal target"), "{message}");
+    }
+
+    #[test]
+    fn navigation_resolves_is_not_evaluated_for_an_app_without_routes() {
+        let flow = flow_with(
+            &[
+                diag(
+                    "React/NavMenu.jsx",
+                    12,
+                    "Navigation target /login matches no route of application react.",
+                ),
+                diag(
+                    "React/NavMenu.jsx",
+                    20,
+                    "Navigation target /todo matches no route of application react.",
+                ),
+            ],
+            "",
+            "",
+        );
+        let findings = run(linked(&flow).path(), &["navigation_resolves"]);
+        assert_eq!(findings.len(), 1, "{findings:#?}");
+        assert!(
+            findings[0]
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("not evaluated for react")
+        );
+        assert!(
+            findings[0]
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("2 literal targets")
+        );
+        assert_eq!(findings[0].severity, Severity::Info);
+    }
+
+    #[test]
+    fn navigation_resolves_reads_every_blazor_literal_form() {
+        let dir = linked(&flow_with(
+            &[
+                diag(
+                    "Web/Home.razor",
+                    2,
+                    "Navigation target nowhere2 is not a route of this application.",
+                ),
+                diag(
+                    "Web/Home.razor",
+                    3,
+                    "Navigation target \"/nowhere4\" is not a route of this application.",
+                ),
+                diag(
+                    "Web/Home.razor",
+                    4,
+                    "Navigation target \"user/orders\" is not a route of this application.",
+                ),
+                diag(
+                    "Web/Home.razor",
+                    5,
+                    "Navigation target returnUrl is not a route of this application.",
+                ),
+                diag(
+                    "Web/Home.razor",
+                    6,
+                    "Navigation target returnUrl.ToString() is not a route of this application.",
+                ),
+            ],
+            "",
+            "",
+        ));
+        write(
+            dir.path(),
+            &[(
+                "Web/Home.razor",
+                "@page \"/\"\n<a href=\"nowhere2\">x</a>\n@code { void A() { Nav.NavigateTo(\"/nowhere4\"); } }\n// Nav.NavigateTo(\"user/orders\")\n// NavigateTo(returnUrl)\n// returnUrl.ToString()\n",
+            )],
+        );
+        let findings = run(dir.path(), &["navigation_resolves"]);
+        let subjects: Vec<&str> = findings
+            .iter()
+            .map(|f| f.evidence[0].raw.as_str())
+            .collect();
+        assert_eq!(
+            subjects,
+            ["/nowhere2", "/nowhere4", "/user/orders"],
+            "{findings:#?}"
+        );
+        // A base href other than `/` moves a base-relative literal.
+        write(
+            dir.path(),
+            &[("Web/wwwroot/index.html", "<base href=\"/app/\" />")],
+        );
+        let findings = run(dir.path(), &["navigation_resolves"]);
+        let subjects: Vec<&str> = findings
+            .iter()
+            .map(|f| f.evidence[0].raw.as_str())
+            .collect();
+        assert_eq!(subjects, ["/app/nowhere2", "/nowhere4", "/app/user/orders"]);
+    }
+
+    #[test]
+    fn endpoint_called_does_not_skip_any_method_endpoints() {
+        let any = r#",{"method":"ANY","path":"/api/legacy","access":"open","file":"Api/Legacy.cs","line":3,"source":"x"}"#;
+        let findings = run(
+            linked(&flow_with(&[], "", any)).path(),
+            &["endpoint_called"],
+        );
+        assert_eq!(findings.len(), 1, "{findings:#?}");
+        assert!(
+            findings[0].id.ends_with("ANY /api/legacy"),
+            "{}",
+            findings[0].id
+        );
+        let message = findings[0].message.as_deref().unwrap();
+        assert!(message.contains("no reader found a caller"), "{message}");
+    }
+
+    #[test]
+    fn endpoint_called_counts_a_literal_link_as_reaching_the_endpoint() {
+        let any = r#",{"method":"ANY","path":"/Account/Login","access":"open","file":"Api/Account.cs","line":3,"source":"x"}"#;
+        let flow = flow_with(&[], "", any);
+        let flow = flow.replacen(
+            r#""actions":"#,
+            r#""transitions":[{"from":{"screen":"home"},"target":{"unresolved":"\"/Account/Login\""},"file":"Web/Home.razor","line":2,"source":"x"}],"actions":"#,
+            1,
+        );
+        let findings = run(linked(&flow).path(), &["endpoint_called"]);
+        assert!(findings.is_empty(), "{findings:#?}");
+    }
+
+    #[test]
+    fn endpoint_called_is_not_evaluated_while_a_frontend_has_unresolved_calls() {
+        let blind = r#",{"screen":{"screen":"home"},"call":{"unresolved":"Url(x)"},"file":"Web/Home.razor","line":9,"source":"x"}"#;
+        let any = r#",{"method":"GET","path":"/api/unused","access":"open","file":"Api/U.cs","line":3,"source":"x"}"#;
+        let findings = run(
+            linked(&flow_with(&[], blind, any)).path(),
+            &["endpoint_called"],
+        );
+        assert_eq!(findings.len(), 1, "{findings:#?}");
+        assert_eq!(findings[0].id, "view-conventions::endpoint_called");
+        assert_eq!(findings[0].severity, Severity::Info);
+        let message = findings[0].message.as_deref().unwrap();
+        assert!(
+            message.contains("not evaluated: web has 1 unresolved"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn endpoint_called_is_not_evaluated_while_a_frontend_has_an_unread_client() {
+        let gap = diag(
+            "Web/Api.razor",
+            2,
+            "HTTP client import not read; its calls are unknown.",
+        );
+        let flow = flow_with(
+            &[gap],
+            "",
+            r#",{"method":"GET","path":"/api/x","access":"open","file":"Api/X.cs","line":1,"source":"x"}"#,
+        );
+        let findings = run(linked(&flow).path(), &["endpoint_called"]);
+        assert_eq!(findings.len(), 1, "{findings:#?}");
+        assert!(
+            findings[0]
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("web has 1 unresolved/unread")
+        );
+    }
+
+    #[test]
+    fn navigation_resolves_counts_a_link_to_a_get_or_any_endpoint_as_resolved() {
+        let get = r#",{"method":"GET","path":"/account/login","access":"open","file":"Api/A.cs","line":3,"source":"x"}"#;
+        let any = r#",{"method":"ANY","path":"/api/linked","access":"open","file":"Api/B.cs","line":4,"source":"x"}"#;
+        let post = r#",{"method":"POST","path":"/api/post","access":"open","file":"Api/C.cs","line":5,"source":"x"}"#;
+        let flow = flow_with(
+            &[
+                diag(
+                    "Web/Home.razor",
+                    3,
+                    "Navigation target /account/login matches no route of application web.",
+                ),
+                diag(
+                    "Web/Home.razor",
+                    4,
+                    "Navigation target /api/linked matches no route of application web.",
+                ),
+                diag(
+                    "Web/Home.razor",
+                    5,
+                    "Navigation target /api/post matches no route of application web.",
+                ),
+            ],
+            "",
+            &format!("{get}{any}{post}"),
+        );
+        let findings = run(linked(&flow).path(), &["navigation_resolves"]);
+        let ids: Vec<&str> = findings.iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["view-navigation_resolves:Web/Home.razor:/api/post"],
+            "{ids:?}"
+        );
+    }
+
+    #[test]
+    fn endpoint_called_is_not_evaluated_while_an_app_has_no_resolved_call() {
+        let docs = r#"{"id":"docs","name":"Docs","kind":"page","route":"/docs","application":"docs","file":"Docs/Docs.razor","line":1,"source":"x"}"#;
+        let unused = r#",{"method":"GET","path":"/api/unused","access":"open","file":"Api/U.cs","line":3,"source":"x"}"#;
+        let flow = flow_with(&[], "", unused).replacen(
+            r#""screens":["#,
+            &format!(r#""screens":[{docs},"#),
+            1,
+        );
+        let dir = linked(&flow);
+        write(dir.path(), &[("Docs/Docs.razor", "<h1>Docs</h1>\n")]);
+        let findings = run(dir.path(), &["endpoint_called"]);
+        assert_eq!(findings.len(), 1, "{findings:#?}");
+        assert_eq!(findings[0].severity, Severity::Info);
+        let message = findings[0].message.as_deref().unwrap();
+        assert!(message.contains("docs has 0 resolved calls"), "{message}");
+    }
+
+    /// CleanArchitecture's shape: screens, no readable call, one endpoint.
+    const NO_CALLS: &str = r#"{"definition":"ui-flow/v1","complete":true,
+"screens":[{"id":"home","name":"Home","kind":"page","route":"/","application":"web","file":"Web/app/home.ts","line":1,"source":"x"}],
+"endpoints":[{"method":"GET","path":"/api/x","access":"open","file":"Api/X.cs","line":1,"source":"x"}]}"#;
+
+    #[test]
+    fn endpoint_called_is_not_evaluated_with_an_unread_generated_client_config() {
+        let dir = linked(NO_CALLS);
+        write(
+            dir.path(),
+            &[
+                ("Web/app/home.ts", "export class Home {}\n"),
+                ("Web/nswag.json", "{}"),
+            ],
+        );
+        let findings = run(dir.path(), &["endpoint_called"]);
+        assert_eq!(findings.len(), 1, "{findings:#?}");
+        assert_eq!(findings[0].severity, Severity::Info);
+        let message = findings[0].message.as_deref().unwrap();
+        assert!(message.contains("nswag.json"), "{message}");
     }
 
     #[test]

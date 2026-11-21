@@ -234,6 +234,8 @@ conventions = [
   "frontend_backend_agree",        # keine Abweichung shown_but_refused / hidden_but_unprotected
   "state_changes_in_entity",       # C#: `x.Feld = Enum.Wert` auf ein Zustandsfeld nur in seiner Entität, immer literal
   "events_through_raise_function", # C#: ein `*DomainEvent`/`INotification`-Typ entsteht nur für AddDomainEvent(…)
+  "navigation_resolves",           # ein literales Navigationsziel trifft eine Screen-Route seiner Anwendung
+  "endpoint_called",               # ein Endpunkt wird von einer Frontend-Aktion aufgerufen (nur wenn Screens/Aktionen existieren)
 ]
 ```
 

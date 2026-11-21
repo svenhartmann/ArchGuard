@@ -259,6 +259,8 @@ pub enum ViewConvention {
     FrontendBackendAgree,
     StateChangesInEntity,
     EventsThroughRaiseFunction,
+    NavigationResolves,
+    EndpointCalled,
 }
 
 impl ViewConvention {
@@ -272,6 +274,8 @@ impl ViewConvention {
             Self::FrontendBackendAgree => "frontend_backend_agree",
             Self::StateChangesInEntity => "state_changes_in_entity",
             Self::EventsThroughRaiseFunction => "events_through_raise_function",
+            Self::NavigationResolves => "navigation_resolves",
+            Self::EndpointCalled => "endpoint_called",
         }
     }
 }

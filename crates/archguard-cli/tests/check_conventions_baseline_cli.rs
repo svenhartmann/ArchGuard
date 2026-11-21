@@ -170,3 +170,55 @@ fn notes_show_under_findings_and_intentional_ones_do_not_fail() {
     assert_eq!(code, Some(0), "all accepted: {text}");
     assert!(text.starts_with("PASS"), "{text}");
 }
+
+#[test]
+fn link_conventions_honour_baseline_and_accept_risk() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = "[views]\nconventions = [\"navigation_resolves\", \"endpoint_called\"]\n";
+    write(dir.path(), ".archguard/archguard.toml", config);
+    write(dir.path(), "Web/Web.csproj", "<Project />");
+    write(dir.path(), "Web/Program.cs", "class Program { }\n");
+    let home = "@page \"/\"\n<a href=\"/nowhere\">Lost</a>\n";
+    write(dir.path(), "Web/Pages/Home.razor", home);
+    let flow = r#"{"definition":"ui-flow/v1","complete":true,
+"actions":[{"screen":{"any_screen":{"application":"Web"}},"call":{"http":{"method":"GET","path":"/api/used"}},"file":"Web/Pages/Home.razor","line":2,"source":"x"}],
+"endpoints":[{"method":"GET","path":"/api/used","access":"open","file":"Api/Used.cs","line":3,"source":"x"},{"method":"GET","path":"/api/unused","access":"open","file":"Api/Unused.cs","line":9,"source":"x"}]}"#;
+    write(dir.path(), ".archguard/ui-flow.json", flow);
+
+    let (_, ids) = check_json(dir.path());
+    assert_eq!(ids.len(), 2, "{ids:?}");
+    assert!(ids.contains(&"view-endpoint_called:Api/Unused.cs:GET /api/unused".to_string()));
+    assert!(
+        ids.iter()
+            .any(|i| i.starts_with("view-navigation_resolves:"))
+    );
+    let (code, text) = archguard(dir.path(), &["check"]);
+    assert_eq!(code, Some(1), "{text}");
+
+    let (code, text) = archguard(dir.path(), &["baseline", "write"]);
+    assert_eq!(code, Some(0), "{text}");
+    let (code, text) = archguard(dir.path(), &["check", "--baseline"]);
+    assert_eq!(code, Some(0), "{text}");
+
+    // Without the baseline, accept-risk notes pass the gate instead.
+    let (code, text) = archguard(dir.path(), &["check"]);
+    assert_eq!(code, Some(1), "{text}");
+    for id in &ids {
+        let args = [
+            "review-decision",
+            "record",
+            "--finding",
+            id,
+            "--decision",
+            "accept-risk",
+            "--note",
+            "ok",
+            "--author",
+            "sven",
+        ];
+        let (code, text) = archguard(dir.path(), &args);
+        assert_eq!(code, Some(0), "{text}");
+    }
+    let (code, text) = archguard(dir.path(), &["check"]);
+    assert_eq!(code, Some(0), "{text}");
+}
