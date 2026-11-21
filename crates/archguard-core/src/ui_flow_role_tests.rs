@@ -361,34 +361,35 @@ fn an_unprefixed_authority_is_held_as_typed() {
 }
 
 #[test]
-fn another_applications_convention_does_not_leak() {
-    let admin = Condition::Role("ADMIN".into());
-    let mut node = screen("n", AccessState::Protected(admin.clone()));
-    node.application = Some("web".into());
-    let mut backend = screen(
-        "s",
-        AccessState::Protected(Condition::Role("ROLE_ADMIN".into())),
-    );
-    backend.application = Some("api".into());
+fn each_element_uses_its_own_applications_convention() {
+    let in_app = |id: &str, app: &str, role: &str| {
+        let mut s = screen(id, AccessState::Protected(Condition::Role(role.into())));
+        s.application = Some(app.into());
+        s
+    };
     let flow = UiFlow {
-        screens: vec![node, backend],
+        screens: vec![
+            in_app("spring", "api", "ROLE_ADMIN"),
+            in_app("node_literal", "web", "ROLE_ADMIN"),
+            in_app("node", "web", "ADMIN"),
+        ],
+        start_screens: vec!["spring".into(), "node_literal".into(), "node".into()],
         role_conventions: vec![spring("api")],
         ..UiFlow::default()
     };
-    // another application's convention never applies to it
-    assert_eq!(flow.convention(Some("web")).role_prefix, None);
-    assert_eq!(
-        flow.convention(Some("api")).role_prefix.as_deref(),
-        Some("ROLE_")
-    );
-    // the Node screen keeps its name: ADMIN is allowed as typed
-    assert_eq!(eval(&flow, &admin, &holding(&["ADMIN"])), Outcome::Allowed);
-    assert_eq!(
-        eval(&flow, &admin, &holding(&["ROLE_ADMIN"])),
-        Outcome::Denied
-    );
+    let reach = screen_reaches(&flow, &holding(&["ADMIN"]));
+    // typed ADMIN is Spring's hasRole('ADMIN') (stored ROLE_ADMIN) there only
+    assert_eq!(reach["spring"], ScreenReach::Sure);
+    assert_eq!(reach["node_literal"], ScreenReach::Denied, "no leak");
+    assert_eq!(reach["node"], ScreenReach::Sure);
+    // the stored name itself works everywhere
+    let reach = screen_reaches(&flow, &holding(&["ROLE_ADMIN"]));
+    assert_eq!(reach["spring"], ScreenReach::Sure);
+    assert_eq!(reach["node_literal"], ScreenReach::Sure);
+    assert_eq!(reach["node"], ScreenReach::Denied);
+    // an element without application: the only application's convention
     let single = UiFlow {
-        screens: vec![flow.screens[1].clone()],
+        screens: vec![in_app("spring", "api", "ROLE_ADMIN")],
         role_conventions: vec![spring("api")],
         ..UiFlow::default()
     };
@@ -396,6 +397,7 @@ fn another_applications_convention_does_not_leak() {
         single.convention(None).role_prefix.as_deref(),
         Some("ROLE_")
     );
+    assert_eq!(flow.convention(None).role_prefix, None);
 }
 
 fn screen(id: &str, access: AccessState) -> Screen {

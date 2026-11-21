@@ -87,7 +87,7 @@ pub fn permission_matrix(flow: &UiFlow, kind: MatrixKind) -> PermissionMatrix {
                 requires: requires(&s.access),
                 weak: s.weak,
                 cells: (assignments.iter())
-                    .map(|a| evaluate_access(&s.access, a))
+                    .map(|a| evaluate_access(&s.access, a.in_app(s.application.as_deref())))
                     .collect(),
             });
         }
@@ -103,7 +103,7 @@ pub fn permission_matrix(flow: &UiFlow, kind: MatrixKind) -> PermissionMatrix {
                 weak: false,
                 cells: assignments
                     .iter()
-                    .map(|a| evaluate_access(&e.access, a))
+                    .map(|a| evaluate_access(&e.access, a.in_app(e.application.as_deref())))
                     .collect(),
             });
         }

@@ -96,7 +96,7 @@ pub fn steps(
 }
 
 fn endpoint(e: &EndpointAccess, who: &Assignment, texts: &Texts) -> DrillStep {
-    let outcome = evaluate_access(&e.access, who);
+    let outcome = evaluate_access(&e.access, who.in_app(e.application.as_deref()));
     let text = format!(
         "{} {} · {} · {}",
         e.method,

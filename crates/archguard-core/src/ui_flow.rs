@@ -64,12 +64,11 @@ impl Default for UiFlow {
 }
 
 impl UiFlow {
-    /// The convention of `application`; another application's convention
-    /// never applies to it. The whole flow (`None`) uses its own entry; when
-    /// that names no role prefix, the one prefix all applications agree on,
-    /// so a typed `ADMIN` meets a stored `ROLE_ADMIN` of a frontend and a
-    /// backend that live in different applications (names are never
-    /// rewritten, only matched). Default (exact) when nothing was read.
+    /// The convention an element of `application` is evaluated under: its own
+    /// entry, else the whole-flow entry. An element without application uses
+    /// the whole-flow entry, or the only application's entry when the flow has
+    /// exactly one application. Another application's convention never
+    /// applies; default (exact) when nothing was read.
     pub fn convention(&self, application: Option<&str>) -> RoleConvention {
         let entry = |app: Option<&str>| {
             (self.role_conventions.iter()).find(|c| c.application.as_deref() == app)
@@ -80,16 +79,31 @@ impl UiFlow {
                 .cloned()
                 .unwrap_or_default();
         }
-        let mut whole = entry(None).cloned().unwrap_or_default();
-        if whole.role_prefix.is_none() {
-            let prefixes: BTreeSet<&String> = (self.role_conventions.iter())
-                .filter_map(|c| c.role_prefix.as_ref())
-                .collect();
-            if let (1, Some(p)) = (prefixes.len(), prefixes.first()) {
-                whole.role_prefix = Some((*p).clone());
+        let apps = self.applications();
+        let only = match apps.as_slice() {
+            [one] => entry(Some(one.as_str())),
+            _ => None,
+        };
+        let whole = entry(None);
+        match (only, whole) {
+            (Some(o), Some(w)) => {
+                let mut c = o.clone();
+                if w.permissions != PermissionFormat::Exact {
+                    c.permissions = w.permissions.clone();
+                }
+                c
             }
+            (Some(o), None) => o.clone(),
+            (None, w) => w.cloned().unwrap_or_default(),
         }
-        whole
+    }
+
+    /// The applications of screens and endpoints, sorted.
+    pub fn applications(&self) -> Vec<String> {
+        let apps: BTreeSet<&String> = (self.screens.iter().filter_map(|s| s.application.as_ref()))
+            .chain(self.endpoints.iter().filter_map(|e| e.application.as_ref()))
+            .collect();
+        apps.into_iter().cloned().collect()
     }
 
     /// Where the handler method of `e` is declared, when the extractor read it.
@@ -432,6 +446,12 @@ pub enum DiagnosticSeverity {
 pub struct Assignment {
     /// How role names compare; filled by [`resolve_assignment`], exact otherwise.
     pub convention: RoleConvention,
+    /// The roles as chosen, before the catalog implied more; filled by
+    /// [`resolve_assignment`] so each application can imply under its own
+    /// convention.
+    pub held: BTreeSet<String>,
+    /// One resolved copy per application, for [`Assignment::in_app`].
+    pub by_app: BTreeMap<Option<String>, Assignment>,
     pub authenticated: bool,
     pub roles: BTreeSet<String>,
     pub policies: BTreeMap<String, bool>,
@@ -509,6 +529,14 @@ fn negate(outcome: Outcome) -> Outcome {
 }
 
 /// `undeclared` is unknown, never allowed.
+impl Assignment {
+    /// The assignment an element of `application` is judged by: roles held
+    /// and implied under that application's convention, never another's.
+    pub fn in_app(&self, application: Option<&str>) -> &Assignment {
+        (self.by_app.get(&application.map(String::from))).unwrap_or(self)
+    }
+}
+
 pub fn evaluate_access(access: &AccessState, assignment: &Assignment) -> Outcome {
     match access {
         AccessState::Protected(condition) => evaluate_condition(condition, assignment),
@@ -518,10 +546,14 @@ pub fn evaluate_access(access: &AccessState, assignment: &Assignment) -> Outcome
 }
 
 /// The findings keep reading a missing declaration as "no guard".
-fn evaluate_optional(access: &AccessState, assignment: &Assignment) -> Outcome {
+fn evaluate_optional(
+    access: &AccessState,
+    application: Option<&str>,
+    assignment: &Assignment,
+) -> Outcome {
     match access {
         AccessState::Undeclared => Outcome::Allowed,
-        other => evaluate_access(other, assignment),
+        other => evaluate_access(other, assignment.in_app(application)),
     }
 }
 
@@ -540,7 +572,8 @@ pub enum Reach {
 
 impl AccessState {
     /// Reach level of one screen or link; none when denied.
-    fn level(&self, assignment: &Assignment) -> Option<Reach> {
+    fn level(&self, assignment: &Assignment, application: Option<&str>) -> Option<Reach> {
+        let assignment = assignment.in_app(application);
         match self {
             AccessState::Undeclared => Some(Reach::Undeclared),
             other => match evaluate_access(other, assignment) {
@@ -566,7 +599,9 @@ pub fn reachable_screens(
     let screens: BTreeMap<&str, &Screen> =
         flow.screens.iter().map(|s| (s.id.as_str(), s)).collect();
     let mut reached = BTreeMap::new();
-    let Some(first) = screens.get(start).and_then(|s| s.access.level(assignment)) else {
+    let Some(first) =
+        (screens.get(start)).and_then(|s| s.access.level(assignment, s.application.as_deref()))
+    else {
         return reached;
     };
     reached.insert(start.to_string(), first);
@@ -582,9 +617,17 @@ pub fn reachable_screens(
             let Some(target) = screens.get(to.as_str()) else {
                 continue;
             };
+            let from_app = match &transition.from {
+                Origin::Screen(id) => screens
+                    .get(id.as_str())
+                    .and_then(|s| s.application.as_deref()),
+                Origin::AnyScreen { application } => Some(application.as_str()),
+            };
             let (Some(link), Some(screen)) = (
-                transition.condition.level(assignment),
-                target.access.level(assignment),
+                transition.condition.level(assignment, from_app),
+                target
+                    .access
+                    .level(assignment, target.application.as_deref()),
             ) else {
                 continue;
             };
@@ -665,7 +708,13 @@ pub fn screen_reaches(flow: &UiFlow, assignment: &Assignment) -> BTreeMap<String
         Some(Reach::Sure) => ScreenReach::Sure,
         Some(Reach::Undeclared) => ScreenReach::Undeclared,
         Some(Reach::Possible) => ScreenReach::Possible,
-        None if s.access.level(assignment).is_none() => ScreenReach::Denied,
+        None if s
+            .access
+            .level(assignment, s.application.as_deref())
+            .is_none() =>
+        {
+            ScreenReach::Denied
+        }
         None if !started.contains(&app(s)) => ScreenReach::NoStartScreen,
         None => ScreenReach::NoKnownPath {
             unresolved_transitions_in_application: unresolved
@@ -1109,7 +1158,14 @@ mod roles {
     /// The assignment the simulator evaluates, with the convention of the whole
     /// flow; see [`resolve_assignment_for`].
     pub fn resolve_assignment(flow: &UiFlow, assignment: &Assignment) -> Assignment {
-        resolve_assignment_for(flow, None, assignment)
+        let mut out = resolve_assignment_for(flow, None, assignment);
+        out.by_app = (flow.applications().into_iter())
+            .map(|app| {
+                let one = resolve_assignment_for(flow, Some(&app), assignment);
+                (Some(app), one)
+            })
+            .collect();
+        out
     }
 
     /// The assignment the simulator evaluates for one application's elements:
@@ -1126,6 +1182,14 @@ mod roles {
         assignment: &Assignment,
     ) -> Assignment {
         let mut out = assignment.clone();
+        out.by_app.clear();
+        // nothing defined or read: nothing is implied, the input stays as it is
+        if !flow.roles.is_empty() || !flow.role_conventions.is_empty() {
+            if out.held.is_empty() {
+                out.held = out.roles.clone();
+            }
+            out.roles = out.held.clone();
+        }
         out.convention = flow.convention(application);
         imply_roles(flow, &out.convention, &mut out.roles);
         resolve_policies(flow, &mut out);
@@ -1336,8 +1400,10 @@ mod findings {
             }
             let refused = reached.iter().find(|(_, assignment, reached)| {
                 shown(flow, action, assignment, reached)
-                    && (hits.iter())
-                        .all(|e| evaluate_access(&e.access, assignment) == Outcome::Denied)
+                    && (hits.iter()).all(|e| {
+                        evaluate_access(&e.access, assignment.in_app(e.application.as_deref()))
+                            == Outcome::Denied
+                    })
             });
             if let Some((role, ..)) = refused {
                 let text = format!(
@@ -1464,7 +1530,18 @@ mod findings {
                 .iter()
                 .any(|s| s.application.as_deref().unwrap_or("") == application && sure(&s.id)),
         };
-        on_sure_screen && evaluate_optional(&action.condition, assignment) != Outcome::Denied
+        on_sure_screen
+            && evaluate_optional(&action.condition, action_app(flow, action), assignment)
+                != Outcome::Denied
+    }
+
+    fn action_app<'a>(flow: &'a UiFlow, action: &'a Action) -> Option<&'a str> {
+        match &action.screen {
+            Origin::Screen(id) => {
+                (flow.screens.iter().find(|s| s.id == *id)).and_then(|s| s.application.as_deref())
+            }
+            Origin::AnyScreen { application } => Some(application.as_str()),
+        }
     }
 
     /// The screen's access and the action's condition deny an anonymous user.
@@ -1476,8 +1553,8 @@ mod findings {
             Origin::AnyScreen { .. } => AccessState::Undeclared,
         };
         and(
-            evaluate_optional(&screen_access, &anonymous),
-            evaluate_optional(&action.condition, &anonymous),
+            evaluate_optional(&screen_access, action_app(flow, action), &anonymous),
+            evaluate_optional(&action.condition, action_app(flow, action), &anonymous),
         ) == Outcome::Denied
     }
 

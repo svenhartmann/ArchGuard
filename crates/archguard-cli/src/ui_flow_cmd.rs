@@ -79,13 +79,20 @@ pub(crate) fn assignment(roles: &[String]) -> Assignment {
 /// authority through the convention); one the code does not define, neither
 /// as typed nor canonical, gets a warning.
 fn defined_names(flow: &UiFlow, roles: &[String]) -> Vec<String> {
-    let conv = flow.convention(None);
+    // typed as stored, or as some application's convention would store it
+    let convs: Vec<_> = (flow
+        .applications()
+        .into_iter()
+        .map(|a| flow.convention(Some(&a))))
+    .chain([flow.convention(None)])
+    .collect();
     for role in roles {
-        let stored = canonical(&conv, AtomKind::Role, role);
-        let defined = flow
-            .roles
-            .iter()
-            .any(|d| d.name == *role || d.name == stored);
+        let defined = (flow.roles.iter()).any(|d| {
+            d.name == *role
+                || convs
+                    .iter()
+                    .any(|c| d.name == canonical(c, AtomKind::Role, role))
+        });
         if !flow.roles.is_empty() && !defined {
             eprintln!(
                 "warning: role {role:?} is not defined in the code; `archguard ui-flow roles` lists the defined ones"
@@ -114,7 +121,7 @@ fn simulate(flow: &UiFlow, roles: &[String]) -> Value {
             json!({
                 "method": e.method, "path": e.path, "application": e.application,
                 "file": e.file, "line": e.line,
-                "outcome": evaluate_access(&e.access, &assignment),
+                "outcome": evaluate_access(&e.access, assignment.in_app(e.application.as_deref())),
             })
         })
         .collect();

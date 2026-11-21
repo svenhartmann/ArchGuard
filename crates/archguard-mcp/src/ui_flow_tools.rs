@@ -3,7 +3,7 @@
 use crate::engineering_tools::EngineeringParams;
 use crate::server::ArchguardTools;
 use archguard_engine::core::{
-    Assignment, MatrixKind, Origin, Outcome, ScreenReach, UiFlow, evaluate_access,
+    Assignment, EndpointAccess, MatrixKind, Origin, Outcome, ScreenReach, UiFlow, evaluate_access,
     permission_matrix, resolve_assignment, screen_reaches, start_screen_ids, ui_flow_findings,
     ui_flow_summary,
 };
@@ -94,6 +94,14 @@ fn application_of<'a>(flow: &'a UiFlow, origin: &'a Origin) -> &'a str {
             .unwrap_or(""),
         Origin::AnyScreen { application } => application,
     }
+}
+
+/// What the simulated user may do at an endpoint, under its application's convention.
+fn simulated_endpoint(e: &EndpointAccess, a: &Assignment) -> &'static str {
+    outcome(evaluate_access(
+        &e.access,
+        a.in_app(e.application.as_deref()),
+    ))
 }
 
 /// The chosen role as an assignment; none without roles or anonymous.
@@ -208,7 +216,6 @@ fn flow_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData> {
     }
     let rev = revision(&(flow, &p.application, &p.roles, &p.anonymous));
     check_revision(&rev, p.expected_revision.as_deref())?;
-    // `roles` arrive as users type them; compare in the stored form
     let sim = assignment(p.roles.as_deref(), p.anonymous)
         .map(|c| (simulate(flow, app, &c), resolve_assignment(flow, &c), c));
     let in_app = |origin: &Origin| app.is_none_or(|a| application_of(flow, origin) == a);
@@ -244,7 +251,7 @@ fn flow_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData> {
     for e in &flow.endpoints {
         let mut row = json!({"kind":"endpoint","endpoint":e});
         if let Some((_, a, _)) = &sim {
-            row["simulated"] = json!(outcome(evaluate_access(&e.access, a)));
+            row["simulated"] = json!(simulated_endpoint(e, a));
         }
         rows.push(row);
     }

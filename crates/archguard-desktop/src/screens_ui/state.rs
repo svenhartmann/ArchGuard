@@ -554,7 +554,12 @@ mod tests {
     #[test]
     fn the_assignment_follows_role_and_switches() {
         let mut s = build_from(Ok(flow()));
-        assert_eq!(s.assignment(), Assignment::default(), "anonymous");
+        // the per-application copies are a representation detail
+        let anonymous = Assignment {
+            by_app: Default::default(),
+            ..s.assignment()
+        };
+        assert_eq!(anonymous, Assignment::default(), "anonymous");
         s.select_role(1);
         assert!(s.assignment().authenticated);
         assert!(s.assignment().roles.is_empty(), "signed in, no role");

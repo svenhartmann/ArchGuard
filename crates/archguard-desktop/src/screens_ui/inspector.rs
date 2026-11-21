@@ -88,7 +88,10 @@ fn panel(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> FlowInspector {
         .selected
         .and_then(|i| s.sim.screens.get(i))
         .map_or(Outcome::Unknown, |sim| {
-            evaluate_access(&sim.access, &s.assignment())
+            evaluate_access(
+                &sim.access,
+                s.assignment().in_app(sim.application.as_deref()),
+            )
         });
     let triggered = actions(s, flow, screen, texts);
     let (meaning, meaning_from, _) = meaning(s, screen, texts);
