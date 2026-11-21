@@ -20,6 +20,27 @@
 //!   for SQLModel, have `table=True`. The fields and relations of every scanned
 //!   base that is not itself an entity (abstract models, mixins, SQLModel
 //!   bases) are inherited. A model class nested in another block is a gap.
+//! - Names are resolved through imports (re-exports and star imports followed)
+//!   or the file's own classes, never by a same name elsewhere: an import of
+//!   unscanned code (`from django.contrib.auth.models import User`) is an
+//!   external reference, so its relation is a gap. A Django string without app
+//!   label resolves inside the model's own app, `'label.Model'` in the app with
+//!   that label: `AppConfig.label` of its `apps.py`, else the last part of
+//!   `AppConfig.name`, else the directory name (`INSTALLED_APPS` is not read;
+//!   an app is the nearest directory with `apps.py`, `models.py` or `models/`).
+//!   SQLAlchemy strings (`relationship('Post')`) resolve by class name, as the
+//!   SQLAlchemy registry does.
+//! - A class of a models module (`models.py` or a `models/` folder) deriving
+//!   from a class imported from an unscanned `*.models` module
+//!   (`AbstractBaseUser`, `ContentType`, `MPTTModel`) is an entity with its own
+//!   body's fields; a note records that the inherited fields are unknown.
+//! - Django class attributes that are calls: a field when named `*Field`, a
+//!   relation callee (`*ForeignKey`, `*OneToOneField`, `*ManyToManyField`, so
+//!   `TreeForeignKey`; callees containing `Generic` are fields without relation) or
+//!   `TaggableManager` (a collection field, its relation to the tag model is
+//!   not read), imported from `django.db.models` or a `*.fields` module, or
+//!   given `to=`/`on_delete=`. Managers, query sets and translations are no
+//!   fields; any other call is a gap "field type not read".
 //! - API models: a SQLModel class without `table=True` goes to `api_models`
 //!   with the reason "SQLModel without table=True".
 //! - Fields: Django `x = models.CharField(…)` (a call whose last name part ends
@@ -124,7 +145,11 @@ struct Class {
 
 #[derive(Clone)]
 enum Target {
+    /// A string literal: a table, or a class name by the SQLAlchemy registry.
     Lit(String),
+    /// A Django model string: `'Model'` (own app), `'label.Model'`, `'self'`.
+    Model(String),
+    /// A class reference as written, resolved through imports.
     Ref(String),
 }
 
@@ -144,6 +169,8 @@ struct Mem {
     type_name: String,
     collection: bool,
     rel: Option<RawRel>,
+    /// The callee of a class attribute no rule reads.
+    unread: Option<String>,
 }
 
 struct Machine {
@@ -158,6 +185,7 @@ struct Extractor {
     model: DomainModel,
     files: Vec<File>,
     paths: BTreeSet<String>,
+    by_rel: BTreeMap<String, usize>,
     classes: Vec<Class>,
     by_name: BTreeMap<String, Vec<usize>>,
     sa_bases: BTreeSet<String>,
@@ -219,6 +247,7 @@ impl Extractor {
                     table,
                 });
             }
+            self.by_rel.insert(rel.clone(), f);
             self.files.push(File {
                 rel,
                 stmts: statements(&masked),
@@ -272,33 +301,6 @@ impl Extractor {
         })
     }
 
-    /// The class `name` as seen from file `f`: imports, same file, unique name.
-    fn lookup(&self, f: usize, name: &str) -> Option<usize> {
-        let simple = last(name);
-        let first = name.split('.').next().unwrap_or(name);
-        let top = |c: &usize| self.def(*c).parent.is_none();
-        let in_file = |file: &str, sym: &str| {
-            let cands = self.by_name.get(sym)?;
-            (cands.iter().copied()).find(|c| self.files[self.classes[*c].f].rel == file && top(c))
-        };
-        for imp in self.files[f].imports.iter().filter(|i| i.local == first) {
-            if let Some((file, sym)) = resolve_import(&self.files[f].rel, imp, &self.paths) {
-                let sym = sym.unwrap_or_else(|| simple.to_string());
-                if let Some(c) = in_file(&file, &sym) {
-                    return Some(c);
-                }
-            }
-        }
-        let tops: Vec<usize> = (self.by_name.get(simple)?.iter().copied())
-            .filter(top)
-            .collect();
-        match tops.iter().copied().find(|&c| self.classes[c].f == f) {
-            Some(c) => Some(c),
-            None if tops.len() == 1 => Some(tops[0]),
-            None => None,
-        }
-    }
-
     fn root_fw(&self, f: usize, base: &str) -> Option<Fw> {
         let imported = |name: &str, module_end: &str| {
             (self.files[f].imports.iter())
@@ -343,12 +345,16 @@ impl Extractor {
     /// The framework of class `c` through its bases, as far as known so far.
     fn framework_of(&self, c: usize) -> Option<Fw> {
         let f = self.classes[c].f;
-        self.classes[c].bases.iter().find_map(|b| {
-            self.root_fw(f, b).or_else(|| {
-                let k = self.lookup(f, b).filter(|&k| k != c)?;
-                self.fw[k]
+        self.classes[c]
+            .bases
+            .iter()
+            .find_map(|b| {
+                self.root_fw(f, b).or_else(|| {
+                    let k = Names(self).lookup(f, b).filter(|&k| k != c)?;
+                    self.fw[k]
+                })
             })
-        })
+            .or_else(|| Names(self).external_base(c).map(|_| Fw::Django))
     }
 
     fn find_frameworks(&mut self) {
@@ -447,7 +453,10 @@ impl Extractor {
         let f = self.classes[c].f;
         let mut out = vec![];
         for b in &self.classes[c].bases {
-            if let Some(k) = self.lookup(f, b).filter(|k| !self.ent.contains_key(k)) {
+            if let Some(k) = Names(self)
+                .lookup(f, b)
+                .filter(|k| !self.ent.contains_key(k))
+            {
                 out.extend(self.members(k, fw, seen));
             }
         }
@@ -463,13 +472,17 @@ impl Extractor {
         let fw = self.fw[c].unwrap_or(Fw::Django);
         let (f, id) = (self.classes[c].f, self.ent[&c].clone());
         let (file, line) = (self.files[f].rel.clone(), self.def(c).line);
-        let members = self.members(c, fw, &mut BTreeSet::new());
+        let (unread, members): (Vec<_>, Vec<_>) = (self.members(c, fw, &mut BTreeSet::new()))
+            .into_iter()
+            .partition(|(_, m)| m.unread.is_some());
+        let mut gaps = Names(self).unread_gaps(c, &id, &unread);
         let mut resolved = vec![];
         // Foreign-key targets of this class decide the side of a legacy `relationship()`.
         let mut fk_targets = BTreeSet::new();
         for (decl, m) in &members {
             let df = self.classes[*decl].f;
-            let r = (m.rel.as_ref()).map(|r| Resolver(self).target(df, &id, &r.target, r.by_table));
+            let r =
+                (m.rel.as_ref()).map(|r| Resolver(self).target(df, f, &id, &r.target, r.by_table));
             if let (Some(rel), Some(Ok(t))) = (&m.rel, &r)
                 && rel.by_table
             {
@@ -478,7 +491,7 @@ impl Extractor {
             resolved.push((*decl, m, r));
         }
         let mut fields = vec![];
-        let (mut rels, mut gaps) = (vec![], vec![]);
+        let mut rels = vec![];
         for (decl, m, r) in resolved {
             fields.push(Field {
                 name: m.name.clone(),
@@ -618,7 +631,7 @@ impl Extractor {
             |k: usize| (self.classes[k].bases.iter()).any(|b| CHOICES.contains(&last(b)));
         let nested = (self.by_name.get(name)?.iter().copied())
             .find(|&k| is_choices(k) && self.classes[k].f == f && self.def(k).parent.is_some());
-        let k = nested.or_else(|| self.lookup(f, name).filter(|&k| is_choices(k)))?;
+        let k = nested.or_else(|| Names(self).lookup(f, name).filter(|&k| is_choices(k)))?;
         let kf = self.classes[k].f;
         let file = &self.files[kf];
         Some(
@@ -851,36 +864,559 @@ mod resolving {
             }
         }
 
+        /// Django `'Model'` (own app) or `'label.Model'` (the app with that label).
+        fn model(&self, mf: usize, me: &str, s: &str) -> Result<String, String> {
+            let x = self.0;
+            if s == "self" {
+                return Ok(me.to_string());
+            }
+            let (label, name) = s.rsplit_once('.').unwrap_or(("", s));
+            let mine = Names(x).app_dir(&x.files[mf].rel);
+            let cands: Vec<usize> = (x.by_name.get(name).into_iter().flatten().copied())
+                .filter(|c| x.ent.contains_key(c))
+                .filter(|&c| {
+                    let dir = Names(x).app_dir(&x.files[x.classes[c].f].rel);
+                    match label.is_empty() {
+                        true => dir == mine,
+                        false => Names(x).label(&dir) == label,
+                    }
+                })
+                .collect();
+            match cands.as_slice() {
+                [one] => Ok(x.ent[one].clone()),
+                [] if label.is_empty() => {
+                    Err(format!("no scanned entity {name} in its own app ({mine})"))
+                }
+                [] => Err(format!(
+                    "no scanned entity {name} in an app labelled {label}"
+                )),
+                _ => Err(format!("{s} matches several scanned entities")),
+            }
+        }
+
+        /// The entity id a relation target points to; `f` is the file the
+        /// attribute is written in, `mf` the entity's file (Django strings
+        /// resolve from the concrete model's app).
         pub(super) fn target(
             &self,
             f: usize,
+            mf: usize,
             me: &str,
             t: &Target,
             by_table: bool,
         ) -> Result<String, String> {
             match (t, by_table) {
                 (Target::Lit(s), true) => self.table(s),
-                (Target::Lit(s), false) if s == "self" => Ok(me.to_string()),
                 (Target::Lit(s), false) => self.name(f, s),
+                (Target::Model(s), _) => self.model(mf, me, s),
                 (Target::Ref(r), by_table) => {
-                    let mut parts: Vec<&str> = r.split('.').collect();
-                    if by_table && parts.len() > 1 {
-                        parts.pop();
+                    let mut name = r.as_str();
+                    if let Some((class, _)) = name.rsplit_once('.').filter(|_| by_table) {
+                        name = class;
                     }
-                    let name = parts.last().copied().unwrap_or("");
-                    if name.is_empty() || !name.bytes().all(is_id) {
+                    if name.is_empty() {
+                        return Err("no target class given".to_string());
+                    }
+                    if !name.bytes().all(|b| is_id(b) || b == b'.') {
                         return Err(format!("`{r}` is not a class name"));
                     }
-                    match self.0.lookup(f, name).and_then(|k| self.0.ent.get(&k)) {
-                        Some(id) => Ok(id.clone()),
-                        None => Err(format!("`{name}` is not a scanned entity")),
-                    }
+                    let k = Names(self.0).find(f, name)?;
+                    (self.0.ent.get(&k).cloned())
+                        .ok_or_else(|| format!("`{name}` is not a scanned entity"))
                 }
             }
         }
     }
 }
 use resolving::Resolver;
+
+/// Where a name points: imports, definitions, re-exports, and Django apps.
+mod names {
+    use super::*;
+
+    pub(super) struct Names<'a>(pub(super) &'a Extractor);
+
+    /// Module paths of an import for messages.
+    fn imported(imp: &Import) -> String {
+        imp.module.clone()
+    }
+
+    impl Names<'_> {
+        pub(super) fn lookup(&self, f: usize, name: &str) -> Option<usize> {
+            self.find(f, name).ok()
+        }
+
+        /// The scanned class `name` (`Cls` or `mod.Cls`) as seen from file `f`:
+        /// through its import (also re-exports and star imports), else defined in
+        /// the file. An import of unscanned code is an external reference, never
+        /// a same-named scanned class.
+        pub(super) fn find(&self, f: usize, name: &str) -> Result<usize, String> {
+            let x = self.0;
+            let simple = last(name);
+            let first = name.split('.').next().unwrap_or(name);
+            let file = &x.files[f];
+            let mut external = None;
+            for imp in file.imports.iter().filter(|i| i.local == first) {
+                match resolve_import(&file.rel, imp, &x.paths) {
+                    Some((target, sym)) => {
+                        let sym = sym.unwrap_or_else(|| simple.to_string());
+                        if let Some(c) = self.class_in(&target, &sym, 0) {
+                            return Ok(c);
+                        }
+                    }
+                    None => external = Some(imported(imp)),
+                }
+            }
+            for imp in file.imports.iter().filter(|i| i.local == "*") {
+                let target = resolve_import(&file.rel, imp, &x.paths);
+                if let Some(c) = target.and_then(|(t, _)| self.class_in(&t, simple, 0)) {
+                    return Ok(c);
+                }
+            }
+            if first == simple
+                && let Some(c) = self.class_in(&file.rel, simple, 5)
+            {
+                return Ok(c);
+            }
+            Err(match external {
+                Some(m) => format!("`{name}` is imported from {m}, which is not scanned"),
+                None => format!("`{name}` is neither imported nor defined in {}", file.rel),
+            })
+        }
+
+        /// The top-level class `sym` of `file`, following re-exports up to `5 - depth` levels.
+        fn class_in(&self, file: &str, sym: &str, depth: u8) -> Option<usize> {
+            let x = self.0;
+            let fi = *x.by_rel.get(file)?;
+            let own = x.by_name.get(sym).into_iter().flatten().copied();
+            if let Some(c) = own.into_iter().find(|&c| {
+                x.classes[c].f == fi && x.files[fi].defs[x.classes[c].d].parent.is_none()
+            }) {
+                return Some(c);
+            }
+            if depth >= 5 {
+                return None;
+            }
+            let f = &x.files[fi];
+            (f.imports
+                .iter()
+                .filter(|i| i.local == sym || i.local == "*"))
+            .find_map(|imp| {
+                let (t, s) = resolve_import(&f.rel, imp, &x.paths)?;
+                let named = s.filter(|_| imp.local != "*");
+                self.class_in(&t, &named.unwrap_or_else(|| sym.to_string()), depth + 1)
+            })
+        }
+
+        /// Gaps of a model class: attribute calls no rule reads, and the note
+        /// that an external model base leaves inherited fields unknown.
+        pub(super) fn unread_gaps(
+            &self,
+            c: usize,
+            id: &str,
+            unread: &[(usize, Mem)],
+        ) -> Vec<(String, u32, String)> {
+            let x = self.0;
+            let mut gaps: Vec<(String, u32, String)> = (unread.iter())
+                .map(|(d, m)| {
+                    let callee = m.unread.as_deref().unwrap_or_default();
+                    let at = x.files[x.classes[*d].f].rel.clone();
+                    let what = format!(
+                        "Field {id}.{} not read: field type not read (`{callee}`).",
+                        m.name
+                    );
+                    (at, m.line, what)
+                })
+                .collect();
+            let note = format!("Entity {id} derives from an external model base in");
+            gaps.extend(self.external_base(c).map(|m| {
+                let at = x.files[x.classes[c].f].rel.clone();
+                (
+                    at,
+                    x.def(c).line,
+                    format!("{note} {m}; its inherited fields are not read."),
+                )
+            }));
+            gaps
+        }
+
+        /// The unscanned `*.models` module a model class of a models module
+        /// derives from (`AbstractBaseUser`, `ContentType`, `MPTTModel`).
+        pub(super) fn external_base(&self, c: usize) -> Option<String> {
+            let x = self.0;
+            let k = &x.classes[c];
+            let file = &x.files[k.f];
+            let in_models = file
+                .rel
+                .split('/')
+                .any(|p| p == "models" || p == "models.py");
+            if !in_models {
+                return None;
+            }
+            for b in &k.bases {
+                let simple = last(b);
+                if ["Manager", "QuerySet", "Choices", "Meta"]
+                    .iter()
+                    .any(|s| simple.ends_with(s))
+                {
+                    continue;
+                }
+                let first = b.split('.').next().unwrap_or(b);
+                for imp in file.imports.iter().filter(|i| i.local == first) {
+                    if resolve_import(&file.rel, imp, &x.paths).is_some() {
+                        continue;
+                    }
+                    let module = match (&imp.name, b.contains('.')) {
+                        (Some(n), true) => format!("{}.{n}", imp.module),
+                        _ => imp.module.clone(),
+                    };
+                    if module.rsplit('.').next() == Some("models") && module != "django.db.models" {
+                        return Some(module);
+                    }
+                }
+            }
+            None
+        }
+
+        /// The directory of the Django app `rel` belongs to: the nearest
+        /// ancestor with `apps.py`, else the nearest with `models.py` or
+        /// `models/__init__.py` (a `models/` folder holding a `models.py` is no app).
+        pub(super) fn app_dir(&self, rel: &str) -> String {
+            let paths = &self.0.paths;
+            let dirs: Vec<&str> = std::iter::successors(rel.rsplit_once('/').map(|d| d.0), |d| {
+                d.rsplit_once('/').map(|d| d.0)
+            })
+            .chain(std::iter::once(""))
+            .collect();
+            let has = |dir: &str, names: &[&str]| {
+                names.iter().any(|n| match dir.is_empty() {
+                    true => paths.contains(*n),
+                    false => paths.contains(&format!("{dir}/{n}")),
+                })
+            };
+            let app = dirs.iter().find(|d| has(d, &["apps.py"]));
+            let app = app.or_else(|| {
+                dirs.iter()
+                    .find(|d| has(d, &["models.py", "models/__init__.py"]))
+            });
+            app.copied().unwrap_or("").to_string()
+        }
+
+        /// The app label: `AppConfig.label` of the app's `apps.py`, else the
+        /// last part of its `name`, else the directory name.
+        pub(super) fn label(&self, dir: &str) -> String {
+            let x = self.0;
+            let apps = format!("{dir}/apps.py");
+            let dir_name = last_dir(dir).to_string();
+            let Some(&fi) = x.by_rel.get(&apps) else {
+                return dir_name;
+            };
+            let attr = |c: usize, n: &str| {
+                let file = &x.files[fi];
+                (x.direct(fi, x.def(c)).iter())
+                    .filter_map(|s| member(file, s))
+                    .find(|m| m.name == n)
+                    .and_then(|m| string_value(m.value?.1))
+            };
+            let configs = (0..x.classes.len()).filter(|&c| {
+                x.classes[c].f == fi && x.classes[c].bases.iter().any(|b| last(b) == "AppConfig")
+            });
+            for c in configs {
+                if let Some(l) = attr(c, "label") {
+                    return l;
+                }
+                if let Some(n) = attr(c, "name") {
+                    return last(&n).to_string();
+                }
+            }
+            dir_name
+        }
+    }
+
+    fn last_dir(dir: &str) -> &str {
+        dir.rsplit('/').next().unwrap_or(dir)
+    }
+}
+use names::Names;
+
+/// Class attributes of models as fields and relations, per framework.
+mod fields {
+    use super::*;
+
+    fn target(v: &str) -> Target {
+        string_value(v).map_or_else(|| Target::Ref(v.trim().to_string()), Target::Lit)
+    }
+
+    /// (type, collection) of an annotation without `Mapped`, `Optional`, `| None`.
+    fn ann_type(ann: &str) -> (String, bool) {
+        let mut t = ann.replace(['"', '\''], "");
+        let mut coll = false;
+        loop {
+            t = (t
+                .trim()
+                .trim_end_matches("| None")
+                .trim_end_matches("|None"))
+            .to_string();
+            t = t.trim().trim_start_matches("None |").trim().to_string();
+            let Some(open) = t.find('[').filter(|_| t.ends_with(']')) else {
+                break;
+            };
+            match last(&t[..open]) {
+                "Mapped" | "Optional" => {}
+                "WriteOnlyMapped" | "DynamicMapped" | "list" | "List" | "set" | "Set"
+                | "Sequence" | "Collection" | "Iterable" => coll = true,
+                _ => break,
+            }
+            t = t[open + 1..t.len() - 1].to_string();
+        }
+        (
+            last(t.split('[').next().unwrap_or(&t)).trim().to_string(),
+            coll,
+        )
+    }
+
+    /// The first argument of `name(…)` inside the expression `v`, as written.
+    fn call_in(v: &str, name: &str) -> Option<String> {
+        let at = v.find(name)?;
+        let open = at + name.len();
+        let b = v.as_bytes();
+        if b.get(open) != Some(&b'(') || (at > 0 && is_id(b[at - 1])) {
+            return None;
+        }
+        let close = matching(b, open)?;
+        let first = v[open + 1..close].split(',').next()?.trim();
+        (!first.is_empty()).then(|| first.to_string())
+    }
+
+    /// A member with its call (`callee`, `args`), as read by one framework rule.
+    struct Read<'a> {
+        file: &'a File,
+        m: &'a Member<'a>,
+        line: u32,
+        callee: &'a str,
+        args: &'a [Arg<'a>],
+    }
+
+    impl Read<'_> {
+        fn mem(&self, type_name: String, collection: bool, rel: Option<RawRel>) -> Option<Mem> {
+            Some(Mem {
+                name: self.m.name.to_string(),
+                line: self.line,
+                type_name,
+                collection,
+                rel,
+                unread: None,
+            })
+        }
+
+        fn arg(&self, name: &str) -> Option<&Arg<'_>> {
+            self.args.iter().find(|a| a.name == Some(name))
+        }
+
+        /// The module the callee's first name part was imported from.
+        fn callee_module(&self) -> Option<String> {
+            let first = self.callee_full().split('.').next()?.to_string();
+            let imp = self.file.imports.iter().find(|i| i.local == first)?;
+            Some(match (&imp.name, self.callee_full().contains('.')) {
+                (Some(n), true) => format!("{}.{n}", imp.module),
+                _ => imp.module.clone(),
+            })
+        }
+
+        fn callee_full(&self) -> String {
+            let at = self.m.value.map_or(0, |v| v.0);
+            dotted(self.file.masked.as_bytes(), at).0
+        }
+    }
+
+    pub(super) fn read_member(f: &File, m: &Member, fw: Fw) -> Option<Mem> {
+        if m.name.starts_with('_') || m.name.contains('.') {
+            return None;
+        }
+        let line = line(&f.masked, m.value.map_or(0, |v| v.0));
+        let c = m.value.and_then(|(at, _)| call(f, at));
+        let callee = c.as_ref().map_or("", |c| last(&c.0));
+        let args: &[Arg] = c.as_ref().map_or(&[], |c| &c.1);
+        let r = Read {
+            file: f,
+            m,
+            line,
+            callee,
+            args,
+        };
+        match fw {
+            Fw::Django => django_member(&r),
+            Fw::SqlModel => sqlmodel_member(&r),
+            Fw::SqlAlchemy | Fw::Flask => sqlalchemy_member(&r),
+        }
+    }
+
+    fn relation_kind(callee: &str) -> Option<RelationKind> {
+        match callee {
+            c if c.contains("Generic") => None,
+            c if c.ends_with("ManyToManyField") => Some(RelationKind::HasMany),
+            c if c.ends_with("OneToOneField") || c.ends_with("ForeignKey") => {
+                Some(RelationKind::HasOne)
+            }
+            _ => None,
+        }
+    }
+
+    /// Calls that are no column: managers, query sets, translations.
+    fn not_a_field(callee: &str) -> bool {
+        callee.ends_with("Manager")
+            || callee.ends_with("QuerySet")
+            || callee == "as_manager"
+            || [
+                "_",
+                "gettext",
+                "gettext_lazy",
+                "lazy",
+                "property",
+                "cached_property",
+            ]
+            .contains(&callee)
+    }
+
+    enum Class {
+        Field,
+        Skip,
+        Unread,
+    }
+
+    /// Whether a class attribute call is a field (by name, module or arguments),
+    /// no column (manager, translation) or unread.
+    fn field_class(r: &Read, kind: Option<RelationKind>) -> Class {
+        let callee = r.callee;
+        let known = callee.ends_with("Field") || kind.is_some() || callee == "TaggableManager";
+        if !known && not_a_field(callee) {
+            return Class::Skip;
+        }
+        let module = r.callee_module().unwrap_or_default();
+        let in_field_module = module == "django.db.models" || module.ends_with(".fields");
+        let with_model = r.arg("to").is_some() || r.arg("on_delete").is_some();
+        match known || in_field_module || with_model {
+            true => Class::Field,
+            false => Class::Unread,
+        }
+    }
+
+    /// Django: a call is a field by its name (`*Field`, relation callees,
+    /// `TaggableManager`), by the module it comes from (`django.db.models`,
+    /// `*.fields`) or by `to=`/`on_delete=`; other calls are not read.
+    fn django_member(r: &Read) -> Option<Mem> {
+        let callee = r.callee;
+        if callee.is_empty() {
+            return None;
+        }
+        let kind = relation_kind(callee);
+        match field_class(r, kind) {
+            Class::Skip => return None,
+            Class::Unread => {
+                let mut mem = r.mem(callee.to_string(), false, None)?;
+                mem.unread = Some(callee.to_string());
+                return Some(mem);
+            }
+            Class::Field => {}
+        }
+        let first = (r.args.iter()).find(|a| a.name.is_none() || a.name == Some("to"));
+        let t = first.map_or(Target::Ref(String::new()), |a| match target(a.value) {
+            Target::Lit(s) => Target::Model(s),
+            t => t,
+        });
+        let tn = match &t {
+            Target::Lit(s) | Target::Model(s) | Target::Ref(s) if kind.is_some() => {
+                last(s).to_string()
+            }
+            _ => callee.to_string(),
+        };
+        let many = kind == Some(RelationKind::HasMany) || callee == "TaggableManager";
+        let rel = kind.map(|kind| RawRel {
+            kind: Some(kind),
+            target: t,
+            by_table: false,
+        });
+        r.mem(tn, many, rel)
+    }
+
+    fn sqlmodel_member(r: &Read) -> Option<Mem> {
+        let ann = r.m.ann?;
+        if ann.starts_with("ClassVar") || r.m.name == "model_config" {
+            return None;
+        }
+        let (tn, coll) = ann_type(ann);
+        if r.callee == "Relationship" {
+            let kind = if coll {
+                RelationKind::HasMany
+            } else {
+                RelationKind::HasOne
+            };
+            let rel = RawRel {
+                kind: Some(kind),
+                target: Target::Ref(tn.clone()),
+                by_table: false,
+            };
+            return r.mem(tn, coll, Some(rel));
+        }
+        let rel = r.arg("foreign_key").map(|a| RawRel {
+            kind: None,
+            target: target(a.value),
+            by_table: true,
+        });
+        r.mem(tn, coll, rel)
+    }
+
+    fn sqlalchemy_member(r: &Read) -> Option<Mem> {
+        match r.callee {
+            "Column" | "mapped_column" => {
+                let tn = match r.m.ann {
+                    Some(a) => ann_type(a).0,
+                    None => (r.args.iter())
+                        .find(|a| a.name.is_none() && string_value(a.value).is_none())
+                        .map(|a| last(&dotted(a.value.as_bytes(), 0).0).to_string())
+                        .unwrap_or_default(),
+                };
+                let fk = r.args.iter().find_map(|a| call_in(a.value, "ForeignKey"));
+                let rel = fk.map(|v| RawRel {
+                    kind: None,
+                    target: target(&v),
+                    by_table: true,
+                });
+                r.mem(tn, false, rel)
+            }
+            "relationship" => {
+                let ann = r.m.ann.map(ann_type);
+                let first =
+                    (r.args.iter()).find(|a| a.name.is_none() || a.name == Some("argument"));
+                let t = match (first, &ann) {
+                    (Some(a), _) => target(a.value),
+                    (None, Some((tn, _))) if !tn.is_empty() => Target::Ref(tn.clone()),
+                    _ => Target::Ref(String::new()),
+                };
+                let one = r.arg("uselist").is_some_and(|a| a.value == "False");
+                let kind = match (&ann, one) {
+                    (_, true) => Some(RelationKind::HasOne),
+                    (Some((_, many)), _) => Some(if *many {
+                        RelationKind::HasMany
+                    } else {
+                        RelationKind::HasOne
+                    }),
+                    (None, _) => None,
+                };
+                let (Target::Lit(s) | Target::Model(s) | Target::Ref(s)) = &t;
+                let tn = last(s).to_string();
+                let rel = RawRel {
+                    kind,
+                    target: t,
+                    by_table: false,
+                };
+                r.mem(tn, ann.is_some_and(|a| a.1), Some(rel))
+            }
+            _ => None,
+        }
+    }
+}
+use fields::read_member;
 
 struct Method<'a> {
     /// Entity id.
@@ -1058,195 +1594,6 @@ fn call(f: &File, at: usize) -> Option<(String, Vec<Arg<'_>>)> {
         return None;
     }
     call_args(&f.src, &f.masked, end).map(|(a, _)| (name, a))
-}
-
-fn target(v: &str) -> Target {
-    string_value(v).map_or_else(|| Target::Ref(v.trim().to_string()), Target::Lit)
-}
-
-/// (type, collection) of an annotation without `Mapped`, `Optional`, `| None`.
-fn ann_type(ann: &str) -> (String, bool) {
-    let mut t = ann.replace(['"', '\''], "");
-    let mut coll = false;
-    loop {
-        t = (t
-            .trim()
-            .trim_end_matches("| None")
-            .trim_end_matches("|None"))
-        .to_string();
-        t = t.trim().trim_start_matches("None |").trim().to_string();
-        let Some(open) = t.find('[').filter(|_| t.ends_with(']')) else {
-            break;
-        };
-        match last(&t[..open]) {
-            "Mapped" | "Optional" => {}
-            "WriteOnlyMapped" | "DynamicMapped" | "list" | "List" | "set" | "Set" | "Sequence"
-            | "Collection" | "Iterable" => coll = true,
-            _ => break,
-        }
-        t = t[open + 1..t.len() - 1].to_string();
-    }
-    (
-        last(t.split('[').next().unwrap_or(&t)).trim().to_string(),
-        coll,
-    )
-}
-
-/// A member with its call (`callee`, `args`), as read by one framework rule.
-struct Read<'a> {
-    m: &'a Member<'a>,
-    line: u32,
-    callee: &'a str,
-    args: &'a [Arg<'a>],
-}
-
-impl Read<'_> {
-    fn mem(&self, type_name: String, collection: bool, rel: Option<RawRel>) -> Option<Mem> {
-        Some(Mem {
-            name: self.m.name.to_string(),
-            line: self.line,
-            type_name,
-            collection,
-            rel,
-        })
-    }
-
-    fn arg(&self, name: &str) -> Option<&Arg<'_>> {
-        self.args.iter().find(|a| a.name == Some(name))
-    }
-}
-
-fn read_member(f: &File, m: &Member, fw: Fw) -> Option<Mem> {
-    if m.name.starts_with('_') || m.name.contains('.') {
-        return None;
-    }
-    let line = line(&f.masked, m.value.map_or(0, |v| v.0));
-    let c = m.value.and_then(|(at, _)| call(f, at));
-    let callee = c.as_ref().map_or("", |c| last(&c.0));
-    let args: &[Arg] = c.as_ref().map_or(&[], |c| &c.1);
-    let r = Read {
-        m,
-        line,
-        callee,
-        args,
-    };
-    match fw {
-        Fw::Django => django_member(&r),
-        Fw::SqlModel => sqlmodel_member(&r),
-        Fw::SqlAlchemy | Fw::Flask => sqlalchemy_member(&r),
-    }
-}
-
-fn django_member(r: &Read) -> Option<Mem> {
-    if !(r.callee.ends_with("Field") || r.callee == "ForeignKey") {
-        return None;
-    }
-    let kind = match r.callee {
-        "ForeignKey" | "OneToOneField" => Some(RelationKind::HasOne),
-        "ManyToManyField" => Some(RelationKind::HasMany),
-        _ => None,
-    };
-    let first = (r.args.iter()).find(|a| a.name.is_none() || a.name == Some("to"));
-    let t = first.map_or(Target::Ref(String::new()), |a| target(a.value));
-    let tn = match &t {
-        Target::Lit(s) | Target::Ref(s) if kind.is_some() => last(s).to_string(),
-        _ => r.callee.to_string(),
-    };
-    let rel = kind.map(|kind| RawRel {
-        kind: Some(kind),
-        target: t,
-        by_table: false,
-    });
-    r.mem(tn, kind == Some(RelationKind::HasMany), rel)
-}
-
-fn sqlmodel_member(r: &Read) -> Option<Mem> {
-    let ann = r.m.ann?;
-    if ann.starts_with("ClassVar") || r.m.name == "model_config" {
-        return None;
-    }
-    let (tn, coll) = ann_type(ann);
-    if r.callee == "Relationship" {
-        let kind = if coll {
-            RelationKind::HasMany
-        } else {
-            RelationKind::HasOne
-        };
-        let rel = RawRel {
-            kind: Some(kind),
-            target: Target::Lit(tn.clone()),
-            by_table: false,
-        };
-        return r.mem(tn, coll, Some(rel));
-    }
-    let rel = r.arg("foreign_key").map(|a| RawRel {
-        kind: None,
-        target: target(a.value),
-        by_table: true,
-    });
-    r.mem(tn, coll, rel)
-}
-
-fn sqlalchemy_member(r: &Read) -> Option<Mem> {
-    match r.callee {
-        "Column" | "mapped_column" => {
-            let tn = match r.m.ann {
-                Some(a) => ann_type(a).0,
-                None => (r.args.iter())
-                    .find(|a| a.name.is_none() && string_value(a.value).is_none())
-                    .map(|a| last(&dotted(a.value.as_bytes(), 0).0).to_string())
-                    .unwrap_or_default(),
-            };
-            let fk = r.args.iter().find_map(|a| call_in(a.value, "ForeignKey"));
-            let rel = fk.map(|v| RawRel {
-                kind: None,
-                target: target(&v),
-                by_table: true,
-            });
-            r.mem(tn, false, rel)
-        }
-        "relationship" => {
-            let ann = r.m.ann.map(ann_type);
-            let first = (r.args.iter()).find(|a| a.name.is_none() || a.name == Some("argument"));
-            let t = match (first, &ann) {
-                (Some(a), _) => target(a.value),
-                (None, Some((tn, _))) if !tn.is_empty() => Target::Lit(tn.clone()),
-                _ => Target::Ref(String::new()),
-            };
-            let one = r.arg("uselist").is_some_and(|a| a.value == "False");
-            let kind = match (&ann, one) {
-                (_, true) => Some(RelationKind::HasOne),
-                (Some((_, many)), _) => Some(if *many {
-                    RelationKind::HasMany
-                } else {
-                    RelationKind::HasOne
-                }),
-                (None, _) => None,
-            };
-            let (Target::Lit(s) | Target::Ref(s)) = &t;
-            let tn = last(s).to_string();
-            let rel = RawRel {
-                kind,
-                target: t,
-                by_table: false,
-            };
-            r.mem(tn, ann.is_some_and(|a| a.1), Some(rel))
-        }
-        _ => None,
-    }
-}
-
-/// The first argument of `name(…)` inside the expression `v`, as written.
-fn call_in(v: &str, name: &str) -> Option<String> {
-    let at = v.find(name)?;
-    let open = at + name.len();
-    let b = v.as_bytes();
-    if b.get(open) != Some(&b'(') || (at > 0 && is_id(b[at - 1])) {
-        return None;
-    }
-    let close = matching(b, open)?;
-    let first = v[open + 1..close].split(',').next()?.trim();
-    (!first.is_empty()).then(|| first.to_string())
 }
 
 fn snake(name: &str) -> String {
@@ -1536,5 +1883,137 @@ class Post(db.Model):
             ]
         );
         assert!(m.complete, "{:?}", m.diagnostics);
+    }
+
+    #[test]
+    fn imports_of_unscanned_code_and_other_apps_are_never_matched_by_name() {
+        let users = "from django.db import models\nclass User(models.Model):\n    name = models.CharField(max_length=3)\n";
+        let shop = r#"from django.db import models
+from django.contrib.auth.models import User
+class Profile(models.Model):
+    pass
+class Order(models.Model):
+    owner = models.ForeignKey(User, on_delete=models.CASCADE)
+    same_app = models.ForeignKey('Profile', on_delete=models.CASCADE)
+    other_app = models.ForeignKey('User', on_delete=models.CASCADE)
+"#;
+        let m = model(&[("users/models.py", users), ("shop/models.py", shop)]);
+        assert_eq!(rels(&m), ["Order-HasOne->Profile via same_app"]);
+        let msgs: Vec<&str> = m.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(msgs.len(), 2, "{msgs:?}");
+        assert!(
+            msgs.iter()
+                .any(|x| x.contains("Order.owner") && x.contains("django.contrib.auth.models")),
+            "{msgs:?}"
+        );
+        assert!(
+            msgs.iter().any(|x| x.contains("Order.other_app")),
+            "{msgs:?}"
+        );
+    }
+
+    #[test]
+    fn app_label_comes_from_appconfig_else_directory() {
+        let apps = "from django.apps import AppConfig\nclass RetailConfig(AppConfig):\n    name = 'store.shop'\n    label = 'retail'\n";
+        let shop = "from django.db import models\nclass Product(models.Model):\n    pass\n";
+        let order = r#"from django.db import models
+class Order(models.Model):
+    a = models.ForeignKey('retail.Product', on_delete=models.CASCADE)
+    b = models.ForeignKey('shop.Product', on_delete=models.CASCADE)
+    c = models.ForeignKey('billing.Invoice', on_delete=models.CASCADE)
+"#;
+        let invoice = "from django.db import models\nclass Invoice(models.Model):\n    pass\n";
+        let m = model(&[
+            ("store/shop/apps.py", apps),
+            ("store/shop/models.py", shop),
+            ("ordering/models.py", order),
+            ("billing/models.py", invoice),
+        ]);
+        assert_eq!(
+            rels(&m),
+            ["Order-HasOne->Invoice via c", "Order-HasOne->Product via a"]
+        );
+        assert_eq!(m.diagnostics.len(), 1);
+        assert!(m.diagnostics[0].message.contains("Order.b"));
+    }
+
+    #[test]
+    fn models_on_unscanned_model_bases_are_entities_with_a_note() {
+        let src = r#"from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
+from django.contrib.contenttypes.models import ContentType
+from mptt.models import MPTTModel
+from django.db import models
+class User(AbstractBaseUser, PermissionsMixin):
+    name = models.CharField(max_length=3)
+class ObjectType(ContentType):
+    public = models.BooleanField()
+class Node(MPTTModel):
+    pass
+class Helper(models.Manager):
+    pass
+"#;
+        let m = model(&[("users/models.py", src)]);
+        let ids: Vec<&str> = m.entities.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["Node", "ObjectType", "User"]);
+        let notes = m
+            .diagnostics
+            .iter()
+            .filter(|d| d.message.contains("inherited fields"))
+            .count();
+        assert_eq!(notes, 3, "{:?}", m.diagnostics);
+    }
+
+    #[test]
+    fn tree_foreign_key_is_a_relation_and_unknown_field_calls_are_gaps() {
+        let src = r#"from django.db import models
+from mptt.fields import TreeForeignKey
+from taggit.managers import TaggableManager
+from somewhere import Mystery
+from utilities.fields import RestrictedGenericForeignKey
+class Group(models.Model):
+    parent = TreeForeignKey('self', null=True, on_delete=models.CASCADE)
+    tags = TaggableManager()
+    objects = models.Manager()
+    odd = Mystery(3)
+    note = 'text'
+    obj = RestrictedGenericForeignKey(ct_field='a', fk_field='b')
+"#;
+        let m = model(&[("g/models.py", src)]);
+        assert_eq!(rels(&m), ["Group-HasOne->Group via parent"]);
+        let fields: Vec<&str> = m.entities[0]
+            .fields
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        assert_eq!(fields, ["parent", "tags", "obj"]);
+        assert_eq!(m.diagnostics.len(), 1, "{:?}", m.diagnostics);
+        assert!(
+            m.diagnostics[0].message.contains("Group.odd")
+                && m.diagnostics[0].message.contains("field type not read")
+        );
+    }
+
+    #[test]
+    fn star_import_re_exports_and_inner_models_folders_resolve() {
+        let tokens = "from django.db import models\nclass Token(models.Model):\n    key = models.CharField(max_length=3)\n";
+        let init = "from .tokens import *\n";
+        let account = "from users.models import Token\nclass UserToken(Token):\n    pass\n";
+        let inner = "from django.db import models\nclass Rack(models.Model):\n    pass\n";
+        let other = "from django.db import models\nclass Cable(models.Model):\n    rack = models.ForeignKey('Rack', on_delete=models.CASCADE)\n";
+        let m = model(&[
+            ("users/__init__.py", ""),
+            ("account/__init__.py", ""),
+            ("users/apps.py", ""),
+            ("users/models/__init__.py", init),
+            ("users/models/tokens.py", tokens),
+            ("account/models.py", account),
+            ("dcim/apps.py", ""),
+            ("dcim/models/models.py", inner),
+            ("dcim/models/cables.py", other),
+        ]);
+        let ids: Vec<&str> = m.entities.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["Cable", "Rack", "Token", "UserToken"]);
+        assert_eq!(rels(&m), ["Cable-HasOne->Rack via rack"]);
+        assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
     }
 }
