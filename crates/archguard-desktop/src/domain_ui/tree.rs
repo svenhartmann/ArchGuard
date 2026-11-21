@@ -247,6 +247,7 @@ pub(crate) mod tests {
                 kind: RelationKind::HasOne,
                 via: "Address".into(),
                 source: "t".into(),
+                external: false,
             }],
             state_machines: vec![StateMachine {
                 entity: "Order".into(),

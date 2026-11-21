@@ -283,6 +283,7 @@ mod tests {
             kind: RelationKind::HasOne,
             via: to.into(),
             source: "t".into(),
+            external: false,
         }
     }
 

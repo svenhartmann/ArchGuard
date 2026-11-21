@@ -218,6 +218,7 @@ mod tests {
             kind,
             via: to.into(),
             source: "t".into(),
+            external: false,
         }
     }
 

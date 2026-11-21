@@ -401,7 +401,8 @@ fn print_entity(model: &DomainModel, entity: &Entity) {
     for r in &model.relations {
         let kind = label(&r.kind);
         if r.from == entity.id {
-            outln!("  {kind} {} via {}", r.to, r.via);
+            let ext = if r.external { " (external)" } else { "" };
+            outln!("  {kind} {}{ext} via {}", r.to, r.via);
         } else if r.to == entity.id {
             outln!("  {kind} from {} via {}", r.from, r.via);
         }

@@ -426,6 +426,13 @@ impl Extractor {
                     self.auth_user = AuthUser::Computed;
                 }
                 (Some(s), AuthUser::Unset) => self.auth_user = AuthUser::Literal(s),
+                (Some(s), AuthUser::Literal(first)) if *first != s => {
+                    let msg = format!(
+                        "AUTH_USER_MODEL has differing values ('{first}', '{s}') in the settings modules; settings.AUTH_USER_MODEL and get_user_model() relations are not read."
+                    );
+                    self.gap(&file, ln, msg);
+                    self.auth_user = AuthUser::Computed;
+                }
                 _ => {}
             }
         }
@@ -1874,6 +1881,51 @@ class Tag(models.Model):
         );
         assert!(m.relations.iter().all(|r| r.external));
         assert!(m.complete, "{:?}", m.diagnostics);
+    }
+
+    #[test]
+    fn django_differing_auth_user_models_are_a_gap_identical_ones_resolve() {
+        let acc = "from django.db import models\nclass Account(models.Model):\n    n = models.CharField(max_length=1)\n";
+        let files = |a: &'static str, b: &'static str| {
+            model(&[
+                ("accounts/apps.py", ""),
+                ("accounts/models.py", acc),
+                ("proj/settings/base.py", a),
+                ("proj/settings/local.py", b),
+                ("notes/models.py", OWNED),
+            ])
+        };
+        let same = files(
+            "AUTH_USER_MODEL = 'accounts.Account'\n",
+            "AUTH_USER_MODEL = 'accounts.Account'\n",
+        );
+        assert!(
+            rels(&same)
+                .iter()
+                .any(|s| s == "Note-HasOne->Account via owner")
+        );
+        let m = files(
+            "AUTH_USER_MODEL = 'accounts.Account'\n",
+            "AUTH_USER_MODEL = 'other.User'\n",
+        );
+        let msgs: Vec<&str> = m.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        assert!(msgs.iter().any(|s| s.contains("differing")), "{msgs:?}");
+        assert!(msgs.iter().any(|s| s.contains("Note.owner")), "{msgs:?}");
+        assert!(!rels(&m).iter().any(|s| s.contains("via owner")));
+    }
+
+    #[test]
+    fn django_user_import_is_a_gap_when_auth_user_model_points_elsewhere() {
+        let acc = "from django.db import models\nclass Account(models.Model):\n    n = models.CharField(max_length=1)\n";
+        let src = "from django.db import models\nfrom django.contrib.auth.models import User\nclass Note(models.Model):\n    u = models.ForeignKey(User, on_delete=models.CASCADE)\n";
+        let m = model(&[
+            ("accounts/apps.py", ""),
+            ("accounts/models.py", acc),
+            ("proj/settings.py", "AUTH_USER_MODEL = 'accounts.Account'\n"),
+            ("notes/models.py", src),
+        ]);
+        assert!(rels(&m).is_empty(), "{:?}", rels(&m));
+        assert!(m.diagnostics.iter().any(|d| d.message.contains("Note.u")));
     }
 
     #[test]
