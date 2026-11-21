@@ -56,6 +56,10 @@ pub use staged::{
 };
 pub mod domain_model;
 mod ui_flow;
+mod ui_flow_matrix;
+pub use ui_flow_matrix::{
+    MatrixKind, MatrixRow, MatrixRowKind, PermissionMatrix, permission_matrix,
+};
 // Declared here, not in `ui_flow`: a test file importing its parent closes a file cycle.
 #[cfg(test)]
 mod ui_flow_role_tests;

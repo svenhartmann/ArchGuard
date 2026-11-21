@@ -3,8 +3,9 @@
 use crate::engineering_tools::EngineeringParams;
 use crate::server::ArchguardTools;
 use archguard_engine::core::{
-    Assignment, Origin, Outcome, ScreenReach, UiFlow, evaluate_access, resolve_assignment,
-    screen_reaches, start_screen_ids, ui_flow_findings, ui_flow_summary,
+    Assignment, MatrixKind, Origin, Outcome, ScreenReach, UiFlow, evaluate_access,
+    permission_matrix, resolve_assignment, screen_reaches, start_screen_ids, ui_flow_findings,
+    ui_flow_summary,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{ErrorData, schemars, tool, tool_router};
@@ -24,6 +25,11 @@ pub struct UiFlowParams {
     /// Exact application (project) name: keeps its screens, transitions and actions and
     /// simulates from its start screens. Endpoints, findings and diagnostics stay complete.
     pub application: Option<String>,
+    /// `matrix` returns only the permission matrix: one row per screen or endpoint, a cell per
+    /// role (anonymous, signed in, each defined role) of allowed/denied/unknown. Omit for the flow.
+    pub view: Option<String>,
+    /// With view `matrix`: screens, endpoints or both (default).
+    pub kind: Option<String>,
     /// Revision from a previous page. Rejects a changed flow; restart at offset 0.
     pub expected_revision: Option<String>,
 }
@@ -39,6 +45,18 @@ pub fn validate(p: &UiFlowParams) -> Result<(), ErrorData> {
     {
         return Err(crate::tools::invalid_params(
             "roles (at most 64), application and expected_revision must be 1..=256 bytes without NUL",
+        ));
+    }
+    if p.kind.is_some() && p.view.is_none() {
+        return Err(crate::tools::invalid_params("kind requires view: matrix"));
+    }
+    if p.view.as_deref().is_some_and(|v| v != "matrix")
+        || p.kind
+            .as_deref()
+            .is_some_and(|k| !["screens", "endpoints", "both"].contains(&k))
+    {
+        return Err(crate::tools::invalid_params(
+            "view must be matrix; kind must be screens, endpoints or both",
         ));
     }
     if p.anonymous == Some(true) && p.roles.is_some() {
@@ -133,7 +151,49 @@ fn simulation_metadata(starts: &[String], resolved: &Assignment, chosen: &Assign
     json!({"anonymous":!chosen.authenticated,"roles":chosen.roles,"implied_roles":implied,"policies":resolved.policies,"start_screens":starts,"custom_and_undefined_policies":"unknown"})
 }
 
+/// `view: "matrix"`: the permission matrix rows, filtered by `query`, paginated.
+fn matrix_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData> {
+    let kind = match p.kind.as_deref() {
+        Some("screens") => MatrixKind::Screens,
+        Some("endpoints") => MatrixKind::Endpoints,
+        _ => MatrixKind::Both,
+    };
+    let rev = revision(&(flow, &p.view, &p.kind));
+    check_revision(&rev, p.expected_revision.as_deref())?;
+    let matrix = permission_matrix(flow, kind);
+    let q = p.page.query.as_deref().unwrap_or("").trim().to_lowercase();
+    let rows: Vec<Value> = (matrix.rows.iter())
+        .map(|r| {
+            let cells: BTreeMap<&str, &'static str> = (matrix.roles.iter())
+                .map(String::as_str)
+                .zip(r.cells.iter().map(|c| outcome(*c)))
+                .collect();
+            json!({"kind":"matrix","row":r.kind,"label":r.label,"file":r.file,"line":r.line,"requires":r.requires,"cells":cells})
+        })
+        .filter(|r| q.is_empty() || r.to_string().to_lowercase().contains(&q))
+        .collect();
+    crate::engineering_tools::page(
+        if flow.complete {
+            "complete"
+        } else {
+            "incomplete"
+        },
+        json!({"definition":flow.definition,"revision":rev,"view":"matrix","roles":matrix.roles,
+            "limitations":"Columns: anonymous, signed in, and each role or group the code defines (not permission ids). A role cell is a signed-in user holding exactly that role, hierarchy and policy definitions applied. Screens are judged by their own access (no guard = allowed), not by a navigation path. undeclared endpoints, custom checks and unreadable conditions are unknown, never allowed. Static evidence, no running application."}),
+        rows.iter(),
+        &p.page,
+        Clone::clone,
+    )
+}
+
 pub fn ui_flow_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData> {
+    match p.view {
+        Some(_) => matrix_value(flow, p),
+        None => flow_value(flow, p),
+    }
+}
+
+fn flow_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData> {
     let app = p.application.as_deref();
     if app.is_some_and(|a| {
         !flow
@@ -212,7 +272,7 @@ pub fn ui_flow_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData
 #[tool_router(router = ui_flow_router, vis = "pub(crate)")]
 impl ArchguardTools {
     #[tool(
-        description = "Read the UI flow from code (ADR 0021): screens (route, name, access, file, line), navigation transitions, actions with their HTTP calls, backend endpoint access (protected/open/undeclared), frontend/backend mismatch findings, summary and gap diagnostics. Built-in rules for Blazor, Angular, ASP.NET and Spring plus .archguard/ui-flow.json. Also the roles, permissions and policies the code defines (metadata roles/policies; role and policy rows with file:line). With roles or anonymous: true it simulates that user (role hierarchy and policy definitions applied): each screen sure/possible/denied/no_known_path/no_start_screen from the start screens (marked or routed `/`) and each endpoint allowed/denied/unknown. Static evidence, not a running application; undeclared never means allowed. application narrows screens, transitions and actions. Read-only; flattened 4 KiB pages, follow next_offset with metadata.revision as expected_revision."
+        description = "Read the UI flow from code (ADR 0021): screens (route, name, access, file, line), navigation transitions, actions with their HTTP calls, backend endpoint access (protected/open/undeclared), frontend/backend mismatch findings, summary and gap diagnostics. Built-in rules for Blazor, Angular, ASP.NET and Spring plus .archguard/ui-flow.json. Also the roles, permissions and policies the code defines (metadata roles/policies; role and policy rows with file:line). With roles or anonymous: true it simulates that user (role hierarchy and policy definitions applied): each screen sure/possible/denied/no_known_path/no_start_screen from the start screens (marked or routed `/`) and each endpoint allowed/denied/unknown. Static evidence, not a running application; undeclared never means allowed. application narrows screens, transitions and actions. view: \"matrix\" (kind screens|endpoints|both) returns instead the permission matrix: rows of screens/endpoints with an allowed/denied/unknown cell per role (anonymous, signed in, each defined role). Read-only; flattened 4 KiB pages, follow next_offset with metadata.revision as expected_revision."
     )]
     pub(crate) async fn ui_flow(
         &self,
@@ -327,5 +387,73 @@ mod tests {
         assert_eq!(simulation["implied_roles"], json!(["Administrator"]));
         assert_eq!(simulation["policies"]["CanPurge"], true);
         assert_eq!(purge_reach(&page(Some(&[]))), "denied");
+    }
+
+    #[test]
+    fn matrix_view_pages_rows_with_a_cell_per_role() {
+        let params = |offset, limit| UiFlowParams {
+            page: EngineeringParams {
+                offset: Some(offset),
+                limit: Some(limit),
+                ..EngineeringParams::default()
+            },
+            view: Some("matrix".into()),
+            kind: Some("screens".into()),
+            ..UiFlowParams::default()
+        };
+        let first = ui_flow_value(&flow(), &params(0, 1)).unwrap();
+        assert_eq!(first["total"], 2);
+        assert_eq!(first["next_offset"], 1);
+        assert_eq!(
+            first["metadata"]["roles"],
+            json!(["anonymous", "signed in", "role:Owner"])
+        );
+        assert_eq!(first["items"][0]["label"], "/");
+        assert_eq!(first["items"][0]["cells"]["anonymous"], "allowed");
+        let second = ui_flow_value(&flow(), &params(1, 1)).unwrap();
+        assert_eq!(second["next_offset"], Value::Null);
+        let purge = &second["items"][0]["cells"];
+        // CanPurge needs role Administrator, which Owner includes
+        assert_eq!(
+            (
+                purge["anonymous"].as_str(),
+                purge["signed in"].as_str(),
+                purge["role:Owner"].as_str()
+            ),
+            (Some("denied"), Some("denied"), Some("allowed"))
+        );
+        let bad = UiFlowParams {
+            view: Some("x".into()),
+            ..UiFlowParams::default()
+        };
+        assert!(validate(&bad).is_err());
+    }
+
+    #[test]
+    fn a_role_named_like_a_fixed_column_does_not_overwrite_it() {
+        let mut f = flow();
+        f.roles.push(RoleDef {
+            name: "anonymous".into(),
+            kind: RoleKind::Role,
+            includes: vec![],
+            file: "R.cs".into(),
+            line: 1,
+            source: "test".into(),
+        });
+        f.screens[1].access = Some(Condition::Authenticated);
+        let params = UiFlowParams {
+            view: Some("matrix".into()),
+            kind: Some("screens".into()),
+            ..UiFlowParams::default()
+        };
+        let v = ui_flow_value(&f, &params).unwrap();
+        let cells = &v["items"][1]["cells"];
+        assert_eq!(cells["anonymous"], "denied");
+        assert_eq!(cells["role:anonymous"], "allowed");
+        let no_view = UiFlowParams {
+            kind: Some("both".into()),
+            ..UiFlowParams::default()
+        };
+        assert!(validate(&no_view).is_err());
     }
 }
