@@ -253,3 +253,18 @@ fn template_records_head_and_a_later_commit_warns() {
         "{stderr}"
     );
 }
+
+#[test]
+fn warnings_from_the_assessment_never_reach_the_terminal_as_escapes() {
+    let (_dir, root) = fixture();
+    fs::create_dir_all(root.join(".archguard")).unwrap();
+    fs::write(
+        root.join(".archguard/assessment.toml"),
+        "[assessment]\nassessor = \"x\"\ndate = \"2026-11-06\"\nrevision = \"0123\\u001b]0;pwned\\u0007\"\n",
+    )
+    .unwrap();
+    let out = archguard(&root, &["evaluate", "--quiet"]);
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("warning"), "{stderr}");
+    assert!(!stderr.contains('\u{1b}'), "{stderr:?}");
+}
