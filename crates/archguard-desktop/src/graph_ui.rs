@@ -11,10 +11,11 @@ pub mod simulation;
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use slint::{ComponentHandle, Model, SharedString, VecModel};
 
-use crate::context::Loaded;
+use crate::context::{Analysis, Loaded};
 use crate::deferred::{Coalesce, TYPING};
 use crate::documents::{self, with_store};
 use crate::export::{Diagram, GraphInput};
@@ -345,6 +346,50 @@ fn edge_mode(m: i32) -> EdgeMode {
     }
 }
 
+thread_local! {
+    /// The analysis whose quality findings a worker is reading.
+    static LOADING: RefCell<Option<Arc<Analysis>>> = const { RefCell::new(None) };
+}
+
+/// Read the quality report for Graphs still without one on a worker, so the
+/// UI thread never waits on the file. A result for another document or a
+/// newer analysis is dropped; the next sync asks again if still missing.
+fn request_findings(ui: &AppWindow, analysis: Arc<Analysis>) {
+    let mut missing = false;
+    instances::each(|s: &mut Graph| missing |= !s.findings.loaded());
+    let busy = LOADING.with_borrow(|l| l.as_ref().is_some_and(|a| Arc::ptr_eq(a, &analysis)));
+    if !missing || busy {
+        return;
+    }
+    LOADING.with_borrow_mut(|l| *l = Some(analysis.clone()));
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let run = &analysis.run;
+        let report = archguard_engine::read_quality_findings(
+            &analysis.root,
+            &run.config,
+            (&run.graph, &run.source_names),
+        );
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            LOADING.with_borrow_mut(|l| {
+                if l.as_ref().is_some_and(|a| Arc::ptr_eq(a, &analysis)) {
+                    *l = None;
+                }
+            });
+            let current = with_store(|s| s.active()?.analysis.clone());
+            if !current.is_some_and(|a| Arc::ptr_eq(&a, &analysis)) {
+                return;
+            }
+            instances::each(|s: &mut Graph| {
+                if !s.findings.loaded() {
+                    s.findings = quality::Findings::new(report.clone(), &s.g.tree);
+                }
+            });
+            panes_ui::sync(&ui);
+        });
+    });
+}
+
 /// Build, drop and show the active document's Graphs for `layout`.
 fn sync(ui: &AppWindow, layout: &Layout) -> Vec<u32> {
     let Some(analysis) = with_store(|s| s.active()?.analysis.clone()) else {
@@ -354,7 +399,7 @@ fn sync(ui: &AppWindow, layout: &Layout) -> Vec<u32> {
     let tree = tab_support::tree(&data);
     let run = data.run;
     let groups = cycle_groups(&data);
-    instances::sync(ui, layout, "graph", &tree, |tab, node| {
+    let gone = instances::sync(ui, layout, "graph", &tree, |tab, node| {
         let mut g = GraphState::with_review(
             tree.clone(),
             data.sources.clone(),
@@ -364,14 +409,11 @@ fn sync(ui: &AppWindow, layout: &Layout) -> Vec<u32> {
         if let Some(n) = node {
             g.open(n);
         }
-        let report = archguard_engine::read_quality_findings(
-            data.root,
-            &run.config,
-            (&run.graph, &run.source_names),
-        );
-        let findings = quality::Findings::new(report, &tree);
+        let findings = quality::Findings::default();
         Some(Graph::new(g, &groups, findings))
-    })
+    });
+    request_findings(ui, analysis);
+    gone
 }
 
 type StateAction = Box<dyn FnOnce(&mut GraphState)>;

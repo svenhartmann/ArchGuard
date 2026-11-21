@@ -136,6 +136,71 @@ pub fn source_fingerprint(root: &Path, config: &Config) -> Result<String, Archgu
     Ok(format!("{:x}", hash.finalize()))
 }
 
+/// Cheap change detector for polling: hash of `(rel_path, mtime, len)` of
+/// the configured source set, no file reads. Unequal stamps only mean
+/// "look closer" ([`source_content_fingerprint`]); equal stamps mean unchanged.
+pub fn source_stamp(root: &Path, config: &Config) -> Result<String, ArchguardError> {
+    let mut files = pipeline::walk_files(root, config)?;
+    files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+    let mut hash = Sha256::new();
+    for file in &files {
+        hash.update(file.rel_path.as_bytes());
+        hash.update(b"\0");
+        hash.update(file.project.as_bytes());
+        hash.update(b"\0");
+        match file_stamp(&file.path) {
+            FileStamp::Missing => hash.update(b"-"),
+            FileStamp::Stamped { secs, nanos, len } => {
+                hash.update(secs.to_le_bytes());
+                hash.update(nanos.to_le_bytes());
+                hash.update(len.to_le_bytes());
+            }
+        }
+        hash.update(b"\n");
+    }
+    // A few small Cargo.toml reads: edits to them must change the stamp too.
+    pipeline::hash_manifests(
+        root,
+        files
+            .iter()
+            .filter(|file| file.lang == archguard_extract::Lang::Rust)
+            .map(|file| file.rel_path.as_str()),
+        &mut hash,
+    );
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+/// Hash of the configured source set's paths, projects and bytes, without
+/// mtimes: a touch keeps it, an edit changes it. Not the cache key.
+pub fn source_content_fingerprint(root: &Path, config: &Config) -> Result<String, ArchguardError> {
+    let mut files = pipeline::walk_files(root, config)?;
+    files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+    let mut hash = Sha256::new();
+    for file in &files {
+        hash.update(file.rel_path.as_bytes());
+        hash.update(b"\0");
+        hash.update(file.project.as_bytes());
+        hash.update(b"\0");
+        match fs::read(&file.path) {
+            Ok(bytes) => {
+                hash.update([1]);
+                hash.update((bytes.len() as u64).to_le_bytes());
+                hash.update(bytes);
+            }
+            Err(_) => hash.update([0]),
+        }
+    }
+    pipeline::hash_manifests(
+        root,
+        files
+            .iter()
+            .filter(|file| file.lang == archguard_extract::Lang::Rust)
+            .map(|file| file.rel_path.as_str()),
+        &mut hash,
+    );
+    Ok(format!("{:x}", hash.finalize()))
+}
+
 /// The hashed state of one file, or a sentinel when it cannot be stat'ed.
 enum FileStamp {
     Missing,
@@ -496,6 +561,64 @@ mod tests {
             fs::write(path, content).expect("write file");
         }
         dir
+    }
+
+    #[test]
+    fn stamp_follows_size_and_mtime_content_fingerprint_ignores_touch() {
+        let dir = fixture(&[("src/a.py", "x = 1\n")]);
+        let mut config = Config::default();
+        config.project.source_roots = vec!["src".into()];
+        let path = dir.path().join("src/a.py");
+        let stamp = || source_stamp(dir.path(), &config).unwrap();
+        let content = || source_content_fingerprint(dir.path(), &config).unwrap();
+        let (s0, c0) = (stamp(), content());
+        assert_eq!(stamp(), s0, "stable");
+
+        let later = SystemTime::now() + std::time::Duration::from_secs(60);
+        let set_mtime = || {
+            File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(later)
+                .unwrap();
+        };
+        set_mtime();
+        assert_ne!(stamp(), s0, "mtime change");
+        assert_eq!(content(), c0, "touch keeps content hash");
+
+        let s1 = stamp();
+        fs::write(&path, "x = 12\n").unwrap();
+        set_mtime();
+        assert_ne!(stamp(), s1, "size change with same mtime");
+        assert_ne!(content(), c0, "edit changes content hash");
+    }
+
+    #[test]
+    fn stamp_follows_cargo_manifests_and_project_assignment() {
+        let dir = fixture(&[
+            ("src/lib.rs", "pub fn a() {}\n"),
+            ("Cargo.toml", "[package]\nname = \"a\"\n"),
+        ]);
+        let mut config = Config::default();
+        config.project.source_roots = vec!["src".into()];
+        let stamp = |c: &Config| source_stamp(dir.path(), c).unwrap();
+        let s0 = stamp(&config);
+        fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"b\"\n").unwrap();
+        let s1 = stamp(&config);
+        assert_ne!(s1, s0, "manifest edit");
+
+        // A new build file only renames the project of a source file.
+        let dir = fixture(&[("svc/src/main/scala/A.scala", "class A\n")]);
+        let mut config = Config::default();
+        config.project.source_roots = vec!["svc".into()];
+        let before = source_stamp(dir.path(), &config).unwrap();
+        fs::write(dir.path().join("svc/build.sbt"), "name := \"svc\"\n").unwrap();
+        assert_ne!(
+            source_stamp(dir.path(), &config).unwrap(),
+            before,
+            "project"
+        );
     }
 
     #[test]

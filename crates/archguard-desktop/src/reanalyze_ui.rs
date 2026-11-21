@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use archguard_engine::{load_config, source_fingerprint};
+use archguard_engine::{load_config, source_content_fingerprint, source_stamp};
 use slint::ComponentHandle;
 
 use crate::documents::{self, DocId, Document, Status, with_store};
@@ -37,10 +37,41 @@ pub enum Blocked {
     Unsaved(String),
 }
 
-/// The fingerprint of `root`'s configured sources; blocking, for workers.
+/// The content fingerprint of `root`'s configured sources (touching a file
+/// keeps it); reads every file, so blocking, for workers.
 pub fn fingerprint(root: &Path) -> Option<String> {
     let loaded = load_config(None, root).ok()?;
-    source_fingerprint(root, &loaded.config).ok()
+    source_content_fingerprint(root, &loaded.config).ok()
+}
+
+/// The last check of one document: the cheap stat stamp it saw and the
+/// content fingerprint it found for that stamp.
+#[derive(Clone)]
+struct Seen {
+    id: DocId,
+    stamp: String,
+    content: Option<String>,
+}
+
+/// [`fingerprint`] of `root`, but only reading files when the stat stamp
+/// differs from `seen`'s; the check polls, so an idle project costs a walk.
+fn check(root: &Path, id: DocId, seen: Option<Seen>) -> (Option<String>, Option<Seen>) {
+    let Some(config) = load_config(None, root).ok().map(|l| l.config) else {
+        return (None, None);
+    };
+    let Ok(stamp) = source_stamp(root, &config) else {
+        return (None, None);
+    };
+    if let Some(s) = seen.filter(|s| s.id == id && s.stamp == stamp) {
+        return (s.content.clone(), Some(s));
+    }
+    let content = source_content_fingerprint(root, &config).ok();
+    let seen = Seen {
+        id,
+        stamp,
+        content: content.clone(),
+    };
+    (content, Some(seen))
 }
 
 /// Simulated changes (confirmed or proposed) or unsaved edits of `id`.
@@ -94,6 +125,7 @@ struct Watch {
     /// The changed fingerprint already announced, so a dismissed notice
     /// stays dismissed until the sources change again.
     notified: Option<String>,
+    seen: Option<Seen>,
 }
 
 thread_local! {
@@ -118,11 +150,15 @@ fn announces(baseline: Option<&str>, current: Option<&str>, notified: Option<&st
 pub fn watch(ui: &AppWindow) {
     let weak = ui.as_weak();
     let timer = slint::Timer::default();
-    timer.start(slint::TimerMode::Repeated, Duration::from_secs(1), move || {
-        if let Some(ui) = weak.upgrade() {
-            poll(&ui);
-        }
-    });
+    timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_secs(1),
+        move || {
+            if let Some(ui) = weak.upgrade() {
+                poll(&ui);
+            }
+        },
+    );
     // Runs as long as the app.
     std::mem::forget(timer);
 }
@@ -146,15 +182,19 @@ fn poll(ui: &AppWindow) {
     let Some((id, root, base)) = target() else {
         return;
     };
-    WATCH.with_borrow_mut(|w| w.busy = true);
+    let seen = WATCH.with_borrow_mut(|w| {
+        w.busy = true;
+        w.seen.clone()
+    });
     let weak = ui.as_weak();
     std::thread::spawn(move || {
         let started = Instant::now();
-        let current = fingerprint(&root);
+        let (current, seen) = check(&root, id, seen);
         let took = started.elapsed();
         let _ = slint::invoke_from_event_loop(move || {
             WATCH.with_borrow_mut(|w| {
                 w.busy = false;
+                w.seen = seen;
                 w.next = Some(Instant::now() + interval(took));
             });
             if let Some(ui) = weak.upgrade() {
@@ -171,7 +211,8 @@ fn checked(ui: &AppWindow, id: DocId, base: &str, current: Option<String>) {
     if still != Some(true) || documents::active_id() != Some(id) {
         return;
     }
-    let show = WATCH.with_borrow(|w| announces(Some(base), current.as_deref(), w.notified.as_deref()));
+    let show =
+        WATCH.with_borrow(|w| announces(Some(base), current.as_deref(), w.notified.as_deref()));
     // Another notice stays; the change is announced once it is gone.
     if show && ui.get_notice().is_empty() {
         WATCH.with_borrow_mut(|w| w.notified = current);

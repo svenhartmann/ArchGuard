@@ -37,6 +37,11 @@ impl Findings {
         s
     }
 
+    /// Whether the report has arrived (it is read on a worker).
+    pub fn loaded(&self) -> bool {
+        self.report.is_some()
+    }
+
     /// Place the findings on `tree` again (a simulation rebuilt it).
     pub fn retree(&mut self, tree: &Tree) {
         self.counts = vec![0; tree.nodes.len()];
@@ -120,6 +125,20 @@ impl Findings {
 mod tests {
     use super::*;
     use crate::quality_ui::findings::tests::imported_fixture;
+
+    #[test]
+    fn findings_are_loaded_once_the_report_is_placed() {
+        assert!(!Findings::default().loaded());
+        let (root, run) = imported_fixture("graph-loaded");
+        let report = archguard_engine::read_quality_findings(
+            &root,
+            &run.config,
+            (&run.graph, &run.source_names),
+        );
+        let tree = Tree::from_graph(&run.graph);
+        assert!(Findings::new(report, &tree).loaded());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     /// The file and its packages count the two active findings; the
     /// unmapped one counts nowhere; the inspector lists the file's.
