@@ -95,7 +95,8 @@ pub(crate) fn run(
             outln!("ACD: {:.3} -> {:.3}", delta.acd_before, delta.acd_after);
             outln!(
                 "SCCs: {} -> {}",
-                delta.scc_count_before, delta.scc_count_after
+                delta.scc_count_before,
+                delta.scc_count_after
             );
         }
     }

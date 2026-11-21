@@ -247,7 +247,11 @@ fn arc42_check_accepts_a_current_document_the_desktop_wrote_in_german() {
             .args(["doc", "--arc42", "--check"])
             .output()
             .unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
     };
     fs::write(root.join("arc42.md"), german.markdown(None)).unwrap();
     check();

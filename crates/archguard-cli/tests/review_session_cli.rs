@@ -203,7 +203,11 @@ fn saved_review_json_carries_the_report_and_foreign_formats_are_rejected_before_
 fn review_prints_the_assessment_as_markdown() {
     let root = project();
     let output = run(root.path(), &["--format", "markdown"]);
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.starts_with("# Architecture review"), "{text}");
     let json = value(run(root.path(), &["--format", "json"]));

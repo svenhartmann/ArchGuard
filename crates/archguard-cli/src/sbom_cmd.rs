@@ -72,7 +72,9 @@ fn print_summary(sbom: &Sbom, policy_active: bool) {
     for manifest in &sbom.manifests {
         outln!(
             "  {} ({}, {} components)",
-            manifest.path, manifest.ecosystem, manifest.components
+            manifest.path,
+            manifest.ecosystem,
+            manifest.components
         );
     }
     for note in &sbom.notes {
