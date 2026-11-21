@@ -7,7 +7,8 @@ and compares two labelled runs, so "byte-identical on the corpus" is one command
 
   view_corpus.py run --bin target/release/archguard --label before [--apps a,b] [--corpus DIR] [--jobs N] [--timeout 600]
   view_corpus.py compare before after [--expect-changed a,b]   # exit 0 iff all other apps are identical
-  view_corpus.py table after                                    # markdown table of summary.json
+  view_corpus.py access-diff DIR_BASE DIR_HEAD                  # exit 1 iff an element moved towards Open
+  view_corpus.py table after                                  # markdown table of summary.json
 
 Files per app and view: <app>.<view>.json (stdout), .err (stderr), .meta.json (exit code, seconds,
 timeout). The corpus is only read, never written.
@@ -143,6 +144,83 @@ def cmd_compare(a):
     sys.exit(1 if bad else 0)
 
 
+KINDS = ("endpoints", "screens", "links", "actions")
+STATES = ("open", "undeclared", "protected", "unknown")
+
+
+def _state(v, legacy_null):
+    """Old condition object or {"protected": ..} -> protected; "open"/"undeclared"; null -> legacy_null."""
+    if v is None:
+        return legacy_null
+    return v if v in ("open", "undeclared") else "protected"
+
+
+def _flow_is_new(flow):
+    """New shape: string access, a "protected" wrapper or `weak` somewhere (or role_conventions)."""
+    if "role_conventions" in flow:
+        return True
+    for k in ("screens", "transitions", "actions"):
+        for e in flow.get(k, []):
+            v = e.get("access")
+            if "weak" in e or isinstance(v, str) or (isinstance(v, dict) and "protected" in v):
+                return True
+    return False
+
+
+def _name(o):
+    if isinstance(o, dict):
+        k, v = next(iter(o.items()), ("", ""))
+        return f"{k}:{v if isinstance(v, str) else json.dumps(v, sort_keys=True)}"
+    return str(o)
+
+
+def access_elements(flow):
+    """{(kind, identity): state}. Old shape: absent/null screen, link or action condition is "unknown"
+    (legacy), so a later switch to undeclared is no move; new shape: absent/null is undeclared."""
+    new = _flow_is_new(flow)
+    null = "undeclared" if new else "unknown"
+    out = {}
+    for e in flow.get("endpoints", []):
+        out[("endpoints", f"{e.get('application') or ''} {e['method']} {e['path']}".strip())] = _state(e.get("access"), "undeclared")
+    for e in flow.get("screens", []):
+        ident = f"{e.get('application') or ''} {e.get('route') or e['id']}".strip()
+        out[("screens", ident)] = _state(e.get("access"), null)
+    for k, kind, name in (("transitions", "links", lambda e: f"{_name(e['from'])} -> {_name(e['target'])} [{e.get('trigger') or ''}]"),
+                          ("actions", "actions", lambda e: f"{_name(e['screen'])} -> {_name(e['call'])} [{e.get('trigger') or ''}]")):
+        for e in flow.get(k, []):
+            out[(kind, name(e))] = _state(e["access"] if "access" in e else e.get("condition"), null)
+    return out
+
+
+def _load_flows(d):
+    return {f.name[: -len(".ui-flow.json")]: json.loads(f.read_text())["flow"]
+            for f in sorted(Path(d).glob("*.ui-flow.json")) if f.stat().st_size}
+
+
+def access_moves(base, head):
+    """(per-app count tables, moves towards Open) for two {app: flow} dicts."""
+    counts, moves = {}, []
+    for app in sorted(set(base) | set(head)):
+        b = access_elements(base[app]) if app in base else {}
+        h = access_elements(head[app]) if app in head else {}
+        counts[app] = {k: tuple({s: sum(1 for (kk, _), v in e.items() if kk == k and v == s) for s in STATES} for e in (b, h)) for k in KINDS}
+        moves += [(app, kind, ident, b.get((kind, ident), "absent")) for (kind, ident), v in sorted(h.items())
+                  if v == "open" and b.get((kind, ident)) != "open"]
+    return counts, moves
+
+
+def cmd_access_diff(a):
+    counts, moves = access_moves(_load_flows(a.base), _load_flows(a.head))
+    for app, kinds in counts.items():
+        deltas = [f"{k}:" + ",".join(f"{s[0].upper()}{h[s] - b[s]:+d}" for s in STATES if h[s] != b[s])
+                  for k, (b, h) in kinds.items() if b != h]
+        print(f"{app}: " + ("  ".join(deltas) or "no change"))
+    for app, kind, ident, was in moves:
+        print(f"TOWARDS OPEN {app} {kind} {ident} ({was} -> open)")
+    print(f"{len(moves)} element(s) moved towards Open")
+    sys.exit(1 if moves else 0)
+
+
 def cmd_table(a):
     S = load(a.label)
     ui = ["screens", "actions", "unresolved_actions", "endpoints_protected", "endpoints_open",
@@ -180,6 +258,10 @@ def main(argv=None):
     t = sub.add_parser("table")
     t.add_argument("label")
     t.set_defaults(f=cmd_table)
+    d = sub.add_parser("access-diff")
+    d.add_argument("base")
+    d.add_argument("head")
+    d.set_defaults(f=cmd_access_diff)
     a = p.parse_args(argv)
     a.f(a)
 
