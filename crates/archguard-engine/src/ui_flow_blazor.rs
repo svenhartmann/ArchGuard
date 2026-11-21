@@ -5,8 +5,9 @@
 //! - `@page "/route"`: one `page` screen per component; several `@page` lines
 //!   keep the first as `route`, all of them resolve navigation targets.
 //! - `[Authorize]`, `[Authorize(Roles = "A,B")]`, `[Authorize(Policy = "P")]`,
-//!   `[Authorize("P")]` (via `@attribute` or on the code-behind class) and
-//!   `[AllowAnonymous]`, which drops every condition.
+//!   `[Authorize("P")]` (via `@attribute`, `_Imports.razor` above the component,
+//!   or on the component's own class in the code-behind) and `[AllowAnonymous]`
+//!   (as an attribute only), which makes the page `Open`. Attribute names are exact.
 //! - `<a href>` and `<NavLink href>` with a relative or rooted path; Razor
 //!   expressions inside a segment (`item/@item.Id`) become parameter segments.
 //!   Links with a scheme (`https:`, `mailto:`) or a fragment only are ignored.
@@ -39,15 +40,15 @@
 //! resolve within one application).
 use crate::extract_ctx::{ExtractContext, ancestors, read_text, walk, with_root_config};
 use crate::services::support::test_path;
+use crate::ui_flow_backend as backend;
 use archguard_core::{
-    Action, Call, Condition, DiagnosticSeverity, Origin, Screen, ScreenKind, Transition, UiFlow,
-    UiFlowDiagnostic,
+    AccessState, Action, Call, Condition, DiagnosticSeverity, Origin, Screen, ScreenKind,
+    Transition, UiFlow, UiFlowDiagnostic,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use text::{
-    Blocks, attr, balanced, blank, calls, guards, line, links, literal, path_of, split_args,
-    tag_end,
+    Blocks, attr, blank, calls, guards, line, links, literal, path_of, split_args, tag_end,
 };
 
 const SOURCE: &str = "blazor";
@@ -165,10 +166,31 @@ fn discover(root: &Path, flow: &mut UiFlow) -> Option<Files> {
 fn load(root: &Path, files: &Files, flow: &mut UiFlow) -> Vec<Component> {
     let razor = |text: String| blank(&blank(&text, "@*", "*@"), "<!--", "-->");
     let mut components = Vec::new();
+    let mut imports = BTreeMap::new();
     for rel in &files.razor {
+        if rel.rsplit('/').next() == Some("_Imports.razor")
+            && let Some(text) = read(root, rel, flow)
+        {
+            let dir = rel.rsplit_once('/').map_or("", |(d, _)| d);
+            imports.insert(dir.to_string(), (rel.clone(), razor(text)));
+        }
+    }
+    let derived = attributes::derived_attributes(root, files);
+    for rel in &files.razor {
+        if rel.rsplit('/').next() == Some("_Imports.razor") {
+            continue;
+        }
         let Some(text) = read(root, rel, flow) else {
             continue;
         };
+        let mut above = Vec::new();
+        for dir in ancestors(rel) {
+            above.extend(imports.get(dir).cloned());
+            if files.projects.contains_key(dir) {
+                break;
+            }
+        }
+        above.reverse();
         let mut texts = vec![(rel.clone(), razor(text))];
         let cs = format!("{rel}.cs");
         if files.code_behind.contains(&cs)
@@ -176,7 +198,14 @@ fn load(root: &Path, files: &Files, flow: &mut UiFlow) -> Vec<Component> {
         {
             texts.push((cs, razor(text)));
         }
-        components.push(component(root, rel, &files.projects, texts, flow));
+        components.push(component(
+            root,
+            rel,
+            &files.projects,
+            texts,
+            (&above, &derived),
+            flow,
+        ));
     }
     components
 }
@@ -250,6 +279,7 @@ fn component(
     rel: &str,
     projects: &Projects,
     texts: Vec<(String, String)>,
+    (imports, derived): (&[(String, String)], &BTreeSet<String>),
     flow: &mut UiFlow,
 ) -> Component {
     let (application, inner) = owner(root, rel, projects);
@@ -273,7 +303,7 @@ fn component(
     };
     if first > 0 {
         let name = inner.rsplit('/').next().unwrap_or(inner);
-        let access = access(&texts, flow);
+        let access = attributes::access(&texts, imports, derived, flow);
         flow.screens.push(Screen {
             weak: false,
             id: id.clone(),
@@ -283,7 +313,7 @@ fn component(
             application: application.clone(),
             file: file.clone(),
             line: first,
-            access: archguard_core::AccessState::from_parts(access, false),
+            access,
             source: SOURCE.into(),
         });
     }
@@ -352,33 +382,111 @@ fn routes(file: &str, text: &str, flow: &mut UiFlow) -> (Vec<String>, u32) {
 }
 
 /// Page access from `[Authorize]`/`[AllowAnonymous]` in the markup or code-behind.
-fn access(texts: &[(String, String)], flow: &mut UiFlow) -> Option<Condition> {
-    let mut found = Vec::new();
-    for (file, text) in texts {
-        for (n, l) in text.lines().enumerate() {
-            let l = l.trim();
-            let attribute = l.strip_prefix("@attribute").map(str::trim).unwrap_or(l);
-            if !attribute.starts_with('[') {
-                continue;
+/// Authorization attributes of a component, see [`attributes::access`].
+mod attributes {
+    use super::*;
+
+    /// `Authorize` and `AllowAnonymous` of the component: `@attribute` lines of
+    /// the `_Imports.razor` files above it (outermost first), of the `.razor` and
+    /// the attributes of its own class in the code-behind. Attribute names are
+    /// exact (backend reader); `AllowAnonymous` at any level opens the page.
+    pub(super) fn access(
+        texts: &[(String, String)],
+        imports: &[(String, String)],
+        derived: &BTreeSet<String>,
+        flow: &mut UiFlow,
+    ) -> AccessState {
+        let mut attributes = Vec::new();
+        for (file, text) in imports.iter().chain(&texts[..1]) {
+            attributes.extend(directives(file, text));
+        }
+        if let Some((file, text)) = texts.get(1) {
+            let name = texts[0].0.rsplit('/').next().unwrap_or("");
+            let name = name.strip_suffix(".razor").unwrap_or(name);
+            let src = backend::Source::new(file.clone(), text);
+            for decl in backend::decls(&src, false) {
+                if decl.class && decl.name == name {
+                    for a in decl.attrs {
+                        let line = line_of(text, a.at);
+                        attributes.push((file.clone(), line, a));
+                    }
+                }
             }
-            if attribute.contains("AllowAnonymous") {
-                return None;
+        }
+        let (mut found, mut open) = (Vec::new(), false);
+        for (file, line, a) in attributes {
+            match a.name.as_str() {
+                "AllowAnonymous" => open = true,
+                "Authorize" => found.push(authorize(&a.args, &file, line, flow)),
+                name if derived.contains(name) => {
+                    let text = format!("{name}({})", a.args);
+                    found.push(unknown(text.trim_end_matches("()"), &file, line, flow));
+                }
+                name if name.contains("Authorize") => flow.diagnostics.push(UiFlowDiagnostic {
+                    file,
+                    line,
+                    message: format!(
+                        "Attribute {name} is not a known authorization attribute; ignored."
+                    ),
+                    severity: DiagnosticSeverity::Note,
+                }),
+                _ => {}
             }
-            let Some(at) = attribute.find("Authorize") else {
-                continue;
-            };
-            let rest = &attribute[at + "Authorize".len()..];
-            if rest.starts_with(|c: char| c.is_alphanumeric()) {
-                continue;
-            }
-            let args = rest
-                .strip_prefix('(')
-                .map(|r| balanced(r, ')'))
-                .unwrap_or("");
-            found.push(authorize(args, file, n as u32 + 1, flow));
+        }
+        if open {
+            AccessState::Open
+        } else {
+            AccessState::from_parts(all(found), false)
         }
     }
-    all(found)
+
+    /// 1-based line of byte offset `at`.
+    fn line_of(text: &str, at: usize) -> u32 {
+        text[..at.min(text.len())].matches('\n').count() as u32 + 1
+    }
+
+    /// The attributes of every `@attribute` directive, with file and line.
+    fn directives(file: &str, text: &str) -> Vec<(String, u32, backend::Attr)> {
+        let mut out = Vec::new();
+        for (at, _) in text.match_indices("@attribute") {
+            let (before, rest) = (&text[..at], &text[at + "@attribute".len()..]);
+            let starts_line = before
+                .rsplit('\n')
+                .next()
+                .is_some_and(|l| l.trim().is_empty());
+            if !starts_line || !rest.starts_with(|c: char| c.is_whitespace() || c == '[') {
+                continue;
+            }
+            let base = line_of(text, at);
+            for a in backend::directive_attrs(rest) {
+                let line = base + rest[..a.at].matches('\n').count() as u32;
+                out.push((file.to_string(), line, a));
+            }
+        }
+        out
+    }
+
+    /// Simple names of project attribute classes deriving from `AuthorizeAttribute`
+    /// or implementing `IAuthorizeData` (direct bases only).
+    pub(super) fn derived_attributes(root: &Path, files: &Files) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        for rel in files.cs.iter().chain(&files.code_behind) {
+            let Ok(text) = read_text(root, rel, MAX_BYTES) else {
+                continue;
+            };
+            let src = backend::Source::new(rel.clone(), &text);
+            for d in backend::decls(&src, false) {
+                if d.class
+                    && d.bases
+                        .iter()
+                        .any(|b| b == "AuthorizeAttribute" || b == "IAuthorizeData")
+                {
+                    names.insert(backend::simple(&d.name));
+                }
+            }
+        }
+        names
+    }
 }
 
 /// Condition of one `[Authorize(...)]` argument list.
@@ -2643,7 +2751,7 @@ mod tests {
         );
         assert_eq!(
             access("Shop:Pages/Login.razor"),
-            archguard_core::AccessState::Undeclared
+            archguard_core::AccessState::Open
         );
         assert_eq!(
             access("Shop:Pages/Home.razor"),
@@ -3677,5 +3785,164 @@ public static class ItemHelper
             "{}",
             gaps[0].1
         );
+    }
+}
+
+#[cfg(test)]
+mod access_tests {
+    use super::*;
+    use archguard_core::AccessState::{self, Open, Protected, Undeclared};
+
+    fn state(files: &[(&str, &str)], id: &str) -> (AccessState, UiFlow) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut all = vec![("App/App.csproj", "<Project />")];
+        all.extend_from_slice(files);
+        for (path, text) in all {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let flow = extract(dir.path());
+        let access = (flow.screens.iter())
+            .find(|s| s.id == id)
+            .unwrap_or_else(|| panic!("no screen {id}: {:#?}", flow.screens))
+            .access
+            .clone();
+        (access, flow)
+    }
+
+    fn role(r: &str) -> Condition {
+        Condition::Role(r.into())
+    }
+
+    #[test]
+    fn imports_file_applies_to_the_folder() {
+        let (a, _) = state(
+            &[
+                (
+                    "App/Pages/Admin/_Imports.razor",
+                    "@attribute [Authorize(Roles = \"Admin\")]\n",
+                ),
+                ("App/Pages/Admin/Users.razor", "@page \"/admin/users\"\n"),
+            ],
+            "App:Pages/Admin/Users.razor",
+        );
+        assert_eq!(a, Protected(role("Admin")));
+    }
+
+    #[test]
+    fn nested_allow_anonymous_in_imports_opens_the_page() {
+        let files = [
+            ("App/_Imports.razor", "@attribute [Authorize]\n"),
+            (
+                "App/Account/_Imports.razor",
+                "@attribute [AllowAnonymous]\n",
+            ),
+            ("App/Account/Login.razor", "@page \"/login\"\n"),
+            ("App/Home.razor", "@page \"/\"\n"),
+        ];
+        assert_eq!(state(&files, "App:Account/Login.razor").0, Open);
+        assert_eq!(
+            state(&files, "App:Home.razor").0,
+            Protected(Condition::Authenticated)
+        );
+    }
+
+    #[test]
+    fn imports_and_page_attributes_combine() {
+        let (a, _) = state(
+            &[
+                ("App/_Imports.razor", "@attribute [Authorize]\n"),
+                (
+                    "App/P.razor",
+                    "@page \"/p\"\n@attribute [Authorize(Roles=\"A\")]\n",
+                ),
+            ],
+            "App:P.razor",
+        );
+        assert_eq!(
+            a,
+            Protected(Condition::All(vec![Condition::Authenticated, role("A")]))
+        );
+    }
+
+    #[test]
+    fn unknown_attribute_names_are_not_authorization() {
+        let page = "@page \"/p\"\n@attribute [MyAuthorize(\"x\")]\n";
+        let (a, flow) = state(&[("App/P.razor", page)], "App:P.razor");
+        assert_eq!(a, Undeclared);
+        assert!(
+            flow.diagnostics
+                .iter()
+                .any(|d| d.message.contains("MyAuthorize"))
+        );
+        // A project class deriving from AuthorizeAttribute makes it a gap.
+        let derived = "public class MyAuthorizeAttribute : AuthorizeAttribute { }";
+        let (a, flow) = state(
+            &[("App/P.razor", page), ("App/My.cs", derived)],
+            "App:P.razor",
+        );
+        assert_eq!(
+            a,
+            Protected(Condition::Unknown("MyAuthorize(\"x\")".into()))
+        );
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn exact_names_and_qualified_forms() {
+        for attr in [
+            "[AuthorizeAttribute]",
+            "[Microsoft.AspNetCore.Authorization.Authorize]",
+        ] {
+            let page = format!("@page \"/p\"\n@attribute {attr}\n");
+            let (a, _) = state(&[("App/P.razor", &page)], "App:P.razor");
+            assert_eq!(a, Protected(Condition::Authenticated), "{attr}");
+        }
+    }
+
+    #[test]
+    fn multi_line_attribute_keeps_the_role() {
+        let page = "@page \"/p\"\n@attribute [Authorize(\n    Roles = \"Admin\")]\n";
+        assert_eq!(
+            state(&[("App/P.razor", page)], "App:P.razor").0,
+            Protected(role("Admin"))
+        );
+    }
+
+    #[test]
+    fn allow_anonymous_only_counts_as_an_attribute() {
+        let page = "@page \"/p\"\n@attribute [Authorize(Roles = \"Admin\")]\n@code { [Parameter] public bool AllowAnonymous { get; set; } }\n";
+        assert_eq!(
+            state(&[("App/P.razor", page)], "App:P.razor").0,
+            Protected(role("Admin"))
+        );
+    }
+
+    #[test]
+    fn several_attributes_combine() {
+        let one = "@page \"/p\"\n@attribute [Authorize] [StreamRendering]\n";
+        assert_eq!(
+            state(&[("App/P.razor", one)], "App:P.razor").0,
+            Protected(Condition::Authenticated)
+        );
+        let two = "@page \"/p\"\n@attribute [Authorize(Roles=\"A\")]\n@attribute [Authorize(Roles=\"B\")]\n";
+        assert_eq!(
+            state(&[("App/P.razor", two)], "App:P.razor").0,
+            Protected(Condition::All(vec![role("A"), role("B")]))
+        );
+    }
+
+    #[test]
+    fn code_behind_counts_only_the_component_class() {
+        let cs = "[Authorize(Roles=\"X\")]\npublic class Other { }\n\n[Authorize(Policy = \"P\")]\npublic partial class Orders { }\n";
+        let (a, _) = state(
+            &[
+                ("App/Orders.razor", "@page \"/o\"\n"),
+                ("App/Orders.razor.cs", cs),
+            ],
+            "App:Orders.razor",
+        );
+        assert_eq!(a, Protected(Condition::Policy("P".into())));
     }
 }
