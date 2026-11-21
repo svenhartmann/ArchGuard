@@ -42,6 +42,14 @@ class T(unittest.TestCase):
         new = flow("undeclared", extra={"role_conventions": []})
         self.assertEqual(run(flow(None), new), 0)
 
+    def test_unrecognised_is_exit_2(self):
+        f = flow(COND, {"open": None})
+        self.assertEqual(run(f, f), 2)
+
+    def test_old_unit_condition_is_protected(self):
+        f = flow("authenticated", "undeclared")
+        self.assertEqual(run(f, f), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

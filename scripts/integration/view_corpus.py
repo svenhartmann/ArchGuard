@@ -145,24 +145,30 @@ def cmd_compare(a):
 
 
 KINDS = ("endpoints", "screens", "links", "actions")
-STATES = ("open", "undeclared", "protected", "unknown")
+STATES = ("open", "undeclared", "protected", "unknown", "unrecognised")
+COND_KEYS = {"all", "any", "not", "role", "policy", "custom", "unknown"}  # Condition variants with data
+COND_UNITS = {"authenticated", "never"}  # Condition variants without data serialize as strings
 
 
 def _state(v, legacy_null):
-    """Old condition object or {"protected": ..} -> protected; "open"/"undeclared"; null -> legacy_null."""
+    """Old condition or {"protected": ..} -> protected; "open"/"undeclared"; null -> legacy_null; else unrecognised."""
     if v is None:
         return legacy_null
-    return v if v in ("open", "undeclared") else "protected"
+    if isinstance(v, str) and v in ("open", "undeclared"):
+        return v
+    if (isinstance(v, str) and v in COND_UNITS) or (isinstance(v, dict) and len(v) == 1 and next(iter(v)) in COND_KEYS | {"protected"}):
+        return "protected"
+    return "unrecognised"
 
 
 def _flow_is_new(flow):
-    """New shape: string access, a "protected" wrapper or `weak` somewhere (or role_conventions)."""
+    """New shape: "open"/"undeclared" access, a "protected" wrapper or `weak` somewhere (or role_conventions)."""
     if "role_conventions" in flow:
         return True
     for k in ("screens", "transitions", "actions"):
         for e in flow.get(k, []):
             v = e.get("access")
-            if "weak" in e or isinstance(v, str) or (isinstance(v, dict) and "protected" in v):
+            if "weak" in e or (isinstance(v, str) and v in ("open", "undeclared")) or (isinstance(v, dict) and "protected" in v):
                 return True
     return False
 
@@ -199,26 +205,29 @@ def _load_flows(d):
 
 def access_moves(base, head):
     """(per-app count tables, moves towards Open) for two {app: flow} dicts."""
-    counts, moves = {}, []
+    counts, moves, bad = {}, [], []
     for app in sorted(set(base) | set(head)):
         b = access_elements(base[app]) if app in base else {}
         h = access_elements(head[app]) if app in head else {}
         counts[app] = {k: tuple({s: sum(1 for (kk, _), v in e.items() if kk == k and v == s) for s in STATES} for e in (b, h)) for k in KINDS}
+        bad += [(app, kind, ident) for e in (b, h) for (kind, ident), v in sorted(e.items()) if v == "unrecognised"]
         moves += [(app, kind, ident, b.get((kind, ident), "absent")) for (kind, ident), v in sorted(h.items())
                   if v == "open" and b.get((kind, ident)) != "open"]
-    return counts, moves
+    return counts, moves, sorted(set(bad))
 
 
 def cmd_access_diff(a):
-    counts, moves = access_moves(_load_flows(a.base), _load_flows(a.head))
+    counts, moves, bad = access_moves(_load_flows(a.base), _load_flows(a.head))
     for app, kinds in counts.items():
         deltas = [f"{k}:" + ",".join(f"{s[0].upper()}{h[s] - b[s]:+d}" for s in STATES if h[s] != b[s])
                   for k, (b, h) in kinds.items() if b != h]
         print(f"{app}: " + ("  ".join(deltas) or "no change"))
     for app, kind, ident, was in moves:
         print(f"TOWARDS OPEN {app} {kind} {ident} ({was} -> open)")
-    print(f"{len(moves)} element(s) moved towards Open")
-    sys.exit(1 if moves else 0)
+    for app, kind, ident in bad:
+        print(f"UNRECOGNISED access value {app} {kind} {ident}")
+    print(f"{len(moves)} element(s) moved towards Open, {len(bad)} unrecognised")
+    sys.exit(2 if bad else 1 if moves else 0)  # 2 = cannot trust the result
 
 
 def cmd_table(a):
