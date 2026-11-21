@@ -36,12 +36,17 @@
 //!   that creates it) applies to that module's `controllers` (names, or a spread
 //!   constant array) only.
 //! - Metadata: `@Roles('a', E.M)` and `@SetMetadata('roles', […])` mean any of
-//!   the roles. The method's metadata replaces the class's (`getAllAndOverride`,
-//!   as in the NestJS docs); guards add up.
-//! - Decorators listed in `[views.access]` by name: `open` on class or method
-//!   makes the endpoint `open` (it wins over every guard, as `@Public()` with the
-//!   documented `JwtAuthGuard`); any other meaning is one more condition.
-//!   `@Public()`/`@SkipAuth()` are read only this way, never by name.
+//!   the roles, but only together with a guard in force (global, class or method)
+//!   that reads the key (`reflector.getAllAndOverride/getAllAndMerge/get(KEY, …)`
+//!   in a class of the application); otherwise there is no condition and a `note`.
+//!   The guard's lookup decides: override (method replaces class), merge (any of
+//!   both) or handler only. Guards add up.
+//! - Decorators listed in `[views.access]` by name: `open` (`@Public()`) is a
+//!   marker for the metadata key its definition sets (`SetMetadata(KEY, true)`).
+//!   It removes only the guards that read that key; `Open` only when no guard
+//!   remains and at least one honoured it, else the remaining guards apply. An
+//!   unreadable key is a gap and no marker. A route without any guard is
+//!   `Undeclared`. Any other meaning is one more condition.
 //! - Composite decorators defined in the application (`const D = (p) => …` or
 //!   `function D(p) {…}` calling `UseGuards`, `Roles`, `SetMetadata` or a listed
 //!   name) are followed one level: their guards, roles and listed parts count as
@@ -502,10 +507,22 @@ enum Grant {
 /// The access declarations of one level (global, class, method).
 #[derive(Default)]
 struct Level {
-    open: bool,
-    guards: Vec<Condition>,
-    meta: Vec<Condition>,
-    declared: bool,
+    /// A guard mapped to `open` in `[views.access]`.
+    opened: bool,
+    /// Guards by name (`None`: a listed decorator) with what they grant.
+    guards: Vec<(Option<String>, Condition)>,
+    /// Metadata conditions by key; they count only with a guard that reads the key.
+    meta: Vec<(String, Condition)>,
+    /// Public markers by metadata key (`""`: key not readable).
+    public: Vec<String>,
+}
+
+/// How a guard looks metadata up: `getAllAndOverride`, `getAllAndMerge`, `get`.
+#[derive(Clone, Copy, PartialEq)]
+enum Lookup {
+    Override,
+    Merge,
+    Handler,
 }
 
 /// A composite decorator's definition: its first parameter and the calls of
@@ -520,6 +537,7 @@ struct Composite {
 /// A global guard and the controllers it applies to (`None`: all).
 struct Global {
     grant: Grant,
+    name: String,
     scope: Option<BTreeSet<String>>,
 }
 
@@ -531,6 +549,8 @@ struct Scan<'a> {
     composites: HashMap<String, Vec<Composite>>,
     /// Composite decorators that forward options with an access key somewhere.
     keyed: HashSet<String>,
+    /// Metadata key -> guards that read it with their lookup.
+    readers: HashMap<String, Vec<(String, Lookup)>>,
 }
 
 impl<'a> Scan<'a> {
@@ -541,7 +561,9 @@ impl<'a> Scan<'a> {
             consts: Consts::read(app),
             composites: HashMap::new(),
             keyed: HashSet::new(),
+            readers: HashMap::new(),
         };
+        scan.readers = meta::readers(&scan);
         scan.composites = composite::definitions(&scan);
         let keyed: HashSet<String> = (app.files.iter().flat_map(|s| &s.decos))
             .filter(|d| {
@@ -610,7 +632,7 @@ impl<'a> Scan<'a> {
         src: &Src,
         text: &str,
         item: &Item,
-    ) -> Grant {
+    ) -> (Grant, String) {
         let source = item.source(text);
         let expr = source
             .strip_prefix("new ")
@@ -618,16 +640,17 @@ impl<'a> Scan<'a> {
         let (name, args, call) = match call_parts(expr) {
             Some((name, args)) => (name, args, true),
             None if name_path(expr) => (expr, vec![], false),
-            None => return Grant::Cond(self.unknown(out, site, &source)),
+            None => return (Grant::Cond(self.unknown(out, site, &source)), source),
         };
-        if let Some(grant) = self.listed(out, site, name, expr, &args) {
-            return grant;
-        }
-        Grant::Cond(if name == "AuthGuard" && call && src.passport {
-            Condition::Authenticated
-        } else {
-            Condition::Custom(name.into())
-        })
+        let grant = match self.listed(out, site, name, expr, &args) {
+            Some(grant) => grant,
+            None => Grant::Cond(if name == "AuthGuard" && call && src.passport {
+                Condition::Authenticated
+            } else {
+                Condition::Custom(name.into())
+            }),
+        };
+        (grant, name.into())
     }
 
     /// `@Roles(…)` arguments: any of the roles.
@@ -653,13 +676,13 @@ impl<'a> Scan<'a> {
         }
     }
 
-    fn add(level: &mut Level, grant: Grant, meta: bool) {
-        level.declared = true;
-        match grant {
-            Grant::Open if meta => level.open = true,
-            Grant::Open => {}
-            Grant::Cond(c) if meta => level.meta.push(c),
-            Grant::Cond(c) => level.guards.push(c),
+    /// Adds a grant; with a metadata `key` it is metadata, else a listed decorator.
+    fn add(level: &mut Level, grant: Grant, key: Option<&str>) {
+        match (grant, key) {
+            (Grant::Open, Some(k)) => level.public.push(k.into()),
+            (Grant::Open, None) => level.opened = true,
+            (Grant::Cond(c), Some(k)) => level.meta.push((k.into(), c)),
+            (Grant::Cond(c), None) => level.guards.push((None, c)),
         }
     }
 
@@ -674,29 +697,26 @@ impl<'a> Scan<'a> {
             let text = src.raw.as_str();
             if let Some(grant) = self.listed(out, &site, &d.name, text, &d.args) {
                 // A listed decorator: `open` is the endpoint's, other meanings add up.
-                match grant {
-                    Grant::Open => Self::add(&mut level, Grant::Open, true),
-                    g => Self::add(&mut level, g, false),
-                }
+                meta::add_listed(self, out, &site, &mut level, grant, &d.name);
                 continue;
             }
             match d.name.as_str() {
                 "UseGuards" => {
                     for a in &d.args {
-                        let grant = self.guard(out, &site, src, text, a);
-                        Self::add(&mut level, grant, false);
+                        let guard = self.guard(out, &site, src, text, a);
+                        meta::add_guard(&mut level, guard);
                     }
                 }
                 "Roles" => {
                     let c = self.roles(out, &site, text, &d.args);
-                    Self::add(&mut level, Grant::Cond(c), true);
+                    Self::add(&mut level, Grant::Cond(c), Some(&meta::roles_key(self)));
                 }
                 "SetMetadata"
                     if d.args.first().and_then(|k| self.consts.text(k)).as_deref()
                         == Some("roles") =>
                 {
                     let c = self.roles(out, &site, text, &d.args[1..]);
-                    Self::add(&mut level, Grant::Cond(c), true);
+                    Self::add(&mut level, Grant::Cond(c), Some("roles"));
                 }
                 name if self.composites.contains_key(name) => {
                     composite::apply(self, out, &site, src, d, &mut level)
@@ -864,7 +884,7 @@ mod composite {
         for (name, text) in &c.calls {
             let args = Parser { s: text, i: 0 }.array(0);
             if let Some(grant) = scan.listed(out, site, name, text, &args) {
-                Scan::add(level, grant, false);
+                meta::add_listed(scan, out, site, level, grant, name);
                 continue;
             }
             let key = args.first().and_then(|k| scan.consts.text(k));
@@ -879,17 +899,22 @@ mod composite {
             match name.as_str() {
                 "UseGuards" => {
                     for a in own {
-                        Scan::add(level, scan.guard(out, site, src, text, a), false);
+                        meta::add_guard(level, scan.guard(out, site, src, text, a));
                     }
                 }
-                "Roles" => Scan::add(level, Grant::Cond(scan.roles(out, site, text, own)), true),
+                "Roles" => {
+                    let c = Grant::Cond(scan.roles(out, site, text, own));
+                    Scan::add(level, c, Some(&meta::roles_key(scan)))
+                }
                 "SetMetadata" if roles_key => {
-                    Scan::add(level, Grant::Cond(scan.roles(out, site, text, own)), true)
+                    let c = Grant::Cond(scan.roles(out, site, text, own));
+                    Scan::add(level, c, Some("roles"))
                 }
                 "SetMetadata"
                     if args.get(1).is_some_and(is_param) && scan.keyed.contains(&d.name) =>
                 {
-                    options(scan, out, site, src, d, level);
+                    let key = meta::first_key(scan, text, &args);
+                    options(scan, out, site, src, (d, &key), level);
                 }
                 _ => {}
             }
@@ -902,13 +927,13 @@ mod composite {
         out: &mut Vec<UiFlowDiagnostic>,
         site: &Site,
         src: &Src,
-        d: &Deco,
+        (d, meta_key): (&Deco, &str),
         level: &mut Level,
     ) {
         let Some(arg) = d.args.first() else { return };
         let Value::Obj(fields) = &arg.value else {
             let c = scan.unknown(out, site, &arg.source(&src.raw));
-            return Scan::add(level, Grant::Cond(c), true);
+            return Scan::add(level, Grant::Cond(c), Some(meta_key));
         };
         for (key, v) in fields {
             if raw_is(v, "false") {
@@ -937,7 +962,7 @@ mod composite {
                     continue;
                 }
             };
-            Scan::add(level, grant, true);
+            Scan::add(level, grant, Some(meta_key));
         }
     }
 }
@@ -1182,7 +1207,7 @@ impl Settings {
         let mut level = Level::default();
         let applies = |g: &&Global| g.scope.as_ref().is_none_or(|s| s.contains(class));
         for g in self.globals.iter().filter(applies) {
-            Scan::add(&mut level, g.grant.clone(), false);
+            meta::add_guard(&mut level, (g.grant.clone(), g.name.clone()));
         }
         level
     }
@@ -1287,7 +1312,17 @@ impl Scan<'_> {
         if routes.is_empty() {
             return vec![];
         }
-        let access = access(&ctl.global, &ctl.level, &self.level(out, src, &m.decos));
+        let (access, notes) = meta::access(
+            self,
+            &ctl.global,
+            &ctl.level,
+            &self.level(out, src, &m.decos),
+        );
+        if let Some(d) = routes.first() {
+            for n in notes {
+                note(out, &src.rel, src.line(d.0.at), n);
+            }
+        }
         let Some(versions) = self.method_versions(out, settings, ctl, m) else {
             return vec![];
         };
@@ -1552,7 +1587,8 @@ impl Scan<'_> {
                     None
                 }
             };
-            globals.push(Global { grant, scope });
+            let (grant, name) = grant;
+            globals.push(Global { grant, name, scope });
         }
         globals
     }
@@ -1584,7 +1620,7 @@ mod global {
     use super::*;
 
     /// A global guard: what it grants, its module, where it is declared.
-    pub(super) type Declared<'s> = (Grant, Option<String>, &'s Src, usize);
+    pub(super) type Declared<'s> = ((Grant, String), Option<String>, &'s Src, usize);
 
     /// The module each file passes to `NestFactory.create(M)`, by file.
     pub(super) fn roots(app: &App) -> BTreeMap<String, String> {
@@ -1640,7 +1676,10 @@ mod global {
                 let grant =
                     match field(&object, "useClass").or_else(|| field(&object, "useExisting")) {
                         Some(class) => scan.guard(out, &site, src, &src.raw, class),
-                        None => Grant::Cond(scan.unknown(out, &site, &object.source(&src.raw))),
+                        None => {
+                            let text = object.source(&src.raw);
+                            (Grant::Cond(scan.unknown(out, &site, &text)), text)
+                        }
                     };
                 found.push((grant, module_of(src, pos), src, pos));
             }
@@ -1697,25 +1736,239 @@ fn module_of(src: &Src, pos: usize) -> Option<String> {
     None
 }
 
-/// The access of an endpoint from its global, class and method declarations.
-fn access(global: &Level, class: &Level, method: &Level) -> AccessState {
-    if class.open || method.open {
-        return AccessState::Open;
+/// Metadata keys, the guards that read them, and what that does to access.
+mod meta {
+    use super::*;
+
+    const LOOKUPS: [(&str, Lookup); 3] = [
+        ("getAllAndOverride", Lookup::Override),
+        ("getAllAndMerge", Lookup::Merge),
+        ("get", Lookup::Handler),
+    ];
+
+    /// The metadata key of a lookup or `SetMetadata` argument: its value, else as written.
+    pub(super) fn key(scan: &Scan, text: &str, item: &Item) -> String {
+        (scan.consts.text(item)).unwrap_or_else(|| item.source(text))
     }
-    let meta = if method.meta.is_empty() {
-        &class.meta
-    } else {
-        &method.meta
-    };
-    let conds: Vec<Condition> = [&global.guards, &class.guards, &method.guards, meta]
-        .into_iter()
-        .flatten()
-        .cloned()
-        .collect();
-    match combine(conds, Condition::All) {
-        Some(c) => AccessState::Protected(c),
-        None if global.declared || class.declared || method.declared => AccessState::Open,
-        None => AccessState::Undeclared,
+
+    /// The key of the first argument in `args`' source `text`.
+    pub(super) fn first_key(scan: &Scan, text: &str, args: &[Item]) -> String {
+        args.first().map(|k| key(scan, text, k)).unwrap_or_default()
+    }
+
+    /// The key a decorator sets with `SetMetadata(KEY, …)` in its definition.
+    fn decorator_key(scan: &Scan, name: &str) -> Option<String> {
+        let [def] = scan.composites.get(name)?.as_slice() else {
+            return None;
+        };
+        let (_, text) = def.calls.iter().find(|(n, _)| n == "SetMetadata")?;
+        let args = Parser { s: text, i: 0 }.array(0);
+        Some(key(scan, text, args.first()?))
+    }
+
+    /// The metadata key `@Roles` sets: its definition's, else `roles`.
+    pub(super) fn roles_key(scan: &Scan) -> String {
+        decorator_key(scan, "Roles").unwrap_or_else(|| "roles".into())
+    }
+
+    /// A `[views.access]` `open` decorator's metadata key; unreadable is a gap.
+    fn public_key(scan: &Scan, out: &mut Vec<UiFlowDiagnostic>, site: &Site, name: &str) -> String {
+        decorator_key(scan, name).unwrap_or_else(|| {
+            let message =
+                format!("Metadata key of @{name} not readable; it is not treated as public.");
+            gap(out, site.file, site.line, message);
+            String::new()
+        })
+    }
+
+    /// Adds a guard by its name.
+    pub(super) fn add_guard(level: &mut Level, (grant, name): (Grant, String)) {
+        match grant {
+            Grant::Open => level.opened = true,
+            Grant::Cond(c) => level.guards.push((Some(name), c)),
+        }
+    }
+
+    /// Adds a `[views.access]` decorator: `open` is a public marker for its key.
+    pub(super) fn add_listed(
+        scan: &Scan,
+        out: &mut Vec<UiFlowDiagnostic>,
+        site: &Site,
+        level: &mut Level,
+        grant: Grant,
+        name: &str,
+    ) {
+        match grant {
+            Grant::Open => Scan::add(level, grant, Some(&public_key(scan, out, site, name))),
+            g => Scan::add(level, g, None),
+        }
+    }
+
+    /// Calls of `reflector.<lookup>(KEY, …)` in `src`: (offset, key, lookup).
+    fn lookups(scan: &Scan, src: &Src) -> Vec<(usize, String, Lookup)> {
+        let (code, b) = (&src.code, src.code.as_bytes());
+        let mut found = Vec::new();
+        for (name, lookup) in LOOKUPS {
+            for at in words(code, name) {
+                let receiver = code[..at].strip_suffix('.').unwrap_or("");
+                let mut open = skip_ws(b, at + name.len());
+                if b.get(open) == Some(&b'<') {
+                    open = skip_ws(b, skip_generic(b, open));
+                }
+                if !receiver.to_lowercase().ends_with("reflector") || b.get(open) != Some(&b'(') {
+                    continue;
+                }
+                let args = Parser {
+                    s: &src.raw,
+                    i: open,
+                }
+                .array(0);
+                found.extend(args.first().map(|k| (at, key(scan, &src.raw, k), lookup)));
+            }
+        }
+        found
+    }
+
+    /// The name of the top-level `const`/`function` (at column 0) that holds `at`.
+    fn top_level(code: &str, at: usize) -> Option<String> {
+        code[..at].lines().rev().find_map(|l| {
+            let l = l.strip_prefix("export ").unwrap_or(l);
+            let l = (l.strip_prefix("const ")).or_else(|| l.strip_prefix("function "))?;
+            Some(ident_at(l, 0).to_string()).filter(|n| !n.is_empty())
+        })
+    }
+
+    /// Guards that read a metadata key: a class calling `reflector.getAllAndOverride(K, …)`,
+    /// `getAllAndMerge` or `get`, directly or through a top-level helper function
+    /// (declared at column 0) that does and that the class calls.
+    pub(super) fn readers(scan: &Scan) -> HashMap<String, Vec<(String, Lookup)>> {
+        let mut readers: HashMap<String, Vec<(String, Lookup)>> = HashMap::new();
+        let mut helpers: Vec<(String, String, Lookup)> = Vec::new();
+        for src in &scan.app.files {
+            let classes = structure::classes(src);
+            for (at, key, lookup) in lookups(scan, src) {
+                let owner = classes.iter().find(|c| c.body.0 <= at && at < c.body.1);
+                match owner {
+                    Some(c) => readers
+                        .entry(key)
+                        .or_default()
+                        .push((c.name.clone(), lookup)),
+                    None => helpers.extend(top_level(&src.code, at).map(|f| (f, key, lookup))),
+                }
+            }
+        }
+        for src in &scan.app.files {
+            let b = src.code.as_bytes();
+            for class in structure::classes(src) {
+                let body = &src.code[class.body.0..class.body.1];
+                for (f, key, lookup) in &helpers {
+                    let calls =
+                        |p: &usize| b.get(skip_ws(b, class.body.0 + p + f.len())) == Some(&b'(');
+                    if words(body, f).iter().any(calls) {
+                        let list = readers.entry(key.clone()).or_default();
+                        list.push((class.name.clone(), *lookup));
+                    }
+                }
+            }
+        }
+        readers
+    }
+
+    type Guards<'g> = Vec<&'g (Option<String>, Condition)>;
+
+    /// The guards that stay after the public markers `publics` removed those
+    /// that read their key, and whether one was removed.
+    fn surviving(scan: &Scan, guards: &Guards, publics: &[&String]) -> (Vec<Condition>, bool) {
+        let honours = |name: &str| {
+            publics.iter().any(|k| {
+                (scan.readers.get(k.as_str())).is_some_and(|r| r.iter().any(|(g, _)| g == name))
+            })
+        };
+        let kept: Vec<Condition> = (guards.iter())
+            .filter(|(name, _)| !name.as_deref().is_some_and(honours))
+            .map(|(_, c)| c.clone())
+            .collect();
+        let removed = kept.len() < guards.len();
+        (kept, removed)
+    }
+
+    /// Any of the roles of `cs`, flattened.
+    fn merged(cs: Vec<Condition>) -> impl Iterator<Item = Condition> {
+        cs.into_iter().flat_map(|c| match c {
+            Condition::Any(v) => v,
+            c => vec![c],
+        })
+    }
+
+    /// The conditions metadata `key` adds under the lookup of the first guard in
+    /// force that reads it; none when no guard reads it.
+    fn lookup_conditions(
+        scan: &Scan,
+        guards: &Guards,
+        (class, method): (&Level, &Level),
+        key: &str,
+    ) -> Option<Vec<Condition>> {
+        let readers = scan.readers.get(key).map_or(&[][..], Vec::as_slice);
+        let lookup = (guards.iter())
+            .filter_map(|(n, _)| n.as_deref())
+            .find_map(|n| readers.iter().find(|(g, _)| g == n))
+            .map(|(_, l)| *l)?;
+        let own = |level: &Level| -> Vec<Condition> {
+            (level.meta.iter())
+                .filter(|(k, _)| k == key)
+                .map(|(_, c)| c.clone())
+                .collect()
+        };
+        let (c, m) = (own(class), own(method));
+        Some(match lookup {
+            Lookup::Override if m.is_empty() => c,
+            Lookup::Override | Lookup::Handler => m,
+            Lookup::Merge => combine(merged(c).chain(merged(m)).collect(), Condition::Any)
+                .into_iter()
+                .collect(),
+        })
+    }
+
+    /// The access of an endpoint from its global, class and method declarations,
+    /// with the notes for metadata nobody reads. Metadata counts only with a
+    /// guard in force that reads its key; a public marker removes exactly the
+    /// guards that read its key (`Open` when none remains).
+    pub(super) fn access(
+        scan: &Scan,
+        global: &Level,
+        class: &Level,
+        method: &Level,
+    ) -> (AccessState, Vec<String>) {
+        let guards: Guards = [global, class, method]
+            .into_iter()
+            .flat_map(|l| &l.guards)
+            .collect();
+        let publics: Vec<&String> = class.public.iter().chain(&method.public).collect();
+        let (mut conds, honoured) = surviving(scan, &guards, &publics);
+        let mut notes = Vec::new();
+        if !honoured {
+            for k in publics.iter().filter(|k| !k.is_empty()) {
+                notes.push(format!("Public marker `{k}` set, no guard reads it."));
+            }
+        }
+        let mut keys: Vec<&String> = (class.meta.iter().chain(&method.meta))
+            .map(|(k, _)| k)
+            .collect();
+        let mut seen = BTreeSet::new();
+        keys.retain(|k| seen.insert(*k));
+        for key in keys {
+            match lookup_conditions(scan, &guards, (class, method), key) {
+                Some(c) => conds.extend(c),
+                None => notes.push(format!("Metadata `{key}` set, no guard reads it.")),
+            }
+        }
+        let opened = global.opened || class.opened || method.opened;
+        let state = match combine(conds, Condition::All) {
+            Some(c) => AccessState::Protected(c),
+            None if honoured || opened => AccessState::Open,
+            None => AccessState::Undeclared,
+        };
+        (state, notes)
     }
 }
 
@@ -1867,11 +2120,15 @@ export class AppController {
             &[
                 ("package.json", PKG),
                 (
+                    "src/roles.guard.ts",
+                    &roles_guard("getAllAndOverride('roles', [ctx.getHandler(), ctx.getClass()])"),
+                ),
+                (
                     "src/admin.controller.ts",
                     r#"import { AuthGuard } from '@nestjs/passport';
 export enum Role { Owner = 'owner' }
 @Controller('admin')
-@UseGuards(AuthGuard('jwt'))
+@UseGuards(AuthGuard('jwt'), RolesGuard)
 @Roles('staff')
 export class AdminController {
   @Get('a')
@@ -1895,10 +2152,12 @@ export class AdminController {
             "AdminGuard = \"role:Admin\"\n",
         );
         let auth = Condition::Authenticated;
+        let rg = custom("RolesGuard");
         assert_eq!(
             ep(&flow, "GET", "/admin/a").access,
             prot(Condition::All(vec![
                 auth.clone(),
+                rg.clone(),
                 role("Admin"),
                 custom("AuditGuard"),
                 role("staff")
@@ -1908,22 +2167,23 @@ export class AdminController {
             ep(&flow, "GET", "/admin/b").access,
             prot(Condition::All(vec![
                 auth.clone(),
+                rg.clone(),
                 Condition::Any(vec![role("admin"), role("owner")])
             ]))
         );
         assert_eq!(
             ep(&flow, "GET", "/admin/c").access,
-            prot(Condition::All(vec![auth.clone(), role("ops")]))
+            prot(Condition::All(vec![auth.clone(), rg.clone(), role("ops")]))
         );
         assert_eq!(
             ep(&flow, "GET", "/admin/d").access,
-            prot(Condition::All(vec![auth, role("staff")]))
+            prot(Condition::All(vec![auth, rg, role("staff")]))
         );
         assert!(flow.complete, "{:#?}", flow.diagnostics);
     }
 
     #[test]
-    fn global_guards_apply_unless_an_open_decorator_says_otherwise() {
+    fn global_guards_apply_unless_they_read_the_public_marker() {
         let flow = run(
             &[
                 ("package.json", PKG),
@@ -1943,6 +2203,11 @@ export class AdminController {
                      @Get() list() {}\n\
                      @Public()\n@Get('open') open() {}\n}\n",
                 ),
+                (
+                    "src/jwt.guard.ts",
+                    "export const Public = () => SetMetadata('isPublic', true);\n\
+                     export class JwtGuard { canActivate(c) { return this.reflector.getAllAndOverride('isPublic', [c.getHandler()]); } }\n",
+                ),
             ],
             "JwtGuard = \"authenticated\"\nPublic = \"open\"\n",
         );
@@ -1953,7 +2218,11 @@ export class AdminController {
                 custom("ThrottleGuard")
             ]))
         );
-        assert_eq!(ep(&flow, "GET", "/cats/open").access, AccessState::Open);
+        // ThrottleGuard does not read the key, so it still applies.
+        assert_eq!(
+            ep(&flow, "GET", "/cats/open").access,
+            prot(custom("ThrottleGuard"))
+        );
     }
 
     #[test]
@@ -2022,7 +2291,13 @@ export const Docs = (options) => SetMetadata('docs', options);
                 (
                     "src/main.ts",
                     "await NestFactory.create(AppModule);\n\
-                     @Module({ providers: [{ provide: APP_GUARD, useClass: AuthGuard }] }) class AppModule {}\n",
+                     @Module({ providers: [{ provide: APP_GUARD, useClass: AuthGuard }] }) class AppModule {}\n\
+                     export enum MetadataKey { AuthRoute = 'auth_route' }\n\
+                     export class AuthGuard { canActivate(c) { return this.reflector.getAllAndOverride<AuthenticatedOptions>(MetadataKey.AuthRoute, [c.getHandler(), c.getClass()]); } }\n",
+                ),
+                (
+                    "src/roles.guard.ts",
+                    &roles_guard("getAllAndOverride('roles', [ctx.getHandler(), ctx.getClass()])"),
                 ),
                 (
                     "src/assets.controller.ts",
@@ -2163,9 +2438,237 @@ export class OrdersController {
             ep(&flow, "GET", "/x/g").access,
             AccessState::Protected(Condition::Unknown(_))
         ));
-        assert!(matches!(
-            ep(&flow, "GET", "/x/r").access,
-            AccessState::Protected(Condition::Unknown(_))
-        ));
+        // Unreadable roles are a gap; metadata no guard reads is no condition.
+        assert_eq!(ep(&flow, "GET", "/x/r").access, AccessState::Undeclared);
+        assert!(gaps.iter().any(|m| m.contains("someRole")), "{gaps:#?}");
+    }
+
+    const PUBLIC_GUARD: &str = r#"export const IS_PUBLIC_KEY = 'isPublic';
+export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
+@Injectable()
+export class JwtAuthGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+  canActivate(ctx: ExecutionContext) {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [ctx.getHandler(), ctx.getClass()]);
+    if (isPublic) return true;
+    return super.canActivate(ctx);
+  }
+}
+"#;
+
+    fn roles_guard(call: &str) -> String {
+        format!(
+            "export const ROLES_KEY = 'roles';\n\
+             export class RolesGuard implements CanActivate {{\n\
+               canActivate(ctx) {{ const r = this.reflector.{call}; return !r || r.some(x => user.roles.includes(x)); }}\n\
+             }}\n"
+        )
+    }
+
+    fn notes(flow: &UiFlow) -> Vec<&str> {
+        (flow.diagnostics.iter())
+            .filter(|d| d.severity == DiagnosticSeverity::Note)
+            .map(|d| d.message.as_str())
+            .collect()
+    }
+
+    fn app_module(guards: &str) -> String {
+        let providers: Vec<String> = (guards.split(',').filter(|g| !g.is_empty()))
+            .map(|g| format!("{{ provide: APP_GUARD, useClass: {g} }}"))
+            .collect();
+        format!(
+            "@Module({{ controllers: [A], providers: [{}] }})\nexport class AppModule {{}}\n",
+            providers.join(", ")
+        )
+    }
+
+    #[test]
+    fn nf1_a_route_without_any_guard_is_undeclared() {
+        let flow = run(
+            &[
+                ("package.json", PKG),
+                ("src/a.ts", "@Controller('a')\nclass A { @Get() f() {} }\n"),
+            ],
+            "",
+        );
+        assert_eq!(ep(&flow, "GET", "/a").access, AccessState::Undeclared);
+    }
+
+    #[test]
+    fn nf2_roles_without_a_reading_guard_is_a_note_not_a_condition() {
+        let flow = run(
+            &[
+                ("package.json", PKG),
+                (
+                    "src/a.ts",
+                    "@Controller('a')\nclass A { @Roles('admin') @Get() f() {} }\n",
+                ),
+            ],
+            "",
+        );
+        assert_eq!(ep(&flow, "GET", "/a").access, AccessState::Undeclared);
+        let notes = notes(&flow);
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("roles") && n.contains("no guard reads")),
+            "{notes:#?}"
+        );
+    }
+
+    #[test]
+    fn nf3_public_is_open_when_the_only_guard_reads_its_key() {
+        let flow = run(
+            &[
+                ("package.json", PKG),
+                ("src/jwt.ts", PUBLIC_GUARD),
+                ("src/app.module.ts", &app_module("JwtAuthGuard")),
+                (
+                    "src/a.ts",
+                    "@Controller('a')\nclass A { @Public() @Get('login') login() {} @Get() f() {} }\n",
+                ),
+            ],
+            "Public = \"open\"\n",
+        );
+        assert_eq!(ep(&flow, "GET", "/a/login").access, AccessState::Open);
+        assert_eq!(ep(&flow, "GET", "/a").access, prot(custom("JwtAuthGuard")));
+    }
+
+    #[test]
+    fn nf4_public_does_not_open_a_method_guard_that_ignores_the_key() {
+        let flow = run(
+            &[
+                ("package.json", PKG),
+                ("src/jwt.ts", PUBLIC_GUARD),
+                (
+                    "src/roles.ts",
+                    &roles_guard(
+                        "getAllAndOverride(ROLES_KEY, [ctx.getHandler(), ctx.getClass()])",
+                    ),
+                ),
+                ("src/app.module.ts", &app_module("JwtAuthGuard")),
+                (
+                    "src/a.ts",
+                    "@Controller('a')\nclass A {\n@Public() @UseGuards(RolesGuard) @Roles('admin') @Get('x') f() {}\n}\n",
+                ),
+            ],
+            "Public = \"open\"\n",
+        );
+        assert_eq!(
+            ep(&flow, "GET", "/a/x").access,
+            prot(Condition::All(vec![custom("RolesGuard"), role("admin")]))
+        );
+    }
+
+    #[test]
+    fn nf5_public_leaves_the_global_guard_that_does_not_read_it() {
+        let flow = run(
+            &[
+                ("package.json", PKG),
+                ("src/jwt.ts", PUBLIC_GUARD),
+                (
+                    "src/key.ts",
+                    "export class ApiKeyGuard implements CanActivate { canActivate(c) { return check(c); } }\n",
+                ),
+                ("src/app.module.ts", &app_module("JwtAuthGuard,ApiKeyGuard")),
+                (
+                    "src/a.ts",
+                    "@Controller('a')\nclass A { @Public() @Get() f() {} }\n",
+                ),
+            ],
+            "Public = \"open\"\n",
+        );
+        assert_eq!(ep(&flow, "GET", "/a").access, prot(custom("ApiKeyGuard")));
+    }
+
+    #[test]
+    fn nf6_public_nobody_reads_has_no_effect() {
+        let flow = run(
+            &[
+                ("package.json", PKG),
+                (
+                    "src/pub.ts",
+                    "export const Public = () => SetMetadata('isPublic', true);\n",
+                ),
+                (
+                    "src/a.ts",
+                    "@Controller('a')\nclass A { @Public() @Get() f() {} }\n",
+                ),
+            ],
+            "Public = \"open\"\n",
+        );
+        assert_eq!(ep(&flow, "GET", "/a").access, AccessState::Undeclared);
+        let notes = notes(&flow);
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("isPublic") && n.contains("no guard reads")),
+            "{notes:#?}"
+        );
+    }
+
+    #[test]
+    fn nf7_the_guards_lookup_decides_class_and_method_roles() {
+        let run_with = |call: &str| {
+            run(
+                &[
+                    ("package.json", PKG),
+                    ("src/roles.ts", &roles_guard(call)),
+                    (
+                        "src/a.ts",
+                        "@Controller('a')\n@UseGuards(RolesGuard)\n@Roles('a')\nclass A {\n\
+                         @Roles('b') @Get('m') m() {}\n@Get('c') c() {}\n}\n",
+                    ),
+                ],
+                "",
+            )
+        };
+        let flow = run_with("getAllAndOverride(ROLES_KEY, [ctx.getHandler(), ctx.getClass()])");
+        let g = custom("RolesGuard");
+        let all = |c: Vec<Condition>| prot(Condition::All(c));
+        assert_eq!(
+            ep(&flow, "GET", "/a/m").access,
+            all(vec![g.clone(), role("b")])
+        );
+        assert_eq!(
+            ep(&flow, "GET", "/a/c").access,
+            all(vec![g.clone(), role("a")])
+        );
+        let flow = run_with("getAllAndMerge(ROLES_KEY, [ctx.getHandler(), ctx.getClass()])");
+        assert_eq!(
+            ep(&flow, "GET", "/a/m").access,
+            all(vec![g.clone(), Condition::Any(vec![role("a"), role("b")])])
+        );
+        let flow = run_with("get(ROLES_KEY, ctx.getHandler())");
+        assert_eq!(
+            ep(&flow, "GET", "/a/m").access,
+            all(vec![g.clone(), role("b")])
+        );
+        assert_eq!(ep(&flow, "GET", "/a/c").access, prot(g));
+    }
+
+    #[test]
+    fn a_guard_reads_the_key_through_a_helper_function_or_a_multiline_generic() {
+        let flow = run(
+            &[
+                ("package.json", PKG),
+                (
+                    "src/auth.guard.ts",
+                    "export const options = (reflector: Reflector, t) => {\n\
+                     \x20 return reflector.getAllAndOverride<Opts | undefined>(KEY, t);\n};\n\
+                     export const Public = () => SetMetadata(KEY, true);\n\
+                     export class AuthGuard { canActivate(c) { return options(this.reflector, [c.getHandler()]); } }\n\
+                     export class MaintGuard {\n  canActivate(c) {\n\
+                     \x20   return this.reflector.getAllAndOverride<{ _x: never } | undefined>(\n      KEY,\n      [c.getHandler()],\n    );\n  }\n}\n",
+                ),
+                ("src/app.module.ts", &app_module("AuthGuard,MaintGuard")),
+                (
+                    "src/a.ts",
+                    "@Controller('a')\nclass A { @Public() @Get() f() {} }\n",
+                ),
+            ],
+            "Public = \"open\"\n",
+        );
+        assert_eq!(ep(&flow, "GET", "/a").access, AccessState::Open);
     }
 }
