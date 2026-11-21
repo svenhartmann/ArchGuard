@@ -362,3 +362,81 @@ form in the tooltip; the "(root)" group is tested but not seen on a real
 project; overloads with the same condition in one file are told apart by
 line order only, as the model has no parameter lists; the desktop repeats the
 engine's crate-private `project_of`.
+
+### 2026-11-20: C# precision and api_models
+
+- State machines: a literal enum assignment, or a non-constructor assignment
+  of a non-literal (gap), creates the machine; constructor mappings alone
+  create neither machine nor gap.
+- State of a plain model: any instance field or property of any visibility,
+  own or from a scanned base; mutable statics count, `const` and
+  `static readonly` do not; a readonly field is an injected dependency only
+  for a scanned interface or a scanned stateless class with only scanned
+  bases; an unresolvable field type counts as state. A stateless class named
+  by a kept model stays.
+- API models: a plain model that is the return type or body-bound parameter
+  of a public action of an ASP.NET controller (or reachable only through
+  such a model) is not an entity but is listed in `api_models` (name, file,
+  line, reason). Never API models: classes in a Domain/Entities folder, with
+  behaviour, named by persistence (DbSet, `IEntityTypeConfiguration`, Dapper,
+  Mongo collections, `[Table]`, `[BsonId]`), or named by a kept model.
+  Minimal-API endpoints are not read, so their classes stay entities.
+- `api_models` is additive and omitted when empty (old JSON and apps without
+  candidates stay byte-identical). It is counted in the summary, printed by
+  the CLI as one line, and returned by the MCP `domain_model` tool as rows of
+  kind `api_model` (filterable by query, listed when no entity is selected).
+  Reason: bitwarden-server lists 285 API models, which otherwise looked like
+  ~266 missing entities.
+
+### 2026-11-21: Python reader
+
+`domain` read Python apps as empty. `domain_python.rs` (shared `lang_python`
+lexing) reads Django models, SQLModel (`table=True` is an entity, other
+SQLModel classes go to `api_models` with the reason "SQLModel without
+table=True"), SQLAlchemy declarative and Flask-SQLAlchemy. Abstract bases and
+mixins are inherited, not entities. Relations: ForeignKey/OneToOne as
+has_one, ManyToMany as has_many, `relationship()`/`Relationship()`. State
+machines: TextChoices/IntegerChoices with literal transitions; a non-literal
+assignment outside `__init__` is a gap. Rules: `ValidationError`/`ValueError`
+under an `if`.
+
+Review fixes (987f328f):
+
+- Names are not guessed. A name resolves through its import (re-exports and
+  star imports followed) or the file's own classes; an import of unscanned
+  code is an external reference and its relation a gap. A Django string
+  without app label resolves inside the model's own app, `'label.Model'` in
+  the app with that label (AppConfig label, else the last part of
+  `AppConfig.name`, else the directory name). `INSTALLED_APPS` is not read.
+  SQLAlchemy strings still resolve by class name (registry semantics).
+- A class deriving from a class imported from an unscanned `*.models` module
+  is an entity with its own fields and a note that inherited fields are
+  unknown (external model base).
+- Class attribute calls: `*Field`, relation callees and calls from
+  `django.db.models`/`*.fields` (or with `to=`/`on_delete=`) are fields; any
+  other call is a gap "field type not read".
+- Not read: events, use cases, backref reverse relations, `GenericForeignKey`,
+  `Table()` association tables. Follow-ups: `settings.AUTH_USER_MODEL`,
+  ContentType/Permission as external references instead of gaps.
+
+### 2026-11-21: view conventions `navigation_resolves` and `endpoint_called`
+
+Both are opt-in in `[views] conventions`.
+
+- `navigation_resolves`: a literal navigation target that matches no route of
+  its application; a target that matches a GET or ANY endpoint counts as
+  resolved (same `link_reaches()` as `endpoint_called`). It is evaluated per
+  application only with at least one route and no route-reading gap;
+  otherwise one Info note per application ("not evaluated"). Blazor literals
+  are read, with `<base href>` or the default `/`.
+- `endpoint_called`: an endpoint reached by no action of the action-to-endpoint
+  join and no literal link (GET/ANY). It is evaluated only when every frontend
+  application has a resolved HTTP call, no unresolved call and no
+  unread-client gap. An application with zero resolved calls blocks the
+  evaluation with one Info note (a client-token text scan was tried and
+  removed: it missed helpers and hit a file cap); a generated-client config
+  (`nswag.json`, `*.nswag`, `openapitools.json`) also blocks it.
+- The notes are Info findings of the `view-conventions:` family: shown, never
+  failing, never baselined. Known limit: calls the extractors do not read at
+  all are not counted as unresolved; `base_href()` takes one base for the
+  whole repository.
