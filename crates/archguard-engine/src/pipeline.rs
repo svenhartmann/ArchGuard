@@ -109,11 +109,27 @@ pub enum Level {
 /// [`analyze`] does (bounded, with an overflow note).
 pub(crate) fn print_warnings(warnings: &[String]) {
     for warning in warnings.iter().take(MAX_PRINTED_WARNINGS) {
-        eprintln!("warning: {warning}");
+        eprintln!("{}", warning_line(warning));
     }
     if let Some(overflow) = warnings.len().checked_sub(MAX_PRINTED_WARNINGS) {
         eprintln!("warning: ...and {overflow} more unresolved import(s).");
     }
+}
+
+/// `warning: {warning}` with every control character but `\n` and `\t`
+/// (multi-line imports) written as `\u{..}`: import lines and paths come
+/// from the repository and must not drive the terminal (titles, screen
+/// clears, colours).
+fn warning_line(warning: &str) -> String {
+    let mut line = String::from("warning: ");
+    for c in warning.chars() {
+        if c.is_control() && c != '\n' && c != '\t' {
+            line.extend(c.escape_unicode());
+        } else {
+            line.push(c);
+        }
+    }
+    line
 }
 
 /// Kap. 6 step 3 alone: the walk with the configured exclude globs.
@@ -923,6 +939,15 @@ fn psr4_declarations(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_warning_escapes_repository_control_chars() {
+        let line = warning_line("unresolved import `x\x1b]0;X\x07\x1b[31m\ny\u{9b}`");
+        assert_eq!(
+            line,
+            "warning: unresolved import `x\\u{1b}]0;X\\u{7}\\u{1b}[31m\ny\\u{9b}`"
+        );
+    }
 
     #[test]
     fn deny_matches_only_names_its_own_level() {

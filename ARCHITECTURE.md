@@ -570,7 +570,7 @@ may_depend_on = ["domain", "application"]
 [rules]
 deny_cycles = "module"      # intent (default)
 max_scc_size = 1            # intent (default)
-baseline = ".archguard/baseline.json"
+baseline = ".archguard/baseline.json"  # relative, no `..`/symlinks; `baseline write` only below .archguard
 # max_acd = 3.42                  # measured: 3.42; suggested gate from init (0 = off)
 # max_instability_core = 0.05     # measured core instability; suggested gate (0 = off)
 

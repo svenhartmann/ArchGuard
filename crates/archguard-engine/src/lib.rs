@@ -37,6 +37,7 @@ mod co_change;
 mod cohesion;
 pub use class_cohesion::class_cohesion;
 mod comparison;
+mod git_cmd;
 mod staged;
 pub use staged::{
     CANCELLED, GitBranch, GitBranches, compare_branches, compare_branches_cancellable,
@@ -135,7 +136,7 @@ pub use cache::{
 pub use change_context::{ChangeContext, ChangeContextOptions, build_change_context};
 pub use check_gate::{
     accepted_by_baseline, check_gate_findings, empty_analysis_error, gate_fails, read_baseline,
-    review_gate_findings,
+    read_repo_baseline, review_gate_findings,
 };
 pub use co_change::{CoChangeFile, CoChangeOptions, CoChangePair, CoChangeReport, co_change};
 pub use cohesion::{

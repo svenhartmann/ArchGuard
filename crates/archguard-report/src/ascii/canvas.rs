@@ -117,8 +117,11 @@ impl Canvas {
         c.color = color;
     }
 
+    /// Control characters of a label (repository text) become `�`, one cell
+    /// each as the layout counted them, so they cannot drive the terminal.
     pub fn text(&mut self, x: usize, y: usize, text: &str, color: u8) {
         for (i, ch) in text.chars().enumerate() {
+            let ch = if ch.is_control() { '\u{fffd}' } else { ch };
             self.put(x + i, y, ch, color);
         }
     }
@@ -214,5 +217,23 @@ mod tests {
         c.text(0, 0, "ab", RED);
         assert_eq!(c.render(), "\x1b[31mab\x1b[0m\n");
         assert_eq!(fit("abcdef", 4, false), "abc~");
+    }
+
+    #[test]
+    fn control_chars_in_a_label_reach_no_terminal() {
+        let mut c = Canvas::new(Style {
+            color: true,
+            ..Style::default()
+        });
+        c.text(0, 0, "a\x1b]0;X\x07\x1b[31m\nb\u{9b}", RED);
+        let out = c.render();
+        assert_eq!(
+            out,
+            "\x1b[31ma\u{fffd}]0;X\u{fffd}\u{fffd}[31m\u{fffd}b\u{fffd}\x1b[0m\n"
+        );
+        // The only escapes are the canvas's own colour codes, one line.
+        assert_eq!(out.matches('\x1b').count(), 2);
+        assert!(!out.contains('\x07'));
+        assert_eq!(out.lines().count(), 1);
     }
 }

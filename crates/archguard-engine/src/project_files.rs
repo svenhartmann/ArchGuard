@@ -285,7 +285,7 @@ pub(crate) fn read_repo_file(root: &Path, relative: &Path, limit: u64) -> std::i
             path.push(component);
             if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
                 return Err(std::io::Error::other(
-                    "symlink is outside the security scan scope",
+                    "symlinks in repository paths are not followed",
                 ));
             }
         }
@@ -294,14 +294,14 @@ pub(crate) fn read_repo_file(root: &Path, relative: &Path, limit: u64) -> std::i
     let metadata = file.metadata()?;
     if !metadata.is_file() || metadata.len() > limit {
         return Err(std::io::Error::other(
-            "dependency input is not a regular bounded file",
+            "repository file is not a regular file",
         ));
     }
     let mut bytes = Vec::new();
     file.take(limit + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > limit {
         return Err(std::io::Error::other(
-            "dependency input exceeded its size limit",
+            "repository file exceeds its size limit",
         ));
     }
     Ok(bytes)

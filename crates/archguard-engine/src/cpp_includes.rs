@@ -89,7 +89,7 @@ pub(crate) fn cpp_include_dirs(root: &Path, files: &[SourceFile]) -> BTreeSet<St
             let mut warnings = Vec::new();
             let dirs = include_dirs(root, cpp.map(|file| file.rel_path.as_str()), &mut warnings);
             for warning in warnings {
-                eprintln!("warning: {warning}");
+                eprintln!("{}", super::warning_line(&warning));
             }
             dirs
         }
