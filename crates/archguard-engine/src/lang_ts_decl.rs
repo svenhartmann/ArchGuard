@@ -1,7 +1,7 @@
 //! What a TypeScript or JavaScript file declares and imports, for the Angular,
 //! React, Vue and domain extractors (ADR 0021, 0022), and its blanked view.
 use crate::lang_ts::{
-    Item, Parser, Value, close, ident_at, is_name, skip_ws, trailing_ident, words,
+    Item, Parser, Value, close, dir, ident_at, is_name, join, skip_ws, trailing_ident, words,
 };
 
 /// `src` with comments and template-literal contents blanked, and string
@@ -220,6 +220,77 @@ pub(crate) fn declared_value(text: &str, name: &str) -> Option<Item> {
         }
     }
     None
+}
+
+/// A tsconfig `paths` entry: the import pattern and its targets as paths below
+/// the analysis root, `*` kept in both (`@/*` to `fe/src/*`).
+pub(crate) struct Alias {
+    pub(crate) pattern: String,
+    pub(crate) targets: Vec<String>,
+}
+
+/// The `paths` of tsconfig `rel` (a path below the analysis root; `read` gives
+/// a file's text), below its `baseUrl`. `extends` is followed through local
+/// files, five hops at most; the nearest `baseUrl` and `paths` win, as in
+/// TypeScript. Comments and trailing commas are tolerated.
+// shortcut: `extends` arrays and package names are not followed, upgrade when a project needs it.
+pub(crate) fn tsconfig_aliases(rel: &str, read: &dyn Fn(&str) -> Option<String>) -> Vec<Alias> {
+    let (mut base, mut paths) = (None, None);
+    let mut cur = rel.to_string();
+    for _ in 0..=5 {
+        let Some(text) = read(&cur).map(|t| mask(&t, true)) else {
+            break;
+        };
+        let value_after = |key: &str| {
+            let at = text.find(&format!("\"{key}\""))? + key.len() + 2;
+            let colon = skip_ws(text.as_bytes(), at);
+            (text.as_bytes().get(colon) == Some(&b':')).then(|| {
+                Parser {
+                    s: &text,
+                    i: colon + 1,
+                }
+                .value(0)
+                .value
+            })
+        };
+        let here = dir(&cur).to_string();
+        if let (None, Some(Value::Str(b))) = (&base, value_after("baseUrl")) {
+            base = Some(join(&here, &b));
+        }
+        if let (None, Some(Value::Obj(fields))) = (&paths, value_after("paths")) {
+            paths = Some((here.clone(), fields));
+        }
+        let Some(Value::Str(next)) = value_after("extends") else {
+            break;
+        };
+        if !next.starts_with('.') {
+            break;
+        }
+        cur = join(&here, &next);
+        if !cur.ends_with(".json") {
+            cur.push_str(".json");
+        }
+    }
+    let Some((paths_dir, fields)) = paths else {
+        return Vec::new();
+    };
+    let base = base.unwrap_or(paths_dir);
+    fields
+        .into_iter()
+        .map(|(pattern, item)| {
+            let targets = match item.value {
+                Value::Arr(items) => items
+                    .into_iter()
+                    .filter_map(|t| match t.value {
+                        Value::Str(t) => Some(join(&base, &t)),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            Alias { pattern, targets }
+        })
+        .collect()
 }
 
 /// A dotted name whose every segment is non-empty: `a.b`, not `...x` or `a..b`

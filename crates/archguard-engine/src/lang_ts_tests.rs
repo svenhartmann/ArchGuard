@@ -186,3 +186,90 @@ function notExported() { return fetch('/hidden'); }
     // No fetch call, or not exported: no entry.
     assert!(!calls.contains_key("baseUrl") && !calls.contains_key("notExported"));
 }
+
+fn aliases(rel: &str, files: &[(&str, &str)]) -> Vec<(String, Vec<String>)> {
+    let read = |p: &str| {
+        files
+            .iter()
+            .find(|(f, _)| *f == p)
+            .map(|(_, t)| t.to_string())
+    };
+    tsconfig_aliases(rel, &read)
+        .into_iter()
+        .map(|a| (a.pattern, a.targets))
+        .collect()
+}
+
+fn alias(pattern: &str, targets: &[&str]) -> (String, Vec<String>) {
+    (
+        pattern.into(),
+        targets.iter().map(|t| t.to_string()).collect(),
+    )
+}
+
+#[test]
+fn tsconfig_paths_resolve_below_baseurl_or_the_config_directory() {
+    let own =
+        r#"{ "compilerOptions": { "paths": { "@/*": ["./src/*"], "lib": ["../lib/index"] } } }"#;
+    assert_eq!(
+        aliases("fe/tsconfig.json", &[("fe/tsconfig.json", own)]),
+        vec![alias("@/*", &["fe/src/*"]), alias("lib", &["lib/index"])]
+    );
+    let based = r#"{ "compilerOptions": { "baseUrl": "src", "paths": { "@/*": ["*"] } } }"#;
+    assert_eq!(
+        aliases("fe/tsconfig.json", &[("fe/tsconfig.json", based)]),
+        vec![alias("@/*", &["fe/src/*"])]
+    );
+    assert!(aliases("fe/tsconfig.json", &[]).is_empty());
+}
+
+#[test]
+fn tsconfig_tolerates_comments_and_trailing_commas() {
+    let text = r#"{
+  // "paths": { "no/*": ["x/*"] }
+  "compilerOptions": {
+    /* block */ "paths": { "@/*": ["./src/*",], },
+  },
+}"#;
+    assert_eq!(
+        aliases("tsconfig.json", &[("tsconfig.json", text)]),
+        vec![alias("@/*", &["src/*"])]
+    );
+}
+
+#[test]
+fn tsconfig_extends_is_followed_up_to_five_hops_and_the_nearest_wins() {
+    let files = [
+        ("fe/tsconfig.json", r#"{ "extends": "./tsconfig.app" }"#),
+        (
+            "fe/tsconfig.app.json",
+            r#"{ "extends": "../base/tsconfig.base.json", "compilerOptions": { "baseUrl": "src" } }"#,
+        ),
+        (
+            "base/tsconfig.base.json",
+            r#"{ "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["*"] } } }"#,
+        ),
+    ];
+    // `baseUrl` from the nearest config, `paths` from the one that has them.
+    assert_eq!(
+        aliases("fe/tsconfig.json", &files),
+        vec![alias("@/*", &["fe/src/*"])]
+    );
+    // Seven configs in a chain: the paths sit past the fifth hop of c0.
+    let chain: Vec<(String, String)> = (0..7)
+        .map(|i| {
+            let text = if i == 6 {
+                r#"{ "compilerOptions": { "paths": { "@/*": ["*"] } } }"#.to_string()
+            } else {
+                format!(r#"{{ "extends": "./c{}.json" }}"#, i + 1)
+            };
+            (format!("c{i}.json"), text)
+        })
+        .collect();
+    let refs: Vec<(&str, &str)> = chain
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    assert!(aliases("c0.json", &refs).is_empty());
+    assert_eq!(aliases("c1.json", &refs), vec![alias("@/*", &["*"])]);
+}
