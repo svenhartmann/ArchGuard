@@ -658,10 +658,15 @@ impl<'a> Scan<'a> {
         };
         let grant = match self.listed(out, site, name, expr, &args) {
             Some(grant) => grant,
-            None => Grant::Cond(if name == "AuthGuard" && call && src.passport {
-                Condition::Authenticated
-            } else {
-                Condition::Custom(name.into())
+            None => Grant::Cond(match declared::passport(self, name) {
+                _ if name == "AuthGuard" && call && src.passport => Condition::Authenticated,
+                Some(over) if over.is_empty() => Condition::Authenticated,
+                Some(over) => self.unknown(
+                    out,
+                    site,
+                    &format!("{name}: {} overridden", over.join(", ")),
+                ),
+                None => Condition::Custom(name.into()),
             }),
         };
         (grant, name.into())
@@ -733,7 +738,7 @@ impl<'a> Scan<'a> {
                     Self::add(&mut level, Grant::Cond(c), Some("roles"));
                 }
                 name if self.composites.contains_key(name) => {
-                    composite::apply(self, out, &site, src, d, &mut level)
+                    composite::apply(self, out, &site, (src, d), &mut level)
                 }
                 _ => {}
             }
@@ -751,20 +756,79 @@ impl<'a> Scan<'a> {
     }
 }
 
+/// Readings of declarations that give a name its meaning.
+mod declared {
+    use super::*;
+
+    /// Whether `name` is declared `const NAME = Reflector.createDecorator…`:
+    /// the decorator itself is the metadata key.
+    pub(super) fn created(scan: &Scan, name: &str) -> bool {
+        (scan.app.files.iter()).any(|src| {
+            words(&src.code, name).into_iter().any(|at| {
+                let before = src.code[..at].trim_end();
+                let decl = ["const", "let"].iter().any(|k| before.ends_with(k));
+                decl && assignment(&src.code, at + name.len()).is_some_and(|eq| {
+                    (src.code[eq + 1..].trim_start()).starts_with("Reflector.createDecorator")
+                })
+            })
+        })
+    }
+
+    /// For `class NAME extends AuthGuard(…)` (passport imported) the methods
+    /// it overrides that decide access; none when `name` is no such class.
+    pub(super) fn passport(scan: &Scan, name: &str) -> Option<Vec<&'static str>> {
+        let mut found: Option<Vec<&'static str>> = None;
+        for src in scan.app.files.iter().filter(|s| s.passport) {
+            for class in structure::classes(src).iter().filter(|c| c.name == name) {
+                let head = &src.code[..class.body.0];
+                let header = head
+                    .rfind(&format!("class {name}"))
+                    .map_or("", |p| &head[p..]);
+                if !header.contains("extends AuthGuard") {
+                    continue;
+                }
+                let body = &src.code[class.body.0..class.body.1];
+                let own = |m: &&'static str| {
+                    words(body, m).into_iter().any(|p| {
+                        let after = body[p + m.len()..].trim_start();
+                        after.starts_with('(') && !body[..p].trim_end().ends_with('.')
+                    })
+                };
+                let overridden = ["canActivate", "handleRequest"].into_iter().filter(own);
+                found.get_or_insert_with(Vec::new).extend(overridden);
+            }
+        }
+        found
+    }
+}
+
 /// Composite decorators: definitions and their use.
 mod composite {
     use super::*;
+
+    /// A composite use: its name, the use site's arguments, nesting depth.
+    struct Use<'a> {
+        name: &'a str,
+        args: &'a [Item],
+        depth: u8,
+    }
 
     const PARTS: [&str; 3] = ["UseGuards", "Roles", "SetMetadata"];
 
     /// Every `const D = (p) => …` / `function D(p) {…}` of the application whose
     /// body calls a part or a `[views.access]` name, by `D`.
+    /// A second pass also takes composites that only call composites (two levels).
     pub(super) fn definitions(scan: &Scan) -> HashMap<String, Vec<Composite>> {
+        let first = collect(scan, &HashSet::new());
+        collect(scan, &first.keys().cloned().collect())
+    }
+
+    fn collect(scan: &Scan, known: &HashSet<String>) -> HashMap<String, Vec<Composite>> {
         let mut defs: HashMap<String, Vec<Composite>> = HashMap::new();
         for src in &scan.app.files {
             for kw in ["const", "function"] {
                 for pos in words(&src.code, kw) {
-                    if let Some((name, def)) = definition(scan, src, kw, pos) {
+                    if let Some((name, def)) = definition(scan, src, (kw, pos), known) {
                         defs.entry(name).or_default().push(def);
                     }
                 }
@@ -774,7 +838,12 @@ mod composite {
     }
 
     /// The composite declared by keyword `kw` at `pos`, if it is one.
-    fn definition(scan: &Scan, src: &Src, kw: &str, pos: usize) -> Option<(String, Composite)> {
+    fn definition(
+        scan: &Scan,
+        src: &Src,
+        (kw, pos): (&str, usize),
+        known: &HashSet<String>,
+    ) -> Option<(String, Composite)> {
         let (code, b) = (&src.code, src.code.as_bytes());
         let at = skip_ws(b, pos + kw.len());
         let name = ident_at(code, at);
@@ -798,7 +867,7 @@ mod composite {
             .unwrap_or("")
             .trim_start();
         let first = ident_at(first.strip_prefix("...").unwrap_or(first), 0);
-        let calls = calls_in(scan, src, body(code, params, kw == "const")?);
+        let calls = calls_in(scan, src, known, body(code, params, kw == "const")?);
         let def = Composite {
             param: Some(first.to_string()).filter(|p| !p.is_empty()),
             calls,
@@ -809,12 +878,18 @@ mod composite {
     }
 
     /// Calls of parts and `[views.access]` names in `body`, in source order.
-    fn calls_in(scan: &Scan, src: &Src, (from, to): (usize, usize)) -> Vec<(String, String)> {
+    fn calls_in(
+        scan: &Scan,
+        src: &Src,
+        known: &HashSet<String>,
+        (from, to): (usize, usize),
+    ) -> Vec<(String, String)> {
         let (code, b) = (&src.code, src.code.as_bytes());
         let names = PARTS
             .iter()
             .copied()
-            .chain(scan.access.keys().map(String::as_str));
+            .chain(scan.access.keys().map(String::as_str))
+            .chain(known.iter().map(String::as_str));
         let mut calls = Vec::new();
         for part in names {
             for p in words(&code[from..to], part) {
@@ -887,13 +962,36 @@ mod composite {
         scan: &Scan,
         out: &mut Vec<UiFlowDiagnostic>,
         site: &Site,
-        src: &Src,
-        d: &Deco,
+        (src, d): (&Src, &Deco),
         level: &mut Level,
     ) {
-        let Some(c) = single(scan, out, site, &d.name) else {
+        let u = Use {
+            name: &d.name,
+            args: &d.args,
+            depth: 0,
+        };
+        apply_to(scan, out, site, src, (&u, level));
+    }
+
+    /// The parts of composite `d` at its use site.
+    fn apply_to(
+        scan: &Scan,
+        out: &mut Vec<UiFlowDiagnostic>,
+        site: &Site,
+        src: &Src,
+        (u, level): (&Use, &mut Level),
+    ) {
+        let (dname, dargs) = (u.name, u.args);
+        let Some(c) = single(scan, out, site, dname) else {
             return;
         };
+        // Guards are read where the composite is defined (its imports).
+        let def_src = scan
+            .app
+            .files
+            .iter()
+            .find(|f| f.rel == c.file)
+            .unwrap_or(src);
         let is_param = |a: &Item| is_param(c, a);
         for (name, text) in &c.calls {
             let args = Parser { s: text, i: 0 }.array(0);
@@ -901,19 +999,30 @@ mod composite {
                 meta::add_listed(scan, out, site, level, grant, name);
                 continue;
             }
+            if scan.composites.contains_key(name.as_str()) {
+                nest(
+                    scan,
+                    out,
+                    site,
+                    src,
+                    (u, name),
+                    (args.iter().any(is_param), level),
+                );
+                continue;
+            }
             let key = args.first().and_then(|k| scan.consts.text(k));
             let roles_key = name == "SetMetadata" && key.as_deref() == Some("roles");
-            let own = if roles_key { &args[1..] } else { &args[..] };
+            let own = &args[usize::from(roles_key)..];
             // `Roles(...p)`, `UseGuards(...p)`: the use site's arguments.
             let (text, own) = if own.iter().any(is_param) {
-                (src.raw.as_str(), d.args.as_slice())
+                (src.raw.as_str(), dargs)
             } else {
                 (text.as_str(), own)
             };
             match name.as_str() {
                 "UseGuards" => {
                     for a in own {
-                        meta::add_guard(level, scan.guard(out, site, src, text, a));
+                        meta::add_guard(level, scan.guard(out, site, def_src, text, a));
                     }
                 }
                 "Roles" => {
@@ -925,14 +1034,36 @@ mod composite {
                     Scan::add(level, c, Some("roles"))
                 }
                 "SetMetadata"
-                    if args.get(1).is_some_and(is_param) && scan.keyed.contains(&d.name) =>
+                    if args.get(1).is_some_and(is_param) && scan.keyed.contains(dname) =>
                 {
                     let key = meta::first_key(scan, text, &args);
-                    options(scan, out, site, src, (d, &key), level);
+                    options(scan, out, site, src, ((dname, dargs), &key), level);
                 }
                 _ => {}
             }
         }
+    }
+
+    /// A composite `name` called by composite `u`: it gets the use site's
+    /// arguments when handed the parameter, up to three levels deep.
+    fn nest(
+        scan: &Scan,
+        out: &mut Vec<UiFlowDiagnostic>,
+        site: &Site,
+        src: &Src,
+        (u, name): (&Use, &str),
+        (handed, level): (bool, &mut Level),
+    ) {
+        if !handed || u.depth >= 2 {
+            let message = format!("Decorator @{name} nested in @{} is not followed.", u.name);
+            return gap(out, site.file, site.line, message);
+        }
+        let inner = Use {
+            name,
+            args: u.args,
+            depth: u.depth + 1,
+        };
+        apply_to(scan, out, site, src, (&inner, level));
     }
 
     /// The options object a composite forwards (Immich's `@Authenticated`).
@@ -941,10 +1072,10 @@ mod composite {
         out: &mut Vec<UiFlowDiagnostic>,
         site: &Site,
         src: &Src,
-        (d, meta_key): (&Deco, &str),
+        ((dname, dargs), meta_key): ((&str, &[Item]), &str),
         level: &mut Level,
     ) {
-        let Some(arg) = d.args.first() else { return };
+        let Some(arg) = dargs.first() else { return };
         let Value::Obj(fields) = &arg.value else {
             let c = scan.unknown(out, site, &arg.source(&src.raw));
             return Scan::add(level, Grant::Cond(c), Some(meta_key));
@@ -971,7 +1102,7 @@ mod composite {
                     None => scan.unknown(out, site, &v.source(&src.raw)),
                 }),
                 _ => {
-                    let message = format!("Option `{key}` of @{} is not evaluated.", d.name);
+                    let message = format!("Option `{key}` of @{} is not evaluated.", dname);
                     note(out, site.file, site.line, message);
                     continue;
                 }
@@ -1783,7 +1914,10 @@ mod meta {
 
     /// The metadata key `@Roles` sets: its definition's, else `roles`.
     pub(super) fn roles_key(scan: &Scan) -> String {
-        decorator_key(scan, "Roles").unwrap_or_else(|| "roles".into())
+        let created = declared::created(scan, "Roles").then(|| "Roles".to_string());
+        decorator_key(scan, "Roles")
+            .or(created)
+            .unwrap_or_else(|| "roles".into())
     }
 
     /// A `[views.access]` `open` decorator's metadata key; unreadable is a gap.
@@ -2926,5 +3060,113 @@ export class JwtAuthGuard implements CanActivate {
         assert_eq!(ep(&flow, "GET", "/c").access, prot(custom("G")));
         let flow = guard("c.getClass()");
         assert_eq!(ep(&flow, "GET", "/c").access, AccessState::Open);
+    }
+
+    const PASSPORT: &str = "import { AuthGuard } from '@nestjs/passport';\n";
+
+    fn subclass(body: &str, use_site: &str) -> UiFlow {
+        run(
+            &[
+                ("package.json", PKG),
+                (
+                    "src/jwt.ts",
+                    &format!(
+                        "{PASSPORT}export class JwtAuthGuard extends AuthGuard('jwt') {body}\n"
+                    ),
+                ),
+                (
+                    "src/a.ts",
+                    &format!("@Controller('a')\nclass A {{ {use_site} @Get() f() {{}} }}\n"),
+                ),
+            ],
+            "",
+        )
+    }
+
+    #[test]
+    fn nf8_a_passport_subclass_without_overrides_is_authenticated() {
+        let flow = subclass("{}", "@UseGuards(JwtAuthGuard)");
+        assert_eq!(
+            ep(&flow, "GET", "/a").access,
+            prot(Condition::Authenticated)
+        );
+    }
+
+    #[test]
+    fn nf9_a_passport_subclass_overriding_handle_request_or_can_activate_is_unknown() {
+        for ov in [
+            "{ handleRequest(err, user) { return user; } }",
+            "{ canActivate(ctx) { return true; } }",
+        ] {
+            let flow = subclass(ov, "@UseGuards(JwtAuthGuard)");
+            let AccessState::Protected(Condition::Unknown(text)) =
+                ep(&flow, "GET", "/a").access.clone()
+            else {
+                panic!("{:?}", ep(&flow, "GET", "/a").access)
+            };
+            assert!(text.contains("JwtAuthGuard"), "{text}");
+            assert!(
+                gaps(&flow).iter().any(|m| m.contains("JwtAuthGuard")),
+                "{ov}"
+            );
+        }
+    }
+
+    #[test]
+    fn nf10_composites_nest_two_levels() {
+        let flow = run(
+            &[
+                ("package.json", PKG),
+                (
+                    "src/roles.ts",
+                    &roles_guard(
+                        "getAllAndOverride(ROLES_KEY, [ctx.getHandler(), ctx.getClass()])",
+                    ),
+                ),
+                (
+                    "src/auth.ts",
+                    &format!(
+                        "{PASSPORT}export const Auth = (...r) => applyDecorators(Inner(...r));\n\
+                         export const Inner = (...r) => applyDecorators(SetMetadata('roles', r), UseGuards(AuthGuard('jwt'), RolesGuard));\n"
+                    ),
+                ),
+                (
+                    "src/a.ts",
+                    "@Controller('a')\nclass A { @Auth('admin') @Get() f() {} }\n",
+                ),
+            ],
+            "",
+        );
+        assert_eq!(
+            ep(&flow, "GET", "/a").access,
+            prot(Condition::All(vec![
+                Condition::Authenticated,
+                custom("RolesGuard"),
+                role("admin")
+            ]))
+        );
+    }
+
+    #[test]
+    fn nf11_a_reflector_created_decorator_is_read_by_the_guard_that_gets_it() {
+        let flow = run(
+            &[
+                ("package.json", PKG),
+                (
+                    "src/roles.ts",
+                    "export const Roles = Reflector.createDecorator<string[]>();\n\
+                     export class RolesGuard { canActivate(ctx) { const r = this.reflector.get(Roles, ctx.getHandler()); return r.includes(user.role); } }\n",
+                ),
+                (
+                    "src/a.ts",
+                    "@Controller('a')\n@UseGuards(RolesGuard)\nclass A { @Roles(['admin']) @Get() f() {} }\n",
+                ),
+            ],
+            "",
+        );
+        assert_eq!(
+            ep(&flow, "GET", "/a").access,
+            prot(Condition::All(vec![custom("RolesGuard"), role("admin")]))
+        );
     }
 }
