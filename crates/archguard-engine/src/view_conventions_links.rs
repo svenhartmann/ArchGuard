@@ -153,6 +153,76 @@ fn literal(root: &Path, file: &str, line: u32, text: &str, base: &str) -> Option
     })
 }
 
+/// Source files under `dir` (relative to `root`), capped, build output skipped.
+fn files_under(root: &Path, dir: &str) -> Vec<std::path::PathBuf> {
+    let (mut stack, mut out) = (vec![root.join(dir)], Vec::new());
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if path.is_dir() {
+                if !["bin", "obj", "node_modules", ".git", "target", "dist"]
+                    .contains(&name.as_str())
+                {
+                    stack.push(path);
+                }
+            } else if out.len() < 5000 {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Whether sources of `dir` use an HTTP client. Unknown languages count as
+/// usage: with no source file of a known language read, nothing is ruled out.
+fn uses_http_client(root: &Path, dir: &str) -> bool {
+    const KNOWN: [&str; 14] = [
+        "ts", "tsx", "js", "jsx", "vue", "svelte", "cs", "razor", "py", "java", "kt", "php", "go",
+        "rs",
+    ];
+    const CLIENTS: [&str; 10] = [
+        "HttpClient",
+        "fetch(",
+        "axios",
+        "XMLHttpRequest",
+        "$http",
+        "WebClient",
+        "RestTemplate",
+        "requests.",
+        "reqwest",
+        "Client(",
+    ];
+    let mut read = false;
+    for file in files_under(root, dir) {
+        let known = file
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| KNOWN.contains(&e));
+        let Some(text) = known.then(|| std::fs::read_to_string(&file).ok()).flatten() else {
+            continue;
+        };
+        read = true;
+        if CLIENTS.iter().any(|c| text.contains(c)) {
+            return true;
+        }
+    }
+    !read
+}
+
+/// A generated-client configuration file (NSwag, OpenAPI Generator), if any.
+fn generated_client_config(root: &Path) -> Option<String> {
+    files_under(root, "").into_iter().find_map(|f| {
+        let name = f.file_name()?.to_str()?;
+        let hit = name == "nswag.json" || name == "openapitools.json" || name.ends_with(".nswag");
+        hit.then(|| f.strip_prefix(root).unwrap_or(&f).display().to_string())
+    })
+}
+
 /// Whether a link to `path` opens the endpoint (a browser sends GET).
 fn link_reaches(e: &EndpointAccess, path: &str) -> bool {
     (e.method == "GET" || e.method == ANY_METHOD) && path_patterns_match(&e.path, path)
@@ -224,11 +294,28 @@ pub(super) fn endpoint_called(root: &Path, flow: &UiFlow) -> Vec<Finding> {
             .filter(|a| matches!(a.call, Call::Unresolved(_)))
             .count();
         let unseen = gaps(flow, app, &["call", "client", "import", "url"]).count();
-        // An app that is fully read and calls nothing over HTTP hides no caller.
+        let resolved = (flow.actions.iter())
+            .filter(|a| {
+                application_of(flow, &a.screen) == app && matches!(a.call, Call::Http { .. })
+            })
+            .count();
         if unresolved + unseen > 0 {
             let n = unresolved + unseen;
             unread.push(format!("{app} has {n} unresolved/unread calls"));
+        } else if resolved == 0 && uses_http_client(root, &app_dir(flow, app)) {
+            unread.push(format!(
+                "{app} has 0 resolved calls but uses an HTTP client"
+            ));
         }
+    }
+    let any_http = flow
+        .actions
+        .iter()
+        .any(|a| matches!(a.call, Call::Http { .. }));
+    if let (true, Some(marker)) = (!any_http, generated_client_config(root)) {
+        unread.push(format!(
+            "{marker} configures a generated client whose calls were not read"
+        ));
     }
     if !unread.is_empty() {
         return vec![note(
