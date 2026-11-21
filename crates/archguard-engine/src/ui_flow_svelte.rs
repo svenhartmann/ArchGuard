@@ -30,13 +30,32 @@
 //!   `custom(name)` unless `[views.access]` lists that name; a call is read only when
 //!   `[views.access]` lists its function. Anything else is `unknown` and a gap. The
 //!   meaning of a check is never guessed.
+//! - `error(…)` from `@sveltejs/kit` guards a load like `redirect(…)`.
 //! - A call inside `load` to a function listed in `[views.access]` (`authenticate =
-//!   "authenticated"`) is that meaning; `$arg` forms take its string literal arguments.
-//! - `hooks.server.ts`/`.js` in `src`: an `if (…)` whose block calls `redirect(` or
-//!   `error(`, its condition split at `&&`: `….pathname.startsWith('/p')` and
-//!   `….pathname === '/p'` select the routes (compared as route text; none selects
-//!   all), the other parts are checks as above, and matching screens and endpoints
-//!   require that the block does not run.
+//!   "authenticated"`) is that meaning; `$arg` forms take its string literal arguments. A
+//!   fixed meaning called with an options object (`authenticate(url, { admin: true })`)
+//!   is `unknown` and a gap: one meaning cannot hold for every call site. A listed
+//!   `open` guard makes the screen `open`; `open` never hides an unknown next to it.
+//! - A helper called as a statement (`await authenticate(url)`) and not listed is read
+//!   one hop deep (its own file or the `$lib`/relative module it is imported from) with
+//!   the same rules; not found or not a function is `unknown` and a gap. Helpers of
+//!   helpers and package functions are not followed.
+//! - Layout loads inherit down the layout chain; `+page@x.svelte` and `+layout@x.svelte`
+//!   cut the chain at the ancestor directory `x` (empty: the root); an unknown `x` is a
+//!   gap and keeps the chain. A screen with a condition from a layout is `weak`.
+//! - `handle` of `src/hooks.server.{ts,js}` (or `hooks.server/index`), directly, as
+//!   `sequence(a, b)` (local, inline or imported functions, one hop) or re-exported
+//!   (`export { handle } from './auth'`; Auth.js `SvelteKitAuth` protects nothing). In its
+//!   body an `if (…)` whose block calls `redirect(`/`error(` or returns a `Response`/
+//!   `json(` with status 40x, nested `if`s `and`ed; conjuncts `pathname.startsWith`/`===`
+//!   and the same on `route.id` (with groups), `[…].includes(…)` of a literal list (or a
+//!   constant of the file), and their negations select routes, the others are checks as
+//!   above. Matching screens, endpoints and actions require that the block does not run.
+//!   `if (selectors) return resolve(event)` exempts the routes from later rules; a route
+//!   a read allowlist exempts from a blocking rule is `open` when nothing else applies.
+//!   A blocking call outside such an `if`, or a handle that cannot be read, is `unknown`
+//!   everywhere and a gap. Prerendered pages (`export const prerender = true`) are not
+//!   covered by `handle` (note).
 //!
 //! Transitions: an `href` attribute on any element (`<a>` and components that forward
 //! it), `goto(…)` imported from `$app/navigation`, and `redirect(…)` (in a load, under
@@ -71,8 +90,7 @@
 //! body of the handler it names or calls (in the same file). A link's trigger is its own.
 //!
 //! Not recognized; each case is a diagnostic: non-literal targets, URLs and checks.
-//! Not followed: helpers of helpers, object methods written as `name() {…}`, guard
-//! functions not listed in `[views.access]`, redirects of `hooks.server`, `+page.ts`
+//! Not followed: helpers of helpers, object methods written as `name() {…}`, redirects of `hooks.server`, `+page.ts`
 //! files without a `+page.svelte`, `resolve()` of `$app/paths`.
 use crate::extract_ctx::{
     ExtractContext, access_condition, dir_name as app_name, finish, gap as diag,
@@ -81,7 +99,7 @@ use crate::extract_ctx::{
 use crate::lang_markup::blank;
 use crate::lang_text::{find_top, matching_back, split_top, unparen};
 use crate::lang_ts::*;
-use crate::lang_ts_decl::{has_dep, imports};
+use crate::lang_ts_decl::{declared_value, has_dep, imports};
 use crate::lang_ts_http::*;
 use crate::services::support::test_path;
 use archguard_core::{
@@ -165,6 +183,21 @@ fn all(conditions: Vec<Condition>) -> Option<Condition> {
         1 => conditions.pop(),
         _ => Some(Condition::All(conditions)),
     }
+}
+
+/// All layers must hold: protected conditions are collected (repeats once, in
+/// first order), `Open` only counts when nothing is protected.
+fn fold(layers: impl IntoIterator<Item = AccessState>) -> AccessState {
+    let (mut conditions, mut open) = (Vec::new(), false);
+    for layer in layers {
+        match layer {
+            AccessState::Protected(Condition::All(items)) => conditions.extend(items),
+            AccessState::Protected(c) => conditions.push(c),
+            AccessState::Open => open = true,
+            AccessState::Undeclared => {}
+        }
+    }
+    AccessState::from_parts(all(conditions), open)
 }
 
 /// The negation; `None` stands for "always true".
@@ -415,10 +448,9 @@ impl App {
         let loads = self.loads(&checks, &mut flow.diagnostics);
         let mut pages = self.pages();
         for page in &mut pages {
-            page.screen.access = archguard_core::AccessState::from_parts(
-                self.page_access(page, &loads, &hooks),
-                false,
-            );
+            let (access, weak) = self.page_access(page, &loads, &hooks, &mut flow.diagnostics);
+            page.screen.access = access;
+            page.screen.weak = weak;
         }
         endpoints::extract(self, &hooks, &mut flow.endpoints);
         let clients = Clients::new(&self.files);
@@ -485,7 +517,7 @@ impl App {
         &self,
         checks: &Checks,
         out: &mut Vec<UiFlowDiagnostic>,
-    ) -> BTreeMap<&str, Vec<Condition>> {
+    ) -> BTreeMap<&str, Vec<AccessState>> {
         let is_load = |name: &str| {
             LOADS
                 .iter()
@@ -493,40 +525,124 @@ impl App {
         };
         (self.files.iter())
             .filter(|(file, _)| self.route_file(file).is_some_and(|(_, n)| is_load(n)))
-            .map(|(file, text)| (file.as_str(), guard::requirements(checks, file, text, out)))
+            .map(|(file, text)| {
+                let found = guard::requirements(self, checks, (file, text), out);
+                (file.as_str(), found)
+            })
             .collect()
     }
 
-    /// The layouts' loads from the root down, the page's own loads and the hooks.
+    /// The layout directories whose loads run for `page`, root first: the chain of
+    /// directories, cut at `+layout@x.svelte` and `+page@x.svelte` resets (`x` names an
+    /// ancestor directory, empty the root). An unknown target keeps the whole chain.
+    fn layout_chain(&self, page: &Page, out: &mut Vec<UiFlowDiagnostic>) -> Vec<String> {
+        let mut dirs = vec![String::new()];
+        dirs.extend(
+            page.dir
+                .match_indices('/')
+                .map(|(i, _)| page.dir[..i].to_string()),
+        );
+        if !page.dir.is_empty() {
+            dirs.push(page.dir.clone());
+        }
+        let reset = |name: &str| {
+            let (_, rest) = name.split_once('@')?;
+            rest.strip_suffix(".svelte").map(str::to_string)
+        };
+        let cut = |kept: &mut Vec<String>, target: &str, out: &mut Vec<UiFlowDiagnostic>| {
+            let at = kept.iter().position(|d| match target {
+                "" => d.is_empty(),
+                t => !d.is_empty() && d.rsplit('/').next() == Some(t),
+            });
+            match at {
+                Some(i) => kept.truncate(i + 1),
+                None => {
+                    let message = format!(
+                        "Layout reset to '{target}' names no ancestor directory; the whole layout chain is kept."
+                    );
+                    diag(out, &page.screen.file, 1, message);
+                }
+            }
+        };
+        let mut kept: Vec<String> = Vec::new();
+        for d in &dirs {
+            let sep = if d.is_empty() { "" } else { "/" };
+            let prefix = format!("{}{d}{sep}+layout@", self.routes);
+            let layout = self.files.keys().find_map(|f| {
+                let name = f.strip_prefix(&prefix)?;
+                reset(&format!("+layout@{name}")).filter(|_| !name.contains('/'))
+            });
+            if let Some(target) = layout {
+                cut(&mut kept, &target, out);
+            }
+            kept.push(d.clone());
+        }
+        let name = self.route_file(&page.screen.file).map_or("", |(_, n)| n);
+        if let Some(target) = reset(name) {
+            cut(&mut kept, &target, out);
+        }
+        kept
+    }
+
+    /// The load files of `page`, outermost layout first, then the page's own.
+    fn load_files(&self, page: &Page, chain: &[String]) -> (Vec<String>, Vec<String>) {
+        let files = |dir: &str, kind: &str| -> Vec<String> {
+            let sep = if dir.is_empty() { "" } else { "/" };
+            LOADS
+                .map(|e| format!("{}{dir}{sep}{kind}{e}", self.routes))
+                .into()
+        };
+        let layouts = chain.iter().flat_map(|d| files(d, "+layout")).collect();
+        (layouts, files(&page.dir, "+page"))
+    }
+
+    /// Whether `page` is prerendered: the nearest `export const prerender` of its
+    /// own loads and its layouts wins.
+    fn prerendered(&self, layouts: &[String], pages: &[String]) -> bool {
+        let nearest = pages.iter().chain(layouts.iter().rev());
+        for file in nearest {
+            let Some(text) = self.files.get(file) else {
+                continue;
+            };
+            let declared = words(text, "prerender")
+                .into_iter()
+                .find(|&p| text[..p].trim_end().ends_with("const") && text[..p].contains("export"));
+            if let Some(p) = declared {
+                let value = declared_value(text, "prerender");
+                return value.is_some_and(|v| v.source(text) == "true") && p > 0;
+            }
+        }
+        false
+    }
+
+    /// The access of `page`: the layouts' loads from the root down, the page's own
+    /// loads and the hooks; weak when a layout's load contributes a condition. A
+    /// prerendered page is not covered by `handle`.
     fn page_access(
         &self,
         page: &Page,
-        loads: &BTreeMap<&str, Vec<Condition>>,
+        loads: &BTreeMap<&str, Vec<AccessState>>,
         hooks: &[hooks::Rule],
-    ) -> Option<Condition> {
-        let mut dirs = vec![""];
-        dirs.extend(page.dir.match_indices('/').map(|(i, _)| &page.dir[..i]));
-        if !page.dir.is_empty() {
-            dirs.push(&page.dir);
-        }
-        let mut files = Vec::new();
-        for (i, d) in dirs.iter().enumerate() {
-            let sep = if d.is_empty() { "" } else { "/" };
-            let kinds: &[&str] = if i + 1 == dirs.len() {
-                &["+layout", "+page"]
-            } else {
-                &["+layout"]
-            };
-            for kind in kinds {
-                files.extend(LOADS.map(|e| format!("{}{d}{sep}{kind}{e}", self.routes)));
-            }
-        }
-        let mut conditions: Vec<Condition> = (files.iter())
-            .flat_map(|f| loads.get(f.as_str()).into_iter().flatten().cloned())
-            .collect();
+        out: &mut Vec<UiFlowDiagnostic>,
+    ) -> (AccessState, bool) {
+        let chain = self.layout_chain(page, out);
+        let (layouts, own) = self.load_files(page, &chain);
+        let of = |files: &[String]| -> Vec<AccessState> {
+            let found = files.iter().filter_map(|f| loads.get(f.as_str()));
+            found.flatten().cloned().collect()
+        };
+        let (from_layouts, from_page) = (of(&layouts), of(&own));
+        let weak = from_layouts.iter().any(|s| s.condition().is_some());
         let route = page.screen.route.as_deref().unwrap_or("/");
-        conditions.extend(hooks::requirement(hooks, route));
-        all(conditions)
+        let mut hook = hooks::state(hooks, route, &format!("/{}", page.dir));
+        if hook != AccessState::Undeclared && self.prerendered(&layouts, &own) {
+            let message =
+                "Prerendered page: handle does not run for it, hooks rules do not cover it.";
+            note(out, &page.screen.file, 1, message);
+            hook = AccessState::Undeclared;
+        }
+        let layers = from_layouts.into_iter().chain(from_page).chain([hook]);
+        (fold(layers), weak)
     }
 
     /// The screens a file's links and calls start from; none for server files and
@@ -891,7 +1007,7 @@ mod guard {
     }
 
     /// Offsets of the `{` of every block holding `pos`, innermost first.
-    fn enclosing(text: &str, pos: usize) -> Vec<usize> {
+    pub(super) fn enclosing(text: &str, pos: usize) -> Vec<usize> {
         let mut stack = Vec::new();
         scan_brackets(text, 0, (b'{', b'}'), |i, c, _| {
             if i >= pos {
@@ -993,12 +1109,13 @@ mod guard {
         }
     }
 
-    /// The `load` function's source range.
-    fn load_range(text: &str) -> Option<(usize, usize)> {
+    /// The source range of the function or constant `name`: the expression of a
+    /// `const`/`let`, the body of a `function`.
+    pub(super) fn decl_range(text: &str, name: &str, exported: bool) -> Option<(usize, usize)> {
         let b = text.as_bytes();
-        words(text, "load").into_iter().find_map(|pos| {
+        words(text, name).into_iter().find_map(|pos| {
             let before = text[..pos].trim_end();
-            if !text[..pos].contains("export") {
+            if exported && !before.contains("export") {
                 return None;
             }
             if before.ends_with("const") || before.ends_with("let") {
@@ -1015,21 +1132,116 @@ mod guard {
         })
     }
 
-    /// What the `load` function of a `+layout`/`+page` file requires, in text order.
+    /// The braces of the function written at `at..end` (`{…}` of a function body, an
+    /// arrow with a block or a `function` expression); an arrow with an expression
+    /// body gives an empty range; `None` when it is no function.
+    pub(super) fn body_range(text: &str, (at, end): (usize, usize)) -> Option<(usize, usize)> {
+        let s = text.get(at..end)?;
+        if s.starts_with('{') {
+            return Some((at, end));
+        }
+        if let Some(arrow) = s.find("=>") {
+            let i = skip_ws(text.as_bytes(), at + arrow + 2);
+            return Some(match text.as_bytes().get(i) {
+                Some(b'{') => (i, close(text, i)),
+                _ => (at, at),
+            });
+        }
+        let kw = s.find("function")?;
+        let open = at + kw + s[kw..].find('(')?;
+        let body = close(text, open) + text[close(text, open)..].find('{')?;
+        Some((body, close(text, body)))
+    }
+
+    /// The `load` function's source range.
+    fn load_range(text: &str) -> Option<(usize, usize)> {
+        decl_range(text, "load", true)
+    }
+
+    /// Calls `f(…)` written as a statement (the result is dropped), in `range`:
+    /// the name, the offset of the name and of its `(`.
+    fn statement_calls(text: &str, (start, end): (usize, usize)) -> Vec<(String, usize, usize)> {
+        const KEYWORDS: [&str; 9] = [
+            "if", "for", "while", "switch", "catch", "return", "function", "typeof", "throw",
+        ];
+        let b = text.as_bytes();
+        let mut found = Vec::new();
+        let mut i = start;
+        while i < end {
+            if !is_ident_char(b[i] as char) || (i > start && is_ident_char(b[i - 1] as char)) {
+                i += 1;
+                continue;
+            }
+            let name = ident_at(text, i);
+            let after = skip_ws(b, i + name.len());
+            let mut before = text[start..i].trim_end();
+            if let Some(s) = before.strip_suffix("await")
+                && !s.ends_with(is_ident_char)
+            {
+                before = s.trim_end();
+            }
+            let statement = before.is_empty() || before.ends_with([';', '{', '}']);
+            if statement && b.get(after) == Some(&b'(') && !KEYWORDS.contains(&name) {
+                found.push((name.to_string(), i, after));
+            }
+            i += name.len().max(1);
+        }
+        found
+    }
+
+    /// What the `load` function of a `+layout`/`+page` file requires, in text order:
+    /// each requirement is `Protected`, or `Open` for a guard `[views.access]` lists
+    /// as open.
     pub(super) fn requirements(
+        app: &App,
         checks: &Checks,
-        file: &str,
-        text: &str,
+        (file, text): (&str, &str),
         out: &mut Vec<UiFlowDiagnostic>,
-    ) -> Vec<Condition> {
-        let Some((start, end)) = load_range(text) else {
+    ) -> Vec<AccessState> {
+        let Some(range) = load_range(text) else {
             return vec![];
         };
-        let mut found: Vec<(usize, Condition)> = Vec::new();
-        let redirects = (imports(text).into_iter())
-            .filter(|i| i.module == "@sveltejs/kit" && i.imported.as_deref() == Some("redirect"))
+        scan(app, checks, (file, text, range), true, out)
+            .into_iter()
+            .map(|(_, s)| s)
+            .collect()
+    }
+
+    type Found = Vec<(usize, AccessState)>;
+
+    /// The requirements inside `range` of `text`, by offset. `hop`: helpers called
+    /// as statements are read one level deep.
+    fn scan(
+        app: &App,
+        checks: &Checks,
+        (file, text, range): (&str, &str, (usize, usize)),
+        hop: bool,
+        out: &mut Vec<UiFlowDiagnostic>,
+    ) -> Found {
+        let at = (file, text, range);
+        let mut found = blocking_calls(checks, at, out);
+        found.extend(listed_calls(checks, at, out));
+        if hop {
+            found.extend(helper_calls(app, checks, at, out));
+        }
+        found.sort_by_key(|(pos, _)| *pos);
+        found
+    }
+
+    /// `redirect(…)`/`error(…)` of `@sveltejs/kit` under their guards.
+    fn blocking_calls(
+        checks: &Checks,
+        (file, text, (start, end)): (&str, &str, (usize, usize)),
+        out: &mut Vec<UiFlowDiagnostic>,
+    ) -> Found {
+        let mut found = Vec::new();
+        let blockers = (imports(text).into_iter())
+            .filter(|i| {
+                i.module == "@sveltejs/kit"
+                    && matches!(i.imported.as_deref(), Some("redirect" | "error"))
+            })
             .map(|i| i.local);
-        for name in redirects {
+        for name in blockers {
             for pos in words(text, &name)
                 .into_iter()
                 .filter(|p| (start..end).contains(p))
@@ -1038,11 +1250,24 @@ mod guard {
                     continue;
                 }
                 if let (true, Some(c)) = condition(checks, (file, text, pos), out) {
-                    found.extend(negate(Some(c)).map(|c| (pos, c)));
+                    // a guard that never holds never blocks: an explicit open marker
+                    let state = negate(Some(c)).map_or(AccessState::Open, AccessState::Protected);
+                    found.push((pos, state));
                 }
             }
         }
-        for name in checks.access.keys().filter(|n| is_ident(n)) {
+        found
+    }
+
+    /// Calls of guards `[views.access]` lists.
+    fn listed_calls(
+        checks: &Checks,
+        (file, text, (start, end)): (&str, &str, (usize, usize)),
+        out: &mut Vec<UiFlowDiagnostic>,
+    ) -> Found {
+        use AccessState::Protected as P;
+        let mut found = Vec::new();
+        for (name, meaning) in checks.access.iter().filter(|(n, _)| is_ident(n)) {
             for pos in words(text, name)
                 .into_iter()
                 .filter(|p| (start..end).contains(p))
@@ -1050,132 +1275,495 @@ mod guard {
                 let Some(open) = call_open(text, pos, name) else {
                     continue;
                 };
-                match access_condition(checks.access, name, &args(text, open)) {
-                    Ok(s) => found.extend(s.condition().cloned().map(|c| (pos, c))),
-                    Err(n) => {
-                        let message = format!(
+                let call = &text[pos..close(text, open)];
+                let fixed = !matches!(
+                    meaning,
+                    AccessMeaning::RoleFromArguments
+                        | AccessMeaning::PolicyFromArguments
+                        | AccessMeaning::FromArgumentsOr(..)
+                );
+                let options = (args(text, open).iter()).any(|a| matches!(a.value, Value::Obj(_)));
+                let message = if fixed && options {
+                    format!(
+                        "Guard call {call} passes an options object; one fixed meaning from [views.access] cannot hold for every call site, the condition is unknown."
+                    )
+                } else {
+                    match access_condition(checks.access, name, &args(text, open)) {
+                        Ok(s) => {
+                            found.push((pos, s));
+                            continue;
+                        }
+                        Err(n) => format!(
                             "Guard call {n} has no string literal arguments for its $arg meaning; the condition is unknown."
-                        );
-                        diag(out, file, line_of(text, pos), message);
-                        found.push((pos, Condition::Unknown(n)));
+                        ),
                     }
+                };
+                diag(out, file, line_of(text, pos), message);
+                found.push((pos, P(Condition::Unknown(call.into()))));
+            }
+        }
+        found
+    }
+
+    /// Helpers called as statements, read one hop deep or unknown.
+    fn helper_calls(
+        app: &App,
+        checks: &Checks,
+        (file, text, range): (&str, &str, (usize, usize)),
+        out: &mut Vec<UiFlowDiagnostic>,
+    ) -> Found {
+        let mut found = Vec::new();
+        for (name, pos, open) in statement_calls(text, range) {
+            if checks.access.contains_key(&name) {
+                continue;
+            }
+            let call = text[pos..close(text, open)].to_string();
+            match helper_range(app, (file, text), &name) {
+                Helper::None => {}
+                Helper::Unreadable => {
+                    let message = format!(
+                        "Helper {call} is not found or not a function in the scanned sources; whether it guards is unknown."
+                    );
+                    diag(out, file, line_of(text, pos), message);
+                    found.push((pos, AccessState::Protected(Condition::Unknown(call))));
+                }
+                Helper::At(hfile, htext, hrange) => {
+                    let inner = scan(app, checks, (&hfile, &htext, hrange), false, out);
+                    found.extend(inner.into_iter().map(|(_, s)| (pos, s)));
                 }
             }
         }
-        found.sort_by_key(|(pos, _)| *pos);
-        found.into_iter().map(|(_, c)| c).collect()
+        found
+    }
+
+    enum Helper {
+        /// Not a helper of the application (a parameter, a package function).
+        None,
+        Unreadable,
+        At(String, String, (usize, usize)),
+    }
+
+    /// The declaration of the function `name` called in `file`: its own, or one
+    /// of the module it is imported from.
+    fn helper_range(app: &App, (file, text): (&str, &str), name: &str) -> Helper {
+        let Some(import) = imports(text).into_iter().find(|i| i.local == name) else {
+            return match decl_range(text, name, false) {
+                Some(range) => Helper::At(file.into(), text.into(), range),
+                None => Helper::None,
+            };
+        };
+        let local = import.module.starts_with('.') || import.module.starts_with("$lib");
+        let found = app.module(file, &import.module);
+        if !local && found.is_none() {
+            return Helper::None;
+        }
+        let range = import
+            .imported
+            .as_deref()
+            .filter(|i| *i != "*")
+            .and_then(|i| {
+                let (f, t) = found?;
+                Some((f, t, decl_range(t, i, false)?))
+            });
+        match range {
+            Some((f, t, range)) => Helper::At(f.into(), t.into(), range),
+            None => Helper::Unreadable,
+        }
     }
 }
 
-/// `hooks.server` path rules.
+/// `hooks.server` rules of the `handle` function.
 mod hooks {
     use super::*;
 
-    pub(super) struct Rule {
-        /// `(prefix, exact)`: every one must hold.
-        paths: Vec<(String, bool)>,
-        requirement: Option<Condition>,
+    enum Op {
+        Prefix(String),
+        Exact(String),
+        In(Vec<String>),
     }
 
-    /// A `pathname.startsWith('/p')` or `pathname === '/p'` conjunct.
-    fn path_check(c: &str) -> Option<(String, bool)> {
-        let (_, rest) = c.split_once("pathname")?;
-        let rest = rest.trim_start();
-        let (arg, exact) = if let Some(r) = rest.strip_prefix(".startsWith(") {
-            (r.strip_suffix(')')?, false)
+    /// One conjunct that selects routes: on the pathname, or on `route.id` (with
+    /// its groups); `neg` for `!`/`!==`.
+    struct Sel {
+        id: bool,
+        neg: bool,
+        op: Op,
+    }
+
+    impl Sel {
+        fn holds(&self, route: &str, id: &str) -> bool {
+            let s = if self.id { id } else { route };
+            let hit = match &self.op {
+                Op::Prefix(p) => s.starts_with(p.as_str()),
+                Op::Exact(p) => s == p,
+                Op::In(list) => list.iter().any(|p| p == s),
+            };
+            hit != self.neg
+        }
+
+        /// `!list.includes(…)`: failing it means the route is on a read allowlist.
+        fn allowlist(&self) -> bool {
+            self.neg && matches!(self.op, Op::In(_))
+        }
+    }
+
+    enum Kind {
+        /// The routes the selectors match are blocked unless the requirement holds
+        /// (`None`: the rule needs nothing).
+        Block(Option<Condition>),
+        /// `return resolve(event)`: the matched routes skip every later rule.
+        Pass,
+    }
+
+    pub(super) struct Rule {
+        sels: Vec<Sel>,
+        kind: Kind,
+    }
+
+    /// Whether `s` is the route id (`true`) or the pathname (`false`).
+    fn subject(s: &str) -> Option<bool> {
+        let s = s.trim().trim_end_matches('?').replace("?.", ".");
+        if s.ends_with("route.id") {
+            Some(true)
+        } else if s == "pathname" || s.ends_with(".pathname") {
+            Some(false)
         } else {
-            let r = rest
-                .strip_prefix("===")
-                .or_else(|| rest.strip_prefix("=="))?;
-            (r, true)
-        };
-        match (Parser {
-            s: arg.trim(),
+            None
+        }
+    }
+
+    fn literal(s: &str) -> Option<String> {
+        match (Parser { s: s.trim(), i: 0 }).value(0).value {
+            Value::Str(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// The strings of the array literal `list`, or of the constant it names in `text`.
+    fn string_list(text: &str, list: &str) -> Option<Vec<String>> {
+        let items = match (Parser {
+            s: list.trim(),
             i: 0,
         })
         .value(0)
         .value
         {
-            Value::Str(s) => Some((s, exact)),
-            _ => None,
-        }
+            Value::Arr(items) => items,
+            Value::Raw(name) if is_name(&name) => match declared_value(text, &name)?.value {
+                Value::Arr(items) => items,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        (items.into_iter())
+            .map(|i| match i.value {
+                Value::Str(s) => Some(s),
+                _ => None,
+            })
+            .collect()
     }
 
+    /// The part of an `if` condition `part` as a route selector.
+    fn selector(text: &str, part: &str) -> Option<Sel> {
+        let t = unparen(part);
+        let (neg, t) = match t.strip_prefix('!') {
+            Some(r) if !r.starts_with('=') => (true, unparen(r)),
+            _ => (false, t),
+        };
+        if let Some((left, rest)) = t.split_once(".startsWith(") {
+            let op = Op::Prefix(literal(rest.strip_suffix(')')?)?);
+            return Some(Sel {
+                id: subject(left)?,
+                neg,
+                op,
+            });
+        }
+        if let Some((list, rest)) = t.split_once(".includes(") {
+            let op = Op::In(string_list(text, list)?);
+            return Some(Sel {
+                id: subject(rest.strip_suffix(')')?)?,
+                neg,
+                op,
+            });
+        }
+        let compare = [("!==", true), ("!=", true), ("===", false), ("==", false)];
+        let (left, right, flip) = compare
+            .iter()
+            .find_map(|(op, flip)| t.split_once(op).map(|(l, r)| (l, r, *flip)))?;
+        Some(Sel {
+            id: subject(left)?,
+            neg: neg ^ flip,
+            op: Op::Exact(literal(right)?),
+        })
+    }
+
+    /// Reads the rules of every `handle` of the application's hooks files.
     pub(super) fn rules(app: &App, access: &Access, out: &mut Vec<UiFlowDiagnostic>) -> Vec<Rule> {
         let checks = Checks { access };
-        let mut rules = Vec::new();
-        for ext in ["ts", "js"] {
-            let file = format!("{}src/hooks.server.{ext}", app.prefix);
+        let mut reader = Reader {
+            app,
+            checks: &checks,
+            out,
+            rules: Vec::new(),
+        };
+        for name in [
+            "hooks.server.ts",
+            "hooks.server.js",
+            "hooks.server/index.ts",
+        ]
+        .into_iter()
+        .chain(["hooks.server/index.js"])
+        {
+            let file = format!("{}src/{name}", app.prefix);
             if let Some(text) = app.files.get(&file) {
-                let found = words(text, "if").into_iter().filter_map(|pos| {
-                    let cond = blocking_if(text, pos)?;
-                    Some(rule(
-                        &checks,
-                        cond,
-                        (file.as_str(), line_of(text, pos)),
-                        out,
-                    ))
-                });
-                rules.extend(found.collect::<Vec<_>>());
+                reader.named(&file, text, "handle", true);
             }
         }
-        rules
+        reader.rules
     }
 
-    /// The condition of the `if` at `pos` when its block calls `redirect(` or `error(`.
-    fn blocking_if(text: &str, pos: usize) -> Option<&str> {
-        let b = text.as_bytes();
-        let open = skip_ws(b, pos + 2);
-        if b.get(open) != Some(&b'(') {
-            return None;
+    struct Reader<'a> {
+        app: &'a App,
+        checks: &'a Checks<'a>,
+        out: &'a mut Vec<UiFlowDiagnostic>,
+        rules: Vec<Rule>,
+    }
+
+    impl Reader<'_> {
+        /// Everything is unknown: a rule that blocks unless the unreadable part holds.
+        fn unknown(&mut self, file: &str, line: u32, why: &str) {
+            let message = format!("{why}; every route it could cover is unknown.");
+            diag(self.out, file, line, message);
+            let kind = Kind::Block(Some(Condition::Unknown(why.into())));
+            self.rules.push(Rule { sels: vec![], kind });
         }
-        let end = close(text, open);
-        let body_at = skip_ws(b, end);
-        let body_end = match b.get(body_at) {
-            Some(b'{') => close(text, body_at),
-            _ => text[body_at..]
-                .find(';')
-                .map_or(text.len(), |e| body_at + e),
-        };
-        let body = &text[body_at..body_end];
-        let calls = |f: &str| {
-            words(body, f)
-                .iter()
-                .any(|&p| body[p + f.len()..].starts_with('('))
-        };
-        (calls("redirect") || calls("error")).then(|| &text[open + 1..end - 1])
-    }
 
-    /// Path conjuncts select routes; the others are checks the request must fail.
-    fn rule(checks: &Checks, cond: &str, at: (&str, u32), out: &mut Vec<UiFlowDiagnostic>) -> Rule {
-        let (mut paths, mut rest) = (Vec::new(), Vec::new());
-        for part in split_top(cond, "&&") {
-            match path_check(unparen(part)) {
-                Some(p) => paths.push(p),
-                None => rest.push(unparen(part).to_string()),
-            }
-        }
-        let requirement = match rest.is_empty() {
-            true => Some(Condition::Never),
-            false => negate(checks.checks(&rest, at, out)),
-        };
-        Rule { paths, requirement }
-    }
-
-    /// The requirements of every rule that selects `route`.
-    pub(super) fn requirement(rules: &[Rule], route: &str) -> Vec<Condition> {
-        (rules.iter())
-            .filter(|r| {
-                (r.paths.iter()).all(|(p, exact)| {
-                    if *exact {
-                        route == p.as_str()
-                    } else {
-                        route.starts_with(p.as_str())
+        /// Reads the handle `name` declared in (or re-exported from) `file`; `follow`
+        /// allows one hop through an import. `false` when the file has none.
+        fn named(&mut self, file: &str, text: &str, name: &str, follow: bool) -> bool {
+            if let Some(range) = guard::decl_range(text, name, false) {
+                let source = &text[range.0..range.1];
+                if let Some(rest) = source.strip_prefix("sequence")
+                    && rest.trim_start().starts_with('(')
+                {
+                    let open = range.0 + source.find('(').unwrap_or(0);
+                    for arg in (Parser { s: text, i: open }).array(0) {
+                        self.operand(file, text, &arg, follow);
                     }
-                })
-            })
-            .filter_map(|r| r.requirement.clone())
-            .collect()
+                } else {
+                    self.function(file, text, range);
+                }
+                return true;
+            }
+            let reexport = words(text, "export").into_iter().find_map(|p| {
+                let stmt = text[p..].split(';').next()?.lines().next()?;
+                let (names, from) = stmt.split_once(" from ")?;
+                let hit = names.contains('{') && !words(names, name).is_empty();
+                let spec = from.trim().trim_matches(['\'', '"', ';']).to_string();
+                hit.then(|| (spec, line_of(text, p)))
+            });
+            let Some((module, line)) = reexport else {
+                return false;
+            };
+            self.external(file, line, &module, name, follow);
+            true
+        }
+
+        /// The handle `imported` of module `spec`, imported by `file`.
+        fn external(&mut self, file: &str, line: u32, spec: &str, imported: &str, follow: bool) {
+            let target = self.app.module(file, spec).filter(|_| follow);
+            let Some((mfile, mtext)) = target else {
+                let why =
+                    format!("handle `{imported}` of '{spec}' is not found in the scanned sources");
+                return self.unknown(file, line, &why);
+            };
+            // Auth.js: `handle` only attaches `locals.auth()`; the library protects nothing.
+            if imported == "handle" && mtext.contains("SvelteKitAuth(") {
+                return;
+            }
+            if !self.named(mfile, mtext, imported, false) {
+                let why = format!("handle `{imported}` is not declared in {mfile}");
+                self.unknown(file, line, &why);
+            }
+        }
+
+        /// One argument of `sequence(…)`.
+        fn operand(&mut self, file: &str, text: &str, arg: &Item, follow: bool) {
+            let source = arg.source(text);
+            let line = line_of(text, arg.at);
+            if is_name(&source) {
+                if guard::decl_range(text, &source, false).is_some() {
+                    self.named(file, text, &source, follow);
+                } else if let Some(i) = imports(text).into_iter().find(|i| i.local == source) {
+                    let imported = i.imported.unwrap_or_default();
+                    self.external(file, line, &i.module, &imported, follow);
+                } else {
+                    let why = format!("handle `{source}` is not declared");
+                    self.unknown(file, line, &why);
+                }
+            } else if source.contains("=>") || source.contains("function") {
+                self.function(file, text, (arg.at, arg.end));
+            } else {
+                let why = format!("handle `{source}` is not a function");
+                self.unknown(file, line, &why);
+            }
+        }
+
+        /// The rules of the function written at `range`.
+        fn function(&mut self, file: &str, text: &str, range: (usize, usize)) {
+            let Some((open, end)) = guard::body_range(text, range) else {
+                let why = "handle is not a function".to_string();
+                return self.unknown(file, line_of(text, range.0), &why);
+            };
+            if end <= open {
+                return;
+            }
+            let mut seen = Vec::new();
+            self.block(file, text, (open, end), &[], &mut seen);
+            for pos in blocking(text, (open, end)) {
+                if !seen.contains(&pos) {
+                    let why = "A redirect, error or response of handle is not under an `if` the rules read";
+                    self.unknown(file, line_of(text, pos), why);
+                }
+            }
+        }
+
+        /// The `if` statements directly in the block `{…}` of `text`; `prefix` are the
+        /// conditions of the blocks around it.
+        fn block(
+            &mut self,
+            file: &str,
+            text: &str,
+            (open, end): (usize, usize),
+            prefix: &[String],
+            seen: &mut Vec<usize>,
+        ) {
+            let b = text.as_bytes();
+            for pos in words(text, "if") {
+                if pos <= open || pos >= end || guard::enclosing(text, pos).first() != Some(&open) {
+                    continue;
+                }
+                let before = text[..pos].trim_end();
+                if !(before.ends_with([';', '{', '}']) && !before.ends_with("else")) {
+                    continue;
+                }
+                let paren = skip_ws(b, pos + 2);
+                if b.get(paren) != Some(&b'(') {
+                    continue;
+                }
+                let cond_end = close(text, paren);
+                let cond = text[paren + 1..cond_end - 1].trim().to_string();
+                let at = skip_ws(b, cond_end);
+                let braced = b.get(at) == Some(&b'{');
+                let body_end = if braced {
+                    close(text, at)
+                } else {
+                    text[at..].find(';').map_or(text.len(), |e| at + e + 1)
+                };
+                let direct: Vec<usize> = (blocking(text, (at, body_end)).into_iter())
+                    .filter(|&p| !braced || guard::enclosing(text, p).first() == Some(&at))
+                    .collect();
+                let mut conds = prefix.to_vec();
+                conds.push(cond);
+                let line = line_of(text, pos);
+                if !direct.is_empty() {
+                    seen.extend(direct);
+                    self.rule(file, text, &conds, (line, false));
+                } else if passes(&text[at..body_end]) {
+                    self.rule(file, text, &conds, (line, true));
+                }
+                if braced {
+                    self.block(file, text, (at, body_end), &conds, seen);
+                }
+            }
+        }
+
+        /// A rule from the `&&` conjuncts of `conds`: route selectors and checks.
+        fn rule(&mut self, file: &str, text: &str, conds: &[String], (line, pass): (u32, bool)) {
+            let (mut sels, mut rest) = (Vec::new(), Vec::new());
+            for part in conds.iter().flat_map(|c| split_top(c, "&&")) {
+                match selector(text, part) {
+                    Some(s) => sels.push(s),
+                    None => rest.push(unparen(part).to_string()),
+                }
+            }
+            if pass {
+                // an early return that is not purely a route selection proves nothing
+                if rest.is_empty() {
+                    self.rules.push(Rule {
+                        sels,
+                        kind: Kind::Pass,
+                    });
+                }
+                return;
+            }
+            let requirement = match rest.is_empty() {
+                true => Some(Condition::Never),
+                false => negate(self.checks.checks(&rest, (file, line), self.out)),
+            };
+            self.rules.push(Rule {
+                sels,
+                kind: Kind::Block(requirement),
+            });
+        }
+    }
+
+    /// `return resolve(…)` and nothing else.
+    fn passes(body: &str) -> bool {
+        let t = body.trim().trim_start_matches('{').trim_end_matches('}');
+        let t = t.trim().trim_end_matches(';');
+        t.strip_prefix("return").is_some_and(|r| {
+            let r = r.trim_start();
+            let r = r.strip_prefix("await ").unwrap_or(r);
+            r.starts_with("resolve(") && r.ends_with(')')
+        })
+    }
+
+    /// Offsets of the blocking calls in `range`: `redirect(…)`, `error(…)`, and a
+    /// `Response`/`json(…)` with a 40x status.
+    fn blocking(text: &str, (start, end): (usize, usize)) -> Vec<usize> {
+        let mut found = Vec::new();
+        for f in ["redirect", "error", "Response", "json"] {
+            for pos in words(text, f) {
+                if !(start..end).contains(&pos) || text[..pos].ends_with('.') {
+                    continue;
+                }
+                let Some(open) = call_open(text, pos, f) else {
+                    continue;
+                };
+                let blocks = match f {
+                    "Response" | "json" => {
+                        let call = &text[open..close(text, open)];
+                        words(call, "status").into_iter().any(|s| {
+                            let rest = call[s + 6..].trim_start_matches([':', '=', ' ']);
+                            rest.starts_with("40")
+                        })
+                    }
+                    _ => true,
+                };
+                if blocks {
+                    found.push(pos);
+                }
+            }
+        }
+        found
+    }
+
+    /// The state hooks give the route `route` (route id `id`): the conditions of
+    /// every rule that selects it, up to a rule that lets it pass; `Open` only when
+    /// a read allowlist exempts it from a blocking rule and nothing else applies.
+    pub(super) fn state(rules: &[Rule], route: &str, id: &str) -> AccessState {
+        let (mut conditions, mut allowed) = (Vec::new(), false);
+        for rule in rules {
+            let fails: Vec<&Sel> = (rule.sels.iter()).filter(|s| !s.holds(route, id)).collect();
+            match &rule.kind {
+                Kind::Pass if fails.is_empty() => break,
+                Kind::Block(Some(c)) if fails.is_empty() => conditions.push(c.clone()),
+                Kind::Block(Some(_)) if fails.iter().all(|s| s.allowlist()) => allowed = true,
+                _ => {}
+            }
+        }
+        AccessState::from_parts(all(conditions), allowed)
     }
 }
 
@@ -1196,10 +1784,7 @@ mod endpoints {
             } else {
                 continue;
             };
-            let access = match all(hooks::requirement(rules, &route)) {
-                Some(c) => AccessState::Protected(c),
-                None => AccessState::Undeclared,
-            };
+            let access = hooks::state(rules, &route, &format!("/{dir}"));
             endpoints.extend(found.into_iter().map(|(method, path, pos)| EndpointAccess {
                 method,
                 path,
@@ -2212,9 +2797,15 @@ export const handle = async ({ event, resolve }) => {
         ]);
         assert_eq!(access(&flow, "web:/"), Some(want));
         let unknown = Condition::Unknown("locals.user.roles.includes('x')".into());
-        let admin = Condition::All(vec![Condition::Role("admin".into()), not(unknown)]);
-        assert_eq!(access(&flow, "web:/admin"), Some(admin.clone()));
-        assert_eq!(access(&flow, "web:/admin/users"), Some(admin));
+        // the layout's call passes an options object: one fixed meaning cannot hold for it
+        let call = Condition::Unknown("authenticate(url, { admin: true })".into());
+        let users = vec![call, not(unknown)];
+        let admin = [users.clone(), vec![Condition::Role("admin".into())]].concat();
+        assert_eq!(access(&flow, "web:/admin"), Some(Condition::All(admin)));
+        assert_eq!(
+            access(&flow, "web:/admin/users"),
+            Some(Condition::All(users))
+        );
     }
 
     #[test]
@@ -2396,5 +2987,407 @@ export const getBaseUrl = () => defaults.baseUrl;
             ("site/src/routes/+page.svelte", "<a href=\"/x\">x</a>\n"),
         ]);
         assert_eq!(extract(dir.path()), UiFlow::default());
+    }
+
+    use AccessState::{Open, Protected, Undeclared};
+
+    fn state(flow: &UiFlow, id: &str) -> AccessState {
+        let screen = flow.screens.iter().find(|s| s.id == id);
+        screen.expect("screen").access.clone()
+    }
+
+    fn weak(flow: &UiFlow, id: &str) -> bool {
+        flow.screens.iter().find(|s| s.id == id).unwrap().weak
+    }
+
+    fn endpoint(flow: &UiFlow, method: &str, path: &str) -> AccessState {
+        let mut found = flow.endpoints.iter();
+        let e = found.find(|e| e.method == method && e.path == path);
+        e.unwrap_or_else(|| panic!("endpoint {method} {path}"))
+            .access
+            .clone()
+    }
+
+    fn unknown(text: &str) -> Condition {
+        Condition::Unknown(text.into())
+    }
+
+    const PAGE: &str = "<p/>\n";
+    const GUARD_LOAD: &str = "import { redirect } from '@sveltejs/kit';
+export const load = ({ locals }) => {
+  if (!locals.user) redirect(307, '/login');
+};
+";
+
+    fn kit(files: &[(&str, &str)]) -> UiFlow {
+        kit_cfg("", files)
+    }
+
+    fn kit_cfg(config: &str, files: &[(&str, &str)]) -> UiFlow {
+        let mut all = vec![
+            (".archguard/archguard.toml", config),
+            ("web/package.json", KIT),
+        ];
+        all.extend_from_slice(files);
+        extract(project(&all).path())
+    }
+
+    #[test]
+    fn d3_error_in_load_is_a_guard_like_redirect() {
+        let load = "import { error } from '@sveltejs/kit';
+export const load = ({ locals }) => {
+  if (!locals.user) error(401, 'x');
+};
+";
+        let flow = kit(&[
+            ("web/src/routes/a/+page.svelte", PAGE),
+            ("web/src/routes/a/+page.server.ts", load),
+        ]);
+        assert_eq!(state(&flow, "web:/a"), Protected(custom("locals.user")));
+    }
+
+    #[test]
+    fn d7_redirect_in_else_stays_unknown_with_a_gap() {
+        let load = "import { redirect } from '@sveltejs/kit';
+export const load = ({ locals }) => {
+  if (locals.user) { ok(); } else { redirect(307, '/login'); }
+};
+";
+        let flow = kit(&[
+            ("web/src/routes/a/+page.svelte", PAGE),
+            ("web/src/routes/a/+page.server.ts", load),
+        ]);
+        let want = Protected(Condition::Not(Box::new(unknown(
+            "redirect in an else block",
+        ))));
+        assert_eq!(state(&flow, "web:/a"), want);
+        assert!(!flow.complete);
+    }
+
+    const APP_LAYOUT: (&str, &str) = ("web/src/routes/(app)/+layout.server.ts", GUARD_LOAD);
+
+    #[test]
+    fn d8_layout_guard_reaches_group_pages_only_and_is_weak() {
+        let flow = kit(&[
+            APP_LAYOUT,
+            ("web/src/routes/(app)/x/+page.svelte", PAGE),
+            ("web/src/routes/(marketing)/y/+page.svelte", PAGE),
+        ]);
+        assert_eq!(state(&flow, "web:/x"), Protected(custom("locals.user")));
+        assert!(weak(&flow, "web:/x"));
+        assert_eq!(state(&flow, "web:/y"), Undeclared);
+        assert!(!weak(&flow, "web:/y"));
+    }
+
+    #[test]
+    fn d9_page_and_layout_resets_skip_the_group_layout() {
+        let flow = kit(&[
+            APP_LAYOUT,
+            ("web/src/routes/(app)/x/+page.svelte", PAGE),
+            ("web/src/routes/(app)/x/embed/+page@.svelte", PAGE),
+            ("web/src/routes/(app)/z/+layout@.svelte", PAGE),
+            ("web/src/routes/(app)/z/+page.svelte", PAGE),
+            ("web/src/routes/(app)/w/+page@(app).svelte", PAGE),
+            ("web/src/routes/(app)/v/+page@nowhere.svelte", PAGE),
+        ]);
+        let guarded = Protected(custom("locals.user"));
+        assert_eq!(state(&flow, "web:/x"), guarded);
+        assert_eq!(state(&flow, "web:/x/embed"), Undeclared);
+        assert_eq!(state(&flow, "web:/z"), Undeclared);
+        assert_eq!(state(&flow, "web:/w"), guarded);
+        // an unknown reset target is a gap and keeps the whole chain
+        assert_eq!(state(&flow, "web:/v"), guarded);
+        assert!(!flow.complete);
+    }
+
+    const AUTH_HELPER: &str = "import { redirect } from '@sveltejs/kit';
+export async function authenticate(url) {
+  if (!auth.ok) redirect(307, '/login');
+}
+";
+
+    fn helper_load(import: &str, call: &str) -> String {
+        format!("{import}\nexport const load = async ({{ url }}) => {{\n  {call}\n}};\n")
+    }
+
+    #[test]
+    fn d14_helper_is_followed_one_hop_or_unknown_with_a_gap() {
+        let load = helper_load(
+            "import { authenticate } from '$lib/auth';",
+            "await authenticate(url);",
+        );
+        let flow = kit(&[
+            ("web/src/routes/a/+page.svelte", PAGE),
+            ("web/src/routes/a/+page.ts", &load),
+            ("web/src/routes/login/+page.svelte", PAGE),
+            ("web/src/lib/auth.ts", AUTH_HELPER),
+        ]);
+        assert_eq!(state(&flow, "web:/a"), Protected(custom("auth.ok")));
+        assert!(flow.complete);
+        // helper not found: never silent
+        let flow = kit(&[
+            ("web/src/routes/a/+page.svelte", PAGE),
+            ("web/src/routes/a/+page.ts", &load),
+        ]);
+        assert_eq!(
+            state(&flow, "web:/a"),
+            Protected(unknown("authenticate(url)"))
+        );
+        assert!(!flow.complete);
+        // a helper without any guard adds nothing and no gap
+        let flow = kit(&[
+            ("web/src/routes/a/+page.svelte", PAGE),
+            ("web/src/routes/a/+page.ts", &load),
+            (
+                "web/src/lib/auth.ts",
+                "export async function authenticate(url) { log(url); }\n",
+            ),
+        ]);
+        assert_eq!(state(&flow, "web:/a"), Undeclared);
+        assert!(flow.complete);
+    }
+
+    #[test]
+    fn d15_listed_guard_with_an_options_object_is_unknown() {
+        let call = |args: &str| {
+            helper_load(
+                "import { authenticate } from '$lib/auth';",
+                &format!("await authenticate({args});"),
+            )
+        };
+        let (admin, public, plain) = (
+            call("url, { admin: true }"),
+            call("url, { public: true }"),
+            call("url"),
+        );
+        let flow = kit_cfg(
+            "[views.access]\nauthenticate = \"authenticated\"\n",
+            &[
+                ("web/src/routes/a/+page.svelte", PAGE),
+                ("web/src/routes/a/+page.ts", &public),
+                ("web/src/routes/b/+page.svelte", PAGE),
+                ("web/src/routes/b/+page.ts", &admin),
+                ("web/src/routes/c/+page.svelte", PAGE),
+                ("web/src/routes/c/+page.ts", &plain),
+            ],
+        );
+        let want_a = Protected(unknown("authenticate(url, { public: true })"));
+        assert_eq!(state(&flow, "web:/a"), want_a);
+        let want_b = Protected(unknown("authenticate(url, { admin: true })"));
+        assert_eq!(state(&flow, "web:/b"), want_b);
+        assert_eq!(state(&flow, "web:/c"), Protected(Condition::Authenticated));
+        assert!(!flow.complete);
+    }
+
+    fn hooks_project(hooks: &str, extra: &[(&str, &str)]) -> UiFlow {
+        let get = "export const GET = () => {};\n";
+        let mut files = vec![
+            ("web/src/hooks.server.ts", hooks),
+            ("web/src/routes/+page.svelte", PAGE),
+            ("web/src/routes/login/+page.svelte", PAGE),
+            ("web/src/routes/admin/+page.svelte", PAGE),
+            ("web/src/routes/administrators/+page.svelte", PAGE),
+            ("web/src/routes/(app)/dash/+page.svelte", PAGE),
+            ("web/src/routes/admin/api/+server.ts", get),
+            (
+                "web/src/routes/admin/x/+page.server.ts",
+                "export const actions = { default: async () => {} };\n",
+            ),
+            ("web/src/routes/api/public/feed/+server.ts", get),
+            ("web/src/routes/api/private/+server.ts", get),
+        ];
+        files.extend_from_slice(extra);
+        kit(&files)
+    }
+
+    #[test]
+    fn d16_path_prefix_rule_covers_screens_endpoints_and_actions() {
+        let hooks = "export const handle = async ({ event, resolve }) => {
+  if (event.url.pathname.startsWith('/admin') && !event.locals.user) redirect(303, '/login');
+  return resolve(event);
+};
+";
+        let flow = hooks_project(hooks, &[]);
+        let want = Protected(custom("event.locals.user"));
+        for id in ["web:/admin", "web:/administrators"] {
+            assert_eq!(state(&flow, id), want, "{id}");
+        }
+        assert_eq!(state(&flow, "web:/"), Undeclared);
+        assert_eq!(endpoint(&flow, "GET", "/admin/api"), want);
+        assert_eq!(endpoint(&flow, "POST", "/admin/x"), want);
+        assert_eq!(endpoint(&flow, "GET", "/api/private"), Undeclared);
+    }
+
+    #[test]
+    fn d17_early_return_excludes_routes_from_later_rules() {
+        let hooks = "export const handle = async ({ event, resolve }) => {
+  if (event.url.pathname.startsWith('/api/public')) return resolve(event);
+  if (!event.locals.user) error(401);
+  return resolve(event);
+};
+";
+        let flow = hooks_project(hooks, &[]);
+        let want = Protected(custom("event.locals.user"));
+        assert_eq!(endpoint(&flow, "GET", "/api/public/feed"), Undeclared);
+        assert_eq!(endpoint(&flow, "GET", "/api/private"), want);
+        assert_eq!(state(&flow, "web:/admin"), want);
+    }
+
+    #[test]
+    fn d18_read_allowlist_is_open_and_never_beats_another_rule() {
+        let hooks = "const pub = ['/', '/login'];
+export const handle = async ({ event, resolve }) => {
+  if (!event.locals.user && !pub.includes(event.route.id)) redirect(303, '/login');
+  return resolve(event);
+};
+";
+        let flow = hooks_project(hooks, &[]);
+        assert_eq!(state(&flow, "web:/"), Open);
+        assert_eq!(state(&flow, "web:/login"), Open);
+        let want = Protected(custom("event.locals.user"));
+        assert_eq!(state(&flow, "web:/admin"), want);
+        // a second, unreadable rule keeps the allowlisted routes protected
+        let both = "const pub = ['/', '/login'];
+export const handle = async ({ event, resolve }) => {
+  if (!event.locals.user && !pub.includes(event.route.id)) redirect(303, '/login');
+  if (!ok(event)) return new Response('no', { status: 403 });
+  return resolve(event);
+};
+";
+        let flow = hooks_project(both, &[]);
+        let want = Protected(Condition::Not(Box::new(unknown("!ok(event)"))));
+        assert_eq!(state(&flow, "web:/"), want);
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn d19_route_id_selector_matches_groups() {
+        let hooks = "export const handle = async ({ event, resolve }) => {
+  if (event.route.id?.startsWith('/(app)') && !event.locals.user) redirect(303, '/login');
+  return resolve(event);
+};
+";
+        let flow = hooks_project(hooks, &[]);
+        let want = Protected(custom("event.locals.user"));
+        assert_eq!(state(&flow, "web:/dash"), want);
+        assert_eq!(state(&flow, "web:/admin"), Undeclared);
+    }
+
+    #[test]
+    fn d20_authjs_handle_reexport_protects_nothing() {
+        let auth = "import SvelteKitAuth from '@auth/sveltekit';
+export const { handle, signIn, signOut } = SvelteKitAuth({ providers: [] });
+";
+        let flow = hooks_project(
+            "export { handle } from './auth';\n",
+            &[("web/src/auth.ts", auth)],
+        );
+        assert_eq!(state(&flow, "web:/admin"), Undeclared);
+        assert!(flow.complete);
+        // a re-export that cannot be read is unknown
+        let flow = hooks_project("export { handle } from './nowhere';\n", &[]);
+        let state = state(&flow, "web:/admin");
+        assert!(matches!(state, Protected(Condition::Unknown(_))));
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn d21_sequence_follows_imported_handles_one_hop() {
+        let hooks = "import { sequence } from '@sveltejs/kit/hooks';
+import { authz } from '$lib/server/authz';
+const authn = async ({ event, resolve }) => { event.locals.user = u(); return resolve(event); };
+export const handle = sequence(authn, authz);
+";
+        let authz = "export const authz = async ({ event, resolve }) => {
+  if (event.url.pathname.startsWith('/admin') && !event.locals.user) redirect(303, '/login');
+  return resolve(event);
+};
+";
+        let flow = hooks_project(hooks, &[("web/src/lib/server/authz.ts", authz)]);
+        let want = Protected(custom("event.locals.user"));
+        assert_eq!(state(&flow, "web:/admin"), want);
+        assert_eq!(state(&flow, "web:/"), Undeclared);
+        assert!(flow.complete);
+        let flow = hooks_project(hooks, &[]);
+        let state = state(&flow, "web:/");
+        assert!(matches!(state, Protected(Condition::Unknown(_))));
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn d22_unreadable_blocking_response_is_unknown_everywhere() {
+        let hooks = "export const handle = async ({ event, resolve }) => {
+  if (!ok(event)) return new Response('no', { status: 403 });
+  return resolve(event);
+};
+";
+        let flow = hooks_project(hooks, &[]);
+        let want = Protected(Condition::Not(Box::new(unknown("!ok(event)"))));
+        assert_eq!(state(&flow, "web:/"), want);
+        assert_eq!(endpoint(&flow, "GET", "/api/private"), want);
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn d23_prerendered_pages_are_not_covered_by_handle() {
+        let hooks = "export const handle = async ({ event, resolve }) => {
+  if (event.url.pathname.startsWith('/admin') && !event.locals.user) redirect(303, '/login');
+  return resolve(event);
+};
+";
+        let flow = hooks_project(
+            hooks,
+            &[
+                ("web/src/routes/admin/help/+page.svelte", PAGE),
+                (
+                    "web/src/routes/admin/help/+page.ts",
+                    "export const prerender = true;\n",
+                ),
+            ],
+        );
+        assert_eq!(state(&flow, "web:/admin/help"), Undeclared);
+        let want = Protected(custom("event.locals.user"));
+        assert_eq!(state(&flow, "web:/admin"), want);
+        let note = (flow.diagnostics.iter()).find(|d| d.message.contains("Prerendered"));
+        assert!(note.is_some_and(|d| d.severity == DiagnosticSeverity::Note));
+    }
+
+    #[test]
+    fn d27_blocking_calls_outside_handle_are_no_rule() {
+        let hooks = "export const handleError = ({ error }) => {
+  if (error) error(500);
+};
+const helper = () => { if (x) error(500); };
+export const handle = async ({ event, resolve }) => resolve(event);
+";
+        let flow = hooks_project(hooks, &[]);
+        assert_eq!(state(&flow, "web:/admin"), Undeclared);
+        assert!(flow.complete);
+    }
+
+    #[test]
+    fn a_blocking_call_the_rules_cannot_place_is_unknown() {
+        let hooks = "export const handle = async ({ event, resolve }) => {
+  switch (event.url.pathname) { case '/x': redirect(303, '/'); }
+  return resolve(event);
+};
+";
+        let flow = hooks_project(hooks, &[]);
+        let state = state(&flow, "web:/");
+        assert!(matches!(state, Protected(Condition::Unknown(_))));
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn a_listed_open_guard_in_a_load_makes_the_screen_open() {
+        let load = helper_load("import { allowAll } from '$lib/auth';", "await allowAll();");
+        let flow = kit_cfg(
+            "[views.access]\nallowAll = \"open\"\n",
+            &[
+                ("web/src/routes/a/+page.svelte", PAGE),
+                ("web/src/routes/a/+page.ts", &load),
+            ],
+        );
+        assert_eq!(state(&flow, "web:/a"), Open);
     }
 }
