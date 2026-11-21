@@ -12,7 +12,9 @@
 //!   `AggregateRoot` (`@nestjs/cqrs`) → `aggregate_root`; `@Entity()` (TypeORM,
 //!   MikroORM) → `entity`; `@Embeddable()` (MikroORM) → `value_object`; a
 //!   Prisma `model X { … }` → `entity`. `id` is the class name, qualified with
-//!   the folder when two entities share a name (with a diagnostic).
+//!   the folder when two entities share a name (with a diagnostic). A class
+//!   decorated `@Table(…)` (sequelize-typescript, `@immich/sql-tools`) is an
+//!   `entity` too; a class merely named `*Entity` is not.
 //! - Fields: class properties with a type (`x: T`, `x?: T | null`, `x!: T`) or
 //!   an initializer `new T<…>(…)` / `E.V`; Prisma `name Type[?|[]]` lines. `T[]`,
 //!   `Array`, `ReadonlyArray`, `Set`, `Collection`, `List`, `Iterable` and a
@@ -49,7 +51,15 @@
 //!   constructors, `get`/`set` accessors, `toString` and `equals` left out. A
 //!   name on several entities is a diagnostic.
 //!
-//! Not recognized: constructor parameter properties as fields, properties
+//! - Arrow-function relations: `@ManyToOne/@OneToOne/@OneToMany/@ManyToMany/
+//!   @ForeignKeyColumn(() => X)` on a field whose type names no entity gives
+//!   a relation to `X` (found by name, not by import); an `X` that is not a
+//!   unique entity is a diagnostic and makes the model incomplete.
+//!   Docs: <https://typeorm.io/relations>, <https://www.prisma.io/docs/orm/prisma-schema/data-model/relations>.
+//!
+//! Not recognized: Kysely `interface DB` row maps and Drizzle `pgTable(…)`
+//! (immich declares its tables as `@Table` classes, which are read),
+//! constructor parameter properties as fields, properties
 //! without a type and with another initializer, inline literal unions as
 //! field types, `state = …` without `this.`, `??=`, `switch` guards,
 //! regular-expression literals containing quotes or brackets, Prisma
@@ -73,6 +83,18 @@ const AGGREGATE_MARKERS: [&str; 1] = ["AggregateRoot"];
 const ENTITY_DECORATOR: &str = "Entity";
 const VALUE_OBJECT_DECORATOR: &str = "Embeddable";
 const TO_MANY: [&str; 2] = ["OneToMany", "ManyToMany"];
+/// Entity decorator besides `@Entity`: `@Table` (sequelize-typescript,
+/// `@immich/sql-tools`).
+const TABLE_DECORATOR: &str = "Table";
+/// Field decorators whose first argument `() => X` names the related entity
+/// when the field type does not (`Relation<X>`, `string` foreign keys).
+const ARROW_RELATIONS: [&str; 5] = [
+    "ManyToOne",
+    "OneToOne",
+    "OneToMany",
+    "ManyToMany",
+    "ForeignKeyColumn",
+];
 /// Prisma field attribute that makes a single model field a `has_one`.
 const PRISMA_RELATION: &str = "relation";
 /// `this.apply(…)`; `<…eventBus>.publish(…)`; `<…emitter>.emit('name', …)`.
@@ -307,9 +329,12 @@ impl Extractor {
 
     fn relations(&mut self) {
         let mut found = vec![];
+        let mut gaps = vec![];
         for (e, ent) in self.ents.iter().enumerate() {
+            let decl = &self.decls[ent.decl];
+            let text = &self.files[decl.file].text;
             for f in &ent.fields {
-                if let Some((to, kind)) = self.relation_of(e, f) {
+                let mut push = |to: usize, kind| {
                     found.push(Relation {
                         from: ent.id.clone(),
                         to: self.ents[to].id.clone(),
@@ -317,10 +342,47 @@ impl Extractor {
                         via: f.name.clone(),
                         source: SOURCE.into(),
                     });
+                };
+                if let Some((to, kind)) = self.relation_of(e, f) {
+                    push(to, kind);
+                    continue;
+                }
+                // `@ManyToOne(() => X)`: the target comes from the arrow function.
+                let Some(deco) = (decl.members.iter()).find_map(|m| {
+                    let named = matches!(&m.kind, Kind::Data { name, .. } if *name == f.name);
+                    let d =
+                        (m.decorators.iter()).find(|d| ARROW_RELATIONS.contains(&d.name.as_str()));
+                    d.filter(|_| named)
+                }) else {
+                    continue;
+                };
+                let target = deco.args.and_then(|(a, z)| arrow_target(&text[a..z]));
+                match target.and_then(|t| self.resolve(&t, e)) {
+                    Some(to) => {
+                        let many = TO_MANY.contains(&deco.name.as_str());
+                        let kind = if many {
+                            RelationKind::HasMany
+                        } else {
+                            RelationKind::HasOne
+                        };
+                        push(to, kind);
+                    }
+                    None => gaps.push(DomainDiagnostic {
+                        file: self.files[decl.file].rel.clone(),
+                        line: line(text, decl.pos),
+                        message: format!(
+                            "relation {}.{} (@{}): target is not a unique entity this extractor read",
+                            ent.name, f.name, deco.name
+                        ),
+                    }),
                 }
             }
         }
         self.model.relations = found;
+        if !gaps.is_empty() {
+            self.model.complete = false;
+            self.model.diagnostics.extend(gaps);
+        }
     }
 
     fn relation_of(&self, e: usize, f: &Field) -> Option<(usize, RelationKind)> {
@@ -597,6 +659,17 @@ impl Extractor {
     }
 }
 
+/// `X` of `() => X` at the start of decorator arguments.
+fn arrow_target(args: &str) -> Option<String> {
+    let rest = args.trim_start().strip_prefix("()")?.trim_start();
+    let rest = rest.strip_prefix("=>")?.trim_start();
+    let id: String = (rest.chars())
+        .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '$'))
+        .collect();
+    let after = rest[id.len()..].trim_start();
+    (!id.is_empty() && (after.is_empty() || after.starts_with(','))).then_some(id)
+}
+
 fn marker_kind(decl: &Decl) -> Option<EntityKind> {
     if decl.kw == "model" {
         return Some(EntityKind::Entity);
@@ -607,7 +680,7 @@ fn marker_kind(decl: &Decl) -> Option<EntityKind> {
     let based = (decl.bases.iter()).any(|b| AGGREGATE_MARKERS.contains(&simple(b).as_str()));
     if based || AGGREGATE_MARKERS.iter().any(|m| decl.deco(m).is_some()) {
         Some(EntityKind::AggregateRoot)
-    } else if decl.deco(ENTITY_DECORATOR).is_some() {
+    } else if decl.deco(ENTITY_DECORATOR).is_some() || decl.deco(TABLE_DECORATOR).is_some() {
         Some(EntityKind::Entity)
     } else if decl.deco(VALUE_OBJECT_DECORATOR).is_some() {
         Some(EntityKind::ValueObject)
@@ -2184,6 +2257,46 @@ enum InvoiceStatus {
         let model = run(&[("big.ts", big.as_str())]);
         assert!(model.entities.is_empty());
         assert_eq!(model.diagnostics[0].file, "big.ts");
+        assert!(!model.complete);
+    }
+
+    const TABLES: [(&str, &str); 3] = [
+        (
+            "t/user.table.ts",
+            "@Table('user')\nexport class UserTable {\n  @PrimaryGeneratedColumn() id!: string;\n}\n",
+        ),
+        (
+            "t/album.table.ts",
+            "@Table('album')\nexport class AlbumTable {\n  @PrimaryGeneratedColumn() id!: string;\n  @ForeignKeyColumn(() => UserTable, { onDelete: 'CASCADE' })\n  ownerId!: string;\n}\n",
+        ),
+        (
+            "t/fake.ts",
+            "export class FakeEntity {\n  @Column() a: string;\n}\n",
+        ),
+    ];
+
+    #[test]
+    fn table_decorator_is_an_entity_and_foreign_key_column_a_relation() {
+        let model = run(&TABLES);
+        let names: Vec<&str> = model.entities.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["AlbumTable", "UserTable"]);
+        let r = &model.relations[0];
+        assert_eq!(
+            (r.from.as_str(), r.to.as_str()),
+            ("AlbumTable", "UserTable")
+        );
+        assert_eq!((r.kind, r.via.as_str()), (RelationKind::HasOne, "ownerId"));
+        assert!(model.complete);
+    }
+
+    #[test]
+    fn unresolvable_arrow_target_is_a_gap() {
+        let model = run(&[(
+            "a.ts",
+            "@Entity()\nexport class A {\n  @ManyToOne(() => Missing)\n  m: Rel<Missing>;\n}\n",
+        )]);
+        assert!(model.relations.is_empty());
+        assert!(has_diag(&model, "A.m (@ManyToOne)"));
         assert!(!model.complete);
     }
 }
