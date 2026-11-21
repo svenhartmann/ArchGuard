@@ -272,14 +272,14 @@ impl Out {
 }
 
 /// A source file with comments blanked (offsets and lines unchanged).
-struct Source {
+pub(crate) struct Source {
     rel: String,
     text: String,
     pairs: HashMap<usize, usize>,
     lines: Vec<usize>,
 }
 impl Source {
-    fn new(rel: String, raw: &str) -> Self {
+    pub(crate) fn new(rel: String, raw: &str) -> Self {
         let text = lex::strip_comments(raw);
         let b = text.as_bytes();
         let lines = std::iter::once(0)
@@ -351,24 +351,24 @@ fn path(parts: &[&str]) -> String {
 }
 
 #[derive(Clone)]
-struct Attr {
-    name: String,
-    args: String,
-    at: usize,
+pub(crate) struct Attr {
+    pub(crate) name: String,
+    pub(crate) args: String,
+    pub(crate) at: usize,
 }
 
 #[derive(Clone)]
-struct Decl {
-    class: bool,
-    name: String,
-    attrs: Vec<Attr>,
+pub(crate) struct Decl {
+    pub(crate) class: bool,
+    pub(crate) name: String,
+    pub(crate) attrs: Vec<Attr>,
     /// Offset of a method's parameter list; a class's header start.
     open: usize,
     /// A class's body end (`}`, or `;` without a body); 0 for a method.
     end: usize,
     /// A class's base list as simple names (`: Base<T>, IFoo`, `extends`,
     /// `implements`); empty for a method.
-    bases: Vec<String>,
+    pub(crate) bases: Vec<String>,
     /// `interface` for a class; `public` and not `static` for a method.
     flag: bool,
 }
@@ -393,7 +393,7 @@ fn has(attrs: &[Attr], name: &str) -> bool {
 }
 
 /// Last segment of a qualified attribute name, without `Attribute` and a target.
-fn simple(name: &str) -> String {
+pub(crate) fn simple(name: &str) -> String {
     let name = name.rsplit([':', '.']).next().unwrap_or(name).trim();
     name.strip_suffix("Attribute")
         .filter(|n| !n.is_empty())
@@ -403,7 +403,7 @@ fn simple(name: &str) -> String {
 
 /// Class and annotated method declarations with their attributes, in order.
 /// `annotations`: Java/Kotlin `@X(…)`; otherwise C# `[X(…), Y]`.
-fn decls(src: &Source, annotations: bool) -> Vec<Decl> {
+pub(crate) fn decls(src: &Source, annotations: bool) -> Vec<Decl> {
     let b = src.bytes();
     let (mut out, mut pending, mut i) = (Vec::new(), Vec::new(), 0);
     while i < b.len() {
@@ -419,6 +419,24 @@ fn decls(src: &Source, annotations: bool) -> Vec<Decl> {
                 end + 1
             }
         };
+    }
+    out
+}
+
+/// The attributes of a Razor `@attribute [A(…)] [B]` directive (text after
+/// the keyword); `at` is the offset of the list in `rest`.
+pub(crate) fn directive_attrs(rest: &str) -> Vec<Attr> {
+    let src = Source::new(String::new(), rest);
+    let (mut out, mut i) = (Vec::new(), 0);
+    while let Some(at) = src.text[i..].find(|c: char| !c.is_whitespace()) {
+        if src.bytes()[i + at] != b'[' {
+            break;
+        }
+        let next = attribute_list(&src, i + at, &mut out);
+        if next == i + at + 1 && src.pair(i + at).is_none() {
+            break;
+        }
+        i = next;
     }
     out
 }
