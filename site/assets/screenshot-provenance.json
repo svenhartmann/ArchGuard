@@ -4,7 +4,6 @@
   "desktop_binary_revision": null,
   "source_revisions": "Not independently recorded for this refresh; current local checkout revisions are not treated as capture pins.",
   "unchanged": [
-    "flow video",
     "assets/marketing/"
   ],
   "excluded": {

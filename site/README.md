@@ -36,14 +36,15 @@ local reports, source checkouts, absolute machine paths or these maintenance scr
 Workflow reference: [GitHub's custom Pages workflow documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
 Actions are pinned to verified commit IDs.
 
-## Update screenshots and video
+## Update screenshots
 
-Every screenshot and the flow video come from the ArchGuard desktop app, rendered
-headless at 2960 × 1840 pixels (1480 × 920 points) with English labels.
-`media/capture-app.sh` recreates all of them. It needs `ffmpeg`, the pinned checkouts
-from the walkthroughs under `examples/` (Commons Collections and Kafka with their
-example configuration copied into the checkout), and an app built with the snapshot
-feature; without it a real window opens:
+The gallery screenshots come from the ArchGuard desktop app. `media/capture-app.sh`
+recreates the 18 gallery views at 2960 × 1840 pixels with English labels. It needs
+the pinned checkouts from the walkthroughs under `examples/` (Commons Collections
+and Kafka with their example configuration copied into the checkout), and an app
+built with the snapshot feature; without it a real window opens. The additional
+Screens, Domain and Security captures have their own record in
+`assets/screenshot-provenance.json`; Domain uses 4400 × 1840 pixels.
 
 ```sh
 cargo build --release -p archguard-desktop --features snapshot
@@ -53,14 +54,6 @@ site/media/capture-app.sh target/release/archguard-desktop
 The script lists what each image shows. Review the images before committing: keep
 partial-evidence indicators visible, check that the values named in `index.html`
 and `site.js` still match, and update `about.html` with the capture date and scope.
-
-`assets/flow.mp4` is silent and about 26 seconds long: one full turn of the World View
-(72 captures, 5° apart), then CBO, the `map` package, Graph, Calls, Quality and arc42
-with short fades. It contains no simulated clicks. `assets/flow-poster.jpg` is its
-first turn frame.
-
-The page loads the video only on demand, plays it while it is visible and
-leaves it paused for visitors who ask for reduced motion.
 
 The source checkout and any generated analysis outputs are intentionally absent
 from the published site. Upstream projects keep their own licenses and notices.
