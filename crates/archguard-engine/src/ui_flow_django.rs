@@ -295,6 +295,8 @@ mod project {
         pub(super) roots: Vec<(usize, String, u32)>,
         /// Project decorators on views that no `[views.access]` entry explains: (file, line, name).
         pub(super) unresolved: std::cell::RefCell<BTreeSet<(usize, u32, String)>>,
+        /// Findings made while reading access: (file, line, is a gap, message).
+        pub(super) findings: std::cell::RefCell<BTreeSet<(usize, u32, bool, String)>>,
     }
 
     impl<'a> Project<'a> {
@@ -367,6 +369,7 @@ mod project {
                 default_perms: None,
                 roots: vec![],
                 unresolved: Default::default(),
+                findings: Default::default(),
             };
             project.read_settings(dir, flow);
             project
@@ -606,6 +609,7 @@ use project::{Project, Py, Sym, dotted, simple};
 
 /// Access declarations: Django decorators and mixins, DRF permission classes.
 mod access {
+    use super::views::{ACTIONS, API_GENERICS, HTTP, VIEWSETS};
     use super::*;
 
     /// What was declared: nothing (`undeclared`), or conditions that must all
@@ -622,8 +626,11 @@ mod access {
         /// One declaration; `None` allows everyone.
         pub(super) fn add(&mut self, c: Option<Condition>) {
             self.declared = true;
-            if let Some(c) = c.filter(|c| !self.parts.contains(c)) {
-                self.parts.push(c);
+            match c {
+                // `all(a, b)` next to `c` is `all(a, b, c)`.
+                Some(Condition::All(parts)) => parts.into_iter().for_each(|c| self.add(Some(c))),
+                Some(c) if !self.parts.contains(&c) => self.parts.push(c),
+                _ => {}
             }
         }
 
@@ -664,6 +671,22 @@ mod access {
         pub(super) api_view: bool,
         /// DRF `@permission_classes(…)`: (file, from, to) of the list.
         pub(super) perms: Option<(usize, usize, usize)>,
+        /// A `@permission_classes` above `@api_view`, which DRF ignores: (file, offset).
+        pub(super) perms_above: Option<(usize, usize)>,
+        /// Declarations of one handler method (lower case): `method_decorator(name=…)`
+        /// and the decorators of the handler itself.
+        pub(super) by_method: BTreeMap<String, Decl>,
+    }
+
+    impl Effects {
+        /// The view's declarations plus those of handler `method` (any case).
+        pub(super) fn for_method(&self, method: &str) -> Decl {
+            let mut decl = self.decl.clone();
+            if let Some(d) = self.by_method.get(&method.to_ascii_lowercase()) {
+                decl.extend(d.clone());
+            }
+            decl
+        }
     }
 
     const STAFF: &str = "is_staff";
@@ -685,6 +708,13 @@ mod access {
         "condition",
         "etag",
     ];
+    /// DRF `IsAdminUser` and `staff_member_required`: a signed-in staff user.
+    fn staff() -> Condition {
+        Condition::All(vec![
+            Condition::Authenticated,
+            Condition::Custom(STAFF.into()),
+        ])
+    }
     const SAFE: [&str; 3] = ["GET", "HEAD", "OPTIONS"];
 
     fn any(mut c: Vec<Condition>) -> Condition {
@@ -724,6 +754,11 @@ mod access {
             let positional: Vec<&Arg> = args.iter().filter(|a| a.name.is_none()).collect();
             let first = positional.first().map(|a| p.span(a.value));
             let name = simple(callee);
+            let named = args.iter().find(|a| a.name == Some("name"));
+            if let (Some(n), "method_decorator") = (named, name) {
+                self.named_method_decorator(f, at, first, py::string_value(n.value), fx);
+                return;
+            }
             if self.decorate_request(f, name, first, fx) {
                 return;
             }
@@ -732,7 +767,7 @@ mod access {
                 .filter(|l| !l.is_empty());
             let condition = match name {
                 "login_required" => Some(Condition::Authenticated),
-                "staff_member_required" => Some(Condition::Custom(STAFF.into())),
+                "staff_member_required" => Some(staff()),
                 "permission_required" => {
                     Some(literals.map_or_else(|| unknown_call(p, name, first), all_policies))
                 }
@@ -742,7 +777,7 @@ mod access {
                 },
                 _ => {
                     let Some(m) = self.access.get(name) else {
-                        if !NO_ACCESS_CHECK.contains(&name) {
+                        if !self.checks_no_access(f, callee) {
                             fx.decl.unresolved.push(name.to_string());
                             let line = p.line(at);
                             (self.unresolved.borrow_mut()).insert((f, line, name.to_string()));
@@ -757,6 +792,54 @@ mod access {
                 }
             };
             fx.decl.add(condition);
+        }
+
+        /// `method_decorator(d, name="post")`: `d` guards that handler only.
+        fn named_method_decorator(
+            &self,
+            f: usize,
+            at: usize,
+            first: Option<(usize, usize)>,
+            target: Option<String>,
+            fx: &mut Effects,
+        ) {
+            let mut sub = Effects::default();
+            self.decorate_request(f, "method_decorator", first, &mut sub);
+            let line = self.pys[f].line(at);
+            match target.as_deref().map(str::to_ascii_lowercase) {
+                Some(t) if t == "dispatch" => fx.decl.extend(sub.decl),
+                Some(t) if HTTP.contains(&t.as_str()) || ACTIONS.iter().any(|a| a.0 == t) => {
+                    fx.by_method.entry(t).or_default().extend(sub.decl)
+                }
+                other => {
+                    let what = other.map_or("an unreadable name".to_string(), |t| format!("`{t}`"));
+                    let message = format!(
+                        "`method_decorator` targets {what}, not a known HTTP handler; the access it checks is unknown."
+                    );
+                    self.finding(f, line, true, message);
+                    fx.decl
+                        .add(Some(Condition::Unknown("method_decorator(name=…)".into())));
+                }
+            }
+        }
+
+        pub(super) fn finding(&self, f: usize, line: u32, gap: bool, message: String) {
+            (self.findings.borrow_mut()).insert((f, line, gap, message));
+        }
+
+        /// A `NO_ACCESS_CHECK` name counts only when imported from its Django/DRF module.
+        fn checks_no_access(&self, f: usize, callee: &str) -> bool {
+            let from_framework = |path: &str| {
+                [
+                    "django.views.decorators.",
+                    "django.utils.decorators.",
+                    "rest_framework.decorators.",
+                ]
+                .iter()
+                .any(|m| path.starts_with(m))
+            };
+            matches!(self.resolve(f, callee), Sym::External(path)
+                if from_framework(&path) && NO_ACCESS_CHECK.contains(&simple(&path)))
         }
 
         /// Decorators about the request rather than the user: methods, DRF
@@ -788,7 +871,8 @@ mod access {
                         None => fixed(&["GET"]),
                     };
                 }
-                "permission_classes" => fx.perms = first.map(|(a, b)| (f, a, b)),
+                "permission_classes" if fx.api_view => fx.perms = first.map(|(a, b)| (f, a, b)),
+                "permission_classes" => fx.perms_above = first.map(|(a, _)| (f, a)),
                 "require_http_methods" => fx.methods = methods(first),
                 "require_GET" => fx.methods = fixed(&["GET"]),
                 "require_POST" => fx.methods = fixed(&["POST"]),
@@ -806,12 +890,11 @@ mod access {
             }
         }
 
-        /// Django mixins of a class view and the decorators on its classes and `dispatch`.
+        /// Django mixins of a class view and the decorators on its classes, `dispatch`
+        /// and handler methods.
         pub(super) fn class_decl(&self, mro: &[Sym], fx: &mut Effects) {
+            self.mixin_decl(mro, fx);
             for sym in mro {
-                if let Some(condition) = self.mixin_condition(mro, &self.simple_name(sym)) {
-                    fx.decl.add(condition);
-                }
                 if let Sym::Def(f, d) = sym {
                     for &(a, b) in &self.pys[*f].defs[*d].decorators {
                         self.decorate(*f, a, b, fx);
@@ -823,6 +906,55 @@ mod access {
                     self.decorate(f, a, b, fx);
                 }
             }
+            for (name, f, d) in self.methods(mro) {
+                if !HTTP.contains(&name.as_str()) {
+                    continue;
+                }
+                let mut sub = Effects::default();
+                for &(a, b) in &self.pys[f].defs[d].decorators {
+                    self.decorate(f, a, b, &mut sub);
+                }
+                if sub.decl.declared || !sub.decl.unresolved.is_empty() {
+                    fx.by_method.entry(name).or_default().extend(sub.decl);
+                }
+            }
+        }
+
+        /// Mixins that run: a mixin right of a view base never does, because the
+        /// base's `dispatch` does not call on.
+        fn mixin_decl(&self, mro: &[Sym], fx: &mut Effects) {
+            let stop = (mro.iter())
+                .position(|s| self.is_view_base(s))
+                .unwrap_or(mro.len());
+            for (i, sym) in mro.iter().enumerate() {
+                let name = self.simple_name(sym);
+                let Some(condition) = self.mixin_condition(mro, &name) else {
+                    continue;
+                };
+                if i < stop {
+                    fx.decl.add(condition);
+                } else if let Sym::Def(f, d) = mro[0] {
+                    let base = self.simple_name(&mro[stop]);
+                    let message = format!(
+                        "`{name}` is listed after `{base}`, whose `dispatch` never calls on; it gives no protection."
+                    );
+                    self.finding(f, self.pys[f].defs[d].line, false, message);
+                }
+            }
+        }
+
+        /// A framework view class: its `dispatch` runs before any mixin to its right.
+        fn is_view_base(&self, sym: &Sym) -> bool {
+            let Sym::External(path) = sym else {
+                return false;
+            };
+            let views = [
+                "django.views.",
+                "django.contrib.auth.views.",
+                "rest_framework.",
+            ];
+            let named = !simple(path).ends_with("Mixin");
+            named && views.iter().any(|v| path.starts_with(v))
         }
 
         /// What base class `name` of a view declares; none when nothing.
@@ -867,26 +999,55 @@ mod access {
                 return decl;
             }
             if let Some((f, a, b)) = own {
-                return self.perm_list(f, a, b, method);
+                return self.perm_list(f, a, b, (method, mro));
             }
-            if let Some((f, v, at)) = self.attr(mro, "permission_classes") {
-                return self.perm_list(f, at, at + v.len(), method);
+            // The first class of the MRO that sets them; a base outside the scan may.
+            for sym in mro {
+                match sym {
+                    Sym::Def(f, d) => {
+                        if let Some((v, at)) = self.pys[*f].class_attr(*d, "permission_classes") {
+                            return self.perm_list(*f, at, at + v.len(), (method, mro));
+                        }
+                    }
+                    Sym::External(path) if !framework_base(path) => {
+                        let name = simple(path);
+                        if let Sym::Def(f, d) = mro[0] {
+                            let message = format!(
+                                "Base class `{name}` is outside the scan; its permission_classes are unknown."
+                            );
+                            self.finding(f, self.pys[f].defs[d].line, true, message);
+                        }
+                        let mut decl = Decl::default();
+                        decl.add(Some(Condition::Unknown(format!(
+                            "{name}.permission_classes"
+                        ))));
+                        return decl;
+                    }
+                    _ => {}
+                }
             }
             let mut decl = Decl::default();
             for name in self.default_perms.iter().flatten() {
-                decl.add(self.perm_expr(name, method));
+                decl.add(self.perm_expr(None, name, (method, mro)));
             }
             decl
         }
 
-        fn perm_list(&self, f: usize, a: usize, b: usize, method: &str) -> Decl {
+        fn perm_list(&self, f: usize, a: usize, b: usize, at: (&str, &[Sym])) -> Decl {
             let p = &self.pys[f];
             let mut decl = Decl::default();
             match p.elements(a, b) {
                 Some(list) => {
-                    decl.declared = true;
+                    decl.declared = list.is_empty();
                     for (x, y) in list {
-                        decl.add(self.perm_expr(&p.src[x..y], method));
+                        if let Some(name) = self.object_only(f, &p.src[x..y]) {
+                            let message = format!(
+                                "`{name}` checks objects only; list and create requests are not guarded by it."
+                            );
+                            self.finding(f, p.line(x), false, message);
+                            continue;
+                        }
+                        decl.add(self.perm_expr(Some(f), &p.src[x..y], at));
                     }
                 }
                 None => decl.add(Some(Condition::Unknown(collapse(&p.src[a..b])))),
@@ -894,20 +1055,41 @@ mod access {
             decl
         }
 
+        /// The name of a project permission class that defines `has_object_permission`
+        /// but no `has_permission` (so it allows every request), else none.
+        fn object_only(&self, f: usize, text: &str) -> Option<String> {
+            let name = dotted(text.trim().trim_end_matches("()"))?;
+            if self.access.get(simple(name)).is_some() {
+                return None;
+            }
+            let sym @ Sym::Def(..) = self.resolve(f, name) else {
+                return None;
+            };
+            let mro = self.mro(&sym);
+            let bare = |s: &Sym| match s {
+                Sym::External(path) => matches!(simple(path), "BasePermission" | "object"),
+                _ => true,
+            };
+            (mro.iter().all(bare)
+                && self.method(&mro, "has_object_permission").is_some()
+                && self.method(&mro, "has_permission").is_none())
+            .then(|| simple(name).to_string())
+        }
+
         /// One permission class expression; `None` allows everyone.
-        fn perm_expr(&self, text: &str, method: &str) -> Option<Condition> {
+        fn perm_expr(&self, f: Option<usize>, text: &str, at: (&str, &[Sym])) -> Option<Condition> {
             let text = crate::lang_text::unparen(text);
             let parts = split_top(text, "|");
             if parts.len() > 1 {
                 let all: Option<Vec<Condition>> =
-                    parts.iter().map(|t| self.perm_expr(t, method)).collect();
+                    parts.iter().map(|t| self.perm_expr(f, t, at)).collect();
                 return all.map(any);
             }
             let parts = split_top(text, "&");
             if parts.len() > 1 {
                 let all: Vec<Condition> = parts
                     .iter()
-                    .filter_map(|t| self.perm_expr(t, method))
+                    .filter_map(|t| self.perm_expr(f, t, at))
                     .collect();
                 return (!all.is_empty()).then(|| {
                     if all.len() == 1 {
@@ -918,31 +1100,110 @@ mod access {
                 });
             }
             if let Some(inner) = text.strip_prefix('~') {
-                return Some(match self.perm_expr(inner, method) {
+                return Some(match self.perm_expr(f, inner, at) {
                     None => Condition::Never,
                     Some(c) => Condition::Not(Box::new(c)),
                 });
             }
-            self.perm_class(simple(text.trim().trim_end_matches("()")), method)
+            if let Some(name) = f.and_then(|f| self.object_only(f, text)) {
+                // Inside an operator it is no request guard either, but not a plain `allow`.
+                return Some(Condition::Unknown(format!("{name} (object-level only)")));
+            }
+            self.perm_class(simple(text.trim().trim_end_matches("()")), at)
         }
 
         /// One permission class by name: `[views.access]`, the DRF built-ins, else custom.
-        fn perm_class(&self, name: &str, method: &str) -> Option<Condition> {
+        fn perm_class(&self, name: &str, (method, mro): (&str, &[Sym])) -> Option<Condition> {
             if let Some(m) = self.access.get(name) {
                 return meaning(m, name, &[]);
             }
             match name {
                 "AllowAny" => None,
                 "IsAuthenticated" => Some(Condition::Authenticated),
-                "IsAdminUser" => Some(Condition::Custom(STAFF.into())),
+                "IsAdminUser" => Some(staff()),
                 "IsAuthenticatedOrReadOnly" if SAFE.contains(&method) => None,
                 "IsAuthenticatedOrReadOnly" if method == ANY_METHOD => {
                     Some(Condition::Unknown(name.into()))
                 }
                 "IsAuthenticatedOrReadOnly" => Some(Condition::Authenticated),
+                "DjangoModelPermissionsOrAnonReadOnly" if SAFE.contains(&method) => None,
+                "DjangoModelPermissionsOrAnonReadOnly" if method == ANY_METHOD => {
+                    Some(Condition::Unknown(name.into()))
+                }
+                "DjangoModelPermissions"
+                | "DjangoModelPermissionsOrAnonReadOnly"
+                | "DjangoObjectPermissions" => Some(self.model_permissions(name, method, mro)),
                 _ => Some(Condition::Custom(name.to_string())),
             }
         }
+
+        /// DRF's model permissions for one method: a signed-in user holding the model's
+        /// add/change/delete permission; the model is the view's `queryset`.
+        fn model_permissions(&self, name: &str, method: &str, mro: &[Sym]) -> Condition {
+            let unknown = || {
+                if let Some(&Sym::Def(f, d)) = mro.first() {
+                    let message = format!(
+                        "`{name}` needs the view's model; its `queryset` is not readable, so the permission is unknown."
+                    );
+                    self.finding(f, self.pys[f].defs[d].line, true, message);
+                }
+                Condition::All(vec![
+                    Condition::Authenticated,
+                    Condition::Unknown(name.into()),
+                ])
+            };
+            let verb = match method {
+                "GET" | "HEAD" | "OPTIONS" => return Condition::Authenticated,
+                "POST" => "add",
+                "PUT" | "PATCH" => "change",
+                "DELETE" => "delete",
+                _ => return unknown(),
+            };
+            let Some((app, model)) = self.queryset_model(mro) else {
+                return unknown();
+            };
+            Condition::All(vec![
+                Condition::Authenticated,
+                Condition::Policy(format!("{app}.{verb}_{model}")),
+            ])
+        }
+
+        /// (app label, lower-case model name) of the view's `queryset = Model.objects…`.
+        /// shortcut: the app label is the model file's package name; an `app_label`
+        /// or `AppConfig.label` override is not read, so such models stay unknown.
+        fn queryset_model(&self, mro: &[Sym]) -> Option<(String, String)> {
+            if self.method(mro, "get_queryset").is_some() {
+                return None;
+            }
+            let (f, v, _) = self.attr(mro, "queryset")?;
+            let head = v.split(".objects").next().filter(|h| h.len() < v.len())?;
+            let Sym::Def(mf, md) = self.resolve(f, dotted(head.trim())?) else {
+                return None;
+            };
+            let p = &self.pys[mf];
+            let (a, b) = p.defs[md].body;
+            if p.defs[md].kind != DefKind::Class || p.src[a..b].contains("app_label") {
+                return None;
+            }
+            let mut dirs: Vec<&str> = p.rel.split('/').collect();
+            dirs.pop();
+            if dirs.last() == Some(&"models") {
+                dirs.pop();
+            }
+            let app = dirs.last()?;
+            Some((app.to_string(), p.defs[md].name.to_lowercase()))
+        }
+    }
+
+    /// A base class that sets no `permission_classes` of its own: Django, DRF, builtins.
+    fn framework_base(path: &str) -> bool {
+        let known = (API_GENERICS.iter().map(|g| g.0))
+            .chain(VIEWSETS)
+            .chain(["View", "object"]);
+        let bare = !path.contains('.') && known.clone().any(|k| k == path);
+        bare || ["rest_framework.", "django.", "typing.", "abc."]
+            .iter()
+            .any(|m| path.starts_with(m))
     }
 
     /// `policy(p)` for one permission, all of them for several.
@@ -1461,7 +1722,7 @@ mod views {
         ("DeleteView", "_confirm_delete"),
         ("FormView", ""),
     ];
-    const VIEWSETS: [&str; 5] = [
+    pub(super) const VIEWSETS: [&str; 5] = [
         "ViewSet",
         "GenericViewSet",
         "ModelViewSet",
@@ -1469,7 +1730,7 @@ mod views {
         "ViewSetMixin",
     ];
     /// DRF generic API views and the methods they answer.
-    const API_GENERICS: [(&str, &[&str]); 11] = [
+    pub(super) const API_GENERICS: [(&str, &[&str]); 11] = [
         ("APIView", &[]),
         ("GenericAPIView", &[]),
         ("ListAPIView", &["GET"]),
@@ -1486,7 +1747,7 @@ mod views {
         ),
     ];
     /// ViewSet actions: (action, detail, method).
-    const ACTIONS: [(&str, bool, &str); 6] = [
+    pub(super) const ACTIONS: [(&str, bool, &str); 6] = [
         ("list", false, "GET"),
         ("create", false, "POST"),
         ("retrieve", true, "GET"),
@@ -1514,7 +1775,7 @@ mod views {
         ("UpdateModelMixin", &["update", "partial_update"]),
         ("DestroyModelMixin", &["destroy"]),
     ];
-    const HTTP: [&str; 5] = ["get", "post", "put", "patch", "delete"];
+    pub(super) const HTTP: [&str; 5] = ["get", "post", "put", "patch", "delete"];
 
     /// One endpoint row before it is emitted.
     struct Ep {
@@ -1665,7 +1926,7 @@ mod views {
                 let eps = (self.api_methods(&mro, &names).into_iter())
                     .map(|(m, at)| {
                         let handler = format!("{}.{}", site.handler, m.to_ascii_lowercase());
-                        let mut decl = fx.decl.clone();
+                        let mut decl = fx.for_method(&m);
                         decl.extend(self.drf_decl(&mro, None, &m));
                         site.ep(&m, &decl, handler, at.unwrap_or(site.at()))
                     })
@@ -1675,7 +1936,7 @@ mod views {
             let mut fx = Effects::default();
             self.class_decl(&mro, &mut fx);
             fx.decl.extend(outer.decl);
-            self.class_view(&site, &mro, &names, kwargs, &fx.decl)
+            self.class_view(&site, &mro, &names, kwargs, &fx)
         }
 
         /// A Django class view: a screen when it renders a template, else endpoints.
@@ -1685,7 +1946,7 @@ mod views {
             mro: &[Sym],
             names: &[String],
             kwargs: &[Arg],
-            decl: &Decl,
+            fx: &Effects,
         ) -> Outcome {
             let rf = &self.pys[site.r.file];
             let generic = GENERIC.iter().find(|(n, _)| names.iter().any(|x| x == n));
@@ -1702,7 +1963,7 @@ mod views {
                 None => self.class_templates(site, mro, generic.map(|g| g.1)),
             };
             if templates.is_empty() && generic.is_none() {
-                return Outcome::Endpoints(self.plain_endpoints(site, mro, decl));
+                return Outcome::Endpoints(self.plain_endpoints(site, mro, fx));
             }
             let template = kw.and_then(|a| py::string_value(a.value));
             let suffix = template.map(|t| format!("({t})")).unwrap_or_default();
@@ -1713,9 +1974,13 @@ mod views {
                 })
                 .map(|(f, (a, b))| (f, a, b))
                 .collect();
-            Outcome::Screen(Box::new(
-                self.screen_info(site, &suffix, decl, templates, scopes),
-            ))
+            Outcome::Screen(Box::new(self.screen_info(
+                site,
+                &suffix,
+                &fx.for_method("get"),
+                templates,
+                scopes,
+            )))
         }
 
         /// Templates a class view renders; an empty name stands for an unreadable one.
@@ -1750,14 +2015,14 @@ mod views {
         }
 
         /// A class view without template: one endpoint per handler method, else `ANY`.
-        fn plain_endpoints(&self, site: &Site, mro: &[Sym], decl: &Decl) -> Vec<Ep> {
+        fn plain_endpoints(&self, site: &Site, mro: &[Sym], fx: &Effects) -> Vec<Ep> {
             let methods: Vec<Ep> = (self.methods(mro).into_iter())
                 .filter(|(n, _, _)| HTTP.contains(&n.as_str()))
                 .map(|(m, f, d)| {
                     let at = (f, self.pys[f].defs[d].line);
                     site.ep(
                         &m.to_ascii_uppercase(),
-                        decl,
+                        &fx.for_method(&m),
                         format!("{}.{m}", site.handler),
                         at,
                     )
@@ -1766,7 +2031,7 @@ mod views {
             if !methods.is_empty() {
                 return methods;
             }
-            vec![site.ep(ANY_METHOD, decl, site.handler.clone(), site.at())]
+            vec![site.ep(ANY_METHOD, &fx.decl, site.handler.clone(), site.at())]
         }
 
         /// A function view: DRF `@api_view` endpoints, a screen when it renders, else endpoints.
@@ -1787,6 +2052,11 @@ mod views {
             }
             fx.decl.extend(outer.decl);
             let methods = fx.methods.clone();
+            if let (true, Some((pf, at))) = (fx.api_view, fx.perms_above) {
+                let message =
+                    "`@permission_classes` above `@api_view` is ignored by DRF; it must sit below.";
+                self.finding(pf, self.pys[pf].line(at), false, message.into());
+            }
             if fx.api_view {
                 let eps = (methods.iter().flatten())
                     .map(|m| {
@@ -2020,6 +2290,7 @@ mod views {
                 basename,
                 route_name: r.name.clone(),
                 layer: fx.decl,
+                by_action: fx.by_method,
             })
         }
 
@@ -2033,6 +2304,9 @@ mod views {
             at: (usize, u32),
         ) -> Ep {
             let mut decl = vs.layer.clone();
+            if let Some(d) = vs.by_action.get(action) {
+                decl.extend(d.clone());
+            }
             decl.extend(self.drf_decl(&vs.mro, perms, method));
             Ep {
                 method: method.into(),
@@ -2173,6 +2447,8 @@ mod views {
         route_name: Option<String>,
         /// Django-side access around DRF's own.
         layer: Decl,
+        /// `method_decorator(name=…)` per handler or action.
+        by_action: BTreeMap<String, Decl>,
     }
 
     impl Vs<'_> {
@@ -2502,6 +2778,13 @@ impl Project<'_> {
                 "Decorator `{name}` is not read; any access check it makes is unknown (declare it in [views.access])."
             );
             gap(&mut flow.diagnostics, &self.pys[f].rel, line, message);
+        }
+        for (f, line, is_gap, message) in self.findings.take() {
+            let rel = &self.pys[f].rel;
+            match is_gap {
+                true => gap(&mut flow.diagnostics, rel, line, message),
+                false => note(flow, rel, line, message),
+            }
         }
         let mut bases_done = BTreeSet::new();
         for info in built.screens.values() {
@@ -3010,7 +3293,10 @@ def stats(request):
         }
         assert_eq!(
             endpoint(&flow, "POST", "/api/orders/:pk/refund/"),
-            AccessState::Protected(Condition::Custom("is_staff".into()))
+            AccessState::Protected(Condition::All(vec![
+                Condition::Authenticated,
+                Condition::Custom("is_staff".into())
+            ]))
         );
         assert_eq!(endpoint(&flow, "GET", "/api/orders/recent-items/"), open);
         // Settings' DEFAULT_PERMISSION_CLASSES; a read-only viewset; lookup_field.
@@ -3362,7 +3648,10 @@ urlpatterns = router.urls
                 (
                     "club:members.views.staff",
                     "/staff/",
-                    Some(Condition::Custom("is_staff".into()))
+                    Some(Condition::All(vec![
+                        Condition::Authenticated,
+                        Condition::Custom("is_staff".into())
+                    ]))
                 ),
             ]
         );
@@ -3377,7 +3666,10 @@ urlpatterns = router.urls
             })
             .collect();
         let either = AccessState::Protected(Condition::Any(vec![
-            Condition::Custom("is_staff".into()),
+            Condition::All(vec![
+                Condition::Authenticated,
+                Condition::Custom("is_staff".into()),
+            ]),
             Condition::Not(Box::new(Condition::Authenticated)),
         ]));
         let undeclared = AccessState::Undeclared;
@@ -3606,5 +3898,216 @@ class VS(viewsets.ViewSet):
         let flow = extract(w1().path());
         let unknown = AccessState::Protected(Condition::Unknown("VS.get_permissions".into()));
         assert_eq!(endpoint(&flow, "GET", "/vs/:pk/ping/"), unknown);
+    }
+
+    /// A minimal Django project: `views.py` plus the routes in `urls.py`.
+    fn mini(views: &str, routes: &str) -> UiFlow {
+        mini_with(views, routes, "", &[])
+    }
+
+    fn mini_with(views: &str, routes: &str, settings: &str, extra: &[(&str, &str)]) -> UiFlow {
+        let dir = tempfile::tempdir().unwrap();
+        let urls = format!(
+            "from django.urls import path\nfrom django.contrib.auth.decorators import login_required\nfrom . import views\nurlpatterns = [\n{routes}\n]\n"
+        );
+        write(
+            dir.path(),
+            &[
+                ("m/manage.py", ""),
+                ("m/m/__init__.py", ""),
+                (
+                    "m/m/settings.py",
+                    &format!("ROOT_URLCONF = \"m.urls\"\n{settings}"),
+                ),
+                ("m/m/urls.py", &urls),
+                ("m/m/views.py", views),
+            ],
+        );
+        write(dir.path(), extra);
+        extract(dir.path())
+    }
+
+    #[test]
+    fn project_decorator_named_like_an_allowlisted_one_is_unknown() {
+        let views = "from rest_framework.decorators import api_view, permission_classes\nfrom rest_framework.permissions import AllowAny\nfrom rest_framework.decorators import schema as drf_schema\n\ndef schema(f):\n    return f\n\n@schema\n@api_view(['GET'])\n@permission_classes([AllowAny])\ndef proj(request):\n    pass\n\n@drf_schema(None)\n@api_view(['GET'])\n@permission_classes([AllowAny])\ndef real(request):\n    pass\n\n@condition\n@api_view(['GET'])\n@permission_classes([AllowAny])\ndef unimported(request):\n    pass\n";
+        let flow = mini(
+            views,
+            "    path('p/', views.proj),\n    path('r/', views.real),\n    path('u/', views.unimported),",
+        );
+        let unknown = |n: &str| AccessState::Protected(Condition::Unknown(n.into()));
+        assert_eq!(endpoint(&flow, "GET", "/p/"), unknown("schema"));
+        assert_eq!(endpoint(&flow, "GET", "/u/"), unknown("condition"));
+        assert_eq!(endpoint(&flow, "GET", "/r/"), AccessState::Open);
+    }
+
+    fn has_diag(flow: &UiFlow, severity: DiagnosticSeverity, needle: &str) -> bool {
+        (flow.diagnostics.iter()).any(|d| d.severity == severity && d.message.contains(needle))
+    }
+
+    fn protected(c: Condition) -> AccessState {
+        AccessState::Protected(c)
+    }
+
+    #[test]
+    fn mixin_right_of_the_view_base_never_runs() {
+        let views = "from django.views import View\nfrom django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin, UserPassesTestMixin\n\nclass Late(View, LoginRequiredMixin):\n    def get(self, request):\n        pass\n\nclass Both(LoginRequiredMixin, PermissionRequiredMixin, View):\n    permission_required = 'a.b'\n    def get(self, request):\n        pass\n\nclass T1(UserPassesTestMixin):\n    def test_func(self):\n        return True\n\nclass T2(UserPassesTestMixin):\n    def test_func(self):\n        return False\n\nclass Two(T1, T2, View):\n    def get(self, request):\n        pass\n";
+        let flow = mini(
+            views,
+            "    path('late/', views.Late.as_view()),\n    path('both/', views.Both.as_view()),\n    path('two/', views.Two.as_view()),",
+        );
+        assert_eq!(endpoint(&flow, "GET", "/late/"), AccessState::Undeclared);
+        assert!(has_diag(
+            &flow,
+            DiagnosticSeverity::Note,
+            "LoginRequiredMixin"
+        ));
+        let both = Condition::All(vec![
+            Condition::Authenticated,
+            Condition::Policy("a.b".into()),
+        ]);
+        assert_eq!(endpoint(&flow, "GET", "/both/"), protected(both));
+        let two = Condition::Custom("T1.test_func".into());
+        assert_eq!(endpoint(&flow, "GET", "/two/"), protected(two));
+    }
+
+    #[test]
+    fn method_decorator_applies_to_the_named_or_decorated_method_only() {
+        let views = "from django.views import View\nfrom django.utils.decorators import method_decorator\nfrom django.contrib.auth.decorators import login_required, permission_required\n\n@method_decorator(login_required, name='post')\nclass Named(View):\n    def get(self, request):\n        pass\n    def post(self, request):\n        pass\n\nclass OnHandler(View):\n    def get(self, request):\n        pass\n    @method_decorator(permission_required('a.b'))\n    def post(self, request):\n        pass\n\n@method_decorator(login_required, name=WHICH)\nclass Dyn(View):\n    def get(self, request):\n        pass\n";
+        let flow = mini(
+            views,
+            "    path('n/', views.Named.as_view()),\n    path('h/', views.OnHandler.as_view()),\n    path('d/', views.Dyn.as_view()),",
+        );
+        assert_eq!(endpoint(&flow, "GET", "/n/"), AccessState::Undeclared);
+        assert_eq!(
+            endpoint(&flow, "POST", "/n/"),
+            protected(Condition::Authenticated)
+        );
+        assert_eq!(endpoint(&flow, "GET", "/h/"), AccessState::Undeclared);
+        let policy = Condition::Policy("a.b".into());
+        assert_eq!(endpoint(&flow, "POST", "/h/"), protected(policy));
+        // An unreadable `name=` is unknown for the whole view, never dropped.
+        assert!(matches!(
+            endpoint(&flow, "GET", "/d/"),
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+        assert!(has_diag(&flow, DiagnosticSeverity::Gap, "method_decorator"));
+    }
+
+    #[test]
+    fn staff_decorator_and_admin_permission_need_authentication_too() {
+        let staff = Condition::All(vec![
+            Condition::Authenticated,
+            Condition::Custom("is_staff".into()),
+        ]);
+        let views = "from django.contrib.admin.views.decorators import staff_member_required\nfrom rest_framework.views import APIView\nfrom rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated\nfrom .perms import IsOwner\n\n@staff_member_required\ndef dj(request):\n    pass\n\nclass Adm(APIView):\n    permission_classes = [IsAdminUser]\n    def get(self, request):\n        pass\n\nclass Mix(APIView):\n    permission_classes = [IsAuthenticated & (IsAdminUser | IsOwner)]\n    def get(self, request):\n        pass\n\nclass AnyOpen(APIView):\n    permission_classes = [IsAuthenticated | AllowAny]\n    def get(self, request):\n        pass\n\nclass Nope(APIView):\n    permission_classes = [~AllowAny]\n    def get(self, request):\n        pass\n\nclass AndOpen(APIView):\n    permission_classes = [IsAuthenticated & AllowAny]\n    def get(self, request):\n        pass\n";
+        let perms = "from rest_framework.permissions import BasePermission\n\nclass IsOwner(BasePermission):\n    def has_permission(self, request, view):\n        return True\n";
+        let flow = mini_with(
+            views,
+            "    path('dj/', views.dj),\n    path('adm/', views.Adm.as_view()),\n    path('mix/', views.Mix.as_view()),\n    path('ao/', views.AnyOpen.as_view()),\n    path('no/', views.Nope.as_view()),\n    path('an/', views.AndOpen.as_view()),",
+            "",
+            &[("m/m/perms.py", perms)],
+        );
+        assert_eq!(endpoint(&flow, "ANY", "/dj/"), protected(staff.clone()));
+        assert_eq!(endpoint(&flow, "GET", "/adm/"), protected(staff.clone()));
+        let inner = Condition::Any(vec![staff, Condition::Custom("IsOwner".into())]);
+        let mix = Condition::All(vec![Condition::Authenticated, inner]);
+        assert_eq!(endpoint(&flow, "GET", "/mix/"), protected(mix));
+        assert_eq!(endpoint(&flow, "GET", "/ao/"), AccessState::Open);
+        assert_eq!(endpoint(&flow, "GET", "/no/"), protected(Condition::Never));
+        assert_eq!(
+            endpoint(&flow, "GET", "/an/"),
+            protected(Condition::Authenticated)
+        );
+    }
+
+    #[test]
+    fn django_model_permissions_read_the_queryset_model() {
+        let views = "from rest_framework.views import APIView\nfrom rest_framework.permissions import DjangoModelPermissions\nfrom blog.models import Post\n\nclass Known(APIView):\n    permission_classes = [DjangoModelPermissions]\n    queryset = Post.objects.all()\n    def get(self, request):\n        pass\n    def post(self, request):\n        pass\n    def patch(self, request):\n        pass\n    def put(self, request):\n        pass\n    def delete(self, request):\n        pass\n\nclass Dyn(APIView):\n    permission_classes = [DjangoModelPermissions]\n    queryset = get_qs()\n    def post(self, request):\n        pass\n";
+        let flow = mini_with(
+            views,
+            "    path('k/', views.Known.as_view()),\n    path('d/', views.Dyn.as_view()),",
+            "",
+            &[
+                ("m/blog/__init__.py", ""),
+                ("m/blog/models.py", "class Post:\n    pass\n"),
+            ],
+        );
+        let with = |p: &str| {
+            let all = vec![Condition::Authenticated, Condition::Policy(p.into())];
+            protected(Condition::All(all))
+        };
+        assert_eq!(
+            endpoint(&flow, "GET", "/k/"),
+            protected(Condition::Authenticated)
+        );
+        assert_eq!(endpoint(&flow, "POST", "/k/"), with("blog.add_post"));
+        assert_eq!(endpoint(&flow, "PATCH", "/k/"), with("blog.change_post"));
+        assert_eq!(endpoint(&flow, "PUT", "/k/"), with("blog.change_post"));
+        assert_eq!(endpoint(&flow, "DELETE", "/k/"), with("blog.delete_post"));
+        let unknown = Condition::Unknown("DjangoModelPermissions".into());
+        let all = Condition::All(vec![Condition::Authenticated, unknown]);
+        assert_eq!(endpoint(&flow, "POST", "/d/"), protected(all));
+        assert!(has_diag(
+            &flow,
+            DiagnosticSeverity::Gap,
+            "DjangoModelPermissions"
+        ));
+    }
+
+    #[test]
+    fn permission_classes_above_api_view_is_not_applied() {
+        let views = "from rest_framework.decorators import api_view, permission_classes\nfrom rest_framework.permissions import IsAuthenticated\n\n@permission_classes([IsAuthenticated])\n@api_view(['GET'])\ndef above(request):\n    pass\n\n@api_view(['GET'])\n@permission_classes([IsAuthenticated])\ndef below(request):\n    pass\n";
+        let flow = mini(
+            views,
+            "    path('a/', views.above),\n    path('b/', views.below),",
+        );
+        assert_eq!(endpoint(&flow, "GET", "/a/"), AccessState::Undeclared);
+        assert!(has_diag(
+            &flow,
+            DiagnosticSeverity::Note,
+            "permission_classes"
+        ));
+        assert_eq!(
+            endpoint(&flow, "GET", "/b/"),
+            protected(Condition::Authenticated)
+        );
+    }
+
+    #[test]
+    fn object_only_permission_class_is_no_request_guard() {
+        let views = "from rest_framework.views import APIView\nfrom rest_framework.permissions import BasePermission, IsAuthenticated\n\nclass IsOwner(BasePermission):\n    def has_object_permission(self, request, view, obj):\n        return True\n\nclass Only(APIView):\n    permission_classes = [IsOwner]\n    def get(self, request):\n        pass\n\nclass Plus(APIView):\n    permission_classes = [IsAuthenticated, IsOwner]\n    def get(self, request):\n        pass\n";
+        let flow = mini(
+            views,
+            "    path('o/', views.Only.as_view()),\n    path('p/', views.Plus.as_view()),",
+        );
+        assert_eq!(endpoint(&flow, "GET", "/o/"), AccessState::Undeclared);
+        assert!(has_diag(&flow, DiagnosticSeverity::Note, "IsOwner"));
+        assert_eq!(
+            endpoint(&flow, "GET", "/p/"),
+            protected(Condition::Authenticated)
+        );
+    }
+
+    #[test]
+    fn base_class_outside_the_scan_hides_its_permission_classes() {
+        let views = "from vendor.base import ThirdPartyBaseView\nfrom rest_framework.views import APIView\n\nclass V(ThirdPartyBaseView, APIView):\n    def get(self, request):\n        pass\n\nclass Plain(APIView):\n    def get(self, request):\n        pass\n";
+        let settings = "REST_FRAMEWORK = {'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAuthenticated']}\n";
+        let flow = mini_with(
+            views,
+            "    path('v/', views.V.as_view()),\n    path('p/', views.Plain.as_view()),",
+            settings,
+            &[],
+        );
+        let unknown = Condition::Unknown("ThirdPartyBaseView.permission_classes".into());
+        assert_eq!(endpoint(&flow, "GET", "/v/"), protected(unknown));
+        assert!(has_diag(
+            &flow,
+            DiagnosticSeverity::Gap,
+            "ThirdPartyBaseView"
+        ));
+        assert_eq!(
+            endpoint(&flow, "GET", "/p/"),
+            protected(Condition::Authenticated)
+        );
     }
 }
