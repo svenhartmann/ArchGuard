@@ -352,7 +352,13 @@ pub const FIELDS: &[Field] = &[
         "views.conventions",
         K::List,
         G::Rules,
-        "Convention rules to check, e.g. navigation_literal or endpoint_access_declared; empty checks nothing.",
+        "Convention rules to check, e.g. navigation_literal, endpoint_access_declared or screen_access_declared; empty checks nothing.",
+    ),
+    f(
+        "views.backends",
+        K::List,
+        G::Rules,
+        "Other repositories whose HTTP endpoints join the actions of this one, as paths relative to the project root or absolute.",
     ),
     // Review
     f(

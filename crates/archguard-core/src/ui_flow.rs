@@ -64,13 +64,57 @@ impl Default for UiFlow {
 }
 
 impl UiFlow {
-    /// The convention of `application` (`None`: the entry for the whole flow);
-    /// default (exact) when nothing was read.
+    /// The convention an element of `application` is evaluated under: its own
+    /// entry (an element without application: the only application's, when
+    /// the flow has exactly one), with the whole-flow entry filling what the
+    /// own one did not read. Permission format and action aliases always
+    /// inherit; prefixes, claim and case only when the flow has a single
+    /// application, so no application's prefix reaches another's elements.
+    /// Default (exact) when nothing was read.
     pub fn convention(&self, application: Option<&str>) -> RoleConvention {
-        (self.role_conventions.iter())
-            .find(|c| c.application.as_deref() == application)
-            .cloned()
-            .unwrap_or_default()
+        let entry = |app: Option<&str>| {
+            (self.role_conventions.iter()).find(|c| c.application.as_deref() == app)
+        };
+        let apps = self.applications();
+        let single = apps.len() <= 1;
+        let own = match (application, apps.as_slice()) {
+            (Some(a), _) => entry(Some(a)),
+            (None, [one]) => entry(Some(one.as_str())),
+            _ => None,
+        };
+        let mut c = own.cloned().unwrap_or_default();
+        let Some(w) = entry(None) else {
+            return c;
+        };
+        if own.is_none() && single {
+            return w.clone();
+        }
+        if c.permissions == PermissionFormat::Exact {
+            c.permissions = w.permissions.clone();
+        }
+        if c.action_aliases.is_empty() {
+            c.action_aliases = w.action_aliases.clone();
+        }
+        if single {
+            c.role_prefix = c.role_prefix.or_else(|| w.role_prefix.clone());
+            c.scope_prefix = c.scope_prefix.or_else(|| w.scope_prefix.clone());
+            c.role_claim = c.role_claim.or_else(|| w.role_claim.clone());
+            if c.role_case == NameCase::Exact {
+                c.role_case = w.role_case;
+            }
+            if c.policy_case == NameCase::Exact {
+                c.policy_case = w.policy_case;
+            }
+        }
+        c
+    }
+
+    /// The applications of screens and endpoints, sorted.
+    pub fn applications(&self) -> Vec<String> {
+        let apps: BTreeSet<&String> = (self.screens.iter().filter_map(|s| s.application.as_ref()))
+            .chain(self.endpoints.iter().filter_map(|e| e.application.as_ref()))
+            .collect();
+        apps.into_iter().cloned().collect()
     }
 
     /// Where the handler method of `e` is declared, when the extractor read it.
@@ -413,6 +457,12 @@ pub enum DiagnosticSeverity {
 pub struct Assignment {
     /// How role names compare; filled by [`resolve_assignment`], exact otherwise.
     pub convention: RoleConvention,
+    /// The roles as chosen, before the catalog implied more; filled by
+    /// [`resolve_assignment`] so each application can imply under its own
+    /// convention.
+    pub held: BTreeSet<String>,
+    /// One resolved copy per application, for [`Assignment::in_app`].
+    pub by_app: BTreeMap<Option<String>, Assignment>,
     pub authenticated: bool,
     pub roles: BTreeSet<String>,
     pub policies: BTreeMap<String, bool>,
@@ -490,6 +540,14 @@ fn negate(outcome: Outcome) -> Outcome {
 }
 
 /// `undeclared` is unknown, never allowed.
+impl Assignment {
+    /// The assignment an element of `application` is judged by: roles held
+    /// and implied under that application's convention, never another's.
+    pub fn in_app(&self, application: Option<&str>) -> &Assignment {
+        (self.by_app.get(&application.map(String::from))).unwrap_or(self)
+    }
+}
+
 pub fn evaluate_access(access: &AccessState, assignment: &Assignment) -> Outcome {
     match access {
         AccessState::Protected(condition) => evaluate_condition(condition, assignment),
@@ -499,10 +557,14 @@ pub fn evaluate_access(access: &AccessState, assignment: &Assignment) -> Outcome
 }
 
 /// The findings keep reading a missing declaration as "no guard".
-fn evaluate_optional(access: &AccessState, assignment: &Assignment) -> Outcome {
+fn evaluate_optional(
+    access: &AccessState,
+    application: Option<&str>,
+    assignment: &Assignment,
+) -> Outcome {
     match access {
         AccessState::Undeclared => Outcome::Allowed,
-        other => evaluate_access(other, assignment),
+        other => evaluate_access(other, assignment.in_app(application)),
     }
 }
 
@@ -521,7 +583,8 @@ pub enum Reach {
 
 impl AccessState {
     /// Reach level of one screen or link; none when denied.
-    fn level(&self, assignment: &Assignment) -> Option<Reach> {
+    fn level(&self, assignment: &Assignment, application: Option<&str>) -> Option<Reach> {
+        let assignment = assignment.in_app(application);
         match self {
             AccessState::Undeclared => Some(Reach::Undeclared),
             other => match evaluate_access(other, assignment) {
@@ -547,7 +610,9 @@ pub fn reachable_screens(
     let screens: BTreeMap<&str, &Screen> =
         flow.screens.iter().map(|s| (s.id.as_str(), s)).collect();
     let mut reached = BTreeMap::new();
-    let Some(first) = screens.get(start).and_then(|s| s.access.level(assignment)) else {
+    let Some(first) =
+        (screens.get(start)).and_then(|s| s.access.level(assignment, s.application.as_deref()))
+    else {
         return reached;
     };
     reached.insert(start.to_string(), first);
@@ -563,9 +628,17 @@ pub fn reachable_screens(
             let Some(target) = screens.get(to.as_str()) else {
                 continue;
             };
+            let from_app = match &transition.from {
+                Origin::Screen(id) => screens
+                    .get(id.as_str())
+                    .and_then(|s| s.application.as_deref()),
+                Origin::AnyScreen { application } => Some(application.as_str()),
+            };
             let (Some(link), Some(screen)) = (
-                transition.condition.level(assignment),
-                target.access.level(assignment),
+                transition.condition.level(assignment, from_app),
+                target
+                    .access
+                    .level(assignment, target.application.as_deref()),
             ) else {
                 continue;
             };
@@ -646,7 +719,13 @@ pub fn screen_reaches(flow: &UiFlow, assignment: &Assignment) -> BTreeMap<String
         Some(Reach::Sure) => ScreenReach::Sure,
         Some(Reach::Undeclared) => ScreenReach::Undeclared,
         Some(Reach::Possible) => ScreenReach::Possible,
-        None if s.access.level(assignment).is_none() => ScreenReach::Denied,
+        None if s
+            .access
+            .level(assignment, s.application.as_deref())
+            .is_none() =>
+        {
+            ScreenReach::Denied
+        }
         None if !started.contains(&app(s)) => ScreenReach::NoStartScreen,
         None => ScreenReach::NoKnownPath {
             unresolved_transitions_in_application: unresolved
@@ -1010,6 +1089,12 @@ mod roles {
         if held.iter().any(|h| same(case, h, wanted)) {
             return true;
         }
+        // a typed name meets the stored authority through this convention's prefix
+        if kind == AtomKind::Role
+            && (held.iter()).any(|h| same(case, &canonical(conv, kind, h), wanted))
+        {
+            return true;
+        }
         match &conv.permissions {
             PermissionFormat::Exact => false,
             PermissionFormat::Dotted { wildcard } => {
@@ -1084,7 +1169,14 @@ mod roles {
     /// The assignment the simulator evaluates, with the convention of the whole
     /// flow; see [`resolve_assignment_for`].
     pub fn resolve_assignment(flow: &UiFlow, assignment: &Assignment) -> Assignment {
-        resolve_assignment_for(flow, None, assignment)
+        let mut out = resolve_assignment_for(flow, None, assignment);
+        out.by_app = (flow.applications().into_iter())
+            .map(|app| {
+                let one = resolve_assignment_for(flow, Some(&app), assignment);
+                (Some(app), one)
+            })
+            .collect();
+        out
     }
 
     /// The assignment the simulator evaluates for one application's elements:
@@ -1101,6 +1193,14 @@ mod roles {
         assignment: &Assignment,
     ) -> Assignment {
         let mut out = assignment.clone();
+        out.by_app.clear();
+        // nothing defined or read: nothing is implied, the input stays as it is
+        if !flow.roles.is_empty() || !flow.role_conventions.is_empty() {
+            if out.held.is_empty() {
+                out.held = out.roles.clone();
+            }
+            out.roles = out.held.clone();
+        }
         out.convention = flow.convention(application);
         imply_roles(flow, &out.convention, &mut out.roles);
         resolve_policies(flow, &mut out);
@@ -1114,7 +1214,10 @@ mod roles {
             let one = BTreeSet::from([held.clone()]);
             let matching = flow.roles.iter().filter(|d| match d.kind {
                 RoleKind::Permission => holds(conv, AtomKind::Role, &one, &d.name),
-                _ => same(conv.role_case, &d.name, &held),
+                _ => {
+                    let stored = canonical(conv, AtomKind::Role, &held);
+                    same(conv.role_case, &d.name, &held) || same(conv.role_case, &d.name, &stored)
+                }
             });
             for d in matching {
                 for name in d.includes.iter().chain([&d.name]) {
@@ -1308,8 +1411,10 @@ mod findings {
             }
             let refused = reached.iter().find(|(_, assignment, reached)| {
                 shown(flow, action, assignment, reached)
-                    && (hits.iter())
-                        .all(|e| evaluate_access(&e.access, assignment) == Outcome::Denied)
+                    && (hits.iter()).all(|e| {
+                        evaluate_access(&e.access, assignment.in_app(e.application.as_deref()))
+                            == Outcome::Denied
+                    })
             });
             if let Some((role, ..)) = refused {
                 let text = format!(
@@ -1436,7 +1541,18 @@ mod findings {
                 .iter()
                 .any(|s| s.application.as_deref().unwrap_or("") == application && sure(&s.id)),
         };
-        on_sure_screen && evaluate_optional(&action.condition, assignment) != Outcome::Denied
+        on_sure_screen
+            && evaluate_optional(&action.condition, action_app(flow, action), assignment)
+                != Outcome::Denied
+    }
+
+    fn action_app<'a>(flow: &'a UiFlow, action: &'a Action) -> Option<&'a str> {
+        match &action.screen {
+            Origin::Screen(id) => {
+                (flow.screens.iter().find(|s| s.id == *id)).and_then(|s| s.application.as_deref())
+            }
+            Origin::AnyScreen { application } => Some(application.as_str()),
+        }
     }
 
     /// The screen's access and the action's condition deny an anonymous user.
@@ -1448,8 +1564,8 @@ mod findings {
             Origin::AnyScreen { .. } => AccessState::Undeclared,
         };
         and(
-            evaluate_optional(&screen_access, &anonymous),
-            evaluate_optional(&action.condition, &anonymous),
+            evaluate_optional(&screen_access, action_app(flow, action), &anonymous),
+            evaluate_optional(&action.condition, action_app(flow, action), &anonymous),
         ) == Outcome::Denied
     }
 
@@ -1841,6 +1957,19 @@ mod tests {
         let e: EndpointAccess = serde_json::from_str(old).unwrap();
         assert_eq!(e, endpoint("GET", "/a", AccessState::Undeclared));
         assert_eq!(serde_json::to_string(&e).unwrap(), old);
+    }
+
+    #[test]
+    fn garbage_access_is_rejected_not_read_as_open() {
+        for bad in [r#""foo""#, "{}"] {
+            let json = format!(
+                r#"{{"method":"GET","path":"/a","access":{bad},"file":"Api.cs","line":3,"source":"test"}}"#
+            );
+            assert!(
+                serde_json::from_str::<EndpointAccess>(&json).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

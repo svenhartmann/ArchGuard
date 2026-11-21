@@ -119,8 +119,13 @@ pub fn role_picker(
 /// includes USER"; a role only conditions name stays bare.
 pub fn role_label(texts: &Texts, flow: &UiFlow, name: &str) -> String {
     let defs: Vec<_> = flow.roles.iter().filter(|r| r.name == name).collect();
+    let conv = flow.convention(defs.first().and_then(|d| d.application.as_deref()));
+    // stored form is the runtime authority; display drops the read prefix
+    let short =
+        |n: &str| archguard_engine::core::label(&conv, archguard_engine::core::AtomKind::Role, n);
+    let name = short(name);
     let Some(first) = defs.first() else {
-        return name.to_string();
+        return name;
     };
     let kind = texts.t(match first.kind {
         RoleKind::Role => "role",
@@ -128,8 +133,8 @@ pub fn role_label(texts: &Texts, flow: &UiFlow, name: &str) -> String {
         RoleKind::Group => "group",
         RoleKind::Scope => "scope",
     });
-    let mut includes: Vec<&str> = (defs.iter().flat_map(|d| &d.includes))
-        .map(String::as_str)
+    let mut includes: Vec<String> = (defs.iter().flat_map(|d| &d.includes))
+        .map(|n| short(n))
         .collect();
     includes.sort_unstable();
     includes.dedup();
@@ -246,7 +251,7 @@ mod tests {
             application: Some("Web".into()),
             file: format!("{id}.razor"),
             line: 1,
-            access: archguard_engine::core::AccessState::from_parts(access, false),
+            access: archguard_engine::core::AccessState::from_parts(access, true),
             source: "test".into(),
         }
     }
@@ -259,7 +264,7 @@ mod tests {
             trigger: None,
             file: "home.razor".into(),
             line: 7,
-            condition: archguard_engine::core::AccessState::Undeclared,
+            condition: archguard_engine::core::AccessState::Open,
             source: "test".into(),
         };
         UiFlow {
@@ -281,6 +286,20 @@ mod tests {
         (m.cards.iter())
             .map(|c| (c.title.to_string(), c.state, c.note.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn undeclared_and_weak_screens_are_marked_not_reached() {
+        let mut f = shop();
+        f.screens[1].access = archguard_engine::core::AccessState::Undeclared;
+        f.screens[0].weak = true;
+        let mut s = super::super::state::build_from(Ok(f));
+        s.set_mode(2);
+        s.select_role(1);
+        let m = build(&s, &Texts::default());
+        let st = states(&m);
+        assert_eq!(st[0], ("home".into(), 0, "weakly protected".into()));
+        assert_eq!(st[1], ("checkout".into(), 3, "access not declared".into()));
     }
 
     #[test]

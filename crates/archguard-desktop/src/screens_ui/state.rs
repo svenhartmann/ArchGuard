@@ -262,35 +262,15 @@ pub fn atoms_of(flow: &UiFlow) -> (Vec<String>, Vec<Atom>) {
 }
 
 /// The roles to simulate: the catalog's (`flow.roles`) and every role a
-/// condition names, sorted; a condition's `ROLE_X` is the catalog's `X`
-/// when only `X` is defined (see [`with_prefix`]).
+/// condition names, sorted, in the stored form (the runtime authority).
 pub fn role_names(flow: &UiFlow) -> Vec<String> {
     let named = atoms_of(flow).0.into_iter();
     let defined = flow.roles.iter().map(|r| r.name.clone());
-    let all: BTreeSet<String> = named.chain(defined).collect();
-    (all.iter())
-        .filter(|n| prefixed_of(flow, n).is_none())
-        .cloned()
+    named
+        .chain(defined)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect()
-}
-
-/// For a `ROLE_X` the catalog does not define while it defines `X`: `X`.
-fn prefixed_of<'a>(flow: &UiFlow, name: &'a str) -> Option<&'a str> {
-    let bare = name.strip_prefix("ROLE_")?;
-    let defined = |n: &str| flow.roles.iter().any(|r| r.name == n);
-    (defined(bare) && !defined(name)).then_some(bare)
-}
-
-/// Spring's `ROLE_` prefix, as `ui-flow --role` reads it: a held role `X`
-/// also holds `ROLE_X` when a condition names that and the catalog
-/// defines only `X` (jhipster's Angular routes ask for `ROLE_ADMIN`).
-pub fn with_prefix(flow: &UiFlow, a: &mut Assignment) {
-    let named = atoms_of(flow).0;
-    let extra: Vec<String> = (named.iter())
-        .filter(|n| prefixed_of(flow, n).is_some_and(|bare| a.roles.contains(bare)))
-        .cloned()
-        .collect();
-    a.roles.extend(extra);
 }
 
 /// The simulated user the Screens and Domain tabs share, per document: each
@@ -339,7 +319,6 @@ impl ScreensState {
     /// without a value counts as [`Unknown`] says.
     pub fn assignment(&self) -> Assignment {
         let mut a = role_assignment(self.role, &self.roles);
-        with_prefix(&self.sim, &mut a);
         let atoms = self.atoms.iter().zip(&self.switches);
         for (atom, v) in atoms.clone().filter_map(|(a, v)| Some((a, (*v)?))) {
             atom_map(&mut a, atom).insert(atom.name.clone(), v);
@@ -350,11 +329,17 @@ impl ScreensState {
             Unknown::AllHold => true,
             Unknown::NoneHold => false,
         };
-        for (atom, _) in atoms {
-            atom_map(&mut a, atom)
-                .entry(atom.name.clone())
-                .or_insert(fallback);
-        }
+        // the per-application copies the views read get the same fallback
+        let atoms: Vec<&Atom> = atoms.map(|(atom, _)| atom).collect();
+        let mut fill = |x: &mut Assignment| {
+            for atom in &atoms {
+                atom_map(x, atom)
+                    .entry(atom.name.clone())
+                    .or_insert(fallback);
+            }
+        };
+        fill(&mut a);
+        a.by_app.values_mut().for_each(fill);
         a
     }
 
@@ -573,9 +558,28 @@ mod tests {
     }
 
     #[test]
+    fn the_unknown_fallback_reaches_every_applications_copy() {
+        let mut f = flow();
+        for screen in &mut f.screens {
+            screen.application = Some("App".into());
+        }
+        let mut s = build_from(Ok(f));
+        s.set_unknown(1);
+        let a = s.assignment();
+        assert!(!a.custom.is_empty() || !a.policies.is_empty());
+        let copy = a.in_app(Some("App"));
+        assert_eq!((&copy.custom, &copy.policies), (&a.custom, &a.policies));
+    }
+
+    #[test]
     fn the_assignment_follows_role_and_switches() {
         let mut s = build_from(Ok(flow()));
-        assert_eq!(s.assignment(), Assignment::default(), "anonymous");
+        // the per-application copies are a representation detail
+        let anonymous = Assignment {
+            by_app: Default::default(),
+            ..s.assignment()
+        };
+        assert_eq!(anonymous, Assignment::default(), "anonymous");
         s.select_role(1);
         assert!(s.assignment().authenticated);
         assert!(s.assignment().roles.is_empty(), "signed in, no role");
@@ -634,17 +638,17 @@ mod tests {
         assert_eq!(s.assignment().custom.get("beta"), Some(&true));
     }
 
-    /// jhipster: the catalog defines ADMIN, the Angular route asks for
-    /// ROLE_ADMIN; the picker lists ADMIN once and it opens the route.
+    /// jhipster: catalog, route and backend all say ROLE_ADMIN; the picker lists
+    /// it once and the assignment holds it as stored, no alias.
     #[test]
-    fn a_spring_role_prefix_joins_the_catalog_role() {
+    fn a_spring_role_is_listed_once_in_its_stored_form() {
         use archguard_engine::core::{RoleDef, RoleKind};
         let mut f = flow();
         f.screens[2].access =
             archguard_engine::core::AccessState::Protected(Condition::Role("ROLE_ADMIN".into()));
         f.roles = vec![RoleDef {
             application: None,
-            name: "ADMIN".into(),
+            name: "ROLE_ADMIN".into(),
             kind: RoleKind::Role,
             includes: vec![],
             file: "AuthoritiesConstants.java".into(),
@@ -652,9 +656,9 @@ mod tests {
             source: "t".into(),
         }];
         let mut s = build_from(Ok(f));
-        assert_eq!(s.roles, ["ADMIN", "Admin"]);
-        s.select_role(2);
+        assert_eq!(s.roles, ["Admin", "ROLE_ADMIN"]);
+        s.select_role(3);
         let roles: Vec<String> = s.assignment().roles.into_iter().collect();
-        assert_eq!(roles, ["ADMIN", "ROLE_ADMIN"]);
+        assert_eq!(roles, ["ROLE_ADMIN"]);
     }
 }

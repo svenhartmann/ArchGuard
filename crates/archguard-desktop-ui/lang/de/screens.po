@@ -311,8 +311,20 @@ msgstr "Wo Frontend und Backend sich widersprechen: eine Aktion, die ein simulie
 msgid "Navigation targets of this screen and of its layouts and menus the rules could not read literally. Each one may hide a path."
 msgstr "Navigationsziele dieses Bildschirms und seiner Layouts und Menüs, die die Regeln nicht wörtlich lesen konnten. Jedes kann einen Weg verbergen."
 
-msgid "No guard: everyone who reaches the screen may open it."
-msgstr "Kein Schutz: Wer den Bildschirm erreicht, darf ihn öffnen."
+msgid "Not declared: the code declares no access for this screen."
+msgstr "Nicht deklariert: Der Code deklariert für diesen Bildschirm keinen Zugriff."
+
+msgid "Declared open: everyone who reaches the screen may open it."
+msgstr "Offen (deklariert): Wer den Bildschirm erreicht, darf ihn öffnen."
+
+msgid "The code declares this screen open."
+msgstr "Der Code deklariert diesen Bildschirm als offen."
+
+msgid "weakly protected"
+msgstr "schwach geschützt"
+
+msgid "access not declared"
+msgstr "Zugriff nicht deklariert"
 
 msgid "No guard was read in the code for this screen."
 msgstr "Im Code wurde für diesen Bildschirm kein Schutz gelesen."

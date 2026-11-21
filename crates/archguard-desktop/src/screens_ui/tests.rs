@@ -16,7 +16,7 @@ fn screen(id: &str, app: &str, route: &str, access: Option<Condition>) -> Screen
         application: Some(app.into()),
         file: format!("{id}.ts"),
         line: 1,
-        access: archguard_engine::core::AccessState::from_parts(access, false),
+        access: archguard_engine::core::AccessState::from_parts(access, true),
         source: "test".into(),
     }
 }
@@ -29,7 +29,7 @@ fn go(from: &str, to: &str) -> Transition {
         trigger: None,
         file: "x.ts".into(),
         line: 1,
-        condition: archguard_engine::core::AccessState::Undeclared,
+        condition: archguard_engine::core::AccessState::Open,
         source: "test".into(),
     }
 }

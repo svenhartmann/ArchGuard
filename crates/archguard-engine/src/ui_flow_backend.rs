@@ -26,9 +26,11 @@
 //!   `hasRole`, `hasAnyRole`, `hasAuthority`, `hasAnyAuthority`,
 //!   `isAuthenticated()`, `isFullyAuthenticated()`, `and`/`or`/`!`/`not`/`&&`/`||`
 //!   and parentheses, `permitAll()` alone = `open`; `@Secured`, `@RolesAllowed`,
-//!   `@PermitAll`, `@DenyAll` (`never`). Authorities become `role` atoms too, and a `ROLE_` prefix is
-//!   dropped everywhere, so `hasAuthority('ROLE_A')`, `hasRole('A')` and
-//!   `@Secured("ROLE_A")` all read `role(A)`.
+//!   `@PermitAll`, `@DenyAll` (`never`). Authorities become `role` atoms too, stored as the runtime
+//!   authority: `hasRole('A')` adds Spring's `ROLE_` (unless present), so
+//!   `hasRole('A')`, `hasAuthority('ROLE_A')` and `@Secured("ROLE_A")` all
+//!   read `role(ROLE_A)`; the convention (`role_prefix = ROLE_`) is emitted
+//!   per application and shortens labels only.
 //!
 //! Each endpoint also gets its handler method and the request types it sends
 //! (`handlers`, ADR 0022 decision 4).
@@ -51,9 +53,11 @@
 use crate::extract_ctx::{ExtractContext, ancestors, dir_name, read_text, walk, with_root_config};
 use crate::services::support::test_path;
 use archguard_core::{
-    ANY_METHOD, AccessMeaning, AccessState, Condition, DiagnosticSeverity, EndpointAccess,
-    HandlerSite, UiFlow, UiFlowDiagnostic,
+    ANY_METHOD, AccessMeaning, AccessState, Condition, ConventionOrigin, DiagnosticSeverity,
+    EndpointAccess, HandlerSite, RoleConvention, UiFlow, UiFlowDiagnostic,
 };
+/// Spring `GrantedAuthorityDefaults` default role prefix (framework default).
+const ROLE_PREFIX: &str = "ROLE_";
 use lex::{ident_before, literal_end, split_top};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
@@ -96,6 +100,23 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
         spring::central_rules(sources, &index, &mut out, first);
         for e in &mut out.0.endpoints[first..] {
             e.application = application.clone();
+        }
+        if out.0.endpoints.len() > first
+            && sources
+                .iter()
+                .any(|s| s.text.contains("org.springframework"))
+        {
+            out.0.role_conventions.push(RoleConvention {
+                application: application.clone(),
+                role_prefix: Some(ROLE_PREFIX.into()),
+                origins: vec![ConventionOrigin {
+                    field: "role_prefix".into(),
+                    file: String::new(),
+                    line: 0,
+                    source: "framework default spring GrantedAuthorityDefaults".into(),
+                }],
+                ..RoleConvention::default()
+            });
         }
     }
     index.apply_request_access(&mut out);
@@ -2411,7 +2432,7 @@ mod spring {
     mod chain {
         use super::super::lex::{skip_ws, skip_ws_back, split_top, words};
         use super::super::*;
-        use super::{role, spel};
+        use super::{prefixed_role, role, spel};
 
         const MATCHERS: [&str; 4] = [
             "requestMatchers",
@@ -2772,10 +2793,10 @@ mod spring {
         }
 
         fn grant(index: &Index, name: &str, args: &str) -> Option<AccessState> {
-            let roles = || -> Option<Condition> {
+            let roles = |make: fn(&str) -> Condition| -> Option<Condition> {
                 let names: Option<Vec<Condition>> = split_top(args)
                     .into_iter()
-                    .map(|a| index.text(a).map(|n| role(&n)))
+                    .map(|a| index.text(a).map(|n| make(&n)))
                     .collect();
                 combine(names?, Condition::Any)
             };
@@ -2785,9 +2806,8 @@ mod spring {
                 "denyAll" => protected(Condition::Never),
                 "authenticated" | "fullyAuthenticated" => protected(Condition::Authenticated),
                 "anonymous" => protected(Condition::Not(Box::new(Condition::Authenticated))),
-                "hasRole" | "hasAuthority" | "hasAnyRole" | "hasAnyAuthority" => {
-                    roles().map(AccessState::Protected)
-                }
+                "hasRole" | "hasAnyRole" => roles(prefixed_role).map(AccessState::Protected),
+                "hasAuthority" | "hasAnyAuthority" => roles(role).map(AccessState::Protected),
                 "access" => {
                     let expr = index.text(args)?;
                     match expr.trim() {
@@ -2932,8 +2952,18 @@ mod spring {
         }
     }
 
+    /// The authority as written (`hasAuthority`, `@Secured`).
     fn role(name: &str) -> Condition {
-        Condition::Role(name.strip_prefix("ROLE_").unwrap_or(name).into())
+        Condition::Role(name.into())
+    }
+
+    /// `hasRole('A')`: Spring adds the default role prefix unless present.
+    fn prefixed_role(name: &str) -> Condition {
+        role(&if name.starts_with(crate::ui_flow_backend::ROLE_PREFIX) {
+            name.to_string()
+        } else {
+            format!("{}{name}", crate::ui_flow_backend::ROLE_PREFIX)
+        })
     }
 
     /// Access declared by one level's annotations; `None` when there is none.
@@ -3096,8 +3126,13 @@ mod spring {
                 return None;
             };
             self.at += 1;
+            let make = if matches!(name.as_str(), "hasRole" | "hasAnyRole") {
+                prefixed_role
+            } else {
+                role
+            };
             let mut args = if self.eat(&Tok::Open) {
-                self.args()?
+                self.args(make)?
             } else {
                 vec![]
             };
@@ -3111,7 +3146,7 @@ mod spring {
             }
         }
         /// Quoted arguments up to the closing parenthesis, as roles.
-        fn args(&mut self) -> Option<Vec<Condition>> {
+        fn args(&mut self, make: fn(&str) -> Condition) -> Option<Vec<Condition>> {
             let mut args = Vec::new();
             if self.eat(&Tok::Close) {
                 return Some(args);
@@ -3120,7 +3155,7 @@ mod spring {
                 let Some(Tok::Str(s)) = self.toks.get(self.at) else {
                     return None;
                 };
-                args.push(role(s));
+                args.push(make(s));
                 self.at += 1;
                 if self.eat(&Tok::Close) {
                     return Some(args);
@@ -4027,7 +4062,7 @@ class KController(private val repo: Repo) {
         let admin_read = protected(Condition::All(vec![
             Condition::Any(vec![role("SCOPE_x"), role("owner:read")]),
             Condition::Authenticated,
-            role("ADMIN"),
+            role("ROLE_ADMIN"),
         ]));
         assert_eq!(access(&flow, "GET", "/api/owners/{id}"), &admin_read);
         assert_eq!(access(&flow, "GET", "/api/owners/by-id/{id}"), &admin_read);
@@ -4039,7 +4074,7 @@ class KController(private val repo: Repo) {
                         Condition::Authenticated,
                         role("BLOCKED"),
                     ]))),
-                    role("ADMIN"),
+                    role("ROLE_ADMIN"),
                 ]),
                 Condition::Authenticated,
             ]))
@@ -4060,7 +4095,7 @@ class KController(private val repo: Repo) {
         assert_eq!(
             access(&flow, "PUT", "/api/owners/{id}/editor"),
             &protected(Condition::All(vec![
-                Condition::Any(vec![role("ADMIN"), role("EDITOR")]),
+                Condition::Any(vec![role("ROLE_ADMIN"), role("ROLE_EDITOR")]),
                 Condition::Authenticated,
             ]))
         );
@@ -4069,7 +4104,15 @@ class KController(private val repo: Repo) {
             &signed_in(role("AUDITOR"))
         );
         assert_eq!(access(&flow, "GET", "/plain"), &AccessState::Undeclared);
-        assert_eq!(access(&flow, "GET", "/k/a"), &protected(role("USER")));
+        assert_eq!(access(&flow, "GET", "/k/a"), &protected(role("ROLE_USER")));
+        // the read default prefix is emitted; names stay the runtime authority
+        assert!(
+            flow.role_conventions
+                .iter()
+                .any(|c| c.role_prefix.as_deref() == Some("ROLE_")),
+            "{:?}",
+            flow.role_conventions
+        );
         assert_eq!(
             access(&flow, "ANY", "/api/owners/closed"),
             &signed_in(Condition::Never)
@@ -4624,7 +4667,7 @@ public class ManagementResource {
         // The annotation keeps its own reading; the constant resolves.
         assert_eq!(
             access(&flow, "GET", "/api/admin/users"),
-            &protected(role("ADMIN"))
+            &protected(role("ROLE_ADMIN"))
         );
         assert_eq!(flow.endpoints.len(), 12, "{:#?}", flow.endpoints);
         assert_eq!(notes(&flow, "not a literal"), 1, "{:#?}", flow.diagnostics);
@@ -4679,7 +4722,7 @@ public class TicketController {
             .antMatchers("/api/v1/open/**", "/swagger/**").permitAll()
             .anyRequest().authenticated()"#,
         );
-        let admin = Condition::Any(vec![role("ADMIN"), role("ROOT")]);
+        let admin = Condition::Any(vec![role("ROLE_ADMIN"), role("ROLE_ROOT")]);
         assert_eq!(
             access(&flow, "POST", "/api/v1/admin/tickets"),
             &protected(admin)
@@ -4712,7 +4755,7 @@ public class TicketController {
         );
         assert_eq!(
             access(&flow, "GET", "/api/v1/admin/tickets"),
-            &protected(role("ADMIN"))
+            &protected(role("ROLE_ADMIN"))
         );
         assert_eq!(access(&flow, "GET", "/api/v1/other"), &AccessState::Open);
     }
@@ -4742,7 +4785,7 @@ public class TicketController {
         );
         assert_eq!(
             access(&flow, "GET", "/api/v1/admin/tickets"),
-            &protected(Condition::All(vec![role("ADMIN"), role("server")]))
+            &protected(Condition::All(vec![role("ROLE_ADMIN"), role("server")]))
         );
         assert_eq!(
             access(&flow, "GET", "/api/v1/internal"),
@@ -4756,7 +4799,7 @@ public class TicketController {
             &protected(Condition::All(vec![
                 Condition::Any(vec![
                     Condition::Any(vec![role("a"), role("b")]),
-                    role("ROOT")
+                    role("ROLE_ROOT")
                 ]),
                 Condition::Authenticated
             ]))
@@ -5486,14 +5529,14 @@ public class TicketController {
             access(&flow, "GET", "/api/authorities"),
             &protected(Condition::All(vec![
                 Condition::Authenticated,
-                role("AUDITOR")
+                role("ROLE_AUDITOR")
             ]))
         );
         // `@PermitAll` does not lift the chain's sign-in.
         assert_eq!(access(&flow, "POST", "/api/public"), &authenticated);
         assert_eq!(
             access(&flow, "GET", "/api/admin/users"),
-            &protected(role("ADMIN"))
+            &protected(role("ROLE_ADMIN"))
         );
         assert_eq!(access(&flow, "GET", "/management/info"), &AccessState::Open);
         // `access(custom)` and the rule inside `if` are not read.

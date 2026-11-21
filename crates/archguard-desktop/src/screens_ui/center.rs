@@ -127,10 +127,13 @@ fn center(s: &ScreensState, i: usize, reaches: &Reaches, texts: &Texts) -> FlowC
             "needs: {name}",
             &[("name", short(&words::condition(texts, a)))],
         ),
-        archguard_engine::core::AccessState::Open
-        | archguard_engine::core::AccessState::Undeclared => {
-            texts.t("needs no sign-in or role").into()
-        }
+        archguard_engine::core::AccessState::Open => texts.t("needs no sign-in or role").into(),
+        archguard_engine::core::AccessState::Undeclared => texts.t("access not declared").into(),
+    };
+    let needs = if screen.weak {
+        format!("{needs} ({})", texts.t("weakly protected"))
+    } else {
+        needs
     };
     let from = inspector::meaning(s, screen, texts).2;
     c.detail = format!("{needs}\n{from}").trim_end().into();

@@ -4,7 +4,7 @@
 
 use archguard_engine::core::{
     AccessState, Action, Condition, DiagnosticSeverity, EndpointAccess, Origin, Outcome, Screen,
-    Target, Transition, UiFlow, UiFlowFinding, UiFlowFindingKind, evaluate_condition,
+    Target, Transition, UiFlow, UiFlowFinding, UiFlowFindingKind, evaluate_access,
     join_actions_to_endpoints,
 };
 
@@ -84,10 +84,15 @@ fn panel(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> FlowInspector {
         return FlowInspector::default();
     };
     // The simulated copy: an unreadable guard follows the switches too.
-    let guard = s
+    let outcome = s
         .selected
-        .and_then(|i| s.sim.screens.get(i)?.access.condition());
-    let outcome = guard.map_or(Outcome::Allowed, |c| evaluate_condition(c, &s.assignment()));
+        .and_then(|i| s.sim.screens.get(i))
+        .map_or(Outcome::Unknown, |sim| {
+            evaluate_access(
+                &sim.access,
+                s.assignment().in_app(sim.application.as_deref()),
+            )
+        });
     let triggered = actions(s, flow, screen, texts);
     let (meaning, meaning_from, _) = meaning(s, screen, texts);
     FlowInspector {
@@ -99,7 +104,14 @@ fn panel(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> FlowInspector {
         location: at(&screen.file, screen.line).into(),
         file: screen.file.as_str().into(),
         line: screen.line as i32,
-        access: words::access(texts, screen.access.condition()).into(),
+        access: {
+            let text = words::endpoint_access(texts, &screen.access);
+            match screen.weak {
+                true => format!("{text} ({})", texts.t("weakly protected")),
+                false => text,
+            }
+            .into()
+        },
         result: words::outcome(texts, outcome).into(),
         result_tone: match outcome {
             Outcome::Allowed => 0,
@@ -295,12 +307,21 @@ fn undeclared(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> Vec<FlowRow> {
 /// and the origin short enough for a card.
 pub fn meaning(s: &ScreensState, screen: &Screen, texts: &Texts) -> (String, String, String) {
     let archguard_engine::core::AccessState::Protected(c) = &screen.access else {
+        let undeclared = screen.access.is_undeclared();
         return (
             texts
-                .t("No guard: everyone who reaches the screen may open it.")
+                .t(if undeclared {
+                    "Not declared: the code declares no access for this screen."
+                } else {
+                    "Declared open: everyone who reaches the screen may open it."
+                })
                 .into(),
             texts
-                .t("No guard was read in the code for this screen.")
+                .t(if undeclared {
+                    "No guard was read in the code for this screen."
+                } else {
+                    "The code declares this screen open."
+                })
                 .into(),
             String::new(),
         );

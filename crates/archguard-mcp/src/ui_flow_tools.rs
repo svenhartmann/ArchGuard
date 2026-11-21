@@ -3,7 +3,7 @@
 use crate::engineering_tools::EngineeringParams;
 use crate::server::ArchguardTools;
 use archguard_engine::core::{
-    Assignment, MatrixKind, Origin, Outcome, ScreenReach, UiFlow, evaluate_access,
+    Assignment, EndpointAccess, MatrixKind, Origin, Outcome, ScreenReach, UiFlow, evaluate_access,
     permission_matrix, resolve_assignment, screen_reaches, start_screen_ids, ui_flow_findings,
     ui_flow_summary,
 };
@@ -96,6 +96,14 @@ fn application_of<'a>(flow: &'a UiFlow, origin: &'a Origin) -> &'a str {
     }
 }
 
+/// What the simulated user may do at an endpoint, under its application's convention.
+fn simulated_endpoint(e: &EndpointAccess, a: &Assignment) -> &'static str {
+    outcome(evaluate_access(
+        &e.access,
+        a.in_app(e.application.as_deref()),
+    ))
+}
+
 /// The chosen role as an assignment; none without roles or anonymous.
 pub(crate) fn assignment(roles: Option<&[String]>, anonymous: Option<bool>) -> Option<Assignment> {
     (roles.is_some() || anonymous.is_some()).then(|| Assignment {
@@ -166,9 +174,12 @@ fn matrix_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData> {
         .map(|r| {
             let cells: BTreeMap<&str, &'static str> = (matrix.roles.iter())
                 .map(String::as_str)
-                .zip(r.cells.iter().map(|c| outcome(*c)))
+                .zip(r.cells.iter().map(|c| match r.requires.as_str() {
+                    "undeclared" => "undeclared",
+                    _ => outcome(*c),
+                }))
                 .collect();
-            json!({"kind":"matrix","row":r.kind,"label":r.label,"file":r.file,"line":r.line,"requires":r.requires,"cells":cells})
+            json!({"kind":"matrix","row":r.kind,"label":r.label,"file":r.file,"line":r.line,"requires":r.requires,"weak":r.weak,"cells":cells})
         })
         .filter(|r| q.is_empty() || r.to_string().to_lowercase().contains(&q))
         .collect();
@@ -240,7 +251,7 @@ fn flow_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData> {
     for e in &flow.endpoints {
         let mut row = json!({"kind":"endpoint","endpoint":e});
         if let Some((_, a, _)) = &sim {
-            row["simulated"] = json!(outcome(evaluate_access(&e.access, a)));
+            row["simulated"] = json!(simulated_endpoint(e, a));
         }
         rows.push(row);
     }
@@ -413,7 +424,9 @@ mod tests {
             json!(["anonymous", "signed in", "role:Owner"])
         );
         assert_eq!(first["items"][0]["label"], "/");
-        assert_eq!(first["items"][0]["cells"]["anonymous"], "allowed");
+        // no declaration: never "allowed"
+        assert_eq!(first["items"][0]["requires"], "undeclared");
+        assert_eq!(first["items"][0]["cells"]["anonymous"], "undeclared");
         let second = ui_flow_value(&flow(), &params(1, 1)).unwrap();
         assert_eq!(second["next_offset"], Value::Null);
         let purge = &second["items"][0]["cells"];

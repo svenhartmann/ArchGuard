@@ -72,7 +72,10 @@ fn screen_card(
     c.path = screen.file.as_str().into();
     c.line = screen.line as i32;
     let (state, note) = match reaches.get(&screen.id) {
-        Some(ScreenReach::Sure | ScreenReach::Undeclared) => (0, String::new()),
+        Some(ScreenReach::Sure) if screen.weak => (0, texts.t("weakly protected").into()),
+        Some(ScreenReach::Sure) => (0, String::new()),
+        // never shown as reached: nothing was declared
+        Some(ScreenReach::Undeclared) => (3, texts.t("access not declared").into()),
         Some(ScreenReach::Possible) => (1, texts.t("only if an open condition holds").into()),
         Some(ScreenReach::Denied) => {
             let needs = words::access(texts, screen.access.condition());

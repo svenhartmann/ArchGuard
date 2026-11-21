@@ -7,6 +7,7 @@
 //!
 //! - `navigation_literal`: a transition whose target stayed `Unresolved`.
 //! - `endpoint_access_declared`: an `Undeclared` endpoint.
+//! - `screen_access_declared`: an `Undeclared` screen (not `Open`, not protected).
 //! - `http_url_literal`: a `Call::Unresolved` action.
 //! - `frontend_backend_agree`: a `shown_but_refused` or
 //!   `hidden_but_unprotected` finding of [`ui_flow_findings`].
@@ -50,9 +51,10 @@ mod csharp;
 mod links;
 use links::finding;
 
-const UI_RULES: [&str; 6] = [
+const UI_RULES: [&str; 7] = [
     "navigation_literal",
     "endpoint_access_declared",
+    "screen_access_declared",
     "http_url_literal",
     "frontend_backend_agree",
     "navigation_resolves",
@@ -104,9 +106,10 @@ pub fn convention_findings_in(
 type UiRule = fn(&UiFlow) -> Vec<Finding>;
 
 fn ui_findings(root: &Path, flow: &UiFlow, on: &BTreeSet<&str>) -> Vec<Finding> {
-    let rules: [(&str, UiRule); 4] = [
+    let rules: [(&str, UiRule); 5] = [
         ("navigation_literal", navigation_literal),
         ("endpoint_access_declared", endpoint_access_declared),
+        ("screen_access_declared", screen_access_declared),
         ("http_url_literal", http_url_literal),
         ("frontend_backend_agree", frontend_backend_agree),
     ];
@@ -143,6 +146,16 @@ fn endpoint_access_declared(flow: &UiFlow) -> Vec<Finding> {
         let subject = format!("{} {}", e.method, e.path);
         finding("endpoint_access_declared", &e.file, e.line, &subject, format!(
             "Endpoint {subject} declares no access, so nobody can tell who may call it. Fix: declare [Authorize]/[AllowAnonymous] (ASP.NET) or @PreAuthorize/@PermitAll (Spring) on the endpoint or its controller."
+        ))
+    }).collect()
+}
+
+fn screen_access_declared(flow: &UiFlow) -> Vec<Finding> {
+    let undeclared = flow.screens.iter().filter(|s| s.access.is_undeclared());
+    undeclared.map(|s| {
+        let subject = s.route.clone().unwrap_or_else(|| s.name.clone());
+        finding("screen_access_declared", &s.file, s.line, &subject, format!(
+            "Screen {subject} declares no access, so nobody can tell who may open it. Fix: declare its guard (route guard, [Authorize]/[AllowAnonymous]) or map it under [views.access]."
         ))
     }).collect()
 }
@@ -287,9 +300,10 @@ mod tests {
     use super::*;
     use archguard_core::{FindingKind, Severity};
 
-    const RULES: [&str; 8] = [
+    const RULES: [&str; 9] = [
         "navigation_literal",
         "endpoint_access_declared",
+        "screen_access_declared",
         "http_url_literal",
         "frontend_backend_agree",
         "state_changes_in_entity",
@@ -340,7 +354,7 @@ mod tests {
     /// The same application with every convention kept.
     const KEPT_FLOW: &str = r#"{"definition":"ui-flow/v1","complete":true,
 "screens":[
- {"id":"home","name":"Home","kind":"page","route":"/","application":"web","file":"Web/Home.razor","line":1,"source":"x"},
+ {"id":"home","name":"Home","kind":"page","route":"/","application":"web","access":"open","file":"Web/Home.razor","line":1,"source":"x"},
  {"id":"admin","name":"Admin","kind":"page","route":"/admin","application":"web","access":"authenticated","file":"Web/Admin.razor","line":1,"source":"x"}],
 "transitions":[
  {"from":{"screen":"home"},"target":{"screen":"admin"},"file":"Web/Home.razor","line":2,"source":"x"}],
@@ -480,6 +494,19 @@ public class ShipOrderCommandHandler
         );
         assert_eq!(findings[0].severity, Severity::Error);
         assert_eq!(findings[0].kind, FindingKind::Convention);
+    }
+
+    #[test]
+    fn screen_access_declared_names_the_undeclared_screen() {
+        let findings = run(broken().path(), &["screen_access_declared"]);
+        assert_eq!(
+            ids_and_places(&findings),
+            [(
+                "view-screen_access_declared:Web/Home.razor:/".into(),
+                "Web/Home.razor".into(),
+                1
+            )]
+        );
     }
 
     #[test]

@@ -255,6 +255,7 @@ impl TryFrom<RawRunUser> for RunUser {
 pub enum ViewConvention {
     NavigationLiteral,
     EndpointAccessDeclared,
+    ScreenAccessDeclared,
     HttpUrlLiteral,
     FrontendBackendAgree,
     StateChangesInEntity,
@@ -270,6 +271,7 @@ impl ViewConvention {
         match self {
             Self::NavigationLiteral => "navigation_literal",
             Self::EndpointAccessDeclared => "endpoint_access_declared",
+            Self::ScreenAccessDeclared => "screen_access_declared",
             Self::HttpUrlLiteral => "http_url_literal",
             Self::FrontendBackendAgree => "frontend_backend_agree",
             Self::StateChangesInEntity => "state_changes_in_entity",
