@@ -37,6 +37,11 @@ impl Findings {
         s
     }
 
+    /// Whether the report has arrived (it is read on a worker).
+    pub fn loaded(&self) -> bool {
+        self.report.is_some()
+    }
+
     /// Place the findings on `tree` again (a simulation rebuilt it).
     pub fn retree(&mut self, tree: &Tree) {
         self.counts = vec![0; tree.nodes.len()];

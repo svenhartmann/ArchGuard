@@ -125,7 +125,10 @@ pub use arc42::{arc42_document, arc42_from_evidence};
 /// Source-root stripping, as module names spell project paths (ADR 0010).
 pub use archguard_extract::strip_root;
 pub use architecture::architecture_context;
-pub use cache::{fingerprint, load_graph_if_fresh, save_graph, source_fingerprint};
+pub use cache::{
+    fingerprint, load_graph_if_fresh, save_graph, source_content_fingerprint, source_fingerprint,
+    source_stamp,
+};
 pub use change_context::{ChangeContext, ChangeContextOptions, build_change_context};
 pub use check_gate::{
     accepted_by_baseline, check_gate_findings, empty_analysis_error, gate_fails, read_baseline,
