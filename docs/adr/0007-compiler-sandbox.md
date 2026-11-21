@@ -158,3 +158,20 @@ project like in a sandbox.
     Landlock ABI 4 nor a network namespace restricts connecting to them;
     clearing the environment only hides their names. Windows (allowlist,
     starter) is still untested.
+
+- **2026-11-21:** Toolchain grant narrowed after a security audit (branch
+  `fix/sec-misc`). Every confined program, the TypeScript compiler
+  included, could read the whole `~/.cargo`, `~/.rustup`, `CARGO_HOME` and
+  `RUSTUP_HOME`, and with them `~/.cargo/credentials.toml`. Now only a
+  program whose name starts with `rust-analyzer` gets the Rust toolchain:
+  the rustup homes, the `bin`, `registry` and `git` directories of each
+  cargo home, and cargo's `config`/`config.toml` there as single files
+  (cargo aborts when an existing configuration is unreadable). A cargo
+  home is never granted whole, also not as the installation of
+  `~/.cargo/bin/rust-analyzer`. Other programs get no Rust directory. This
+  replaces "the toolchain" in decision 1 for everything but rust-analyzer.
+  - **Verified:** the `compiler_sandbox` tests on macOS (sandbox-exec).
+    Linux Landlock and Windows use the same functions, run only in CI.
+  - **Still open:** Landlock's signal and abstract-socket scopes (ABI 6)
+    are not set; the user/network namespace covers abstract sockets only
+    where it is available.
