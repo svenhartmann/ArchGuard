@@ -517,12 +517,14 @@ struct Level {
     public: Vec<String>,
 }
 
-/// How a guard looks metadata up: `getAllAndOverride`, `getAllAndMerge`, `get`.
+/// How a guard looks metadata up: merged (`getAllAndMerge`) or the handler's
+/// value over the class's, and which levels its targets cover (`getHandler()`,
+/// `getClass()`; targets not readable count as both).
 #[derive(Clone, Copy, PartialEq)]
-enum Lookup {
-    Override,
-    Merge,
-    Handler,
+struct Lookup {
+    merge: bool,
+    handler: bool,
+    class: bool,
 }
 
 /// A composite decorator's definition: its first parameter and the calls of
@@ -1740,10 +1742,11 @@ fn module_of(src: &Src, pos: usize) -> Option<String> {
 mod meta {
     use super::*;
 
-    const LOOKUPS: [(&str, Lookup); 3] = [
-        ("getAllAndOverride", Lookup::Override),
-        ("getAllAndMerge", Lookup::Merge),
-        ("get", Lookup::Handler),
+    /// Lookup functions and whether they merge.
+    const LOOKUPS: [(&str, bool); 3] = [
+        ("getAllAndOverride", false),
+        ("getAllAndMerge", true),
+        ("get", false),
     ];
 
     /// The metadata key of a lookup or `SetMetadata` argument: its value, else as written.
@@ -1808,7 +1811,7 @@ mod meta {
     fn lookups(scan: &Scan, src: &Src) -> Vec<(usize, String, Lookup)> {
         let (code, b) = (&src.code, src.code.as_bytes());
         let mut found = Vec::new();
-        for (name, lookup) in LOOKUPS {
+        for (name, merge) in LOOKUPS {
             for at in words(code, name) {
                 let receiver = code[..at].strip_suffix('.').unwrap_or("");
                 let mut open = skip_ws(b, at + name.len());
@@ -1823,6 +1826,14 @@ mod meta {
                     i: open,
                 }
                 .array(0);
+                let targets: String = args.iter().skip(1).map(|a| a.source(&src.raw)).collect();
+                let (h, c) = (targets.contains("getHandler"), targets.contains("getClass"));
+                let both = h == c;
+                let lookup = Lookup {
+                    merge,
+                    handler: h || both,
+                    class: c || both,
+                };
                 found.extend(args.first().map(|k| (at, key(scan, &src.raw, k), lookup)));
             }
         }
@@ -1876,14 +1887,22 @@ mod meta {
 
     type Guards<'g> = Vec<&'g (Option<String>, Condition)>;
 
+    /// Whether guard `name` reads marker `key` at the marker's level: a method
+    /// marker needs a lookup of the handler, a class marker one of the class.
+    fn reads_at(scan: &Scan, name: &str, (key, at_method): (&String, bool)) -> bool {
+        (scan.readers.get(key.as_str())).is_some_and(|r| {
+            (r.iter()).any(|(g, l)| g == name && if at_method { l.handler } else { l.class })
+        })
+    }
+
     /// The guards that stay after the public markers `publics` removed those
     /// that read their key, and whether one was removed.
-    fn surviving(scan: &Scan, guards: &Guards, publics: &[&String]) -> (Vec<Condition>, bool) {
-        let honours = |name: &str| {
-            publics.iter().any(|k| {
-                (scan.readers.get(k.as_str())).is_some_and(|r| r.iter().any(|(g, _)| g == name))
-            })
-        };
+    fn surviving(
+        scan: &Scan,
+        guards: &Guards,
+        publics: &[(&String, bool)],
+    ) -> (Vec<Condition>, bool) {
+        let honours = |name: &str| publics.iter().any(|p| reads_at(scan, name, *p));
         let kept: Vec<Condition> = (guards.iter())
             .filter(|(name, _)| !name.as_deref().is_some_and(honours))
             .map(|(_, c)| c.clone())
@@ -1919,11 +1938,12 @@ mod meta {
                 .map(|(_, c)| c.clone())
                 .collect()
         };
-        let (c, m) = (own(class), own(method));
-        Some(match lookup {
-            Lookup::Override if m.is_empty() => c,
-            Lookup::Override | Lookup::Handler => m,
-            Lookup::Merge => combine(merged(c).chain(merged(m)).collect(), Condition::Any)
+        let c = if lookup.class { own(class) } else { vec![] };
+        let m = if lookup.handler { own(method) } else { vec![] };
+        Some(match lookup.merge {
+            false if m.is_empty() => c,
+            false => m,
+            true => combine(merged(c).chain(merged(m)).collect(), Condition::Any)
                 .into_iter()
                 .collect(),
         })
@@ -1943,11 +1963,13 @@ mod meta {
             .into_iter()
             .flat_map(|l| &l.guards)
             .collect();
-        let publics: Vec<&String> = class.public.iter().chain(&method.public).collect();
+        let publics: Vec<(&String, bool)> = (class.public.iter().map(|k| (k, false)))
+            .chain(method.public.iter().map(|k| (k, true)))
+            .collect();
         let (mut conds, honoured) = surviving(scan, &guards, &publics);
         let mut notes = Vec::new();
         if !honoured {
-            for k in publics.iter().filter(|k| !k.is_empty()) {
+            for (k, _) in publics.iter().filter(|(k, _)| !k.is_empty()) {
                 notes.push(format!("Public marker `{k}` set, no guard reads it."));
             }
         }
@@ -2670,5 +2692,28 @@ export class JwtAuthGuard implements CanActivate {
             "Public = \"open\"\n",
         );
         assert_eq!(ep(&flow, "GET", "/a").access, AccessState::Open);
+    }
+
+    #[test]
+    fn a_marker_counts_only_at_the_level_the_guards_lookup_covers() {
+        let flow = run(
+            &[
+                ("package.json", PKG),
+                (
+                    "src/g.ts",
+                    "export const Public = () => SetMetadata('pub', true);\n\
+                     export class HandlerGuard { canActivate(c) { return this.reflector.get('pub', c.getHandler()); } }\n",
+                ),
+                ("src/app.module.ts", &app_module("HandlerGuard")),
+                (
+                    "src/a.ts",
+                    "@Public()\n@Controller('c')\nclass C { @Get() f() {} }\n\
+                     @Controller('m')\nclass M { @Public() @Get() f() {} }\n",
+                ),
+            ],
+            "Public = \"open\"\n",
+        );
+        assert_eq!(ep(&flow, "GET", "/c").access, prot(custom("HandlerGuard")));
+        assert_eq!(ep(&flow, "GET", "/m").access, AccessState::Open);
     }
 }
