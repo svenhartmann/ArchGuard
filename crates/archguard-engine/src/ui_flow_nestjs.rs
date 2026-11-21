@@ -482,6 +482,18 @@ fn raw_is(item: &Item, text: &str) -> bool {
     matches!(&item.value, Value::Raw(r) if r == text)
 }
 
+/// A guard's several lookups of one key cover only the levels every one covers.
+fn common_levels(list: &mut Vec<(String, Lookup)>) {
+    let mut one: Vec<(String, Lookup)> = Vec::new();
+    for (g, l) in list.drain(..) {
+        match one.iter_mut().find(|(n, _)| *n == g) {
+            Some((_, k)) => (k.handler, k.class) = (k.handler && l.handler, k.class && l.class),
+            None => one.push((g, l)),
+        }
+    }
+    *list = one;
+}
+
 fn combine(mut items: Vec<Condition>, many: fn(Vec<Condition>) -> Condition) -> Option<Condition> {
     match items.len() {
         0 => None,
@@ -1979,6 +1991,7 @@ mod meta {
                 }
             }
         }
+        readers.values_mut().for_each(super::common_levels);
         readers
     }
 
@@ -2880,5 +2893,38 @@ export class JwtAuthGuard implements CanActivate {
             "Public = \"open\"\n",
         );
         assert_eq!(ep(&flow, "GET", "/c").access, prot(custom("G")));
+    }
+
+    #[test]
+    fn several_lookups_of_one_key_in_a_guard_cover_only_their_common_levels() {
+        let guard = |second: &str| {
+            run(
+                &[
+                    ("package.json", PKG),
+                    (
+                        "src/g.ts",
+                        &format!(
+                            "export const Public = () => SetMetadata('pub', true);\n\
+                             export class G {{ canActivate(c) {{\n\
+                             \x20 const a = this.reflector.getAllAndOverride('pub', [c.getHandler(), c.getClass()]);\n\
+                             \x20 const b = this.reflector.get('pub', {second});\n\
+                             \x20 return a || b;\n}} }}\n"
+                        ),
+                    ),
+                    ("src/app.module.ts", &app_module("G")),
+                    (
+                        "src/a.ts",
+                        "@Public()\n@Controller('c')\nclass C { @Get() f() {} }\n",
+                    ),
+                ],
+                "Public = \"open\"\n",
+            )
+        };
+        let flow = guard("c.getHandler()");
+        assert_eq!(ep(&flow, "GET", "/c").access, prot(custom("G")));
+        let flow = guard("compute(c)");
+        assert_eq!(ep(&flow, "GET", "/c").access, prot(custom("G")));
+        let flow = guard("c.getClass()");
+        assert_eq!(ep(&flow, "GET", "/c").access, AccessState::Open);
     }
 }
