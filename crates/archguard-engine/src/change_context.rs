@@ -378,6 +378,7 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, ArchguardError> {
     const LIMIT: u64 = 64 * 1024 * 1024;
     let output = tempfile::NamedTempFile::new()?;
     let mut child = crate::git_cmd::git(root)
+        .env_remove("GIT_INDEX_FILE")
         .arg("--literal-pathspecs")
         .args(args)
         .stdout(output.reopen()?)
