@@ -57,7 +57,11 @@ archguard doc . --arc42 --chapter 5 --check</code></pre></div>
 <p>Konfigurationserstellung, Schreiben einer Baseline, Berichtsimporte, Review-Aufzeichnungen, Dokumentationserzeugung, Security-Scans und Snapshots können projektlokale Artefakte schreiben. Befehle mit ausdrücklich lesenden Modi beschreiben diese in ihrer Hilfe. Der MCP-Server eröffnet dieselben belegorientierten Abläufe; gehe nicht davon aus, dass jede Operation nur liest.</p>
 
   <div class="docs-next"><a href="getting-started.html">Mit den ersten Schritten beginnen</a><a href="index.html">Alle Leitfäden</a><a href="../index.html#examples">Beispiele erkunden</a></div>
- </main>
+ <section><h2 id="application-models">Anwendungsmodelle und Aufzeichnungen</h2><div class="code"><button class="copy" type="button">Kopieren</button><pre><code>archguard ui-flow . --format json
+archguard ui-flow matrix . --kind both --format json
+archguard domain . --chain
+archguard runtime . --format json
+archguard sbom . --format cyclonedx</code></pre></div><p>Die Anleitungen zu <a href="ui-flows.html">UI-Flows</a>, <a href="permissions.html">Berechtigungen</a>, <a href="domain-model.html">Domänenmodellen</a>, <a href="runtime.html">Runtime</a> und <a href="security.html">Qualität und Lieferkette</a> erläutern Voraussetzungen, Formate und Seiteneffekte. Für den gesonderten Last-Build siehe <a href="simulation.html#load">Lastszenarien</a>.</p></section></main>
 </div>
 <footer class="wrap footer"><a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a><p>Nicht-kommerzielles Open-Source-Projekt.<br>MIT OR Apache-2.0 · Drittprojekte behalten ihre eigenen Lizenzen.</p><a href="../about.html">Über diese Beispiele</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>Quellcode auf GitHub</a><a href="#main">Zum Seitenanfang</a><p class="evidence-motto">Fehlende Evidenz ist keine Null.</p></footer>
 <div id="copy-status" role="status" aria-live="polite"></div>

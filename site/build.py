@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 from pathlib import Path
+from docs_build import index_docs, prepare_docs
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--out', required=True, type=Path)
@@ -30,6 +31,7 @@ for name in ('index.html', 'about.html', 'styles.css', 'site.js', 'lightbox.js',
         shutil.copytree(item, out / name)
     else:
         shutil.copy2(item, out / name)
+prepare_docs(out, source)
 # Repository links and the release install commands appear only when the repository
 # is known; otherwise they are removed and <!--norepo--> blocks (source build) stay.
 keep, drop = ('repo', 'norepo') if args.repository else ('norepo', 'repo')
@@ -94,5 +96,6 @@ for page in out.rglob('*.html'):
     overlay_url = Path(os.path.relpath(out / 'lightbox.js', page.parent)).as_posix()
     text = text.replace('</body>', f'<script src="{overlay_url}" defer></script></body>')
     page.write_text(text)
+index_docs(out)
 (out / '.nojekyll').touch()
 print(f'Built static site: {out}')

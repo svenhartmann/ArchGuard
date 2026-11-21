@@ -72,6 +72,36 @@ class BuildTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(sentinel.read_text(), 'keep')
 
+    def test_handbook_navigation_and_search_use_final_content(self):
+        navigation = json.loads((SOURCE / 'data/docs-navigation.json').read_text())
+        slugs = [page['slug'] for group in navigation for page in group['pages']]
+        for repository in (None, 'example/archguard'):
+            with self.subTest(repository=repository), tempfile.TemporaryDirectory() as directory:
+                out = Path(directory) / 'public'
+                self.build(out, repository)
+                for relative in ('docs', 'de/docs'):
+                    folder = out / relative
+                    index = json.loads((folder / 'search-index.json').read_text())
+                    self.assertEqual({row['url'].split('#')[0] for row in index},
+                                     {'index.html', *(slug + '.html' for slug in slugs)})
+                    self.assertNotIn('@@', json.dumps(index))
+                    self.assertEqual('raw.githubusercontent.com/example/archguard' in json.dumps(index),
+                                     bool(repository))
+                    for row in index:
+                        filename, _, anchor = row['url'].partition('#')
+                        page = (folder / filename).read_text()
+                        if anchor:
+                            self.assertIn(f'id="{anchor}"', page)
+                    page = (folder / 'domain-model.html').read_text()
+                    self.assertEqual(page.count('id="docs-search"'), 1)
+                    self.assertEqual(page.count('id="main"'), 1)
+                    self.assertIn('href="domain-model.html" aria-current="page"', page)
+                    for slug in slugs:
+                        self.assertIn(f'href="{slug}.html"', page)
+                    ids = re.findall(r'\bid="([^"]+)"', page)
+                    self.assertEqual(len(ids), len(set(ids)))
+                self.assertFalse((out / 'docs_build.py').exists())
+
     def test_directory_fragment_targets_index(self):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)
