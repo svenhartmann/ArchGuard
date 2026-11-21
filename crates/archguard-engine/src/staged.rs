@@ -11,7 +11,18 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsString,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
 };
+
+/// The message of the error a cancelled comparison returns.
+pub const CANCELLED: &str = "comparison cancelled";
+/// Returns an error once `cancel` is set; checked between the expensive steps.
+fn checkpoint(cancel: &AtomicBool) -> Result<(), ArchguardError> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(ArchguardError::Analysis(CANCELLED.into()));
+    }
+    Ok(())
+}
 
 fn invalid(message: impl std::fmt::Display) -> ArchguardError {
     ArchguardError::Config(format!("architecture comparison: {message}"))
@@ -204,38 +215,16 @@ fn limitations(policy: &str) -> Vec<String> {
         "Renames are represented by graph path identity, as removed and added nodes. Changed edges include changes to their source evidence.".into(),
         "Git symlinks, submodules and analysis caches are excluded. Missing historical compiler dependencies can reduce semantic coverage; compare the coverage on both sides.".into()]
 }
-fn compare_snapshots(
-    root: &Path,
-    relative: &Path,
-    previous: &Path,
-    target: &Path,
-    explicit_config: Option<&Path>,
-) -> Result<ArchitectureDiffDetails, ArchguardError> {
-    for snapshot in [previous, target] {
-        git(snapshot, &["init", "--quiet", "--template=", "."])?;
-        std::fs::create_dir_all(snapshot.join(relative))?;
-    }
-    let target_root = target.join(relative);
-    let base_root = previous.join(relative);
-    let loaded = crate::config::load_config(explicit_config, &target_root)?;
-    let run =
-        crate::effective::effective_run(&target_root, &loaded, crate::pipeline::Level::Module)?;
-    // Freeze the target policy and derived zoom/layers for the baseline.
-    let files = crate::pipeline::walk_files(&base_root, &run.config)?;
-    let (mut base_graph, _) = crate::pipeline::build_graph(&base_root, &files, &run.config)?;
-    crate::semantic_calls::integrate_graph(&base_root, &files, &run.config, &mut base_graph)?;
-    let (base_report, _) = crate::effective::build_effective_report(
-        &base_root,
-        &base_graph,
-        &run.config,
-        crate::pipeline::Level::Module,
-    )?;
-    let old_findings = comparison_findings(&base_graph, &base_report, &run.config)?;
-    let new_findings = comparison_findings(&run.graph, &run.report, &run.config)?;
-    let old_ids: BTreeSet<_> = old_findings.iter().map(identity).collect();
-    let new_ids: BTreeSet<_> = new_findings.iter().map(identity).collect();
-    let before = edges(&base_graph);
-    let after = edges(&run.graph);
+type EdgeMap = BTreeMap<(String, String), Vec<Ref>>;
+/// Added, removed and changed edges between two edge maps.
+fn edge_changes(
+    before: &EdgeMap,
+    after: &EdgeMap,
+) -> (
+    Vec<ArchitectureEdgeChange>,
+    Vec<ArchitectureEdgeChange>,
+    Vec<ArchitectureEdgeChange>,
+) {
     let mut added_edges = vec![];
     let mut removed_edges = vec![];
     let mut changed_edges = vec![];
@@ -259,6 +248,53 @@ fn compare_snapshots(
             _ => changed_edges.push(edge),
         }
     }
+    (added_edges, removed_edges, changed_edges)
+}
+fn ensure_unchanged(repo: &Path, commit: &str, records: &[u8]) -> Result<(), ArchguardError> {
+    if records != index(repo, commit)? {
+        return Err(invalid(
+            "index changed during analysis; retry the comparison",
+        ));
+    }
+    Ok(())
+}
+fn compare_snapshots(
+    root: &Path,
+    relative: &Path,
+    previous: &Path,
+    target: &Path,
+    explicit_config: Option<&Path>,
+    cancel: &AtomicBool,
+) -> Result<ArchitectureDiffDetails, ArchguardError> {
+    checkpoint(cancel)?;
+    for snapshot in [previous, target] {
+        git(snapshot, &["init", "--quiet", "--template=", "."])?;
+        std::fs::create_dir_all(snapshot.join(relative))?;
+    }
+    let target_root = target.join(relative);
+    let base_root = previous.join(relative);
+    let loaded = crate::config::load_config(explicit_config, &target_root)?;
+    let run =
+        crate::effective::effective_run(&target_root, &loaded, crate::pipeline::Level::Module)?;
+    checkpoint(cancel)?;
+    // Freeze the target policy and derived zoom/layers for the baseline.
+    let files = crate::pipeline::walk_files(&base_root, &run.config)?;
+    let (mut base_graph, _) = crate::pipeline::build_graph(&base_root, &files, &run.config)?;
+    crate::semantic_calls::integrate_graph(&base_root, &files, &run.config, &mut base_graph)?;
+    let (base_report, _) = crate::effective::build_effective_report(
+        &base_root,
+        &base_graph,
+        &run.config,
+        crate::pipeline::Level::Module,
+    )?;
+    checkpoint(cancel)?;
+    let old_findings = comparison_findings(&base_graph, &base_report, &run.config)?;
+    let new_findings = comparison_findings(&run.graph, &run.report, &run.config)?;
+    let old_ids: BTreeSet<_> = old_findings.iter().map(identity).collect();
+    let new_ids: BTreeSet<_> = new_findings.iter().map(identity).collect();
+    let before = edges(&base_graph);
+    let after = edges(&run.graph);
+    let (added_edges, removed_edges, changed_edges) = edge_changes(&before, &after);
     let old_nodes: BTreeSet<_> = base_graph.nodes.iter().map(|n| n.name.clone()).collect();
     let new_nodes: BTreeSet<_> = run.graph.nodes.iter().map(|n| n.name.clone()).collect();
     let mut target_graph = run.graph;
@@ -293,6 +329,18 @@ pub fn compare_branches(
     target: &str,
     explicit_config: Option<&Path>,
 ) -> Result<BranchArchitectureDiff, ArchguardError> {
+    compare_branches_cancellable(root, base, target, explicit_config, &AtomicBool::new(false))
+}
+/// [`compare_branches`] that stops with [`CANCELLED`] once `cancel` is set;
+/// checked before each checkout and analysis, not inside one.
+pub fn compare_branches_cancellable(
+    root: &Path,
+    base: &str,
+    target: &str,
+    explicit_config: Option<&Path>,
+    cancel: &AtomicBool,
+) -> Result<BranchArchitectureDiff, ArchguardError> {
+    checkpoint(cancel)?;
     let (root, repo) = repository(root)?;
     let relative = root.strip_prefix(&repo).map_err(invalid)?;
     let base_commit = resolve_commit(&repo, base)?;
@@ -300,6 +348,7 @@ pub fn compare_branches(
     let previous = tempfile::tempdir()?;
     let next = tempfile::tempdir()?;
     extract_snapshot(&repo, &base_commit, relative, previous.path())?;
+    checkpoint(cancel)?;
     extract_snapshot(&repo, &target_commit, relative, next.path())?;
     let details = compare_snapshots(
         &root,
@@ -307,6 +356,7 @@ pub fn compare_branches(
         previous.path(),
         next.path(),
         explicit_config,
+        cancel,
     )?;
     let source_diff = source_patch(&repo, relative, &[&base_commit, &target_commit])?;
     Ok(BranchArchitectureDiff {
@@ -336,6 +386,16 @@ pub fn compare_staged(
     base: &str,
     explicit_config: Option<&Path>,
 ) -> Result<StagedArchitectureDiff, ArchguardError> {
+    compare_staged_cancellable(root, base, explicit_config, &AtomicBool::new(false))
+}
+/// [`compare_staged`] that stops with [`CANCELLED`] once `cancel` is set.
+pub fn compare_staged_cancellable(
+    root: &Path,
+    base: &str,
+    explicit_config: Option<&Path>,
+    cancel: &AtomicBool,
+) -> Result<StagedArchitectureDiff, ArchguardError> {
+    checkpoint(cancel)?;
     let (root, repo) = repository(root)?;
     let relative = root.strip_prefix(&repo).map_err(invalid)?;
     let commit = resolve_commit(&repo, base)?;
@@ -351,13 +411,10 @@ pub fn compare_staged(
         previous.path(),
         staged.path(),
         explicit_config,
+        cancel,
     )?;
     let source_diff = source_patch(&repo, relative, &["--cached", &commit])?;
-    if records != index(&repo, &commit)? {
-        return Err(invalid(
-            "index changed during analysis; retry the comparison",
-        ));
-    }
+    ensure_unchanged(&repo, &commit, &records)?;
     Ok(StagedArchitectureDiff {
         definition: "git-index-architecture/v1".into(),
         target: "index".into(),

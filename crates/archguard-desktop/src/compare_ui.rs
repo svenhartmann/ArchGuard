@@ -1,15 +1,21 @@
 //! File → Compare architecture… in the window (ui/compare_dialog.slint,
 //! ui/compare_view.slint) over the UI-free [`crate::compare`]. The dialog
 //! lists the document's local branches; the comparison runs on a worker
-//! thread, and closing the dialog cancels it (its result is dropped). The
-//! result is kept per document and shown in the document's Compare tab.
+//! thread, and closing the dialog cancels it (the engine stops at its next
+//! step and a late result is dropped). The result is kept per document and
+//! shown in the document's Compare tab, narrowed by a search text and by
+//! collapsed packages.
 
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use slint::{ComponentHandle, SharedString};
 
 use crate::compare::diff::{Comparison, Cycle, Relation, Status};
+use crate::compare::filter;
 use crate::compare::git::{self, Target};
 use crate::documents::{self, DocId, with_store};
 use crate::panes::{COMPARE, Layout};
@@ -30,13 +36,38 @@ thread_local! {
     /// dialog moves it on, so a late result is dropped.
     static RUN: Cell<u64> = const { Cell::new(0) };
     /// The dialog's document, its root and the branches it lists.
+    /// The running comparison's cancel flag, set when the dialog closes.
+    static CANCEL: RefCell<Arc<AtomicBool>> = RefCell::new(Arc::new(AtomicBool::new(false)));
     static DIALOG: RefCell<Option<(DocId, PathBuf, Vec<String>)>> = const { RefCell::new(None) };
 }
 
 /// A document's comparison and its selected row.
 struct CompareState {
     result: Comparison,
+    /// Index into `result.rows`.
     selected: Option<usize>,
+    query: String,
+    collapsed: BTreeSet<String>,
+    /// `result.rows` indices the list shows, in order.
+    shown: Vec<usize>,
+}
+
+impl CompareState {
+    fn new(result: Comparison) -> Self {
+        let mut s = CompareState {
+            result,
+            selected: None,
+            query: String::new(),
+            collapsed: BTreeSet::new(),
+            shown: Vec::new(),
+        };
+        s.refilter();
+        s
+    }
+
+    fn refilter(&mut self) {
+        self.shown = filter::visible(&self.result.rows, &self.query, &self.collapsed);
+    }
 }
 
 pub fn wire(ui: &AppWindow) {
@@ -48,10 +79,46 @@ pub fn wire(ui: &AppWindow) {
     let f = with_ui(ui, |ui, ()| close(ui));
     d.on_close(move || f(()));
     d.on_select(with_ui(ui, |ui, i: i32| {
-        documents::with_active_state(|s: &mut CompareState| s.selected = index(i));
+        documents::with_active_state(|s: &mut CompareState| {
+            s.selected = index(i).and_then(|i| s.shown.get(i).copied());
+        });
         push(ui);
     }));
+    d.on_query(with_ui(ui, |ui, t: SharedString| {
+        change(ui, |s| s.query = t.to_string());
+    }));
+    d.on_toggle(with_ui(ui, |ui, i: i32| {
+        change(ui, |s| {
+            let Some(name) = index(i)
+                .and_then(|i| s.shown.get(i))
+                .map(|&r| s.result.rows[r].name.clone())
+            else {
+                return;
+            };
+            if !s.collapsed.remove(&name) {
+                s.collapsed.insert(name);
+            }
+        });
+    }));
+    d.on_collapse_all(with_ui(ui, |ui, collapse: bool| {
+        change(ui, |s| {
+            s.collapsed = if collapse {
+                filter::groups(&s.result.rows)
+            } else {
+                BTreeSet::new()
+            };
+        });
+    }));
     panes_ui::on_sync(COMPARE, sync);
+}
+
+/// Change the active document's filter or collapse state and show it.
+fn change(ui: &AppWindow, f: impl FnOnce(&mut CompareState)) {
+    documents::with_active_state(|s: &mut CompareState| {
+        f(s);
+        s.refilter();
+    });
+    push(ui);
 }
 
 /// Open the dialog on the active document with its local branches.
@@ -92,13 +159,18 @@ fn run(ui: &AppWindow) {
     };
     let n = RUN.get() + 1;
     RUN.set(n);
+    CANCEL.with_borrow_mut(|c| {
+        c.store(true, Ordering::Relaxed);
+        *c = Arc::new(AtomicBool::new(false));
+    });
+    let cancel = CANCEL.with_borrow(Arc::clone);
     d.set_state(RUNNING);
     if snapshot_mode() {
-        return arrive(ui, doc, n, git::run(&root, &from, &to));
+        return arrive(ui, doc, n, git::run(&root, &from, &to, &cancel));
     }
     let weak = ui.as_weak();
     std::thread::spawn(move || {
-        let outcome = git::run(&root, &from, &to);
+        let outcome = git::run(&root, &from, &to, &cancel);
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
                 arrive(&ui, doc, n, outcome);
@@ -107,11 +179,11 @@ fn run(ui: &AppWindow) {
     });
 }
 
-/// Close the dialog; a running comparison is dropped when it arrives.
-// shortcut: the worker's Git and analysis processes run to their end;
-// stopping them needs a cancel flag in the engine's comparison.
+/// Close the dialog; a running comparison stops at the engine's next step
+/// and a result that still arrives is dropped.
 fn close(ui: &AppWindow) {
     RUN.set(RUN.get() + 1);
+    CANCEL.with_borrow(|c| c.store(true, Ordering::Relaxed));
     let d = ui.global::<CompareData>();
     d.set_dialog(false);
     d.set_state(0);
@@ -136,13 +208,7 @@ fn arrive(ui: &AppWindow, doc: DocId, n: u64, outcome: Outcome) {
     };
     let title = format!("{} → {}", result.from, label(&result.to, ui));
     documents::forget_active::<CompareState>();
-    documents::with_active_state_or(
-        || CompareState {
-            result,
-            selected: None,
-        },
-        |_| (),
-    );
+    documents::with_active_state_or(|| CompareState::new(result), |_| ());
     close(ui);
     ui.invoke_open_view_tab(COMPARE.into());
     if let Some(id) = panes_ui::shown_id(COMPARE) {
@@ -175,14 +241,25 @@ fn push(ui: &AppWindow) {
         d.set_to(c.to.as_str().into());
         d.set_empty(c.empty);
         d.set_counts(counts(c));
-        d.set_rows(model(c.rows.iter().map(|r| CompareRow {
-            name: r.name.as_str().into(),
-            file: r.file,
-            status: status(r.status),
-            cycle: cycle(r.cycle),
+        d.set_filter(s.query.as_str().into());
+        d.set_groups(!filter::groups(&c.rows).is_empty());
+        d.set_rows(model(s.shown.iter().map(|&i| {
+            let r = &c.rows[i];
+            CompareRow {
+                name: r.name.as_str().into(),
+                file: r.file,
+                status: status(r.status),
+                cycle: cycle(r.cycle),
+                collapsible: !r.file && c.rows.get(i + 1).is_some_and(|n| n.file),
+                collapsed: s.collapsed.contains(&r.name),
+            }
         })));
         let selected = s.selected.filter(|&i| i < c.rows.len());
-        d.set_selected(selected.map_or(-1, |i| i as i32));
+        d.set_selected(
+            selected
+                .and_then(|i| s.shown.iter().position(|&v| v == i))
+                .map_or(-1, |p| p as i32),
+        );
         let listed = selected.map(|i| c.relations_of(i)).unwrap_or_default();
         d.set_relations(model(listed.into_iter().map(relation)));
     });
@@ -238,10 +315,11 @@ fn cycle(c: Cycle) -> i32 {
     }
 }
 
-/// `ARCHGUARD_DESKTOP_COMPARE=<from>,<to>[,<row>]`: File → Compare
-/// architecture… on the active document with branch `from` against
-/// branch `to` (`--staged`: the Git index), run in place, then select the
-/// package or file named `row`. Logs the dialog's state.
+/// `ARCHGUARD_DESKTOP_COMPARE=<from>,<to>[,<row>[,<filter>]]`: File →
+/// Compare architecture… on the active document with branch `from`
+/// against branch `to` (`--staged`: the Git index), run in place, then
+/// select the package or file named `row` (empty: none) and type `filter`
+/// into the search field. Logs the dialog's state.
 #[cfg(feature = "snapshot")]
 pub fn snapshot_hook(ui: &AppWindow) {
     let Ok(spec) = std::env::var("ARCHGUARD_DESKTOP_COMPARE") else {
@@ -269,6 +347,9 @@ pub fn snapshot_hook(ui: &AppWindow) {
     if let Some(name) = parts.get(2) {
         let row = d.get_rows().iter().position(|r| r.name == *name);
         d.invoke_select(row.map_or(-1, |i| i as i32));
+    }
+    if let Some(text) = parts.get(3) {
+        d.invoke_query((*text).into());
     }
     eprintln!(
         "compare: state {}, error {:?}, rows {}",

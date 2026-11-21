@@ -4,7 +4,7 @@
 // Filled from src/compare_ui.rs; the dialog is compare_dialog.slint.
 import { ListView, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Button, Badge, EmptyState, PageTitle, SectionHeading } from "widgets.slint";
+import { Button, Badge, EmptyState, PageTitle, SearchField, SectionHeading } from "widgets.slint";
 import { Fmt } from "format.slint";
 
 // status: 0 added, 1 removed, 2 changed, 3 unchanged; cycle: 0 none,
@@ -14,6 +14,9 @@ export struct CompareRow {
     file: bool,
     status: int,
     cycle: int,
+    // A package with files, and whether its files are hidden.
+    collapsible: bool,
+    collapsed: bool,
 }
 
 export struct CompareRelation {
@@ -60,6 +63,12 @@ export global CompareData {
     in-out property <int> selected: -1;
     in-out property <[CompareRelation]> relations;
     callback select(int);
+    // The search text, a package's files shown or hidden (row), all of them.
+    in-out property <string> filter;
+    callback query(string);
+    in-out property <bool> groups;
+    callback toggle(int);
+    callback collapse-all(bool);
 
     public pure function index-label() -> string { return @tr("Git index (staged)"); }
     public pure function to-label() -> string { return CompareData.to == "" ? CompareData.index-label() : CompareData.to; }
@@ -91,6 +100,7 @@ component RowView inherits Rectangle {
     in property <CompareRow> item;
     in property <bool> selected;
     callback clicked;
+    callback toggled;
     height: 28px;
     border-radius: 6px;
     background: root.selected ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
@@ -104,6 +114,22 @@ component RowView inherits Rectangle {
         padding-left: root.item.file ? 26px : 6px;
         padding-right: 10px;
         spacing: 8px;
+        if root.item.collapsible: Rectangle {
+            width: 20px;
+            accessible-role: button;
+            accessible-label: root.item.collapsed ? @tr("Show files") : @tr("Hide files");
+            accessible-action-default => { root.toggled(); }
+            Text {
+                text: root.item.collapsed ? "▸" : "▾";
+                color: Theme.muted;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.toggled(); }
+            }
+        }
         StatusBadge { status: root.item.status; y: (parent.height - self.height) / 2; }
         Text {
             text: root.item.name;
@@ -146,7 +172,7 @@ component RelationView inherits VerticalLayout {
 component Details inherits VerticalLayout {
     property <string> copied;
     property <CompareRow> shown: CompareData.selected >= 0 && CompareData.selected < CompareData.rows.length
-        ? CompareData.rows[CompareData.selected] : { name: "", file: false, status: 3, cycle: 0 };
+        ? CompareData.rows[CompareData.selected] : { name: "", file: false, status: 3, cycle: 0, collapsible: false, collapsed: false };
     spacing: 8px;
     clipboard := TextInput { width: 0; height: 0; opacity: 0; read-only: true; }
     if root.shown.name == "": EmptyState { reason: @tr("Select a package or file to see its relations and their source evidence."); }
@@ -224,13 +250,32 @@ export component CompareView inherits Rectangle {
             VerticalLayout {
                 width: parent.width * 0.45;
                 spacing: 6px;
-                SectionHeading { label: @tr("Packages"); }
+                HorizontalLayout {
+                    spacing: 8px;
+                    SectionHeading { label: @tr("Packages"); horizontal-stretch: 1; }
+                    if CompareData.groups: Button {
+                        text: @tr("Expand all");
+                        compact: true;
+                        clicked => { CompareData.collapse-all(false); }
+                    }
+                    if CompareData.groups: Button {
+                        text: @tr("Collapse all");
+                        compact: true;
+                        clicked => { CompareData.collapse-all(true); }
+                    }
+                }
+                SearchField {
+                    placeholder: @tr("Filter packages and files");
+                    text: CompareData.filter;
+                    edited(t) => { CompareData.query(t); }
+                }
                 ListView {
                     vertical-stretch: 1;
                     for r[i] in CompareData.rows: RowView {
                         item: r;
                         selected: i == CompareData.selected;
                         clicked => { CompareData.select(i); }
+                        toggled => { CompareData.toggle(i); }
                     }
                 }
             }

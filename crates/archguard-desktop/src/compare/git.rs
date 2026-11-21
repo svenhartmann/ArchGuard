@@ -3,6 +3,7 @@
 //! `--staged`).
 
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 
 use archguard_engine::core::{ArchitectureDiffDetails, StagedArchitectureDiff};
 
@@ -52,13 +53,21 @@ pub fn preselect(branches: Vec<String>, current: Option<&str>) -> Refs {
 }
 
 /// Compare `from` with `to` in the repository around `root`; blocks for
-/// two analyses, so it runs on a worker.
-pub fn run(root: &Path, from: &str, to: &Target) -> Result<Comparison, String> {
+/// two analyses, so it runs on a worker. Setting `cancel` stops it between
+/// the engine's steps with an error.
+pub fn run(
+    root: &Path,
+    from: &str,
+    to: &Target,
+    cancel: &AtomicBool,
+) -> Result<Comparison, String> {
     match to {
-        Target::Ref(to) => archguard_engine::compare_branches(root, from, to, None)
-            .map(|d| Comparison::build(&d.details, from, to)),
+        Target::Ref(to) => {
+            archguard_engine::compare_branches_cancellable(root, from, to, None, cancel)
+                .map(|d| Comparison::build(&d.details, from, to))
+        }
         // The view names the index itself (translated), so its label is empty.
-        Target::Staged => archguard_engine::compare_staged(root, from, None)
+        Target::Staged => archguard_engine::compare_staged_cancellable(root, from, None, cancel)
             .map(|d| Comparison::build(&staged_details(d), from, "")),
     }
     .map_err(|e| e.to_string())

@@ -134,3 +134,27 @@ fn repository_directory_whitespace_is_not_trimmed_from_git_output() {
     .expect("only Git's output line ending may be removed, not path whitespace");
     assert_eq!(comparison.acd_delta, 0.0);
 }
+
+#[test]
+fn set_cancel_flag_stops_branch_comparison_before_any_work() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let repo = tempfile::tempdir().unwrap();
+    init(repo.path());
+    project(repo.path(), false);
+    commit(repo.path());
+    git(repo.path(), &["branch", "other"]);
+    let cancel = AtomicBool::new(true);
+    let err =
+        archguard_engine::compare_branches_cancellable(repo.path(), "HEAD", "other", None, &cancel)
+            .unwrap_err();
+    assert!(
+        err.to_string().contains(archguard_engine::CANCELLED),
+        "{err}"
+    );
+    let staged = archguard_engine::compare_staged_cancellable(repo.path(), "HEAD", None, &cancel)
+        .unwrap_err();
+    assert!(staged.to_string().contains(archguard_engine::CANCELLED));
+    cancel.store(false, Ordering::Relaxed);
+    archguard_engine::compare_branches_cancellable(repo.path(), "HEAD", "other", None, &cancel)
+        .unwrap();
+}
