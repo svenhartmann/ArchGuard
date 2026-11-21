@@ -114,20 +114,23 @@ component RowView inherits Rectangle {
         padding-left: root.item.file ? 26px : 6px;
         padding-right: 10px;
         spacing: 8px;
-        if root.item.collapsible: Rectangle {
+        // The slot stays for packages without files, so their badges line up.
+        if !root.item.file: Rectangle {
             width: 20px;
-            accessible-role: button;
-            accessible-label: root.item.collapsed ? @tr("Show files") : @tr("Hide files");
-            accessible-action-default => { root.toggled(); }
-            Text {
-                text: root.item.collapsed ? "▸" : "▾";
-                color: Theme.muted;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-            TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.toggled(); }
+            if root.item.collapsible: Rectangle {
+                accessible-role: button;
+                accessible-label: root.item.collapsed ? @tr("Show files") : @tr("Hide files");
+                accessible-action-default => { root.toggled(); }
+                Text {
+                    text: root.item.collapsed ? "▸" : "▾";
+                    color: Theme.muted;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.toggled(); }
+                }
             }
         }
         StatusBadge { status: root.item.status; y: (parent.height - self.height) / 2; }

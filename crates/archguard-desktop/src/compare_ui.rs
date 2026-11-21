@@ -35,9 +35,9 @@ thread_local! {
     /// The number of the comparison the dialog waits for; closing the
     /// dialog moves it on, so a late result is dropped.
     static RUN: Cell<u64> = const { Cell::new(0) };
-    /// The dialog's document, its root and the branches it lists.
     /// The running comparison's cancel flag, set when the dialog closes.
     static CANCEL: RefCell<Arc<AtomicBool>> = RefCell::new(Arc::new(AtomicBool::new(false)));
+    /// The dialog's document, its root and the branches it lists.
     static DIALOG: RefCell<Option<(DocId, PathBuf, Vec<String>)>> = const { RefCell::new(None) };
 }
 
