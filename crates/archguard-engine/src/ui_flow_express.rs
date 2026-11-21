@@ -14,7 +14,8 @@
 //!   express.Router()` (or `Router()` imported from `express`) a router. Only
 //!   these variables are read; `this.router.get(...)` and the like are not.
 //! - Endpoints: `x.get|post|put|patch|delete|options|head|all(path, ...handlers)`
-//!   (`all` gives method `ANY`), `x.route(path).get(...).post(...)`. A path is a
+//!   (`all` gives method `ANY`, but `all('*', mw)` and `all('/p/*', mw)` are
+//!   middleware for later routes below the prefix, no endpoint), `x.route(path).get(...).post(...)`. A path is a
 //!   string literal or an array of them; the last handler argument is the
 //!   handler, the others (also inside arrays) are its middleware. A call with
 //!   only a path (`app.get('env')`) is no route.
@@ -37,7 +38,12 @@
 //!   `compression`, `morgan`, `cookie-parser`, `body-parser`, `serve-favicon`,
 //!   `xss-clean`, `express-mongo-sanitize` (by the package the name is imported from),
 //!   `express.json/urlencoded/static/raw/text` and `passport.initialize`; a name
-//!   listed in `[views.access]` wins. No middleware at all is `open`; all
+//!   listed in `[views.access]` wins. A route with no declaring middleware is
+//!   `undeclared` (ADR 0021); `open` only when a middleware listed as `open` is in
+//!   its chain. A middleware registered inside if/ternary/switch is
+//!   `unknown(conditional middleware x)`. A router's own `use` also guards what its
+//!   parent registers later below the same paths. A mount prefix may be a `const`
+//!   string of the same file. All
 //!   conditions must hold (`all`). Order counts: a `use` after the route is
 //!   ignored.
 //! - An inline error handler (four parameters) adds no condition: Express calls
@@ -240,9 +246,10 @@ fn routers(code: &str, binds: &[Import]) -> BTreeMap<String, (bool, usize)> {
         let Some(lhs) = code[..pos].trim_end().strip_suffix('=') else {
             continue;
         };
-        let lhs = lhs.trim_end();
-        let lhs = lhs.rsplit_once(':').map_or(lhs, |(a, _)| a); // `r: Router =`
-        if let Some(name) = trailing_ident(lhs.trim_end()) {
+        // the declaration since the last statement break, a type annotation dropped
+        let stmt = lhs.rsplit([';', '{', '}', '\n']).next().unwrap_or(lhs);
+        let decl = stmt.split(':').next().unwrap_or(stmt);
+        if let Some(name) = trailing_ident(decl.trim_end()) {
             out.insert(name, (is_app, pos));
         }
     }
@@ -329,6 +336,26 @@ fn call_at(src: &Src, at: usize) -> Option<Call<'_>> {
     })
 }
 
+/// A route call; `all('*', mw…)` and `all('/p/*', mw…)` are middleware mounts.
+fn route_ev(verb: &'static str, path: Arg, handlers: Vec<Arg>) -> Ev {
+    match path.lit.as_deref() {
+        Some(p) if verb == ANY_METHOD && (p == "*" || p.ends_with("/*")) => {
+            let prefix = p.trim_end_matches('*').trim_end_matches('/').to_string();
+            let first = Arg {
+                src: path.src,
+                lit: Some(prefix),
+                strs: None,
+            };
+            Ev::Use([vec![first], handlers].concat())
+        }
+        _ => Ev::Route(RouteEv {
+            verb,
+            path,
+            handlers,
+        }),
+    }
+}
+
 /// The routes of `x.route(path).get(...).post(...)`.
 fn chain(src: &Src, route: &Call) -> Vec<(usize, Ev)> {
     let Some(path) = route.items.first().map(|p| arg(&src.raw, p)) else {
@@ -342,12 +369,7 @@ fn chain(src: &Src, route: &Call) -> Vec<(usize, Ev)> {
         end = call.end;
         if let Some(verb) = verb_of(call.name) {
             let (path, handlers) = (path.clone(), flat(&src.raw, &call.items));
-            let ev = Ev::Route(RouteEv {
-                verb,
-                path,
-                handlers,
-            });
-            out.push((call.at, ev));
+            out.push((call.at, route_ev(verb, path, handlers)));
         }
     }
     out
@@ -371,12 +393,7 @@ fn events(src: &Src, var: &str) -> Vec<(usize, Ev)> {
             (verb_of(call.name), call.items.split_first())
         {
             let (path, handlers) = (arg(&src.raw, path), flat(&src.raw, rest));
-            let ev = Ev::Route(RouteEv {
-                verb,
-                path,
-                handlers,
-            });
-            out.push((pos, ev));
+            out.push((pos, route_ev(verb, path, handlers)));
         } else if call.name == "route" {
             out.extend(chain(src, &call));
         }
@@ -469,7 +486,17 @@ fn read_apps(root: &Path, out: &mut Vec<UiFlowDiagnostic>) -> Vec<(String, Files
 #[derive(Clone)]
 struct Guard {
     prefix: String,
-    cond: Condition,
+    /// `None`: a middleware that `[views.access]` declares `open`.
+    cond: Option<Condition>,
+}
+
+/// What a middleware adds to access.
+enum Mw {
+    /// Nothing: a passive package or an error handler.
+    Nothing,
+    /// Declared `open` in `[views.access]`.
+    Open,
+    Cond(Condition),
 }
 
 struct Scan<'a> {
@@ -529,17 +556,19 @@ impl Scan<'_> {
         }
     }
 
-    fn walk(&mut self, file: &str, var: &str, prefix: &str, mut guards: Vec<Guard>) {
+    /// Walks router `var`; returns the guards it added, which in Express also
+    /// guard what its parent registers later below the same paths.
+    fn walk(&mut self, file: &str, var: &str, prefix: &str, mut guards: Vec<Guard>) -> Vec<Guard> {
         let key = (file.to_string(), var.to_string());
         self.visited.insert(key.clone());
         if self.stack.contains(&key) || self.stack.len() >= MAX_DEPTH {
             let message =
                 format!("Router `{var}` is mounted in a cycle or too deep; not followed.");
             gap(&mut self.flow.diagnostics, file, 0, message);
-            return;
+            return vec![];
         }
         self.stack.push(key);
-        let files = self.files;
+        let (files, inherited) = (self.files, guards.len());
         let src = &files[file];
         for (at, ev) in events(src, var) {
             let line = line_of(&src.code, at);
@@ -549,6 +578,7 @@ impl Scan<'_> {
             }
         }
         self.stack.pop();
+        guards.split_off(inherited)
     }
 
     fn use_call(
@@ -560,47 +590,104 @@ impl Scan<'_> {
         args: Vec<Arg>,
     ) {
         let line = line_of(&self.files[file].code, at);
+        let conditional = branch::conditional(&self.files[file].code, at);
         let lists = match self.each_mount(file, at, &args) {
             Some(lists) => lists,
             None => vec![args],
         };
         for args in lists {
-            let (local, rest) = match args.first() {
-                Some(a) if a.lit.is_some() => (a.lit.clone().unwrap_or_default(), &args[1..]),
-                Some(a) if a.src.starts_with(['`', '[']) => {
-                    let message = format!("Path of `use` is not a literal: {}", a.src);
-                    gap(&mut self.flow.diagnostics, file, line, message);
-                    let cond = Condition::Unknown(a.src.clone());
-                    guards.push(Guard {
-                        prefix: String::new(),
-                        cond,
-                    });
-                    continue;
-                }
-                _ => (String::new(), &args[..]),
+            let Some((local, rest)) = self.use_prefix(file, line, guards, &args) else {
+                continue;
             };
             let abs = path_of(&[prefix, &local]);
             for a in rest {
                 match self.mount_target(file, &a.src) {
-                    Some((f, v)) => self.walk(&f, &v, &abs, guards.clone()),
-                    None => {
-                        if self.unread_module(file, &a.src) {
-                            let message = format!(
-                                "`{}` comes from a module that is not read (excluded folder, \
-                                 alias or package); if it is a router, its routes are unknown.",
-                                a.src
-                            );
-                            gap(&mut self.flow.diagnostics, file, line, message);
-                        }
-                        let cond = self.middleware(file, line, &a.src);
-                        guards.extend(cond.map(|cond| Guard {
-                            prefix: abs.clone(),
-                            cond,
-                        }));
+                    Some((f, v)) => {
+                        let leaked = self.walk(&f, &v, &abs, guards.clone());
+                        guards.extend(leaked);
                     }
+                    None => self.guard_arg((file, line), conditional, &abs, guards, &a.src),
                 }
             }
         }
+    }
+
+    /// The literal path of a `use` call and its remaining arguments; `None`
+    /// (a gap) when the path cannot be read.
+    fn use_prefix<'a>(
+        &mut self,
+        file: &str,
+        line: u32,
+        guards: &mut Vec<Guard>,
+        args: &'a [Arg],
+    ) -> Option<(String, &'a [Arg])> {
+        let first = args.first()?;
+        if let Some(lit) = &first.lit {
+            return Some((lit.clone(), &args[1..]));
+        }
+        if first.src.starts_with(['`', '[']) {
+            let message = format!("Path of `use` is not a literal: {}", first.src);
+            gap(&mut self.flow.diagnostics, file, line, message);
+            guards.push(Guard {
+                prefix: String::new(),
+                cond: Some(Condition::Unknown(first.src.clone())),
+            });
+            return None;
+        }
+        let name = call_parts(&first.src).map_or(first.src.as_str(), |(n, _)| n);
+        let middleware = self.access.contains_key(name) || self.passive(file, name);
+        let router_follows = args
+            .get(1)
+            .is_some_and(|a| self.mount_target(file, &a.src).is_some());
+        if middleware || !router_follows {
+            return Some((String::new(), args));
+        }
+        let constant = declared_value(&self.files[file].raw, &first.src);
+        if let Some(Item {
+            value: Value::Str(prefix),
+            ..
+        }) = constant
+        {
+            return Some((prefix, &args[1..]));
+        }
+        let message = format!("Router mount prefix not literal: {}", first.src);
+        gap(&mut self.flow.diagnostics, file, line, message);
+        None
+    }
+
+    /// A `use` argument that is no router: a middleware guarding paths below `abs`.
+    fn guard_arg(
+        &mut self,
+        (file, line): (&str, u32),
+        conditional: bool,
+        abs: &str,
+        guards: &mut Vec<Guard>,
+        text: &str,
+    ) {
+        if self.unread_module(file, text) {
+            let message = format!(
+                "`{text}` comes from a module that is not read (excluded folder, alias or \
+                 package); if it is a router, its routes are unknown."
+            );
+            gap(&mut self.flow.diagnostics, file, line, message);
+        }
+        let cond = match (self.middleware(file, line, text), conditional) {
+            (Mw::Nothing, _) | (Mw::Open, true) => return,
+            (Mw::Open, false) => None,
+            (Mw::Cond(c), false) => Some(c),
+            (Mw::Cond(_), true) => {
+                let message = format!(
+                    "Middleware `{text}` is registered inside if/ternary/switch; \
+                     it may not apply, so it is unknown."
+                );
+                note(&mut self.flow.diagnostics, file, line, message);
+                Some(Condition::Unknown(format!("conditional middleware {text}")))
+            }
+        };
+        guards.push(Guard {
+            prefix: abs.into(),
+            cond,
+        });
     }
 
     /// `list.forEach((r) => x.use(r.path, r.route))` over a literal array of
@@ -716,10 +803,10 @@ impl Scan<'_> {
     }
 
     /// The condition of middleware `text`; `None` when it adds none.
-    fn middleware(&mut self, file: &str, line: u32, text: &str) -> Option<Condition> {
+    fn middleware(&mut self, file: &str, line: u32, text: &str) -> Mw {
         let text = text.trim();
         if error_handler(text) {
-            return None;
+            return Mw::Nothing;
         }
         let (name, args) = match call_parts(text) {
             Some((name, args)) => (name.to_string(), args),
@@ -727,23 +814,28 @@ impl Scan<'_> {
             None => {
                 let message = format!("Inline middleware is not read: {text}");
                 note(&mut self.flow.diagnostics, file, line, message);
-                return Some(Condition::Unknown(text.chars().take(80).collect()));
+                return Mw::Cond(Condition::Unknown(text.chars().take(80).collect()));
             }
         };
         if self.access.contains_key(&name) {
-            return access_condition(self.access, &name, &args).unwrap_or_else(|name| {
-                let message = format!("Arguments of middleware `{name}` are not literal: {text}");
-                gap(&mut self.flow.diagnostics, file, line, message);
-                Some(Condition::Unknown(text.into()))
-            });
+            return match access_condition(self.access, &name, &args) {
+                Ok(Some(c)) => Mw::Cond(c),
+                Ok(None) => Mw::Open,
+                Err(name) => {
+                    let message =
+                        format!("Arguments of middleware `{name}` are not literal: {text}");
+                    gap(&mut self.flow.diagnostics, file, line, message);
+                    Mw::Cond(Condition::Unknown(text.into()))
+                }
+            };
         }
         if self.passive(file, &name) {
-            return None;
+            return Mw::Nothing;
         }
         let message =
             format!("Middleware `{name}` is not listed in [views.access]; its access is unknown.");
         note(&mut self.flow.diagnostics, file, line, message);
-        Some(Condition::Unknown(name))
+        Mw::Cond(Condition::Unknown(name))
     }
 
     /// Middleware of packages known not to decide access.
@@ -775,21 +867,30 @@ impl Scan<'_> {
                 return;
             }
         };
-        let own: Vec<Condition> = (middleware.iter())
-            .filter_map(|m| self.middleware(file, line, &m.src))
+        let own: Vec<Option<Condition>> = (middleware.iter())
+            .filter_map(|m| match self.middleware(file, line, &m.src) {
+                Mw::Nothing => None,
+                Mw::Open => Some(None),
+                Mw::Cond(c) => Some(Some(c)),
+            })
             .collect();
         let name = is_name(&handler.src).then(|| handler.src.clone());
         let site = name.as_deref().and_then(|h| self.declaration(file, h));
         for p in paths {
             let full = path_of(&[prefix, &p]);
-            let mut conds: Vec<Condition> = (guards.iter())
+            let declared: Vec<&Option<Condition>> = (guards.iter())
                 .filter(|g| below(&full, &g.prefix))
-                .map(|g| g.cond.clone())
-                .chain(own.iter().cloned())
+                .map(|g| &g.cond)
+                .chain(own.iter())
                 .collect();
             let mut seen = BTreeSet::new();
-            conds.retain(|c| seen.insert(c.clone()));
+            let mut conds: Vec<Condition> = (declared.iter().copied().flatten())
+                .filter(|c| seen.insert(*c))
+                .cloned()
+                .collect();
+            // no middleware is no declaration (ADR 0021): only a listed `open` one is open
             let access = match conds.len() {
+                0 if declared.is_empty() => AccessState::Undeclared,
                 0 => AccessState::Open,
                 1 => AccessState::Protected(conds.remove(0)),
                 _ => AccessState::Protected(Condition::All(conds)),
@@ -854,6 +955,65 @@ fn error_handler(text: &str) -> bool {
     let arrow = prefix.is_empty() && text[close(text, open)..].trim_start().starts_with("=>");
     let function = prefix.split_whitespace().next() == Some("function");
     (arrow || function) && Parser { s: text, i: open }.array(0).len() == 4
+}
+
+/// Reads whether a call sits in a branch.
+mod branch {
+    use crate::lang_ts::{is_ident_char, trailing_ident};
+
+    /// Whether the call at `at` may not run: inside an `if`, `else`, loop, `switch`
+    /// or `catch` block, or a statement with `?`, `&&`, `||` or a leading `if`.
+    pub(super) fn conditional(code: &str, at: usize) -> bool {
+        let mut open: Vec<usize> = Vec::new();
+        for (i, c) in code[..at].bytes().enumerate() {
+            match c {
+                b'{' => open.push(i),
+                b'}' => drop(open.pop()),
+                _ => {}
+            }
+        }
+        if open.iter().any(|&o| branch_block(&code[..o])) {
+            return true;
+        }
+        let start = code[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
+        let head = code[start..at].trim_start();
+        let keyword = ["if", "else", "while", "for", "switch", "case"]
+            .iter()
+            .any(|k| {
+                head.strip_prefix(k)
+                    .is_some_and(|r| !r.starts_with(is_ident_char))
+            });
+        keyword || head.contains('?') || head.contains("&&") || head.contains("||")
+    }
+
+    /// Whether the `{` after `before` opens `else {` or `if|while|for|switch|catch (…) {`.
+    fn branch_block(before: &str) -> bool {
+        let t = before.trim_end();
+        if trailing_ident(t).as_deref() == Some("else") && !t.ends_with(')') {
+            return true;
+        }
+        if !t.ends_with(')') {
+            return false;
+        }
+        let mut depth = 0;
+        for (i, c) in t.bytes().enumerate().rev() {
+            match c {
+                b')' => depth += 1,
+                b'(' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let word = trailing_ident(t[..i].trim_end());
+                        return matches!(
+                            word.as_deref(),
+                            Some("if" | "while" | "for" | "switch" | "catch")
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
 }
 
 /// The line where `name` is declared as `const|let|var|function name` or
@@ -931,7 +1091,7 @@ mod tests {
         );
         assert!(flow.complete, "{:#?}", flow.diagnostics);
         assert_eq!(flow.endpoints.len(), 4, "{:#?}", flow.endpoints);
-        assert_eq!(ep(&flow, "GET", "/health").access, AccessState::Open);
+        assert_eq!(ep(&flow, "GET", "/health").access, AccessState::Undeclared);
         let post = ep(&flow, "POST", "/api/v1");
         assert_eq!(post.access, prot(Condition::Policy("manageUsers".into())));
         assert_eq!((post.file.as_str(), post.line), ("routes/users.js", 8));
@@ -940,7 +1100,10 @@ mod tests {
             ep(&flow, "GET", "/api/v1").access,
             prot(Condition::Policy("getUsers".into()))
         );
-        assert_eq!(ep(&flow, "GET", "/api/v1/ping").access, AccessState::Open);
+        assert_eq!(
+            ep(&flow, "GET", "/api/v1/ping").access,
+            AccessState::Undeclared
+        );
         let site = (flow.handler_sites.iter()).find(|s| s.handler == "ctl.create");
         assert_eq!(site.map(|s| (s.file.as_str(), s.line)), Some(("ctl.js", 1)));
     }
@@ -1004,7 +1167,7 @@ mod tests {
             ],
             "gate = \"role:admin\"\n",
         );
-        assert_eq!(ep(&flow, "GET", "/before").access, AccessState::Open);
+        assert_eq!(ep(&flow, "GET", "/before").access, AccessState::Undeclared);
         let unknown = prot(Condition::Unknown("x".into()));
         assert_eq!(ep(&flow, "GET", "/after").access, unknown);
         assert_eq!(
@@ -1105,7 +1268,10 @@ mod tests {
             "",
         );
         assert!(flow.complete, "{:#?}", flow.diagnostics);
-        assert_eq!(ep(&flow, ANY_METHOD, "/a/x").access, AccessState::Open);
+        assert_eq!(
+            ep(&flow, ANY_METHOD, "/a/x").access,
+            AccessState::Undeclared
+        );
     }
 
     #[test]
@@ -1123,11 +1289,90 @@ mod tests {
             ],
             "",
         );
-        assert_eq!(ep(&flow, "GET", "/a").access, AccessState::Open);
+        assert_eq!(ep(&flow, "GET", "/a").access, AccessState::Undeclared);
         assert!(
             gaps(&flow)
                 .iter()
                 .any(|g| g.contains("`lost` comes from a module"))
+        );
+    }
+
+    fn one(extra: &str, access: &str) -> UiFlow {
+        let app = format!("const express = require('express');\n{extra}");
+        run(&[("package.json", PKG), ("app.js", &app)], access)
+    }
+
+    #[test]
+    fn declarations_with_colons_before_the_app_are_read() {
+        let flow = one(
+            "const opts = { limit: '10kb' };\nlet n: number;\nconst app = express();\napp.get('/lost', h);\n",
+            "",
+        );
+        assert_eq!(flow.endpoints.len(), 1, "{:#?}", flow.endpoints);
+    }
+
+    #[test]
+    fn prefix_constant_is_resolved_and_non_literal_prefix_is_a_gap() {
+        let flow = one(
+            "const app = express();\nconst base = '/api';\nconst r = express.Router();\nr.get('/x', h);\n\
+             app.use(base, r);\n",
+            "",
+        );
+        ep(&flow, "GET", "/api/x");
+        let flow = one(
+            "const app = express();\nconst r = express.Router();\nr.get('/x', h);\napp.use(pre(), r);\napp.get('/y', h);\n",
+            "",
+        );
+        assert!(
+            gaps(&flow)
+                .iter()
+                .any(|g| g.contains("mount prefix not literal"))
+        );
+        assert_eq!(ep(&flow, "GET", "/y").access, AccessState::Undeclared);
+    }
+
+    #[test]
+    fn all_with_a_wildcard_is_middleware_for_later_routes() {
+        let flow = one(
+            "const app = express();\nconst b = express.Router();\nb.all('*', auth);\nb.get('/y', h);\n\
+             app.use('/b', b);\napp.all('/z', h);\n",
+            "auth = \"authenticated\"\n",
+        );
+        assert_eq!(
+            ep(&flow, "GET", "/b/y").access,
+            prot(Condition::Authenticated)
+        );
+        assert!(
+            flow.endpoints
+                .iter()
+                .all(|e| e.path != "/b" || e.method != ANY_METHOD)
+        );
+        ep(&flow, ANY_METHOD, "/z");
+    }
+
+    #[test]
+    fn conditional_use_is_unknown_not_applied() {
+        let flow = one(
+            "const app = express();\nif (process.env.NODE_ENV === 'development') {\n  app.use(devAuth);\n}\n\
+             app.get('/a', h);\n",
+            "devAuth = \"authenticated\"\n",
+        );
+        assert_eq!(
+            ep(&flow, "GET", "/a").access,
+            prot(Condition::Unknown("conditional middleware devAuth".into()))
+        );
+    }
+
+    #[test]
+    fn router_level_use_without_prefix_guards_later_app_routes() {
+        let flow = one(
+            "const app = express();\nconst admin = express.Router();\nadmin.use(auth);\nadmin.get('/a', h);\n\
+             app.use(admin);\napp.get('/later', h);\n",
+            "auth = \"authenticated\"\n",
+        );
+        assert_eq!(
+            ep(&flow, "GET", "/later").access,
+            prot(Condition::Authenticated)
         );
     }
 
