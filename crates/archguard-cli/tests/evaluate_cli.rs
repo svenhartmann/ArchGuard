@@ -268,3 +268,15 @@ fn warnings_from_the_assessment_never_reach_the_terminal_as_escapes() {
     assert!(stderr.contains("warning"), "{stderr}");
     assert!(!stderr.contains('\u{1b}'), "{stderr:?}");
 }
+
+#[cfg(unix)]
+#[test]
+fn init_never_writes_through_a_symlinked_archguard_directory() {
+    let (dir, root) = fixture();
+    let outside = dir.path().join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join(".archguard")).unwrap();
+    let out = archguard(&root, &["evaluate", "--init"]);
+    assert!(!out.status.success());
+    assert!(!outside.join("assessment.toml").exists());
+}

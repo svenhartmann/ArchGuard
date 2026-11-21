@@ -358,14 +358,24 @@ pub fn init_assessment(
     }
     let findings = analyzed_findings(root, config_path)?;
     let text = assessment_template(&findings, head_of(root).as_deref());
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    if assessment.is_some() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .and_then(|mut file| std::io::Write::write_all(&mut file, text.as_bytes()))?;
+    } else {
+        // The default lies in repository state: no symlink on the way is followed.
+        crate::project_files::write_project_file(
+            root,
+            Path::new("assessment.toml"),
+            text.as_bytes(),
+            false,
+        )?;
     }
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .and_then(|mut file| std::io::Write::write_all(&mut file, text.as_bytes()))?;
     Ok(path)
 }
 
