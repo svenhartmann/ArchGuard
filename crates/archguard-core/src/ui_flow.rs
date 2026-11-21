@@ -64,16 +64,32 @@ impl Default for UiFlow {
 }
 
 impl UiFlow {
-    /// The convention of `application`, else the entry for the whole flow
-    /// (`application` none); default (exact) when nothing was read.
+    /// The convention of `application`; another application's convention
+    /// never applies to it. The whole flow (`None`) uses its own entry; when
+    /// that names no role prefix, the one prefix all applications agree on,
+    /// so a typed `ADMIN` meets a stored `ROLE_ADMIN` of a frontend and a
+    /// backend that live in different applications (names are never
+    /// rewritten, only matched). Default (exact) when nothing was read.
     pub fn convention(&self, application: Option<&str>) -> RoleConvention {
         let entry = |app: Option<&str>| {
             (self.role_conventions.iter()).find(|c| c.application.as_deref() == app)
         };
-        entry(application)
-            .or_else(|| entry(None))
-            .cloned()
-            .unwrap_or_default()
+        if application.is_some() {
+            return entry(application)
+                .or_else(|| entry(None))
+                .cloned()
+                .unwrap_or_default();
+        }
+        let mut whole = entry(None).cloned().unwrap_or_default();
+        if whole.role_prefix.is_none() {
+            let prefixes: BTreeSet<&String> = (self.role_conventions.iter())
+                .filter_map(|c| c.role_prefix.as_ref())
+                .collect();
+            if let (1, Some(p)) = (prefixes.len(), prefixes.first()) {
+                whole.role_prefix = Some((*p).clone());
+            }
+        }
+        whole
     }
 
     /// Where the handler method of `e` is declared, when the extractor read it.
@@ -1013,6 +1029,12 @@ mod roles {
         if held.iter().any(|h| same(case, h, wanted)) {
             return true;
         }
+        // a typed name meets the stored authority through this convention's prefix
+        if kind == AtomKind::Role
+            && (held.iter()).any(|h| same(case, &canonical(conv, kind, h), wanted))
+        {
+            return true;
+        }
         match &conv.permissions {
             PermissionFormat::Exact => false,
             PermissionFormat::Dotted { wildcard } => {
@@ -1117,7 +1139,10 @@ mod roles {
             let one = BTreeSet::from([held.clone()]);
             let matching = flow.roles.iter().filter(|d| match d.kind {
                 RoleKind::Permission => holds(conv, AtomKind::Role, &one, &d.name),
-                _ => same(conv.role_case, &d.name, &held),
+                _ => {
+                    let stored = canonical(conv, AtomKind::Role, &held);
+                    same(conv.role_case, &d.name, &held) || same(conv.role_case, &d.name, &stored)
+                }
             });
             for d in matching {
                 for name in d.includes.iter().chain([&d.name]) {

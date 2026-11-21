@@ -273,17 +273,6 @@ pub fn role_names(flow: &UiFlow) -> Vec<String> {
         .collect()
 }
 
-/// Brings the held roles into the stored form through the flow's convention
-/// (`canonical`); stored names stay as they are.
-pub fn with_prefix(flow: &UiFlow, a: &mut Assignment) {
-    let conv = flow.convention(None);
-    a.roles = (a.roles.iter())
-        .map(|r| {
-            archguard_engine::core::canonical(&conv, archguard_engine::core::AtomKind::Role, r)
-        })
-        .collect();
-}
-
 /// The simulated user the Screens and Domain tabs share, per document: each
 /// tab records its choice here and takes it over before it shows.
 pub struct SharedRole(pub RoleIndex);
@@ -330,7 +319,6 @@ impl ScreensState {
     /// without a value counts as [`Unknown`] says.
     pub fn assignment(&self) -> Assignment {
         let mut a = role_assignment(self.role, &self.roles);
-        with_prefix(&self.sim, &mut a);
         let atoms = self.atoms.iter().zip(&self.switches);
         for (atom, v) in atoms.clone().filter_map(|(a, v)| Some((a, (*v)?))) {
             atom_map(&mut a, atom).insert(atom.name.clone(), v);

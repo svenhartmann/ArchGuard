@@ -25,7 +25,7 @@ use slint::ComponentHandle;
 use crate::context::Loaded;
 use crate::tab_support::{self, Actions, TabState, Texts, index};
 use crate::ui::{AppWindow, ScreensData, ScreensModel, ScreensNote};
-pub use state::{ScreensState, role_assignment, role_names, share_role, shared_role, with_prefix};
+pub use state::{ScreensState, role_assignment, role_names, share_role, shared_role};
 pub use view::role_picker;
 
 /// Register the tab's callbacks once at start-up.

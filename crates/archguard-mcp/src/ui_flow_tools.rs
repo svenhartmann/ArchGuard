@@ -96,17 +96,6 @@ fn application_of<'a>(flow: &'a UiFlow, origin: &'a Origin) -> &'a str {
     }
 }
 
-/// User-typed roles in the stored form, through the flow's convention.
-fn canonical_roles(flow: &UiFlow, roles: Option<&[String]>) -> Option<Vec<String>> {
-    use archguard_engine::core::{AtomKind, canonical};
-    let conv = flow.convention(None);
-    roles.map(|r| {
-        r.iter()
-            .map(|x| canonical(&conv, AtomKind::Role, x))
-            .collect()
-    })
-}
-
 /// The chosen role as an assignment; none without roles or anonymous.
 pub(crate) fn assignment(roles: Option<&[String]>, anonymous: Option<bool>) -> Option<Assignment> {
     (roles.is_some() || anonymous.is_some()).then(|| Assignment {
@@ -220,8 +209,7 @@ fn flow_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData> {
     let rev = revision(&(flow, &p.application, &p.roles, &p.anonymous));
     check_revision(&rev, p.expected_revision.as_deref())?;
     // `roles` arrive as users type them; compare in the stored form
-    let roles = canonical_roles(flow, p.roles.as_deref());
-    let sim = assignment(roles.as_deref(), p.anonymous)
+    let sim = assignment(p.roles.as_deref(), p.anonymous)
         .map(|c| (simulate(flow, app, &c), resolve_assignment(flow, &c), c));
     let in_app = |origin: &Origin| app.is_none_or(|a| application_of(flow, origin) == a);
     let mut rows: Vec<Value> = (ui_flow_findings(flow).into_iter())

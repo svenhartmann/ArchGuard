@@ -75,21 +75,24 @@ pub(crate) fn assignment(roles: &[String]) -> Assignment {
     }
 }
 
-/// `--role` names in the stored form (the convention's `canonical`); a name the
-/// code does not define gets a warning.
+/// `--role` names as typed (never rewritten; matching meets the stored
+/// authority through the convention); one the code does not define, neither
+/// as typed nor canonical, gets a warning.
 fn defined_names(flow: &UiFlow, roles: &[String]) -> Vec<String> {
     let conv = flow.convention(None);
-    (roles.iter())
-        .map(|role| {
-            let name = canonical(&conv, AtomKind::Role, role);
-            if !flow.roles.is_empty() && !flow.roles.iter().any(|d| d.name == name) {
-                eprintln!(
-                    "warning: role {name:?} is not defined in the code; `archguard ui-flow roles` lists the defined ones"
-                );
-            }
-            name
-        })
-        .collect()
+    for role in roles {
+        let stored = canonical(&conv, AtomKind::Role, role);
+        let defined = flow
+            .roles
+            .iter()
+            .any(|d| d.name == *role || d.name == stored);
+        if !flow.roles.is_empty() && !defined {
+            eprintln!(
+                "warning: role {role:?} is not defined in the code; `archguard ui-flow roles` lists the defined ones"
+            );
+        }
+    }
+    roles.to_vec()
 }
 
 fn simulate(flow: &UiFlow, roles: &[String]) -> Value {
@@ -606,12 +609,15 @@ mod tests {
         // no alias: `ADMIN` is canonicalized through the read role_prefix
         let given = ["ADMIN".into(), "ROLE_ADMIN".into(), "Other".into()];
         let names = defined_names(&flow, &given);
-        assert_eq!(names, ["ROLE_ADMIN", "ROLE_ADMIN", "ROLE_Other"]);
-        let simulation = simulate(&flow, &["ROLE_ADMIN".into()]);
-        assert_eq!(simulation["implied_roles"], json!(["ROLE_USER"]));
+        assert_eq!(names, given);
+        let simulation = simulate(&flow, &["ADMIN".into()]);
+        assert_eq!(
+            simulation["implied_roles"],
+            json!(["ROLE_ADMIN", "ROLE_USER"])
+        );
         assert_eq!(
             assignment_text(&simulation),
-            "signed in with roles ROLE_ADMIN (implies ROLE_USER)"
+            "signed in with roles ADMIN (implies ROLE_ADMIN, ROLE_USER)"
         );
     }
 }

@@ -325,7 +325,77 @@ fn hierarchy_is_expanded_before_holds_and_canonical_label_use_the_prefix() {
     assert_eq!(label(&conv, AtomKind::Role, &admin), "ADMIN");
     let user = Condition::Role("ROLE_USER".into());
     assert_eq!(eval(&flow, &user, &holding(&[&admin])), Outcome::Allowed);
-    assert_eq!(eval(&flow, &user, &holding(&["USER"])), Outcome::Denied);
+    // a typed name meets the stored authority at match time, never rewritten
+    assert_eq!(eval(&flow, &user, &holding(&["USER"])), Outcome::Allowed);
+    assert_eq!(
+        eval(&flow, &user, &holding(&["ADMIN"])),
+        Outcome::Allowed,
+        "hierarchy"
+    );
+}
+
+fn spring(app: &str) -> RoleConvention {
+    RoleConvention {
+        application: Some(app.into()),
+        role_prefix: Some("ROLE_".into()),
+        ..RoleConvention::default()
+    }
+}
+
+#[test]
+fn an_unprefixed_authority_is_held_as_typed() {
+    // hasAuthority('AUDITOR') stores AUDITOR; the prefix convention must not change that
+    let flow = UiFlow {
+        role_conventions: vec![spring("api")],
+        ..UiFlow::default()
+    };
+    let audit = Condition::Role("AUDITOR".into());
+    let prefixed = Condition::Role("ROLE_AUDITOR".into());
+    let held = holding(&["AUDITOR"]);
+    assert_eq!(eval(&flow, &audit, &held), Outcome::Allowed);
+    assert_eq!(
+        eval(&flow, &prefixed, &holding(&["OTHER"])),
+        Outcome::Denied
+    );
+    assert_eq!(held.roles.len(), 1, "held names are not rewritten");
+}
+
+#[test]
+fn another_applications_convention_does_not_leak() {
+    let admin = Condition::Role("ADMIN".into());
+    let mut node = screen("n", AccessState::Protected(admin.clone()));
+    node.application = Some("web".into());
+    let mut backend = screen(
+        "s",
+        AccessState::Protected(Condition::Role("ROLE_ADMIN".into())),
+    );
+    backend.application = Some("api".into());
+    let flow = UiFlow {
+        screens: vec![node, backend],
+        role_conventions: vec![spring("api")],
+        ..UiFlow::default()
+    };
+    // another application's convention never applies to it
+    assert_eq!(flow.convention(Some("web")).role_prefix, None);
+    assert_eq!(
+        flow.convention(Some("api")).role_prefix.as_deref(),
+        Some("ROLE_")
+    );
+    // the Node screen keeps its name: ADMIN is allowed as typed
+    assert_eq!(eval(&flow, &admin, &holding(&["ADMIN"])), Outcome::Allowed);
+    assert_eq!(
+        eval(&flow, &admin, &holding(&["ROLE_ADMIN"])),
+        Outcome::Denied
+    );
+    let single = UiFlow {
+        screens: vec![flow.screens[1].clone()],
+        role_conventions: vec![spring("api")],
+        ..UiFlow::default()
+    };
+    assert_eq!(
+        single.convention(None).role_prefix.as_deref(),
+        Some("ROLE_")
+    );
 }
 
 fn screen(id: &str, access: AccessState) -> Screen {

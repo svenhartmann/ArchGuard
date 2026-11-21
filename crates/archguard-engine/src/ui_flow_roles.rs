@@ -82,16 +82,6 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     flow.roles.sort();
     flow.roles.dedup();
     let mut convention = RoleConvention::default();
-    if flow.roles.iter().any(|d| d.source == "spring") {
-        // Spring's default role prefix; names stay as the authority.
-        convention.role_prefix = Some("ROLE_".into());
-        convention.origins.push(ConventionOrigin {
-            field: "role_prefix".into(),
-            file: String::new(),
-            line: 0,
-            source: "framework default spring".into(),
-        });
-    }
     if flow.roles.iter().any(|d| d.kind == RoleKind::Permission) {
         // Dotted permission ids cover each other (the former built-in rule).
         convention.permissions = PermissionFormat::Dotted {

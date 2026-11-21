@@ -301,8 +301,11 @@ msgstr "Ob eine Abhängigkeit, deren Dateien keine Lizenz angeben, verstößt (d
 msgid "Conventions for the UI-flow and domain views; checked by archguard check (ADR 0021, 0022)."
 msgstr "Konventionen für die Sichten Bildschirme und Domäne; geprüft von archguard check (ADR 0021, 0022)."
 
-msgid "Convention rules to check, e.g. navigation_literal or endpoint_access_declared; empty checks nothing."
-msgstr "Zu prüfende Konventionsregeln, z. B. navigation_literal oder endpoint_access_declared; leer prüft nichts."
+msgid "Convention rules to check, e.g. navigation_literal, endpoint_access_declared or screen_access_declared; empty checks nothing."
+msgstr "Zu prüfende Konventionsregeln, z. B. navigation_literal, endpoint_access_declared oder screen_access_declared; leer prüft nichts."
+
+msgid "Other repositories whose HTTP endpoints join the actions of this one, as paths relative to the project root or absolute."
+msgstr "Andere Repositories, deren HTTP-Endpunkte sich mit den Aktionen dieses Repositories verbinden, als Pfade relativ zum Projektwurzelverzeichnis oder absolut."
 
 msgid "Thresholds of the runtime findings from recorded traces."
 msgstr "Schwellen der Laufzeit-Befunde aus aufgezeichneten Traces."
@@ -555,6 +558,10 @@ msgstr "Höchste Instabilität der untersten Schicht"
 msgctxt "Settings"
 msgid "View conventions"
 msgstr "Konventionen der Sichten"
+
+msgctxt "Settings"
+msgid "Backend repositories"
+msgstr "Backend-Repositories"
 
 msgctxt "Settings"
 msgid "History window"

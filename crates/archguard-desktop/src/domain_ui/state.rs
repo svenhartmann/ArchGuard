@@ -228,12 +228,9 @@ impl DomainState {
 
     /// The chosen user, resolved by the flow's role and policy catalog.
     pub fn assignment(&self) -> Assignment {
-        let mut a = role_assignment(self.role, &self.roles);
+        let a = role_assignment(self.role, &self.roles);
         match &*self.flow {
-            Ok(f) => {
-                crate::screens_ui::with_prefix(f, &mut a);
-                resolve_assignment(f, &a)
-            }
+            Ok(f) => resolve_assignment(f, &a),
             Err(_) => a,
         }
     }
