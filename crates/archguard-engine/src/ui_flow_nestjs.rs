@@ -1807,8 +1807,54 @@ mod meta {
         }
     }
 
-    /// Calls of `reflector.<lookup>(KEY, …)` in `src`: (offset, key, lookup).
-    fn lookups(scan: &Scan, src: &Src) -> Vec<(usize, String, Lookup)> {
+    /// A lookup call: offset, metadata key, merge, source of its targets.
+    struct Found {
+        at: usize,
+        key: String,
+        merge: bool,
+        targets: String,
+    }
+
+    /// A top-level helper that looks a key up: its targets are literal (`Ok`) or
+    /// the parameter at that index, given at each call site (`Err`).
+    struct Helper {
+        name: String,
+        key: String,
+        merge: bool,
+        targets: Result<String, usize>,
+    }
+
+    /// The levels the targets text names; unreadable targets cover neither.
+    fn lookup(merge: bool, targets: &str) -> Lookup {
+        Lookup {
+            merge,
+            handler: targets.contains("getHandler"),
+            class: targets.contains("getClass"),
+        }
+    }
+
+    /// The source of a lookup's targets argument; a local `const t = …` is followed.
+    fn targets_text(src: &Src, at: usize, arg: Option<&Item>) -> String {
+        let Some(arg) = arg else { return String::new() };
+        let text = arg.source(&src.raw);
+        let before = &src.code[..at];
+        let local = (before.rfind(&format!("{text} ="))).filter(|p| {
+            name_path(&text)
+                && ["const", "let"]
+                    .iter()
+                    .any(|k| before[..*p].trim_end().ends_with(k))
+        });
+        match local {
+            Some(p) => {
+                let i = skip_ws(src.code.as_bytes(), p + text.len() + 2);
+                Parser { s: &src.raw, i }.value(0).source(&src.raw)
+            }
+            None => text,
+        }
+    }
+
+    /// Calls of `reflector.<lookup>(KEY, targets)` in `src`.
+    fn lookups(scan: &Scan, src: &Src) -> Vec<Found> {
         let (code, b) = (&src.code, src.code.as_bytes());
         let mut found = Vec::new();
         for (name, merge) in LOOKUPS {
@@ -1826,15 +1872,14 @@ mod meta {
                     i: open,
                 }
                 .array(0);
-                let targets: String = args.iter().skip(1).map(|a| a.source(&src.raw)).collect();
-                let (h, c) = (targets.contains("getHandler"), targets.contains("getClass"));
-                let both = h == c;
-                let lookup = Lookup {
+                let targets = targets_text(src, at, args.get(1));
+                let key = args.first().map(|k| key(scan, &src.raw, k));
+                found.extend(key.map(|key| Found {
+                    at,
+                    key,
                     merge,
-                    handler: h || both,
-                    class: c || both,
-                };
-                found.extend(args.first().map(|k| (at, key(scan, &src.raw, k), lookup)));
+                    targets,
+                }));
             }
         }
         found
@@ -1849,35 +1894,80 @@ mod meta {
         })
     }
 
+    /// The index of parameter `ident` of the top-level function `name` before `at`.
+    fn param_index(src: &Src, at: usize, name: &str, ident: &str) -> Option<usize> {
+        let decls = [format!("const {name}"), format!("function {name}")];
+        let p = (decls.iter())
+            .filter_map(|d| src.code[..at].rfind(d.as_str()))
+            .max()?;
+        let open = p + src.code[p..].find('(')?;
+        let params = Parser {
+            s: &src.raw,
+            i: open,
+        }
+        .array(0);
+        (params.iter()).position(|a| ident_at(&a.source(&src.raw), 0) == ident)
+    }
+
+    /// The lookup `class` makes through helper `h` (its first call).
+    fn through(src: &Src, class: &structure::Class, h: &Helper) -> Option<Lookup> {
+        let b = src.code.as_bytes();
+        let body = &src.code[class.body.0..class.body.1];
+        let open = words(body, &h.name)
+            .iter()
+            .map(|p| skip_ws(b, class.body.0 + p + h.name.len()))
+            .find(|&o| b.get(o) == Some(&b'('))?;
+        let targets = match &h.targets {
+            Ok(text) => text.clone(),
+            Err(i) => {
+                let args = Parser {
+                    s: &src.raw,
+                    i: open,
+                }
+                .array(0);
+                args.get(*i).map(|a| a.source(&src.raw)).unwrap_or_default()
+            }
+        };
+        Some(lookup(h.merge, &targets))
+    }
+
+    /// The top-level helper function a lookup outside any class belongs to.
+    fn helper_of(src: &Src, f: Found) -> Option<Helper> {
+        let name = top_level(&src.code, f.at)?;
+        let literal = f.targets.contains("getHandler") || f.targets.contains("getClass");
+        let param = param_index(src, f.at, &name, &f.targets).filter(|_| !literal);
+        Some(Helper {
+            name,
+            key: f.key,
+            merge: f.merge,
+            targets: param.map_or(Ok(f.targets), Err),
+        })
+    }
+
     /// Guards that read a metadata key: a class calling `reflector.getAllAndOverride(K, …)`,
     /// `getAllAndMerge` or `get`, directly or through a top-level helper function
     /// (declared at column 0) that does and that the class calls.
     pub(super) fn readers(scan: &Scan) -> HashMap<String, Vec<(String, Lookup)>> {
         let mut readers: HashMap<String, Vec<(String, Lookup)>> = HashMap::new();
-        let mut helpers: Vec<(String, String, Lookup)> = Vec::new();
+        let mut helpers: Vec<Helper> = Vec::new();
         for src in &scan.app.files {
             let classes = structure::classes(src);
-            for (at, key, lookup) in lookups(scan, src) {
-                let owner = classes.iter().find(|c| c.body.0 <= at && at < c.body.1);
-                match owner {
-                    Some(c) => readers
-                        .entry(key)
-                        .or_default()
-                        .push((c.name.clone(), lookup)),
-                    None => helpers.extend(top_level(&src.code, at).map(|f| (f, key, lookup))),
+            for f in lookups(scan, src) {
+                let owner = classes.iter().find(|c| c.body.0 <= f.at && f.at < c.body.1);
+                if let Some(c) = owner {
+                    let l = lookup(f.merge, &f.targets);
+                    readers.entry(f.key).or_default().push((c.name.clone(), l));
+                    continue;
                 }
+                helpers.extend(helper_of(src, f));
             }
         }
         for src in &scan.app.files {
-            let b = src.code.as_bytes();
             for class in structure::classes(src) {
-                let body = &src.code[class.body.0..class.body.1];
-                for (f, key, lookup) in &helpers {
-                    let calls =
-                        |p: &usize| b.get(skip_ws(b, class.body.0 + p + f.len())) == Some(&b'(');
-                    if words(body, f).iter().any(calls) {
-                        let list = readers.entry(key.clone()).or_default();
-                        list.push((class.name.clone(), *lookup));
+                for h in &helpers {
+                    if let Some(l) = through(src, &class, h) {
+                        let list = readers.entry(h.key.clone()).or_default();
+                        list.push((class.name.clone(), l));
                     }
                 }
             }
@@ -2715,5 +2805,47 @@ export class JwtAuthGuard implements CanActivate {
         );
         assert_eq!(ep(&flow, "GET", "/c").access, prot(custom("HandlerGuard")));
         assert_eq!(ep(&flow, "GET", "/m").access, AccessState::Open);
+    }
+
+    #[test]
+    fn unreadable_targets_cover_no_level_and_literal_ones_are_read_where_they_are_given() {
+        let guards = |body: &str| {
+            run(
+                &[
+                    ("package.json", PKG),
+                    (
+                        "src/g.ts",
+                        &format!("export const Public = () => SetMetadata('pub', true);\n{body}"),
+                    ),
+                    ("src/app.module.ts", &app_module("G")),
+                    (
+                        "src/a.ts",
+                        "@Public()\n@Controller('c')\nclass C { @Get() f() {} }\n",
+                    ),
+                ],
+                "Public = \"open\"\n",
+            )
+        };
+        // unreadable local targets: the guard stays
+        let flow = guards(
+            "export class G { canActivate(c) { const t = compute(c); return this.reflector.getAllAndOverride('pub', t); } }\n",
+        );
+        assert_eq!(ep(&flow, "GET", "/c").access, prot(custom("G")));
+        // local literal targets
+        let flow = guards(
+            "export class G { canActivate(c) { const t = [c.getHandler(), c.getClass()]; return this.reflector.getAllAndOverride('pub', t); } }\n",
+        );
+        assert_eq!(ep(&flow, "GET", "/c").access, AccessState::Open);
+        // a helper's parameter takes the literal of its call site
+        let helper = "export const pick = (reflector: Reflector, targets: Target[]) => {\n\
+                      \x20 return reflector.getAllAndOverride<boolean>('pub', targets);\n};\n";
+        let flow = guards(&format!(
+            "{helper}export class G {{ canActivate(c) {{ return pick(this.reflector, [c.getHandler(), c.getClass()]); }} }}\n"
+        ));
+        assert_eq!(ep(&flow, "GET", "/c").access, AccessState::Open);
+        let flow = guards(&format!(
+            "{helper}export class G {{ canActivate(c) {{ return pick(this.reflector, [c.getHandler()]); }} }}\n"
+        ));
+        assert_eq!(ep(&flow, "GET", "/c").access, prot(custom("G")));
     }
 }
