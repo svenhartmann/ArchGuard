@@ -207,6 +207,7 @@ mod tests {
             file: format!("{name}.cs"),
             line: 1,
             source: "t".into(),
+            module: String::new(),
         }
     }
 

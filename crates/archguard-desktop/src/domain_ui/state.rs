@@ -8,6 +8,7 @@ use std::sync::Arc;
 use archguard_engine::core::domain_model::DomainModel;
 use archguard_engine::core::{Assignment, Config, ReviewDecision, UiFlow, resolve_assignment};
 
+use super::overview;
 use super::services::Services;
 use crate::screens_ui::code::Code;
 use crate::screens_ui::{role_assignment, role_names};
@@ -62,6 +63,9 @@ pub struct DomainState {
     pub state: Option<String>,
     /// The centre shows every entity by aggregate instead of the focus.
     pub whole: bool,
+    /// The module the whole-model diagram is drilled into; `None` for the
+    /// overview (or the plain band diagram of a small model).
+    pub module: Option<String>,
     /// Tree groups the user closed.
     pub folded: BTreeSet<String>,
     /// The tree's "Details" section is open; open until the user closes it.
@@ -90,6 +94,7 @@ pub fn build_from(model: Result<DomainModel, String>, flow: Result<UiFlow, Strin
         focus: None,
         state: None,
         whole: false,
+        module: None,
         folded: BTreeSet::new(),
         details_open: true,
         roles,
@@ -157,6 +162,11 @@ impl DomainState {
             self.whole = false;
             self.note_for = None;
         }
+    }
+
+    /// Drill the diagram into module `i` of [`overview::modules`].
+    pub fn open_module(&mut self, i: usize) {
+        self.module = (self.model()).and_then(|d| overview::modules(d).into_iter().nth(i));
     }
 
     pub fn select_state(&mut self, name: &str) {

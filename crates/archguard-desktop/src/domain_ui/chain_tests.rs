@@ -32,6 +32,7 @@ fn model() -> DomainModel {
             file: "Order.cs".into(),
             line: 5,
             source: "t".into(),
+            module: String::new(),
         }],
         state_machines: vec![StateMachine {
             entity: "Order".into(),

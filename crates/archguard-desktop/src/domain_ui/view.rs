@@ -6,12 +6,12 @@ use archguard_engine::core::domain_model::{DomainModel, EntityKind, StateMachine
 use archguard_engine::domain_model::summary;
 
 use super::state::{DomainState, Focus};
-use super::{chain, entities, flow, focus, ids, states, tree};
+use super::{chain, entities, flow, focus, ids, overview, states, tree};
 use crate::screens_ui::inspector::{note_form, row};
 use crate::tab_support::{Texts, model};
 use crate::ui::{
-    DomArrow, DomBand, DomCard, DomField, DomState, DomStateArrow, DomTransition, DomainViewModel,
-    FlowRow,
+    DomArrow, DomBand, DomBox, DomCard, DomField, DomHubChip, DomState, DomStateArrow,
+    DomTransition, DomainViewModel, FlowRow,
 };
 
 fn kind(k: EntityKind) -> i32 {
@@ -109,7 +109,8 @@ fn chains(m: &mut DomainViewModel, s: &DomainState, d: &DomainModel, i: usize, t
 }
 
 fn diagram(m: &mut DomainViewModel, s: &DomainState, d: &DomainModel, texts: &Texts) {
-    let g = entities::layout(d);
+    let scene = overview::scene(d, s.module.as_deref());
+    let g = scene.diagram;
     let machine = |id: &str| d.state_machines.iter().any(|sm| sm.entity == id);
     m.cards = model(g.cards.iter().map(|c| {
         let e = &d.entities[c.entity];
@@ -125,13 +126,33 @@ fn diagram(m: &mut DomainViewModel, s: &DomainState, d: &DomainModel, texts: &Te
             machine: machine(&e.id),
         }
     }));
-    m.arrows = model(g.arrows.into_iter().map(|a| DomArrow {
-        path: a.path.into(),
-        dashed: a.dashed,
-        label: a.label.into(),
-        lx: a.at.0,
-        ly: a.at.1,
+    let links = (scene.links.into_iter()).map(|l| (l.path, false, l.count.to_string(), l.at));
+    let arrows = (g.arrows.into_iter()).map(|a| (a.path, a.dashed, a.label.to_string(), a.at));
+    m.arrows = model(
+        arrows
+            .chain(links)
+            .map(|(path, dashed, label, at)| DomArrow {
+                path: path.into(),
+                dashed,
+                label: label.into(),
+                lx: at.0,
+                ly: at.1,
+            }),
+    );
+    m.boxes = model(scene.boxes.into_iter().map(|b| DomBox {
+        title: b.title.into(),
+        sub: b.sub.into(),
+        module: b.module as i32,
+        x: b.x,
+        y: b.y,
+        w: b.w,
+        h: b.h,
     }));
+    m.hubs = model(scene.hubs.iter().map(|h| DomHubChip {
+        text: format!("{} \u{2190} {}", d.entities[h.entity].name, h.from).into(),
+        index: h.entity as i32,
+    }));
+    m.module = s.module.as_deref().unwrap_or_default().into();
     m.bands = model(g.bands.into_iter().map(|b| {
         DomBand {
             title: match b.root {

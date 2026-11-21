@@ -226,7 +226,7 @@ export component AppWindow inherits Window {
         if view == "security" && SecurityData.model.status == "not_scanned" { return @tr("Not scanned: no dependency scan exists for this project."); }
         if view == "runtime" && RuntimeData.model.state == 2 { return @tr("No runtime recordings for this project."); }
         if view == "screens" && ScreensData.model.state == 1 && ScreensData.model.cards.length == 0 { return @tr("No screens found."); }
-        if view == "domain" && DomainData.model.state == 1 && DomainData.model.cards.length == 0 { return @tr("No entities found."); }
+        if view == "domain" && DomainData.model.state == 1 && DomainData.model.cards.length == 0 && DomainData.model.boxes.length == 0 { return @tr("No entities found."); }
         if view == "services" && (ServicesData.model.state >= 2 || (ServicesData.model.state == 1
                 && ServicesData.model.services + ServicesData.model.applications + ServicesData.model.containers == 0)) { return @tr("No services found in this project."); }
         return "";

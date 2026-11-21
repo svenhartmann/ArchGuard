@@ -339,6 +339,14 @@ impl Extractor {
                 file: self.files[e.file].rel.clone(),
                 line: line(&self.files[e.file].text, e.pos),
                 source: SOURCE.into(),
+                module: match e.scope() {
+                    "" => self.files[e.file]
+                        .rel
+                        .rsplit_once('/')
+                        .map_or("", |d| d.0)
+                        .into(),
+                    s => s.into(),
+                },
             })
             .collect();
         self.ents = ents;
@@ -4107,6 +4115,30 @@ public class NotAHandler : INotificationHandler<OrderShipped> { }
         for name in ["Ghost", "Gen", "FakeOrder"] {
             assert!(model.entities.iter().all(|e| e.name != name), "{name}");
         }
+    }
+
+    #[test]
+    fn module_is_the_namespace() {
+        let model = run(&[
+            (
+                "A/Item.cs",
+                "namespace Shop.A;\npublic class Item : Entity { }\n",
+            ),
+            (
+                "B/Thing.cs",
+                "namespace Shop.B;\npublic class Thing : Entity { }\n",
+            ),
+        ]);
+        let m = |n: &str| {
+            model
+                .entities
+                .iter()
+                .find(|e| e.name == n)
+                .unwrap()
+                .module
+                .clone()
+        };
+        assert_eq!((m("Item"), m("Thing")), ("Shop.A".into(), "Shop.B".into()));
     }
 
     #[test]

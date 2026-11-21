@@ -1,6 +1,6 @@
 // The Domain tab's data and callbacks (ADR 0022), set from
 // src/domain_ui.rs.
-import { DomCard, DomArrow, DomBand, DomState, DomStateArrow } from "domain_canvas.slint";
+import { DomCard, DomArrow, DomBand, DomBox, DomHubChip, DomState, DomStateArrow } from "domain_canvas.slint";
 import { FlowInspector, FlowRow, DrillStep } from "screens_inspector.slint";
 import { FlowCard, FlowArrow, FlowBand } from "screens_canvas.slint";
 import { CodeView } from "code_overlay.slint";
@@ -85,6 +85,11 @@ export struct DomainViewModel {
     cards: [DomCard],
     arrows: [DomArrow],
     bands: [DomBand],
+    // Overview module boxes, or the stubs of a module view.
+    boxes: [DomBox],
+    hubs: [DomHubChip],
+    // The module of the drill-down, empty in the overview and plain view.
+    module: string,
     width: float,
     height: float,
     // -1 nothing, 0 entity, 1 integration event, 2 domain event, 3 use case.
@@ -140,6 +145,9 @@ export global DomainData {
     // A state of the shown state machine, by name.
     callback select-state(string);
     callback set-whole(bool);
+    // Drill into module `i` of the model's modules; back to the overview.
+    callback open-module(int);
+    callback close-module();
     callback set-details-open(bool);
     callback close-details();
     callback open-editor(string, int);

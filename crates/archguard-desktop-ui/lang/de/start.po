@@ -234,9 +234,6 @@ msgstr "Woher Daten kommen (alle Stationen)"
 msgid "Data flow"
 msgstr "Datenfluss"
 
-msgid "Overview"
-msgstr "Übersicht"
-
 msgid "Zoom into service"
 msgstr "In Service hineinzoomen"
 

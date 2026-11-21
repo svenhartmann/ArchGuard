@@ -303,3 +303,6 @@ msgstr "Dienst"
 msgctxt "Domain"
 msgid "Relations"
 msgstr "Beziehungen"
+
+msgid "Hubs"
+msgstr "Knotenpunkte"

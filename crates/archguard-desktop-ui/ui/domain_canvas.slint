@@ -31,6 +31,24 @@ export struct DomBand {
     h: float,
 }
 
+// A module box of the overview, or a stub to a foreign module (`module`
+// indexes the model's modules).
+export struct DomBox {
+    title: string,
+    sub: string,
+    module: int,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+}
+
+// A hub badge: "Tenant <- 41" selecting entity `index`.
+export struct DomHubChip {
+    text: string,
+    index: int,
+}
+
 export struct DomState {
     name: string,
     initial: bool,
@@ -119,17 +137,56 @@ component ArrowLabel inherits Rectangle {
 
 export component EntityCanvas inherits Rectangle {
     in property <[DomCard]> cards;
+    in property <[DomBox]> boxes;
+    in property <[DomHubChip]> hubs;
+    // The module shown; empty in the overview and the plain view.
+    in property <string> module;
+    callback open-module(int);
+    callback back();
     in property <[DomArrow]> arrows;
     in property <[DomBand]> bands;
     in property <float> canvas-w;
     in property <float> canvas-h;
     in-out property <float> zoom: 1.0;
     callback select(int);
+    property <length> head: (root.module != "" || root.hubs.length > 0) ? 34px : 0px;
+
+    HorizontalLayout {
+        y: 0;
+        height: root.head;
+        padding: 4px;
+        spacing: 8px;
+        alignment: start;
+        if root.module != "": Text {
+            text: "\u{2190} " + @tr("Overview") + " / " + root.module;
+            color: Theme.accent;
+            vertical-alignment: center;
+            TouchArea { mouse-cursor: pointer; clicked => { root.back(); } }
+        }
+        if root.hubs.length > 0: Text {
+            text: @tr("Hubs") + ":";
+            color: Theme.muted;
+            vertical-alignment: center;
+        }
+        for h in root.hubs: Rectangle {
+            width: chip.preferred-width + 16px;
+            border-radius: 10px;
+            background: Theme.panel;
+            border-width: 1px;
+            border-color: Theme.border;
+            chip := Text { text: h.text; color: Theme.text; font-size: Theme.font-small; vertical-alignment: center; }
+            TouchArea { mouse-cursor: pointer; clicked => { root.select(h.index); } }
+        }
+    }
 
     flick := Flickable {
+        y: root.head;
+        height: parent.height - root.head;
         content-width: max(self.width, root.canvas-w * root.zoom * 1px);
         content-height: max(self.height, root.canvas-h * root.zoom * 1px);
         Rectangle {
+            x: 0;
+            y: 0;
             width: root.canvas-w * root.zoom * 1px;
             height: root.canvas-h * root.zoom * 1px;
             for b in root.bands: Rectangle {
@@ -161,6 +218,24 @@ export component EntityCanvas inherits Rectangle {
                 fill: transparent;
                 stroke: a.dashed ? Theme.muted : Theme.edge;
                 stroke-width: 1.4px * root.zoom;
+            }
+            for b in root.boxes: Rectangle {
+                x: b.x * 1px * root.zoom;
+                y: b.y * 1px * root.zoom;
+                width: b.w * 1px * root.zoom;
+                height: b.h * 1px * root.zoom;
+                border-radius: 8px * root.zoom;
+                background: mt.has-hover ? Theme.panel-2 : Theme.panel;
+                border-width: 1.8px;
+                border-color: Theme.package-border;
+                VerticalLayout {
+                    padding-left: 10px * root.zoom;
+                    padding-right: 10px * root.zoom;
+                    alignment: center;
+                    Text { text: b.title; color: Theme.text; font-size: max(7px, 13px * root.zoom); font-weight: Theme.weight-strong; overflow: elide; }
+                    if b.sub != "": Text { text: b.sub; color: Theme.muted; font-size: max(6px, 10.5px * root.zoom); overflow: elide; }
+                }
+                mt := TouchArea { mouse-cursor: pointer; clicked => { root.open-module(b.module); } }
             }
             for c in root.cards: EntityCard {
                 card: c;

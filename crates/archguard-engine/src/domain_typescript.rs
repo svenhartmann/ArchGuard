@@ -283,6 +283,7 @@ impl Extractor {
                     file: self.files[d.file].rel.clone(),
                     line: line(&self.files[d.file].text, d.pos),
                     source: SOURCE.into(),
+                    module: d.scope.clone(),
                 }
             })
             .collect();
