@@ -293,6 +293,8 @@ mod project {
         pub(super) default_perms: Option<Vec<String>>,
         /// URL configurations to start at: (file, settings file, line).
         pub(super) roots: Vec<(usize, String, u32)>,
+        /// Project decorators on views that no `[views.access]` entry explains: (file, line, name).
+        pub(super) unresolved: std::cell::RefCell<BTreeSet<(usize, u32, String)>>,
     }
 
     impl<'a> Project<'a> {
@@ -364,6 +366,7 @@ mod project {
                 parsed,
                 default_perms: None,
                 roots: vec![],
+                unresolved: Default::default(),
             };
             project.read_settings(dir, flow);
             project
@@ -611,6 +614,8 @@ mod access {
     pub(super) struct Decl {
         pub(super) declared: bool,
         pub(super) parts: Vec<Condition>,
+        /// Project decorators that are not read; never lets a declaration be `open`.
+        pub(super) unresolved: Vec<String>,
     }
 
     impl Decl {
@@ -623,6 +628,7 @@ mod access {
         }
 
         pub(super) fn extend(&mut self, other: Decl) {
+            self.unresolved.extend(other.unresolved);
             if other.declared {
                 self.declared = true;
                 other.parts.into_iter().for_each(|c| self.add(Some(c)));
@@ -632,6 +638,9 @@ mod access {
         pub(super) fn state(&self) -> AccessState {
             match (self.declared, self.condition()) {
                 (false, _) => AccessState::Undeclared,
+                (true, None) if !self.unresolved.is_empty() => {
+                    AccessState::Protected(Condition::Unknown(self.unresolved.join(", ")))
+                }
                 (true, None) => AccessState::Open,
                 (true, Some(c)) => AccessState::Protected(c),
             }
@@ -658,6 +667,24 @@ mod access {
     }
 
     const STAFF: &str = "is_staff";
+
+    /// Decorators that perform no access check; every other unread one is unknown (D1).
+    /// Django: https://docs.djangoproject.com/en/stable/topics/http/decorators/ and
+    /// https://docs.djangoproject.com/en/stable/ref/csrf/ ; DRF: https://www.django-rest-framework.org/api-guide/views/
+    const NO_ACCESS_CHECK: [&str; 12] = [
+        "csrf_exempt",
+        "csrf_protect",
+        "cache_page",
+        "never_cache",
+        "vary_on_headers",
+        "vary_on_cookie",
+        "renderer_classes",
+        "parser_classes",
+        "throttle_classes",
+        "schema",
+        "condition",
+        "etag",
+    ];
     const SAFE: [&str; 3] = ["GET", "HEAD", "OPTIONS"];
 
     fn any(mut c: Vec<Condition>) -> Condition {
@@ -715,6 +742,11 @@ mod access {
                 },
                 _ => {
                     let Some(m) = self.access.get(name) else {
+                        if !NO_ACCESS_CHECK.contains(&name) {
+                            fx.decl.unresolved.push(name.to_string());
+                            let line = p.line(at);
+                            (self.unresolved.borrow_mut()).insert((f, line, name.to_string()));
+                        }
                         return;
                     };
                     let args: Vec<String> = positional
@@ -827,15 +859,15 @@ mod access {
             own: Option<(usize, usize, usize)>,
             method: &str,
         ) -> Decl {
-            if let Some((f, a, b)) = own {
-                return self.perm_list(f, a, b, method);
-            }
             if let Some((f, d)) = self.method(mro, "get_permissions") {
                 let p = &self.pys[f];
                 let class = p.defs[d].parent.map_or("", |c| p.defs[c].name.as_str());
                 let mut decl = Decl::default();
                 decl.add(Some(Condition::Unknown(format!("{class}.get_permissions"))));
                 return decl;
+            }
+            if let Some((f, a, b)) = own {
+                return self.perm_list(f, a, b, method);
             }
             if let Some((f, v, at)) = self.attr(mro, "permission_classes") {
                 return self.perm_list(f, at, at + v.len(), method);
@@ -1504,7 +1536,13 @@ mod views {
                     Kind::ViewSet {
                         slash, basename, ..
                     } => {
-                        for ep in self.viewset(r, slash, basename.as_deref(), None, flow) {
+                        for ep in self.viewset(
+                            r,
+                            slash,
+                            basename.as_deref(),
+                            (Decl::default(), None),
+                            flow,
+                        ) {
                             self.endpoint(ep, &mut built, flow);
                         }
                     }
@@ -1618,18 +1656,18 @@ mod views {
             if VIEWSETS.iter().any(|v| has(v)) {
                 let mapping = kwargs.iter().find(|a| a.name.is_none());
                 let mapping = mapping.map(|a| (r.file, self.pys[r.file].span(a.value)));
-                return Outcome::Endpoints(self.viewset(r, "", None, mapping, flow));
+                return Outcome::Endpoints(self.viewset(r, "", None, (outer.decl, mapping), flow));
             }
             if API_GENERICS.iter().any(|(n, _)| has(n)) {
+                let mut fx = Effects::default();
+                self.class_decl(&mro, &mut fx);
+                fx.decl.extend(outer.decl);
                 let eps = (self.api_methods(&mro, &names).into_iter())
                     .map(|(m, at)| {
                         let handler = format!("{}.{}", site.handler, m.to_ascii_lowercase());
-                        site.ep(
-                            &m,
-                            &self.drf_decl(&mro, None, &m),
-                            handler,
-                            at.unwrap_or(site.at()),
-                        )
+                        let mut decl = fx.decl.clone();
+                        decl.extend(self.drf_decl(&mro, None, &m));
+                        site.ep(&m, &decl, handler, at.unwrap_or(site.at()))
                     })
                     .collect();
                 return Outcome::Endpoints(eps);
@@ -1916,10 +1954,10 @@ mod views {
             r: &Route,
             slash: &str,
             basename: Option<&str>,
-            mapping: Option<(usize, (usize, usize))>,
+            (outer, mapping): (Decl, Option<FileSpan>),
             flow: &mut UiFlow,
         ) -> Vec<Ep> {
-            let Some(vs) = self.viewset_context(r, slash, basename) else {
+            let Some(vs) = self.viewset_context(r, slash, basename, outer) else {
                 let name = self.simple_name(&r.target);
                 let message =
                     format!("ViewSet `{name}` is not in the scan; its routes are unknown.");
@@ -1946,12 +1984,17 @@ mod views {
             r: &'r Route,
             slash: &'r str,
             basename: Option<&str>,
+            outer: Decl,
         ) -> Option<Vs<'r>> {
             let Sym::Def(vf, vd) = r.target else {
                 return None;
             };
             let vp = &self.pys[vf];
             let mro = self.mro(&r.target);
+            // Django mixins, decorators and `urls.py` wrappers run outside DRF's checks.
+            let mut fx = Effects::default();
+            self.class_decl(&mro, &mut fx);
+            fx.decl.extend(outer);
             let lookup = (self.attr(&mro, "lookup_url_kwarg"))
                 .or_else(|| self.attr(&mro, "lookup_field"))
                 .and_then(|(_, v, _)| py::string_value(v))
@@ -1976,6 +2019,7 @@ mod views {
                 ns,
                 basename,
                 route_name: r.name.clone(),
+                layer: fx.decl,
             })
         }
 
@@ -1988,10 +2032,12 @@ mod views {
             perms: Option<(usize, usize, usize)>,
             at: (usize, u32),
         ) -> Ep {
+            let mut decl = vs.layer.clone();
+            decl.extend(self.drf_decl(&vs.mro, perms, method));
             Ep {
                 method: method.into(),
                 path: path.into(),
-                access: self.drf_decl(&vs.mro, perms, method).state(),
+                access: decl.state(),
                 handler: format!("{}.{action}", vs.handler),
                 file: at.0,
                 line: at.1,
@@ -2108,6 +2154,9 @@ mod views {
         }
     }
 
+    /// A file and the byte range in it.
+    type FileSpan = (usize, (usize, usize));
+
     /// What one ViewSet's routes share.
     struct Vs<'r> {
         mro: Vec<Sym>,
@@ -2122,6 +2171,8 @@ mod views {
         ns: &'r [String],
         basename: Option<String>,
         route_name: Option<String>,
+        /// Django-side access around DRF's own.
+        layer: Decl,
     }
 
     impl Vs<'_> {
@@ -2446,6 +2497,12 @@ impl Project<'_> {
     fn extract(&self, flow: &mut UiFlow) {
         let routes = urls::Reader::read(self, flow);
         let built = self.build(&routes, flow);
+        for (f, line, name) in self.unresolved.take() {
+            let message = format!(
+                "Decorator `{name}` is not read; any access check it makes is unknown (declare it in [views.access])."
+            );
+            gap(&mut flow.diagnostics, &self.pys[f].rel, line, message);
+        }
         let mut bases_done = BTreeSet::new();
         for info in built.screens.values() {
             flow.screens.push(info.screen.clone());
@@ -3409,5 +3466,145 @@ urlpatterns = router.urls
                 ),
             ]
         );
+    }
+
+    const W1_VIEWS: &str = r#"
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.mixins import LoginRequiredMixin
+from rest_framework.permissions import AllowAny
+from rest_framework.views import APIView
+from rest_framework import viewsets
+from rest_framework.decorators import action
+from .deco import some_project_decorator
+from vendor.auth import api_key_required
+from django.views.decorators.csrf import csrf_exempt
+from rest_framework.decorators import api_view, permission_classes
+
+
+@some_project_decorator
+@login_required
+def guarded(request):
+    pass
+
+
+@some_project_decorator
+@permission_classes([AllowAny])
+def unknown_only(request):
+    pass
+
+
+@api_key_required
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def ext(request):
+    pass
+
+
+@csrf_exempt
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def plain_open(request):
+    pass
+
+
+class Pub(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        pass
+
+
+class Mixed(LoginRequiredMixin, APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        pass
+
+
+class VS(viewsets.ViewSet):
+    def get_permissions(self):
+        return []
+
+    @action(detail=True, permission_classes=[AllowAny])
+    def ping(self, request, pk=None):
+        pass
+
+    def list(self, request):
+        pass
+"#;
+
+    fn w1() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            &[
+                ("w/manage.py", ""),
+                ("w/w/__init__.py", ""),
+                ("w/w/settings.py", "ROOT_URLCONF = \"w.urls\"\n"),
+                (
+                    "w/w/urls.py",
+                    "from django.urls import path\nfrom django.contrib.auth.decorators import login_required\nfrom rest_framework.routers import DefaultRouter\nfrom app import views\n\nrouter = DefaultRouter()\nrouter.register('vs', views.VS, basename='vs')\nurlpatterns = [\n    path('g/', views.guarded),\n    path('u/', views.unknown_only),\n    path('pub/', views.Pub.as_view()),\n    path('wrapped/', login_required(views.Pub.as_view())),\n    path('mixed/', views.Mixed.as_view()),\n    path('ext/', views.ext),\n    path('po/', views.plain_open),\n] + router.urls\n",
+                ),
+                ("w/app/__init__.py", ""),
+                (
+                    "w/app/deco.py",
+                    "def some_project_decorator(f):\n    return f\n",
+                ),
+                ("w/app/views.py", W1_VIEWS),
+            ],
+        );
+        dir
+    }
+
+    #[test]
+    fn w1_unknown_project_decorator_is_a_gap_and_never_open() {
+        let flow = extract(w1().path());
+        assert_eq!(
+            endpoint(&flow, "ANY", "/g/"),
+            AccessState::Protected(Condition::Authenticated)
+        );
+        let gaps = (flow.diagnostics.iter())
+            .filter(|d| {
+                d.severity == DiagnosticSeverity::Gap
+                    && d.message.contains("some_project_decorator")
+            })
+            .count();
+        assert!(gaps >= 1, "{:#?}", flow.diagnostics);
+        assert!(!matches!(endpoint(&flow, "ANY", "/u/"), AccessState::Open));
+    }
+
+    #[test]
+    fn w1_external_decorator_is_unknown_never_open() {
+        let flow = extract(w1().path());
+        let unknown = AccessState::Protected(Condition::Unknown("api_key_required".into()));
+        assert_eq!(endpoint(&flow, "GET", "/ext/"), unknown);
+        let gap = (flow.diagnostics.iter()).any(|d| {
+            d.severity == DiagnosticSeverity::Gap && d.message.contains("api_key_required")
+        });
+        assert!(gap, "{:#?}", flow.diagnostics);
+        // A decorator that checks no access leaves the explicit marker alone.
+        assert_eq!(endpoint(&flow, "GET", "/po/"), AccessState::Open);
+    }
+
+    #[test]
+    fn w1_wrapper_around_drf_view_applies() {
+        let flow = extract(w1().path());
+        assert_eq!(endpoint(&flow, "GET", "/pub/"), AccessState::Open);
+        let wrapped = endpoint(&flow, "GET", "/wrapped/");
+        assert_eq!(wrapped, AccessState::Protected(Condition::Authenticated));
+    }
+
+    #[test]
+    fn w1_django_mixin_outside_drf_applies() {
+        let flow = extract(w1().path());
+        let mixed = endpoint(&flow, "GET", "/mixed/");
+        assert_eq!(mixed, AccessState::Protected(Condition::Authenticated));
+    }
+
+    #[test]
+    fn w1_get_permissions_beats_action_permission_classes() {
+        let flow = extract(w1().path());
+        let unknown = AccessState::Protected(Condition::Unknown("VS.get_permissions".into()));
+        assert_eq!(endpoint(&flow, "GET", "/vs/:pk/ping/"), unknown);
     }
 }
