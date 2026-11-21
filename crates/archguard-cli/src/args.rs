@@ -62,6 +62,8 @@ pub(crate) enum Format {
     Graphml,
     Gexf,
     Table,
+    /// Only for `ui-flow matrix`.
+    Csv,
     /// Markdown PR comment against `review --base`.
     PrComment,
     /// CycloneDX 1.6 JSON, only for `sbom`.
@@ -407,6 +409,51 @@ pub(crate) enum Command {
         #[arg(long)]
         fail_on_found: bool,
     },
+    /// UI screens, navigations and permissions against backend endpoints (ADR 0021).
+    ///
+    /// A backend in another repository joins with `[views] backends =
+    /// ["../server"]` in archguard.toml (paths relative to the project root;
+    /// only its endpoints are taken, with the access rules of its own
+    /// archguard.toml, else this project's).
+    #[command(args_conflicts_with_subcommands = true)]
+    UiFlow {
+        #[command(subcommand)]
+        action: Option<crate::ui_flow_run_cmd::UiFlowAction>,
+        #[arg(value_name = "PFAD")]
+        path: Option<PathBuf>,
+        /// Simulate a signed-in user with this role (repeatable).
+        #[arg(long, value_name = "ROLE", conflicts_with = "anonymous")]
+        role: Vec<String>,
+        /// Simulate a user who is not signed in.
+        #[arg(long)]
+        anonymous: bool,
+    },
+    /// Domain entities, state machines, use cases and events (ADR 0022).
+    #[command(group(clap::ArgGroup::new("chains").args(["chain", "state"]).multiple(true)))]
+    Domain {
+        #[arg(value_name = "PFAD")]
+        path: Option<PathBuf>,
+        /// Limit the output to this entity (id or name).
+        #[arg(long, value_name = "NAME")]
+        entity: Option<String>,
+        /// Show the chain endpoint → use case → transitions → events → handlers.
+        #[arg(long)]
+        chain: bool,
+        /// With --entity: the endpoints, screens and message handlers that can cause this state.
+        #[arg(long, value_name = "STATE", requires = "entity")]
+        state: Option<String>,
+        /// With --chain or --state: whether a signed-in user with this role can run each chain (repeatable).
+        #[arg(
+            long,
+            value_name = "ROLE",
+            conflicts_with = "anonymous",
+            requires = "chains"
+        )]
+        role: Vec<String>,
+        /// With --chain or --state: whether a user who is not signed in can run each chain.
+        #[arg(long, requires = "chains")]
+        anonymous: bool,
+    },
     /// Runtime profile from recorded OTLP traces in .archguard/runtime (ADR 0004).
     Runtime {
         #[arg(value_name = "PFAD")]
@@ -749,6 +796,7 @@ impl Command {
             | Command::Evaluate { path, .. }
             | Command::Services { path, .. }
             | Command::Runtime { path }
+            | Command::Domain { path, .. }
             | Command::Workspace { path, .. }
             | Command::Doc { path, .. }
             | Command::Graph { path, .. }
@@ -770,6 +818,9 @@ impl Command {
                 // `query` only opens the database file — no project root.
                 DbAction::Query { .. } => None,
             },
+            Command::UiFlow { path, action, .. } => action
+                .as_ref()
+                .map_or(path.as_deref(), |action| action.path()),
             Command::Mcp { .. } => None,
             // `diagram building-blocks`: one argument that is no folder is the id.
             Command::Diagram { path, id, .. } => {
@@ -824,12 +875,21 @@ pub(crate) fn format_label(format: Format) -> &'static str {
         Format::Dot => "dot",
         Format::Graphml => "graphml",
         Format::Gexf => "gexf",
+        other => format_label_documents(other),
+    }
+}
+
+/// The remaining labels, split off to keep each `match` small.
+fn format_label_documents(format: Format) -> &'static str {
+    match format {
         Format::Table => "table",
+        Format::Csv => "csv",
         Format::PrComment => "pr-comment",
         Format::Cyclonedx => "cyclonedx",
         Format::Structurizr => "structurizr",
         Format::Asciidoc => "asciidoc",
         Format::Docx => "docx",
         Format::Markdown => "markdown",
+        _ => unreachable!("labelled by format_label"),
     }
 }

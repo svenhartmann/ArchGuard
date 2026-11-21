@@ -125,6 +125,8 @@ Martin A/I zones need abstractness from compiler evidence (Java, C#) or Rust dec
 | Inspect cycles | `archguard cycles . --format json` |
 | Inspect compiler evidence | `archguard calls . --format json` |
 | Inspect service connections | `archguard services . --format json` |
+| Inspect UI screens, navigations and permissions ([ADR 0021](docs/adr/0021-ui-flow-and-permission-simulator.md)); simulate a role | `archguard ui-flow .` or `archguard ui-flow . --role Admin` |
+| Inspect entities, state machines, use cases, domain events, rules, validations and integration events ([ADR 0022](docs/adr/0022-domain-view.md)) | `archguard domain . [--entity Order] [--chain \| --state Paid] [--role Admin \| --anonymous]` |
 | Inspect API contracts (imported OpenAPI, GraphQL from the sources) | `archguard contracts . --format json` |
 | Inspect recorded runtime (requests, DB calls per request, slow and repeated queries, profiler samples per request; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
 | Generate or update arc42 evidence blocks | `archguard doc . --arc42` |
@@ -197,6 +199,66 @@ Scenario · handle · api (static) [runtime-scenario-python-api-http-py-module-h
 ```
 
 `archguard doc --arc42 --format json [--chapter N]` prints the arc42 document as data and writes nothing: where the text lives (`target`: file or folder, exists), each chapter with number, title, the file that holds it (`null`: only generated) and its Markdown as the desktop reads it, and the catalogue as above, each diagram with `shown`, `chosen` (listed in `[arc42] shown_diagrams`), `in_text`, elements and relations. The MCP tool `architecture_document` returns the same catalogue with `template=arc42, format=catalogue`.
+
+### UI flow and domain view
+
+`archguard ui-flow .` lists the screens of each frontend application (route, name, access condition, file:line), the frontend/backend mismatch findings and the gaps the extractors could not resolve (the first 10; `-v` shows all). `--role ROLE` (repeatable) or `--anonymous` simulates that user: each screen is marked reached surely or possibly from the application's start screens (routed `/`, or marked by the extractor: the first Shell page in MAUI, `StartupUri` or the window created at startup in WPF, WinUI and Avalonia), or says why not: denied (with the access it needs), no known path (with the number of links in the app the rules could not resolve) or no start screen, and each backend endpoint is allowed, denied or unknown. `archguard domain . [--entity NAME]` prints entities with their relations, each state machine as a transition table (the guard is the condition under which the step is allowed; a throw or return guard appears as `!(source condition)`), use cases and domain events (raised by → handled by), the rules entity methods enforce (method · condition under which it throws → message · exception · file:line, e.g. `RemoveStock · AvailableStock == 0 → Empty stock, product item {Name} is sold out`), validations (FluentValidation `RuleFor` chains, Bean Validation annotations per property) and integration events (published by `Class.method [service]` → handled by `Handler [service]`); `--entity` limits the output to one entity. Classes without a DDD marker in a folder named `…Domain`, `Model`, `Models` or `Entities` count as entities when they have a field and are no DTO, request, response, command, query, view model, event or exception. `--chain` prints for each backend endpoint and each message handler (`IIntegrationEventHandler<T>`, MassTransit `IConsumer<T>`, NServiceBus `IHandleMessages<T>`, `@KafkaListener`, `@RabbitListener`, `@JmsListener`, `@StreamListener`) the chain to the domain: the screen action that calls it, its handler and the request types it sends (`mediator.Send`, Axon `commandGateway.send`, a called `*UseCase` field), the use cases handling them, their state transitions, events and event handlers, e.g. `POST /api/orders → CreateOrderCommandHandler`, `Order: any → Submitted`, `→ OrderStartedDomainEvent → …Handler`. A chain continues across services: an integration event its handler, use cases or event handlers publish leads into each message handler of that event (`⇒ OrderStatusChangedToPaidIntegrationEvent published by …Handler.Handle [Ordering.API] → …IntegrationEventHandler [Catalog.API]`), at most 3 hops and never through a handler twice. `--entity Order --state Paid` answers the reverse question: which endpoints, screens and message handlers can cause that state, e.g. `message OrderPaymentSucceededIntegrationEvent → SetPaidOrderStatusCommandHandler`. With `--role ROLE` or `--anonymous` each chain also gets a right: allowed, denied or unknown with the reasons (endpoint access, screen reach; an undeclared endpoint is unknown), or not a user path for a message handler. Jobs are no chain starts. Both take `--format json` and exit 0. Static analysis only: see [ADR 0021](docs/adr/0021-ui-flow-and-permission-simulator.md) and [ADR 0022](docs/adr/0022-domain-view.md) for what is recognized.
+
+`archguard ui-flow roles .` lists the roles, permissions and policies the code defines, each with kind, file:line and source: role constant classes (`Roles`, `AuthoritiesConstants`), permission id classes (`Permissions`, `PermissionIds`), constants and enum members named in `RequireRole`, `[Authorize(Roles = …)]`, `hasAuthority`/`hasRole` or `@PreAuthorize`, Identity seeding (`new IdentityRole(…)`), Spring `RoleHierarchyImpl.fromHierarchy("ROLE_ADMIN > ROLE_USER")` (ADMIN includes USER), TypeScript `Authority`/`Role`/`Permission` enums whose members the frontend uses, and ASP.NET `AddPolicy` with what each policy needs in words ("signed in and role Administrator"); what is not readable is a note. The simulation applies them: a role implies the roles it includes and the permission ids it covers (`squidex.apps.{app}.*` covers `squidex.apps.{app}.contents.read`), and a policy defined in code resolves to what it requires. `--role ROLE_ADMIN` reads `ADMIN` when only that is defined; an undefined role gets a warning. The import file may carry `roles` and `policies` too.
+
+`archguard ui-flow open SCREEN . [--param id=4711] [--print]` prints the local URL of a screen (id, name or route; several matches are listed and exit 2) and opens it with `open`/`xdg-open`/`start`. `archguard ui-flow replay SCREEN . [--role ROLE | --anonymous] [--out FILE] [--run]` writes a Playwright test that signs in as the role's test user, opens the start screen and follows the shortest resolved click path, waiting after each click for the next screen's URL; a step without a known trigger navigates directly and is marked `// no trigger read: direct navigation` (weaker evidence). The script goes to the system temp directory unless `--out` names a file. Only `--run` executes it (`npx playwright test`, needs `@playwright/test` resolvable from the script's folder) and prints each step; a failed step is the finding "view and application disagree at step n". The settings live in the configuration; a literal `password` is a configuration error:
+
+```toml
+[views.run.WebApp]                      # application name from the flow
+base_url = "https://localhost:7298"
+login_path = "/user/login"              # optional; shows or redirects to the sign-in form
+[views.run.WebApp.users.Admin]          # test user per role
+login = "admin@example.org"
+password_env = "ARCHGUARD_PW_ADMIN"     # or password_keychain = "archguard-webapp-admin" (macOS)
+```
+
+Project-specific guards and access attributes get their meaning from `[views.access]`, by name; a name not listed stays a custom condition (frontend guards) or is not read (backend attributes), never guessed. `ui-flow`, `domain` and the MCP tools use the configuration `--config` names, else the project's own:
+
+```toml
+[views.access]
+mustBeAuthenticatedGuard = "authenticated"          # open, authenticated, never, role:<name>, policy:<name>
+hasRole = "role:$arg"                               # the literal arguments at the use site, any of them
+ApiPermission = "policy:$arg|authenticated"         # `|…`: the meaning at a use site without arguments
+ApiPermissionOrAnonymous = "policy:$arg|open"
+```
+
+A fallback (`|…`) follows only `role:$arg` or `policy:$arg` and is itself no `$arg` form; anything else is a configuration error. Without a fallback, a `$arg` guard or attribute without arguments is unknown.
+
+A frontend whose backend lives in another repository joins it with `[views] backends` (opt-in; without it nothing outside the project is read):
+
+```toml
+[views]
+backends = ["../bitwarden-server"]   # relative to the project root, or absolute
+```
+
+For each listed directory all extractors run and only its endpoints (with their access) join the actions of this project; application and file carry the configured path as prefix (`../bitwarden-server/Api`), so equally named applications do not collide. The backend's own `[views.access]` comes from its own `archguard.toml` when it has one, else from this project's. A path that is no directory or yields no endpoint, and every gap of the backend, is a diagnostic; the flow is then not complete. The backend must not be the project itself. Foreign endpoints belong to this project's flow, so they can make `endpoint_access_declared` of `archguard check` fail. Ids, notes and baselines contain the configured string: relative paths stay portable between machines, absolute ones are machine-specific. The MCP server reads a backend only inside its server root (any other path, and any path through a symlink, is a diagnostic and not read); the CLI reads what the configuration says.
+
+Conventions keep both views complete when an agent writes the code and `archguard check` runs after each of its steps. They are opt-in; without `[views]` nothing is checked:
+
+```toml
+[views]
+conventions = [
+  "navigation_literal",            # every navigation target is a literal route or route constant
+  "endpoint_access_declared",      # every endpoint declares [Authorize]/[AllowAnonymous] or @PreAuthorize/@PermitAll
+  "http_url_literal",              # every HTTP call of a screen has a literal URL
+  "frontend_backend_agree",        # no shown_but_refused / hidden_but_unprotected mismatch
+  "state_changes_in_entity",       # C#: `x.Field = Enum.Value` on a state field only inside its entity, always a literal
+  "events_through_raise_function", # C#: a `*DomainEvent`/`INotification` type is created only for AddDomainEvent(…)
+  "navigation_resolves",           # a literal navigation target matches a screen route of its application
+  "endpoint_called",               # an endpoint is called by some frontend action (only when screens/actions exist)
+]
+```
+
+Each break is one `convention` error finding (check fails with exit 1; text, JSON and SARIF with rule id `archguard/convention/<rule>`) with file:line and a fix hint, e.g. ``[views] navigation_literal: Navigation target `returnUrl` is not a literal, so the UI flow cannot follow it. Fix: write the target as a literal route or a route constant.`` The id `view-<rule>:<file>:<subject>` does not contain the line, so it stays the same when code above moves. An unknown name in the list is a configuration error.
+
+To switch conventions on in an existing project without fixing everything first, `archguard baseline write` records the current convention ids in the baseline file (`conventions`, next to the cycle hashes). `archguard check --baseline` then fails only on findings not in it and does not list the accepted ones; a baselined id that no longer occurs is shown as an info note "remove it from the baseline" and does not fail. An unreadable view import is never recorded. Baseline files without `conventions` still read.
+
+Notes for the coding agent, recorded in the desktop's Screens view or with `archguard review-decision record --finding <id> --decision fix|accept-risk|defer --note "…"`, show in `check` while conventions are on. A finding with a note gets the line `note (fix|intentional|later, by <author>): <text>` in text output, `note {decision, text, author, ts}` and `accepted_by_note` in JSON and in the MCP `check` tool, and `properties.note` in SARIF. An intentional note (accept-risk) accepts the finding like a baseline entry: it stays in the output marked `accepted: intentional note`, does not fail `check`, and is a SARIF result with `suppressions: [{kind: "external", justification: <note>}]`; an `expires_on` in the past ends that. Notes on gaps no convention reports (`view-gap:<file>:<message>`) are listed under "Noted gaps" (`noted_gaps` in JSON, MCP and the SARIF run properties).
 
 ### Compare findings with an expert assessment
 

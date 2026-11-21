@@ -588,3 +588,9 @@ msgstr "Der Graph-Tab zählt seine Kennzahlen auf den angezeigten Modulen: den n
 
 msgid "Class metrics of the Quality tab's heatmap. Missing compiler evidence leaves a value unknown (—), never 0."
 msgstr "Klassenmetriken der Heatmap im Qualitäts-Tab. Fehlende Compiler-Belege lassen einen Wert unbekannt (—), nie 0."
+
+msgid "UI screens, navigations and permissions against backend endpoints."
+msgstr "UI-Screens, Navigationen und Berechtigungen gegen Backend-Endpunkte."
+
+msgid "Domain entities, state machines, use cases and events."
+msgstr "Domänen-Entitäten, Zustandsautomaten, Use Cases und Events."

@@ -1,0 +1,308 @@
+msgid "Aggregate {{name}}"
+msgstr "Aggregat {{name}}"
+
+msgid "Not part of an aggregate"
+msgstr "Zu keinem Aggregat gehörig"
+
+msgid "aggregate root"
+msgstr "Aggregatwurzel"
+
+msgid "entity"
+msgstr "Entität"
+
+msgid "value object"
+msgstr "Wertobjekt"
+
+msgid "kind not declared"
+msgstr "Art nicht deklariert"
+
+msgid "state machine"
+msgstr "Zustandsautomat"
+
+msgid "any state"
+msgstr "beliebiger Zustand"
+
+msgid "from → to"
+msgstr "von → nach"
+
+msgid "method"
+msgstr "Methode"
+
+msgid "allowed when"
+msgstr "erlaubt, wenn"
+
+msgid "events"
+msgstr "Ereignisse"
+
+msgid "file"
+msgstr "Datei"
+
+msgid "Fields"
+msgstr "Felder"
+
+msgid "No fields read."
+msgstr "Keine Felder gelesen."
+
+msgid "Reading the domain model …"
+msgstr "Domänenmodell wird gelesen …"
+
+msgid "Some elements could not be read by the rules; the model is not complete."
+msgstr "Einige Elemente konnten nach den Regeln nicht gelesen werden; das Modell ist unvollständig."
+
+msgid "No entities found."
+msgstr "Keine Entitäten gefunden."
+
+msgid "Entities come from ORM mappings, aggregate markers and the import file .archguard/domain-model.json."
+msgstr "Entitäten stammen aus ORM-Zuordnungen, Aggregatmarkierungen und der Importdatei .archguard/domain-model.json."
+
+msgid "Domain"
+msgstr "Domäne"
+
+msgid "{0} entity"
+msgid_plural "{0} entities"
+msgstr[0] "{0} Entität"
+msgstr[1] "{0} Entitäten"
+
+msgid "{0} state machine"
+msgid_plural "{0} state machines"
+msgstr[0] "{0} Zustandsautomat"
+msgstr[1] "{0} Zustandsautomaten"
+
+msgid "{0} event"
+msgid_plural "{0} events"
+msgstr[0] "{0} Ereignis"
+msgstr[1] "{0} Ereignisse"
+
+msgid "every screen of {{name}}"
+msgstr "jeder Bildschirm von {{name}}"
+
+msgid "Screen action"
+msgstr "Bildschirmaktion"
+
+msgid "Endpoint"
+msgstr "Endpunkt"
+
+msgid "Message handler"
+msgstr "Nachrichten-Handler"
+
+msgid "not a user path"
+msgstr "kein Benutzerweg"
+
+msgid "Use case"
+msgstr "Anwendungsfall"
+
+msgid "Transition"
+msgstr "Übergang"
+
+msgid "Event"
+msgstr "Ereignis"
+
+msgid "Select a state in the diagram or a row of the table."
+msgstr "Einen Zustand im Diagramm oder eine Zeile der Tabelle wählen."
+
+msgid "Use cases"
+msgstr "Anwendungsfälle"
+
+msgid "Integration events"
+msgstr "Integrationsereignisse"
+
+msgid "Domain events"
+msgstr "Domänenereignisse"
+
+msgid "Publishes"
+msgstr "Veröffentlicht"
+
+msgid "integration event"
+msgstr "Integrationsereignis"
+
+msgid "domain event"
+msgstr "Domänenereignis"
+
+msgid "has one"
+msgstr "hat ein"
+
+msgid "has many"
+msgstr "hat viele"
+
+msgid "references"
+msgstr "verweist auf"
+
+msgid "publishes"
+msgstr "veröffentlicht"
+
+msgid "handles"
+msgstr "verarbeitet"
+
+msgid "raises"
+msgstr "löst aus"
+
+msgid "{{count}} service"
+msgstr "{{count}} Dienst"
+
+msgid "{{count}} services"
+msgstr "{{count}} Dienste"
+
+msgid "{{count}} handler"
+msgstr "{{count}} Handler"
+
+msgid "{{count}} handlers"
+msgstr "{{count}} Handler"
+
+msgid "{{name}} (constructor)"
+msgstr "{{name}} (Konstruktor)"
+
+msgid "throws when {{condition}}"
+msgstr "wirft, wenn {{condition}}"
+
+msgid "throws"
+msgstr "wirft"
+
+msgid "raised by {{method}} · handled by {{handlers}}"
+msgstr "ausgelöst von {{method}} · verarbeitet von {{handlers}}"
+
+msgid "integration event · handled in {{services}}"
+msgstr "Integrationsereignis · verarbeitet in {{services}}"
+
+msgid "handles · sends {{what}}"
+msgstr "verarbeitet · sendet {{what}}"
+
+msgid "handles · publishes {{what}}"
+msgstr "verarbeitet · veröffentlicht {{what}}"
+
+msgid "service not read"
+msgstr "Dienst nicht gelesen"
+
+msgid "{{what}} · {{lanes}}"
+msgstr "{{what}} · {{lanes}}"
+
+msgid "handles {{request}}"
+msgstr "verarbeitet {{request}}"
+
+msgid "calls {{method}}"
+msgstr "ruft {{method}} auf"
+
+msgid "not a user path: a message starts it inside the system"
+msgstr "kein Benutzerpfad: eine Nachricht startet sie im System"
+
+msgid "Close (Esc)"
+msgstr "Schließen (Esc)"
+
+msgid "Fields ({})"
+msgstr "Felder ({})"
+
+msgid "No relations to other entities."
+msgstr "Keine Beziehungen zu anderen Entitäten."
+
+msgid "Rules ({})"
+msgstr "Regeln ({})"
+
+msgid "No rule found: no method of this entity throws a domain exception."
+msgstr "Keine Regel gefunden: keine Methode dieser Entität wirft eine Domänenausnahme."
+
+msgid "Each rule: the method, the condition under which it throws, the message. Source text, never evaluated."
+msgstr "Jede Regel: die Methode, die Bedingung, unter der sie wirft, die Meldung. Quelltext, nie ausgewertet."
+
+msgid "States"
+msgstr "Zustände"
+
+msgid "Click a state to see who can cause it. Transitions are numbered as the rows below; guards are source text, never evaluated."
+msgstr "Einen Zustand anklicken, um zu sehen, wer ihn auslösen kann. Übergänge sind wie die Zeilen unten nummeriert; Bedingungen sind Quelltext, nie ausgewertet."
+
+msgid "Who can cause a state"
+msgstr "Wer einen Zustand auslösen kann"
+
+msgid "Who can cause {}"
+msgstr "Wer {} auslösen kann"
+
+msgid "Each chain: start → use case → transition → events, with the service of each step; a chain continued through an integration event follows indented. The first line says what it means for the simulated user."
+msgstr "Jede Kette: Start → Anwendungsfall → Übergang → Ereignisse, mit dem Dienst jedes Schritts; eine über ein Integrationsereignis fortgesetzte Kette folgt eingerückt. Die erste Zeile sagt, was sie für den simulierten Benutzer bedeutet."
+
+msgid "No chain leads into this state."
+msgstr "Keine Kette führt in diesen Zustand."
+
+msgid "Every chain that changes this entity ({})"
+msgstr "Jede Kette, die diese Entität ändert ({})"
+
+msgid "Who reacts"
+msgstr "Wer reagiert"
+
+msgid "This entity raises no domain event."
+msgstr "Diese Entität löst kein Domänenereignis aus."
+
+msgid "Validations ({})"
+msgstr "Validierungen ({})"
+
+msgid "No validator of a request that reaches this entity."
+msgstr "Kein Validator einer Anfrage, die diese Entität erreicht."
+
+msgid "Checked on the request before the use case runs (FluentValidation, Bean Validation)."
+msgstr "Auf der Anfrage geprüft, bevor der Anwendungsfall läuft (FluentValidation, Bean Validation)."
+
+msgid "published by → event → handled by; one lane per service, an arrow leaving its lane crosses a service boundary."
+msgstr "veröffentlicht von → Ereignis → verarbeitet von; eine Bahn je Dienst, ein Pfeil, der seine Bahn verlässt, überquert eine Dienstgrenze."
+
+msgid "use case"
+msgstr "Anwendungsfall"
+
+msgid "What it does"
+msgstr "Was er tut"
+
+msgid "No request and no entity method read."
+msgstr "Keine Anfrage und keine Entitätsmethode gelesen."
+
+msgid "Read from source files by fixed rules, not observed at run time."
+msgstr "Nach festen Regeln aus Quelldateien gelesen, nicht zur Laufzeit beobachtet."
+
+msgid "Details: legend"
+msgstr "Details: Legende"
+
+msgid "has a state machine"
+msgstr "hat einen Zustandsautomaten"
+
+msgid "“3 rules”: methods that throw a domain exception"
+msgstr "„3 Regeln“: Methoden, die eine Domänenausnahme werfen"
+
+msgid "noted for the coding agent"
+msgstr "für den Coding-Agenten notiert"
+
+msgid "Services are the folders of the nearest project file (.csproj, pom.xml, build.gradle)."
+msgstr "Dienste sind die Ordner der nächsten Projektdatei (.csproj, pom.xml, build.gradle)."
+
+msgid "Whole model"
+msgstr "Ganzes Modell"
+
+msgid "The selected entity, event or use case"
+msgstr "Die gewählte Entität, das Ereignis oder der Anwendungsfall"
+
+msgid "Every entity by aggregate with its relations"
+msgstr "Jede Entität nach Aggregat mit ihren Beziehungen"
+
+msgid "Click an entity to focus it."
+msgstr "Eine Entität anklicken, um sie in den Fokus zu nehmen."
+
+msgid "Pick an entity, event or use case in the tree."
+msgstr "Im Baum eine Entität, ein Ereignis oder einen Anwendungsfall wählen."
+
+msgid "{0} rule"
+msgid_plural "{0} rules"
+msgstr[0] "{0} Regel"
+msgstr[1] "{0} Regeln"
+
+msgid "{0} validation"
+msgid_plural "{0} validations"
+msgstr[0] "{0} Validierung"
+msgstr[1] "{0} Validierungen"
+
+msgid "(root)"
+msgstr "(Wurzel)"
+
+msgctxt "Domain"
+msgid "Service"
+msgstr "Dienst"
+
+msgctxt "Domain"
+msgid "Relations"
+msgstr "Beziehungen"
+
+msgid "Hubs"
+msgstr "Knotenpunkte"

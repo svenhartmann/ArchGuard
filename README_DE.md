@@ -125,6 +125,8 @@ Martins A/I-Zonen brauchen Abstraktheit aus Compilerbelegen (Java, C#) oder Rust
 | Zyklen untersuchen | `archguard cycles . --format json` |
 | Compilerbelege untersuchen | `archguard calls . --format json` |
 | Dienstverbindungen untersuchen | `archguard services . --format json` |
+| UI-Screens, Navigationen und Berechtigungen untersuchen ([ADR 0021](docs/adr/0021-ui-flow-and-permission-simulator.md)); eine Rolle simulieren | `archguard ui-flow .` oder `archguard ui-flow . --role Admin` |
+| Entitäten, Zustandsautomaten, Use Cases und Domain-Events untersuchen ([ADR 0022](docs/adr/0022-domain-view.md)) | `archguard domain . [--entity Order] [--chain \| --state Paid] [--role Admin \| --anonymous]` |
 | API-Verträge untersuchen (importiertes OpenAPI, GraphQL aus den Quellen) | `archguard contracts . --format json` |
 | Aufgezeichnete Laufzeit untersuchen (Requests, DB-Calls pro Request, langsame und wiederholte Queries, Profiler-Samples pro Request; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
 | arc42-Belegblöcke erzeugen oder aktualisieren | `archguard doc . --arc42` |
@@ -197,6 +199,52 @@ Scenario · handle · api (static) [runtime-scenario-python-api-http-py-module-h
 ```
 
 `archguard doc --arc42 --format json [--chapter N]` gibt das arc42-Dokument als Daten aus und schreibt nichts: wo der Text liegt (`target`: Datei oder Ordner, vorhanden), jedes Kapitel mit Nummer, Titel, der Datei, die es enthält (`null`: nur erzeugt), und seinem Markdown, wie die Desktop-App es liest, und den Katalog wie oben, jedes Diagramm mit `shown`, `chosen` (in `[arc42] shown_diagrams` genannt), `in_text`, Elementen und Beziehungen. Das MCP-Werkzeug `architecture_document` liefert denselben Katalog mit `template=arc42, format=catalogue`.
+
+### UI-Fluss und Domänensicht
+
+`archguard ui-flow .` listet die Screens jeder Frontend-Anwendung (Route, Name, Zugriffsbedingung, Datei:Zeile), die Befunde zu Abweichungen zwischen Frontend und Backend und die Lücken, die die Extraktoren nicht auflösen konnten (die ersten 10; `-v` zeigt alle). `--role ROLLE` (wiederholbar) oder `--anonymous` simuliert diesen Nutzer: Jeder Screen wird von den Start-Screens seiner Anwendung aus (Route `/` oder vom Extraktor markiert: die erste Shell-Seite in MAUI, `StartupUri` oder das beim Start erzeugte Fenster in WPF, WinUI und Avalonia) als sicher oder möglicherweise erreicht markiert oder nennt den Grund, warum nicht: verweigert (mit der nötigen Berechtigung), kein bekannter Pfad (mit der Zahl der Links der Anwendung, die die Regeln nicht auflösen konnten) oder kein Start-Screen, jeder Backend-Endpunkt als erlaubt, verweigert oder unbekannt. `archguard domain . [--entity NAME]` zeigt Entitäten mit ihren Beziehungen, jeden Zustandsautomaten als Übergangstabelle (der Guard ist die Bedingung, unter der der Schritt erlaubt ist; ein Guard mit throw oder return erscheint als `!(Quellbedingung)`), Use Cases und Domain-Events (ausgelöst von → behandelt von); `--entity` beschränkt die Ausgabe auf eine Entität. `--chain` zeigt für jeden Backend-Endpunkt und jeden Message-Handler (`IIntegrationEventHandler<T>`, MassTransit `IConsumer<T>`, NServiceBus `IHandleMessages<T>`, `@KafkaListener`, `@RabbitListener`, `@JmsListener`, `@StreamListener`) die Kette in die Domäne: die Screen-Aktion, die ihn aufruft, seinen Handler und die Request-Typen, die er sendet (`mediator.Send`, Axon `commandGateway.send`, ein aufgerufenes `*UseCase`-Feld), die Use Cases, die sie behandeln, deren Zustandsübergänge, Events und Event-Handler, z. B. `POST /api/orders → CreateOrderCommandHandler`, `Order: any → Submitted`, `→ OrderStartedDomainEvent → …Handler`. `--entity Order --state Paid` beantwortet die Gegenfrage: Welche Endpunkte, Screens und Message-Handler können diesen Zustand auslösen, z. B. `message OrderPaymentSucceededIntegrationEvent → SetPaidOrderStatusCommandHandler`. Mit `--role ROLLE` oder `--anonymous` bekommt jede Kette ein Recht: erlaubt, verweigert oder unbekannt mit den Gründen (Endpunkt-Zugriff, Erreichbarkeit des Screens; ein Endpunkt ohne Deklaration ist unbekannt), oder kein Nutzerpfad bei einem Message-Handler. Jobs sind keine Kettenstarts. Beide kennen `--format json` und enden mit Exit-Code 0. Nur statische Analyse: Was erkannt wird, steht in [ADR 0021](docs/adr/0021-ui-flow-and-permission-simulator.md) und [ADR 0022](docs/adr/0022-domain-view.md).
+
+`archguard ui-flow open SCREEN . [--param id=4711] [--print]` gibt die lokale URL eines Screens aus (Id, Name oder Route; mehrere Treffer werden aufgelistet, Exit-Code 2) und öffnet sie mit `open`/`xdg-open`/`start`. `archguard ui-flow replay SCREEN . [--role ROLLE | --anonymous] [--out DATEI] [--run]` schreibt einen Playwright-Test, der sich als Testnutzer der Rolle anmeldet, den Start-Screen öffnet und dem kürzesten aufgelösten Klickpfad folgt; nach jedem Klick wartet er auf die URL des nächsten Screens. Ein Schritt ohne bekannten Auslöser navigiert direkt und ist mit `// no trigger read: direct navigation` markiert (schwächerer Beleg). Das Skript landet im temporären Verzeichnis des Systems, außer `--out` nennt eine Datei. Nur `--run` führt es aus (`npx playwright test`, `@playwright/test` muss vom Ordner des Skripts aus auflösbar sein) und gibt jeden Schritt aus; ein fehlgeschlagener Schritt ist der Befund „view and application disagree at step n“. Die Einstellungen stehen in der Konfiguration; ein wörtliches `password` ist ein Konfigurationsfehler:
+
+```toml
+[views.run.WebApp]                      # Anwendungsname aus dem Flow
+base_url = "https://localhost:7298"
+login_path = "/user/login"              # optional; zeigt das Anmeldeformular oder leitet dorthin
+[views.run.WebApp.users.Admin]          # Testnutzer je Rolle
+login = "admin@example.org"
+password_env = "ARCHGUARD_PW_ADMIN"     # oder password_keychain = "archguard-webapp-admin" (macOS)
+```
+
+Liegt das Backend eines Frontends in einem anderen Repository, bindet `[views] backends` es ein (optional; ohne die Angabe wird nichts außerhalb des Projekts gelesen):
+
+```toml
+[views]
+backends = ["../bitwarden-server"]   # relativ zum Projektwurzelverzeichnis oder absolut
+```
+
+Für jedes genannte Verzeichnis laufen alle Extraktoren, und nur seine Endpunkte (mit Zugriff) werden mit den Aktionen dieses Projekts verbunden; Anwendung und Datei tragen den konfigurierten Pfad als Präfix (`../bitwarden-server/Api`), gleichnamige Anwendungen kollidieren also nicht. Das `[views.access]` des Backends stammt aus dessen eigener `archguard.toml`, falls vorhanden, sonst aus diesem Projekt. Ein Pfad, der kein Verzeichnis ist oder keinen Endpunkt liefert, und jede Lücke des Backends ist eine Diagnose; der Flow ist dann nicht vollständig. Das Backend darf nicht das Projekt selbst sein. Fremde Endpunkte gehören zum Flow dieses Projekts und können `endpoint_access_declared` von `archguard check` fehlschlagen lassen. Ids, Notizen und Baselines enthalten den konfigurierten Text: relative Pfade bleiben zwischen Rechnern übertragbar, absolute sind rechnerspezifisch. Der MCP-Server liest ein Backend nur innerhalb seines Server-Roots (jeder andere Pfad und jeder Pfad über einen Symlink ist eine Diagnose und wird nicht gelesen); die CLI liest, was die Konfiguration sagt.
+
+Konventionen halten beide Sichten vollständig, wenn ein Agent den Code schreibt und `archguard check` nach jedem seiner Schritte läuft. Sie sind optional; ohne `[views]` wird nichts geprüft:
+
+```toml
+[views]
+conventions = [
+  "navigation_literal",            # jedes Navigationsziel ist eine literale Route oder Routen-Konstante
+  "endpoint_access_declared",      # jeder Endpunkt deklariert [Authorize]/[AllowAnonymous] oder @PreAuthorize/@PermitAll
+  "http_url_literal",              # jeder HTTP-Aufruf eines Screens hat eine literale URL
+  "frontend_backend_agree",        # keine Abweichung shown_but_refused / hidden_but_unprotected
+  "state_changes_in_entity",       # C#: `x.Feld = Enum.Wert` auf ein Zustandsfeld nur in seiner Entität, immer literal
+  "events_through_raise_function", # C#: ein `*DomainEvent`/`INotification`-Typ entsteht nur für AddDomainEvent(…)
+  "navigation_resolves",           # ein literales Navigationsziel trifft eine Screen-Route seiner Anwendung
+  "endpoint_called",               # ein Endpunkt wird von einer Frontend-Aktion aufgerufen (nur wenn Screens/Aktionen existieren)
+]
+```
+
+Jeder Verstoß ist ein `convention`-Befund mit Schwere error (check endet mit Exit-Code 1; Text, JSON und SARIF mit Regel-Id `archguard/convention/<regel>`) mit Datei:Zeile und einem Hinweis zur Behebung, z. B. ``[views] navigation_literal: Navigation target `returnUrl` is not a literal, … Fix: write the target as a literal route or a route constant.`` Die Id `view-<regel>:<datei>:<gegenstand>` enthält keine Zeile und bleibt gleich, wenn sich Code darüber verschiebt. Ein unbekannter Name in der Liste ist ein Konfigurationsfehler.
+
+Um Konventionen in einem bestehenden Projekt einzuschalten, ohne zuerst alles zu beheben, schreibt `archguard baseline write` die aktuellen Konventions-Ids in die Baseline-Datei (`conventions`, neben den Zyklus-Hashes). `archguard check --baseline` schlägt dann nur bei Befunden fehl, die dort fehlen, und listet die akzeptierten nicht; eine Id aus der Baseline, die nicht mehr auftritt, erscheint als Info-Hinweis "remove it from the baseline" und lässt check nicht fehlschlagen. Ein nicht lesbarer Sicht-Import wird nie aufgenommen. Baseline-Dateien ohne `conventions` werden weiter gelesen.
+
+Notizen für den Coding-Agenten, erfasst in der Screens-Sicht der Desktop-App oder mit `archguard review-decision record --finding <id> --decision fix|accept-risk|defer --note "…"`, erscheinen in `check`, solange Konventionen eingeschaltet sind. Ein Befund mit Notiz bekommt in der Textausgabe die Zeile `note (fix|intentional|later, by <Autor>): <Text>`, in JSON und im MCP-Tool `check` `note {decision, text, author, ts}` und `accepted_by_note`, in SARIF `properties.note`. Eine Notiz "intentional" (accept-risk) akzeptiert den Befund wie ein Baseline-Eintrag: Er bleibt in der Ausgabe mit `accepted: intentional note`, lässt `check` nicht fehlschlagen und ist in SARIF ein Ergebnis mit `suppressions: [{kind: "external", justification: <Notiz>}]`; ein vergangenes `expires_on` beendet das. Notizen zu Lücken ohne Konvention (`view-gap:<Datei>:<Meldung>`) stehen unter "Noted gaps" (`noted_gaps` in JSON, MCP und den SARIF-Run-Properties).
 
 ### Befunde mit einer Expertenbewertung vergleichen
 

@@ -1,0 +1,164 @@
+// Parts shared by the Screens and Domain views (src/screens_ui.rs,
+// src/domain_ui.rs): text styles, a clickable link line, the panel
+// header, the summary bar with its "static evidence" note, the segmented
+// choice and the simulated-user control of both top bars.
+import { Theme } from "theme.slint";
+import { Icons, Button, TipArea } from "widgets.slint";
+import { ComboBox } from "combo.slint";
+
+export component Para inherits Text {
+    in property <bool> muted;
+    // Long identifiers wrap instead of widening a side panel.
+    min-width: 0;
+    in property <bool> mono;
+    color: muted ? Theme.muted : Theme.text;
+    font-size: Theme.font-small;
+    font-family: mono ? Theme.mono-family : "";
+    wrap: word-wrap;
+}
+
+export component Heading inherits Text {
+    color: Theme.text;
+    font-size: Theme.font-section;
+    font-weight: Theme.weight-strong;
+    wrap: word-wrap;
+}
+
+// A clickable line in the accent colour, e.g. a file:line or a list.
+export component LinkLine inherits Rectangle {
+    in property <string> text;
+    in property <bool> mono;
+    callback clicked();
+    height: label.preferred-height + 6px;
+    border-radius: 4px;
+    background: touch.has-hover ? Theme.panel-2 : transparent;
+    label := Text {
+        x: 2px;
+        width: parent.width - 4px;
+        text: root.text;
+        color: Theme.accent;
+        font-size: Theme.font-small;
+        font-family: root.mono ? Theme.mono-family : "";
+        wrap: word-wrap;
+        vertical-alignment: center;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// The summary line above a view, with the note that all of it is read
+// from code.
+export component SummaryBar inherits Rectangle {
+    in property <string> text;
+    in property <bool> complete: true;
+    in property <string> gaps-tip;
+    height: row.preferred-height;
+    row := HorizontalLayout {
+        padding-left: Theme.page-pad;
+        padding-right: Theme.page-pad;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 10px;
+        if !root.complete: Text {
+            text: @tr("Analysis incomplete");
+            color: Theme.warning;
+            font-size: Theme.font-small;
+            vertical-alignment: center;
+            TipArea { tip: root.gaps-tip; }
+        }
+        Text {
+            text: root.text;
+            color: Theme.text;
+            font-size: Theme.font-small;
+            overflow: elide;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            TipArea { tip: root.text; }
+        }
+        Text {
+            text: @tr("Static evidence from code");
+            color: Theme.muted;
+            font-size: Theme.font-small;
+            font-italic: true;
+            vertical-alignment: center;
+            TipArea { tip: @tr("Read from source files by fixed rules, not observed at run time. A screen marked reached can still fail on data the rules do not know."); }
+        }
+    }
+}
+
+// The title row of a details panel with its close button.
+export component PanelTitle inherits HorizontalLayout {
+    in property <string> text;
+    callback close();
+    spacing: 8px;
+    Heading { text: root.text; horizontal-stretch: 1; vertical-alignment: center; }
+    Button { icon: Icons.close; compact: true; tip: @tr("Close details"); clicked => { root.close(); } }
+}
+
+// A label above its value in a details panel.
+export component Fact inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> mono;
+    spacing: 1px;
+    Text { text: root.label; color: Theme.muted; font-size: Theme.font-caption; }
+    Para { text: root.value; mono: root.mono; }
+}
+
+// A segmented choice: one pressed button per option.
+export component Segments inherits HorizontalLayout {
+    in property <[string]> items;
+    in property <int> chosen;
+    in property <[string]> tips;
+    callback picked(int);
+    spacing: 0px;
+    for t[i] in items: Button {
+        text: t;
+        compact: true;
+        pressed-state: i == root.chosen;
+        tip: i < root.tips.length ? root.tips[i] : "";
+        clicked => { root.picked(i); }
+    }
+}
+
+// A muted label in a top bar.
+export component BarLabel inherits Text {
+    color: Theme.muted;
+    font-size: Theme.font-small;
+    vertical-alignment: center;
+}
+
+// "Simulate as": anonymous, signed in, or a role of `names` ("Role …"
+// first). `role`: 0 anonymous, 1 signed in, 2 + index into the roles; the
+// Screens and Domain views share it.
+export component RoleChoice inherits HorizontalLayout {
+    in property <int> role;
+    in property <[string]> names;
+    callback picked(int);
+    spacing: 10px;
+    // Keeps its size; the bar's spacer takes the rest.
+    horizontal-stretch: 0;
+    BarLabel { text: @tr("Simulate as"); }
+    Segments {
+        items: [@tr("Anonymous"), @tr("Signed in")];
+        chosen: root.role;
+        tips: [@tr("Not signed in"), @tr("Signed in without a role")];
+        picked(i) => { root.picked(i); }
+    }
+    if root.names.length > 1: Rectangle {
+        // A new model must not leave an old role shown.
+        property <int> role: root.role;
+        changed role => { box.current-index = root.role >= 2 ? root.role - 1 : 0; }
+        width: 240px;
+        height: box.min-height;
+        box := ComboBox {
+            model: root.names;
+            current-index: root.role >= 2 ? root.role - 1 : 0;
+            selected => {
+                if (self.current-index > 0) { root.picked(self.current-index + 1); }
+            }
+        }
+    }
+}

@@ -2,7 +2,8 @@
 use std::collections::BTreeMap;
 
 use archguard_engine::analysis::Baseline;
-use archguard_engine::core::{FindingKind, Report, Severity};
+use archguard_engine::core::{Finding, FindingKind, Report, Severity};
+use archguard_engine::{ViewNotes, accepted_by_baseline, accepted_by_note, note_value};
 use serde_json::{Value, json};
 
 use crate::output::to_pretty_json;
@@ -11,30 +12,33 @@ use crate::output::to_pretty_json;
 /// (T25 — deliberately hand-rolled, no third-party SARIF crate): one
 /// run, one driver rule per distinct [`FindingKind`], one result per
 /// finding. Findings name modules, not files, so members become
-/// `logicalLocations` rather than physical artifact locations. Cycles the
-/// `baseline` accepts are reported as `note`: they no longer fail the gate.
+/// `logicalLocations` rather than physical artifact locations. Findings the
+/// `baseline` or an intentional note accepts are reported as `note`: they
+/// no longer fail the gate. Notes go to the result's `properties`
+/// ([`annotate`]); notes on gaps without a finding to the run's.
 pub(crate) fn to_sarif(
     report: &Report,
     source_paths: &BTreeMap<String, String>,
     baseline: Option<&Baseline>,
+    notes: &ViewNotes,
 ) -> String {
-    let mut rule_ids: Vec<&'static str> = Vec::new();
+    let mut rule_ids: Vec<String> = Vec::new();
     let results: Vec<Value> = report
         .findings
         .iter()
         .map(|finding| {
-            let id = rule_id(finding.kind);
+            let id = rule_id(finding);
             if !rule_ids.contains(&id) {
-                rule_ids.push(id);
+                rule_ids.push(id.clone());
             }
             let mut locations:Vec<_>=finding.evidence.iter().filter_map(|reference|source_paths.get(&reference.file).map(|path|{
                 let uri:String=path.bytes().map(|byte|if byte.is_ascii_alphanumeric()||b"-._~/".contains(&byte){(byte as char).to_string()}else{format!("%{byte:02X}")}).collect();
                 json!({"physicalLocation":{"artifactLocation":{"uri":uri},"region":{"startLine":reference.line.max(1)}},"message":{"text":reference.raw}})
             })).collect();
             if locations.is_empty(){locations=finding.nodes.iter().map(|node|json!({"logicalLocations":[{"name":node,"kind":"module"}]})).collect();}
-            json!({
+            let mut result = json!({
                 "ruleId": id,
-                "level": if archguard_engine::accepted_by_baseline(baseline, finding) {
+                "level": if accepted_by_baseline(baseline, finding) || accepted_by_note(notes, finding) {
                     "note"
                 } else {
                     sarif_level(finding.severity)
@@ -48,7 +52,9 @@ pub(crate) fn to_sarif(
                     )),
                 },
                 "locations": locations,
-            })
+            });
+            annotate(&mut result, finding, notes);
+            result
         })
         .collect();
     let rules: Vec<Value> = rule_ids
@@ -61,7 +67,7 @@ pub(crate) fn to_sarif(
             })
         })
         .collect();
-    let doc = json!({
+    let mut doc = json!({
         "version": "2.1.0",
         "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
         "runs": [{
@@ -80,12 +86,30 @@ pub(crate) fn to_sarif(
             "results": results,
         }],
     });
+    let gaps = archguard_engine::noted_gaps_value(notes);
+    if gaps.as_array().is_some_and(|g| !g.is_empty()) {
+        doc["runs"][0]["properties"]["noted_gaps"] = gaps;
+    }
     to_pretty_json(&doc)
 }
 
-/// The SARIF rule id for a finding kind.
-fn rule_id(kind: FindingKind) -> &'static str {
-    match kind {
+/// The finding's note in `properties`; an intentional one that accepts the
+/// finding also suppresses the result (kind `external`, the note as
+/// justification), as a reviewer's decision outside the code.
+fn annotate(result: &mut Value, finding: &Finding, notes: &ViewNotes) {
+    let Some(d) = notes.get(&finding.id) else {
+        return;
+    };
+    result["properties"] = json!({ "note": note_value(d) });
+    if accepted_by_note(notes, finding) {
+        result["suppressions"] = json!([{ "kind": "external", "justification": d.note }]);
+    }
+}
+
+/// The SARIF rule id for a finding: one per kind, one per convention
+/// (`archguard/convention/<rule>` from the id `view-<rule>:…`).
+fn rule_id(finding: &Finding) -> String {
+    let id = match finding.kind {
         FindingKind::Cycle => "archguard/cycle",
         FindingKind::LayerViolation => "archguard/layer-violation",
         FindingKind::MetricThreshold => "archguard/metric-threshold",
@@ -95,7 +119,15 @@ fn rule_id(kind: FindingKind) -> &'static str {
         FindingKind::Orphan => "archguard/orphan",
         FindingKind::TargetArchitecture => "archguard/target-architecture",
         FindingKind::License => "archguard/license",
-    }
+        FindingKind::Convention => {
+            let rule = finding.id.strip_prefix("view-").unwrap_or(&finding.id);
+            return format!(
+                "archguard/convention/{}",
+                rule.split(':').next().unwrap_or(rule)
+            );
+        }
+    };
+    id.to_string()
 }
 
 /// Severity → SARIF result level.

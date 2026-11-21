@@ -1,0 +1,346 @@
+// The Domain tab's diagrams (layout: src/domain_ui/entities.rs and
+// src/domain_ui/states.rs): entities in aggregate bands, and the state
+// diagram of the selected entity.
+import { Theme } from "theme.slint";
+import { ZoomControls, TipArea } from "widgets.slint";
+
+// kind 0 aggregate root, 1 entity, 2 value object, 3 unknown.
+export struct DomCard {
+    title: string,
+    kind: int,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    entity: int,
+    selected: bool,
+    machine: bool,
+}
+
+export struct DomArrow {
+    path: string,
+    dashed: bool,
+    label: string,
+    lx: float,
+    ly: float,
+}
+
+export struct DomBand {
+    title: string,
+    y: float,
+    h: float,
+}
+
+// A module box of the overview, or a stub to a foreign module (`module`
+// indexes the model's modules).
+export struct DomBox {
+    title: string,
+    sub: string,
+    module: int,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+}
+
+// A hub badge: "Tenant <- 41" selecting entity `index`.
+export struct DomHubChip {
+    text: string,
+    index: int,
+}
+
+export struct DomState {
+    name: string,
+    initial: bool,
+    selected: bool,
+    // The "any state" source of transitions without a from-state.
+    any: bool,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+}
+
+export struct DomStateArrow {
+    path: string,
+    number: int,
+    lx: float,
+    ly: float,
+}
+
+export global DomainKinds {
+    public pure function label(k: int) -> string {
+        return k == 0 ? @tr("aggregate root") : k == 1 ? @tr("entity") : k == 2 ? @tr("value object") : @tr("kind not declared");
+    }
+}
+
+component EntityCard inherits Rectangle {
+    in property <DomCard> card;
+    in property <float> zoom;
+    callback clicked();
+    x: card.x * 1px * zoom;
+    y: card.y * 1px * zoom;
+    width: card.w * 1px * zoom;
+    height: card.h * 1px * zoom;
+    border-radius: (card.kind == 2 ? 14px : 6px) * zoom;
+    background: card.selected ? Theme.package-selected : t.has-hover ? Theme.panel-2 : Theme.panel;
+    border-width: card.selected ? 2px : card.kind == 0 ? 1.8px : 1px;
+    border-color: card.selected ? Theme.accent : card.kind == 0 ? Theme.package-border : Theme.border;
+    VerticalLayout {
+        padding-left: 10px * zoom;
+        padding-right: 10px * zoom;
+        alignment: center;
+        spacing: 1px;
+        Text {
+            text: card.title;
+            color: Theme.text;
+            font-size: max(7px, 13px * zoom);
+            font-weight: Theme.weight-strong;
+            overflow: elide;
+        }
+        Text {
+            text: DomainKinds.label(card.kind) + (card.machine ? " · " + @tr("state machine") : "");
+            color: Theme.muted;
+            font-size: max(6px, 10.5px * zoom);
+            overflow: elide;
+        }
+    }
+    t := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// A number or multiplicity on an arrow.
+component ArrowLabel inherits Rectangle {
+    in property <string> text;
+    in property <float> lx;
+    in property <float> ly;
+    in property <float> zoom: 1;
+    in property <bool> round;
+    property <length> size: max(9px, 11px * zoom);
+    width: max(self.height, label.preferred-width + 8px * zoom);
+    height: label.preferred-height + 2px;
+    x: lx * 1px * zoom - self.width / 2;
+    y: ly * 1px * zoom - self.height / 2;
+    border-radius: self.height / 2;
+    background: round ? Theme.accent : Theme.bg;
+    border-width: round ? 0 : 1px;
+    border-color: Theme.border;
+    label := Text {
+        text: root.text;
+        color: round ? Theme.accent-contrast : Theme.muted;
+        font-size: root.size;
+        font-weight: Theme.weight-strong;
+    }
+}
+
+export component EntityCanvas inherits Rectangle {
+    in property <[DomCard]> cards;
+    in property <[DomBox]> boxes;
+    in property <[DomHubChip]> hubs;
+    // The module shown; empty in the overview and the plain view.
+    in property <string> module;
+    callback open-module(int);
+    callback back();
+    in property <[DomArrow]> arrows;
+    in property <[DomBand]> bands;
+    in property <float> canvas-w;
+    in property <float> canvas-h;
+    in-out property <float> zoom: 1.0;
+    callback select(int);
+    property <length> head: (root.module != "" || root.hubs.length > 0) ? 34px : 0px;
+
+    HorizontalLayout {
+        y: 0;
+        height: root.head;
+        padding: 4px;
+        spacing: 8px;
+        alignment: start;
+        if root.module != "": Text {
+            text: "\u{2190} " + @tr("Overview") + " / " + root.module;
+            color: Theme.accent;
+            vertical-alignment: center;
+            TouchArea { mouse-cursor: pointer; clicked => { root.back(); } }
+        }
+        if root.hubs.length > 0: Text {
+            text: @tr("Hubs") + ":";
+            color: Theme.muted;
+            vertical-alignment: center;
+        }
+        for h in root.hubs: Rectangle {
+            width: chip.preferred-width + 16px;
+            border-radius: 10px;
+            background: Theme.panel;
+            border-width: 1px;
+            border-color: Theme.border;
+            chip := Text { text: h.text; color: Theme.text; font-size: Theme.font-small; vertical-alignment: center; }
+            TouchArea { mouse-cursor: pointer; clicked => { root.select(h.index); } }
+        }
+    }
+
+    flick := Flickable {
+        y: root.head;
+        height: parent.height - root.head;
+        content-width: max(self.width, root.canvas-w * root.zoom * 1px);
+        content-height: max(self.height, root.canvas-h * root.zoom * 1px);
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: root.canvas-w * root.zoom * 1px;
+            height: root.canvas-h * root.zoom * 1px;
+            for b in root.bands: Rectangle {
+                x: 8px * root.zoom;
+                y: b.y * 1px * root.zoom;
+                width: parent.width - 16px * root.zoom;
+                height: b.h * 1px * root.zoom;
+                border-radius: 10px * root.zoom;
+                background: Theme.panel.with-alpha(0.5);
+                border-width: 1px;
+                border-color: Theme.border;
+                Text {
+                    x: 12px * root.zoom;
+                    y: 7px * root.zoom;
+                    text: b.title;
+                    color: Theme.muted;
+                    font-size: max(7px, 12px * root.zoom);
+                    font-weight: Theme.weight-strong;
+                }
+            }
+            for a in root.arrows: Path {
+                x: 0;
+                y: 0;
+                width: root.canvas-w * root.zoom * 1px;
+                height: root.canvas-h * root.zoom * 1px;
+                viewbox-width: root.canvas-w;
+                viewbox-height: root.canvas-h;
+                commands: a.path;
+                fill: transparent;
+                stroke: a.dashed ? Theme.muted : Theme.edge;
+                stroke-width: 1.4px * root.zoom;
+            }
+            for b in root.boxes: Rectangle {
+                x: b.x * 1px * root.zoom;
+                y: b.y * 1px * root.zoom;
+                width: b.w * 1px * root.zoom;
+                height: b.h * 1px * root.zoom;
+                border-radius: 8px * root.zoom;
+                background: mt.has-hover ? Theme.panel-2 : Theme.panel;
+                border-width: 1.8px;
+                border-color: Theme.package-border;
+                VerticalLayout {
+                    padding-left: 10px * root.zoom;
+                    padding-right: 10px * root.zoom;
+                    alignment: center;
+                    Text { text: b.title; color: Theme.text; font-size: max(7px, 13px * root.zoom); font-weight: Theme.weight-strong; overflow: elide; }
+                    if b.sub != "": Text { text: b.sub; color: Theme.muted; font-size: max(6px, 10.5px * root.zoom); overflow: elide; }
+                }
+                mt := TouchArea { mouse-cursor: pointer; clicked => { root.open-module(b.module); } }
+            }
+            for c in root.cards: EntityCard {
+                card: c;
+                zoom: root.zoom;
+                clicked => { root.select(c.entity); }
+            }
+            for a in root.arrows: ArrowLabel {
+                text: a.label;
+                lx: a.lx;
+                ly: a.ly;
+                zoom: root.zoom;
+            }
+        }
+    }
+
+    Rectangle {
+        x: 16px;
+        y: parent.height - self.height - 16px;
+        width: bar.preferred-width;
+        height: 44px;
+        border-radius: Theme.radius;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.border;
+        bar := HorizontalLayout {
+            padding: 6px;
+            ZoomControls {
+                zoom: root.zoom;
+                zoom-out => { root.zoom = max(0.25, root.zoom / 1.25); }
+                zoom-in => { root.zoom = min(2.5, root.zoom * 1.25); }
+                reset => { root.zoom = 1; }
+                fit => {
+                    if (root.canvas-w > 0 && root.canvas-h > 0) {
+                        root.zoom = max(0.3, min(1.0, min(flick.width / 1px / root.canvas-w, flick.height / 1px / root.canvas-h)));
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The state diagram at its natural size; the surrounding view scrolls.
+export component StateDiagram inherits Rectangle {
+    in property <[DomState]> states;
+    in property <[DomStateArrow]> arrows;
+    in property <float> canvas-w;
+    in property <float> canvas-h;
+    // A state node was clicked (its name).
+    callback select(string);
+    width: canvas-w * 1px;
+    height: canvas-h * 1px;
+    for a in root.arrows: Path {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        viewbox-width: root.canvas-w;
+        viewbox-height: root.canvas-h;
+        commands: a.path;
+        fill: transparent;
+        stroke: Theme.edge;
+        stroke-width: 1.4px;
+    }
+    for s in root.states: Rectangle {
+        x: s.x * 1px;
+        y: s.y * 1px;
+        width: s.w * 1px;
+        height: s.h * 1px;
+        border-radius: self.height / 2;
+        background: s.any ? transparent : s.selected ? Theme.accent.with-alpha(0.32) : s.initial ? Theme.accent.with-alpha(0.16) : st.has-hover ? Theme.panel-2 : Theme.panel;
+        border-width: s.initial || s.selected ? 2px : 1px;
+        border-color: s.initial || s.selected ? Theme.accent : s.any ? Theme.muted : Theme.border;
+        st := TouchArea {
+            enabled: !s.any;
+            mouse-cursor: pointer;
+            clicked => { root.select(s.name); }
+        }
+        Text {
+            text: s.any ? @tr("any state") : s.name;
+            color: s.any ? Theme.muted : Theme.text;
+            font-size: Theme.font-small;
+            font-weight: s.initial ? Theme.weight-strong : Theme.weight-regular;
+            overflow: elide;
+        }
+        // The initial state: a filled dot with an arrow into it.
+        if s.initial: Rectangle {
+            x: -34px;
+            y: (parent.height - 10px) / 2;
+            width: 10px;
+            height: 10px;
+            border-radius: 5px;
+            background: Theme.accent;
+        }
+        if s.initial: Rectangle {
+            x: -24px;
+            y: parent.height / 2 - 1px;
+            width: 22px;
+            height: 2px;
+            background: Theme.accent;
+        }
+    }
+    for a in root.arrows: ArrowLabel {
+        text: a.number;
+        lx: a.lx;
+        ly: a.ly;
+        round: true;
+    }
+}

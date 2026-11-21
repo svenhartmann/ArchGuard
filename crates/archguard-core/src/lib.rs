@@ -54,6 +54,26 @@ mod staged;
 pub use staged::{
     ArchitectureDiffDetails, ArchitectureEdgeChange, BranchArchitectureDiff, StagedArchitectureDiff,
 };
+pub mod domain_model;
+mod ui_flow;
+mod ui_flow_matrix;
+pub use ui_flow_matrix::{
+    MatrixKind, MatrixRow, MatrixRowKind, PermissionMatrix, permission_matrix,
+};
+// Declared here, not in `ui_flow`: a test file importing its parent closes a file cycle.
+#[cfg(test)]
+mod ui_flow_role_tests;
+pub use ui_flow::{
+    ANY_METHOD, AccessState, Action, Assignment, AtomKind, Call, Condition, ConventionOrigin,
+    DiagnosticSeverity, EndpointAccess, EndpointCounts, HandlerSite, NameCase, Origin, Outcome,
+    PermissionFormat, PolicyDef, Reach, RoleConvention, RoleDef, RoleKind, Screen, ScreenKind,
+    ScreenReach, SimulatedRole, Target, Transition, UI_FLOW_DEFINITION, UI_FLOW_IMPORT_SOURCE,
+    UiFlow, UiFlowActionRef, UiFlowDiagnostic, UiFlowEndpointRef, UiFlowFinding, UiFlowFindingKind,
+    UiFlowSummary, best_route, canonical, evaluate_access, evaluate_condition, holds,
+    join_actions_to_endpoints, label, merge_ui_flows, normalize_path_pattern, path_match_score,
+    path_patterns_match, reachable_screens, resolve_assignment, resolve_assignment_for,
+    screen_reaches, start_screen_ids, ui_flow_findings, ui_flow_summary,
+};
 mod view;
 mod workspace;
 
@@ -68,7 +88,7 @@ pub use calls::{
     JavaSemanticConfig, MethodCall, MethodComplexity, SemanticConfig, SemanticDependencyCoverage,
     TypeScriptSemanticConfig,
 };
-pub use config::Config;
+pub use config::{AccessMeaning, Config};
 pub use graph::GraphBuilder;
 pub use model::{
     ArchguardError, ConfigSource, CycleSampling, Edge, Finding, FindingKind, Graph, ModuleMetrics,

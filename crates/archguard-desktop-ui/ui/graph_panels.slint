@@ -1,5 +1,8 @@
 // What every Graph of the window shares: the explorer's and the details
-// panel's width and whether review priorities are highlighted. Rust loads and saves them in the settings (`[graph]`, src/graph_panels_ui.rs).
+// panel's width; likewise the tree and details widths of the Screens and
+// Domain views. Rust loads and saves them in the settings (`[graph]`,
+// `[screens]`, `[domain]`, src/graph_panels_ui.rs). The Graph also keeps
+// whether review priorities are highlighted.
 import { Theme } from "theme.slint";
 
 export global GraphPanels {
@@ -11,8 +14,17 @@ export global GraphPanels {
     out property <length> explorer-max: 520px;
     out property <length> details-min: 240px;
     out property <length> details-max: 560px;
+    // Screens (view 0) and Domain (view 1): set from Rust, which keeps
+    // them in range (`settings::SidePanels`).
+    in-out property <length> screens-tree-w: 330px;
+    in-out property <length> screens-details-w: 360px;
+    in-out property <length> domain-tree-w: 330px;
+    in-out property <length> domain-details-w: 360px;
     // A drag ended or the toggle changed: save.
     callback changed();
+    // A side panel's edge dragged to a new width, or double-clicked.
+    callback side-drag(int, bool, length);
+    callback side-reset(int, bool);
 
     public function set-explorer(w: length) {
         self.explorer-w = clamp(w, self.explorer-min, self.explorer-max);
@@ -23,19 +35,49 @@ export global GraphPanels {
 }
 
 // A panel edge to drag, drawn like the pane divider (app.slint). It moves
-// with the edge, so each move reports the step since the press point.
+// with the edge, so each move reports the step since the press point. A
+// double click asks for the default width.
 export component PanelHandle inherits Rectangle {
     callback moved(length);
     callback released();
+    callback reset();
     width: 6px;
     background: drag.pressed || drag.has-hover ? Theme.accent.with-alpha(0.6) : transparent;
     drag := TouchArea {
         mouse-cursor: col-resize;
         moved => { root.moved(self.mouse-x - self.pressed-x); }
+        double-clicked => { root.reset(); }
         pointer-event(e) => {
             if (e.kind == PointerEventKind.up) {
                 root.released();
             }
         }
+    }
+}
+
+// The side panels' edges of the Screens or Domain view (`view` 0 or 1),
+// laid over the view: the tree's right edge at `tree-w`, the details
+// panel's left edge at `width - details-w` when it shows.
+export component SideHandles inherits Rectangle {
+    in property <int> view;
+    in property <length> tree-w;
+    in property <length> details-w;
+    in property <bool> details-on;
+    in property <length> top;
+    PanelHandle {
+        x: root.tree-w - self.width / 2;
+        y: root.top;
+        height: root.height - root.top;
+        moved(d) => { GraphPanels.side-drag(root.view, false, root.tree-w + d); }
+        released => { GraphPanels.changed(); }
+        reset => { GraphPanels.side-reset(root.view, false); }
+    }
+    if root.details-on: PanelHandle {
+        x: root.width - root.details-w - self.width / 2;
+        y: root.top;
+        height: root.height - root.top;
+        moved(d) => { GraphPanels.side-drag(root.view, true, root.details-w - d); }
+        released => { GraphPanels.changed(); }
+        reset => { GraphPanels.side-reset(root.view, true); }
     }
 }

@@ -96,6 +96,31 @@ mod swift_sources;
 // back would close a file cycle.
 #[cfg(test)]
 mod arc42_file_tests;
+pub mod domain_chain;
+pub mod domain_csharp;
+pub mod domain_java;
+pub mod domain_model;
+pub mod domain_python;
+pub mod domain_typescript;
+pub mod extract_ctx;
+#[cfg(test)]
+mod extract_ctx_tests;
+mod lang_blank;
+mod lang_csharp;
+mod lang_java;
+mod lang_markup;
+mod lang_php;
+mod lang_pyscan;
+mod lang_python;
+mod lang_rust;
+#[cfg(test)]
+mod lang_tests;
+mod lang_text;
+mod lang_ts;
+mod lang_ts_decl;
+mod lang_ts_http;
+#[cfg(test)]
+mod lang_ts_tests;
 #[cfg(test)]
 mod manifest_render_tests;
 #[cfg(test)]
@@ -118,6 +143,26 @@ mod test_coverage;
 mod test_evidence;
 mod trace_sequences;
 mod typescript_calls;
+pub mod ui_flow;
+pub mod ui_flow_angular;
+pub mod ui_flow_backend;
+pub mod ui_flow_blazor;
+pub mod ui_flow_django;
+pub mod ui_flow_express;
+pub mod ui_flow_fastapi;
+pub mod ui_flow_laravel;
+pub mod ui_flow_nestjs;
+pub mod ui_flow_react;
+pub mod ui_flow_replay;
+pub mod ui_flow_roles;
+#[cfg(test)]
+mod ui_flow_roles_tests;
+pub mod ui_flow_rust;
+pub mod ui_flow_slint;
+pub mod ui_flow_svelte;
+pub mod ui_flow_vue;
+pub mod ui_flow_xaml;
+pub mod view_conventions;
 mod workspace;
 mod workspace_sources;
 
@@ -135,8 +180,10 @@ pub use cache::{
 };
 pub use change_context::{ChangeContext, ChangeContextOptions, build_change_context};
 pub use check_gate::{
-    accepted_by_baseline, check_gate_findings, empty_analysis_error, gate_fails, read_baseline,
-    read_repo_baseline, review_gate_findings,
+    ViewNotes, accepted_by_baseline, accepted_by_note, apply_convention_baseline,
+    baseline_convention_ids, check_gate_findings, check_gate_findings_in, empty_analysis_error,
+    gate_fails, note_value, note_word, noted_gaps, noted_gaps_value, read_baseline,
+    read_repo_baseline, review_gate_findings, view_notes,
 };
 pub use co_change::{CoChangeFile, CoChangeOptions, CoChangePair, CoChangeReport, co_change};
 pub use cohesion::{

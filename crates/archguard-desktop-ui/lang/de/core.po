@@ -296,3 +296,9 @@ msgstr "Anwenden"
 
 msgid "Remove"
 msgstr "Entfernen"
+
+msgid "Overview"
+msgstr "Übersicht"
+
+msgid "none"
+msgstr "keine"

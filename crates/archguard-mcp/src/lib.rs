@@ -48,6 +48,9 @@ pub use evaluation_tools::EvaluationParams;
 mod pattern_tools;
 mod staged_tools;
 pub use staged_tools::StagedDiffParams;
+mod domain_model_tools;
+#[cfg(test)]
+mod flow_tool_tests;
 mod pr_comment_tools;
 mod quality_tools;
 mod review_decision_tools;
@@ -60,8 +63,10 @@ mod semantic_tools;
 mod test_coverage_tools;
 mod tools;
 mod traced;
+mod ui_flow_tools;
 mod workspace_tools;
 pub use change_context_tools::ChangeContextParams;
+pub use domain_model_tools::DomainModelParams;
 pub use engineering_tools::{EngineeringParams, TestImpactParams};
 pub use finding_tools::{ArchitectureFindingParams, ArchitectureFindingsParams};
 pub use pr_comment_tools::PrCommentParams;
@@ -73,6 +78,7 @@ pub use sbom_tools::SbomParams;
 pub use security_tools::SecurityFindingsParams;
 pub use semantic_tools::SemanticModelParams;
 pub use test_coverage_tools::TestCoverageParams;
+pub use ui_flow_tools::UiFlowParams;
 pub use workspace_tools::WorkspaceContextParams;
 
 #[cfg(feature = "db")]
@@ -301,10 +307,19 @@ impl ArchguardTools {
                 tools::read_baseline(&path)
             })
             .transpose()?;
-        let gates =
-            archguard_engine::check_gate_findings(&run.root, &run.loaded.config, &run.report);
+        let server_root = tools::resolve_root(&self.root, None)?;
+        let gates = archguard_engine::check_gate_findings_in(
+            &run.root,
+            &run.loaded.config,
+            &run.report,
+            Some(&server_root),
+        );
         run.report.findings.extend(gates);
-        Ok(tools::guarded(&tools::check_value(&run.report, baseline.as_ref())).to_string())
+        archguard_engine::apply_convention_baseline(&mut run.report.findings, baseline.as_ref());
+        let notes = archguard_engine::view_notes(&run.root, &run.loaded.config)
+            .map_err(tools::invalid_params)?;
+        let answer = tools::check_value(&run.report, baseline.as_ref(), &notes);
+        Ok(tools::guarded(&answer).to_string())
     }
 
     /// Module metrics rows (Kap. 10.2 `metrics`).
@@ -1008,6 +1023,8 @@ impl ArchguardTools {
         router.merge(Self::evaluation_router());
         router.merge(Self::runtime_router());
         router.merge(Self::sbom_router());
+        router.merge(Self::ui_flow_router());
+        router.merge(Self::domain_model_router());
         #[cfg(feature = "db")]
         router.merge(Self::db_router());
         router
@@ -3092,7 +3109,7 @@ links = ["docs/adr/1.md"]
     fn graph_query_is_registered_only_with_the_db_feature() {
         let tools = ArchguardTools::full_router().list_all();
         let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
-        let expected = if cfg!(feature = "db") { 50 } else { 49 };
+        let expected = if cfg!(feature = "db") { 52 } else { 51 };
         assert_eq!(tools.len(), expected, "registered tools: {names:?}");
         assert_eq!(names.contains(&"graph_query"), cfg!(feature = "db"));
         for name in [

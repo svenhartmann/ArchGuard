@@ -546,9 +546,6 @@ msgstr "Warnung"
 msgid "note"
 msgstr "Hinweis"
 
-msgid "none"
-msgstr "keine"
-
 msgid "Source unchanged since import"
 msgstr "Quelle seit Import unverändert"
 

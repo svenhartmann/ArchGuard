@@ -1,0 +1,586 @@
+msgid " and "
+msgstr " und "
+
+msgid " or "
+msgstr " oder "
+
+msgid "not ({{name}})"
+msgstr "nicht ({{name}})"
+
+msgid "signed in"
+msgstr "angemeldet"
+
+msgid "never"
+msgstr "nie"
+
+msgid "role {{name}}"
+msgstr "Rolle {{name}}"
+
+msgid "policy {{name}}"
+msgstr "Policy {{name}}"
+
+msgid "custom {{name}}"
+msgstr "Bedingung {{name}}"
+
+msgid "unknown ({{name}})"
+msgstr "unbekannt ({{name}})"
+
+msgid "open (declared anonymous)"
+msgstr "offen (anonym erlaubt)"
+
+msgid "undeclared"
+msgstr "nicht deklariert"
+
+msgid "allowed"
+msgstr "erlaubt"
+
+msgid "denied"
+msgstr "verweigert"
+
+msgid "Anonymous"
+msgstr "Anonym"
+
+msgid "Signed in without a role"
+msgstr "Angemeldet ohne Rolle"
+
+msgid "Role {{name}}"
+msgstr "Rolle {{name}}"
+
+msgid "Screens without an application"
+msgstr "Bildschirme ohne Anwendung"
+
+msgid "Every screen"
+msgstr "Jeder Bildschirm"
+
+msgid "layouts and menus"
+msgstr "Layouts und Menüs"
+
+msgid "only if an open condition holds"
+msgstr "nur wenn eine offene Bedingung zutrifft"
+
+msgid "needs: {{name}}"
+msgstr "braucht: {{name}}"
+
+msgid "no known path, {{count}} link in this app unresolved"
+msgstr "kein bekannter Weg, {{count}} Link dieser App nicht aufgelöst"
+
+msgid "no known path, {{count}} links in this app unresolved"
+msgstr "kein bekannter Weg, {{count}} Links dieser App nicht aufgelöst"
+
+msgid "no start screen in this app"
+msgstr "kein Startbildschirm in dieser App"
+
+msgid "no scanned endpoint matches"
+msgstr "kein gescannter Endpunkt passt"
+
+msgid "The backend of this call is not in the scan."
+msgstr "Das Backend dieses Aufrufs ist nicht im Scan."
+
+msgid "Frontend and backend agree."
+msgstr "Frontend und Backend stimmen überein."
+
+msgid "Gaps"
+msgstr "Lücken"
+
+msgid "Shown but refused"
+msgstr "Angezeigt, aber abgelehnt"
+
+msgid "Hidden but unprotected"
+msgstr "Verborgen, aber ungeschützt"
+
+msgid "Endpoints without a declared guard"
+msgstr "Endpunkte ohne deklarierten Schutz"
+
+msgid "Navigation targets, routes, roles and calls the rules could not read literally. Each one may hide a path."
+msgstr "Navigationsziele, Routen, Rollen und Aufrufe, die die Regeln nicht wörtlich lesen konnten. Hinter jedem kann ein Weg liegen."
+
+msgid "A simulated user reaches the action, but every matching endpoint refuses it."
+msgstr "Ein simulierter Benutzer erreicht die Aktion, aber jeder passende Endpunkt lehnt sie ab."
+
+msgid "The frontend guards the action, but a matching endpoint is open or declares no guard."
+msgstr "Das Frontend schützt die Aktion, aber ein passender Endpunkt ist offen oder deklariert keinen Schutz."
+
+msgid "No guard is declared; the code may still check by hand. Undeclared is never shown as allowed."
+msgstr "Kein Schutz deklariert; der Code kann trotzdem von Hand prüfen. Nicht deklariert wird nie als erlaubt gezeigt."
+
+msgid "Static evidence from code"
+msgstr "Statische Belege aus dem Code"
+
+msgid "Read from source files by fixed rules, not observed at run time. A screen marked reached can still fail on data the rules do not know."
+msgstr "Nach festen Regeln aus den Quelldateien gelesen, nicht zur Laufzeit beobachtet. Ein als erreicht markierter Bildschirm kann trotzdem an Daten scheitern, die die Regeln nicht kennen."
+
+msgid "Close details"
+msgstr "Details schließen"
+
+msgid "Policy"
+msgstr "Policy"
+
+msgid "Condition"
+msgstr "Bedingung"
+
+msgid "on"
+msgstr "an"
+
+msgid "off"
+msgstr "aus"
+
+msgid "open"
+msgstr "offen"
+
+msgid "Simulate as"
+msgstr "Simulieren als"
+
+msgid "Open conditions"
+msgstr "Offene Bedingungen"
+
+msgid "No policy or custom conditions in this project."
+msgstr "Keine Policy- oder eigenen Bedingungen in diesem Projekt."
+
+msgid "Open means unknown: the simulator keeps both outcomes."
+msgstr "Offen heißt unbekannt: Der Simulator behält beide Ergebnisse."
+
+msgid "reached"
+msgstr "erreicht"
+
+msgid "reached only if an open condition holds"
+msgstr "erreicht, wenn offene Bedingung gilt"
+
+msgid "denied for this user"
+msgstr "für diesen Benutzer verweigert"
+
+msgid "no known path"
+msgstr "kein bekannter Weg"
+
+msgid "Completeness"
+msgstr "Vollständigkeit"
+
+msgid "{} of {} navigations resolved"
+msgstr "{} von {} Navigationen aufgelöst"
+
+msgid "Show the gap list ({})"
+msgstr "Lückenliste anzeigen ({})"
+
+msgid "Mismatches"
+msgstr "Abweichungen"
+
+msgid "Shown but refused by the backend: {}"
+msgstr "Angezeigt, aber vom Backend abgelehnt: {}"
+
+msgid "Hidden but not protected by the backend: {}"
+msgstr "Verborgen, aber vom Backend nicht geschützt: {}"
+
+msgid "Endpoints without a declared guard: {}"
+msgstr "Endpunkte ohne deklarierten Schutz: {}"
+
+msgid "Reading screens and navigations …"
+msgstr "Bildschirme und Navigationen werden gelesen …"
+
+msgid "Some navigations or calls could not be read; see the gap list."
+msgstr "Einige Navigationen oder Aufrufe konnten nicht gelesen werden; siehe Lückenliste."
+
+msgid " ({} unresolved)"
+msgstr " ({} nicht aufgelöst)"
+
+msgid "endpoints: {} protected, {} open, {} undeclared"
+msgstr "Endpunkte: {} geschützt, {} offen, {} nicht deklariert"
+
+msgid "No screens found."
+msgstr "Keine Bildschirme gefunden."
+
+msgid "Screens come from Blazor @page components, Angular route arrays, React and Next routes, XAML shells and the import file .archguard/ui-flow.json."
+msgstr "Bildschirme stammen aus Blazor-@page-Komponenten, Angular-Routen-Arrays, React- und Next-Routen, XAML-Shells und der Importdatei .archguard/ui-flow.json."
+
+msgid "phase 5"
+msgstr "Phase 5"
+
+msgid "(no trigger read)"
+msgstr "(kein Auslöser gelesen)"
+
+msgid "Backend access"
+msgstr "Zugriff im Backend"
+
+msgid "Nothing to list."
+msgstr "Nichts aufzulisten."
+
+msgid "Route"
+msgstr "Route"
+
+msgid "Access condition"
+msgstr "Zugriffsbedingung"
+
+msgid "For the simulated user"
+msgstr "Für den simulierten Benutzer"
+
+msgid "Open in browser"
+msgstr "Im Browser öffnen"
+
+msgid "Replay path"
+msgstr "Weg abspielen"
+
+msgid "Actions"
+msgstr "Aktionen"
+
+msgid "No backend calls read on this screen."
+msgstr "Auf diesem Bildschirm wurden keine Backend-Aufrufe gelesen."
+
+msgid "Screens"
+msgstr "Bildschirme"
+
+msgid "{0} screen"
+msgid_plural "{0} screens"
+msgstr[0] "{0} Bildschirm"
+msgstr[1] "{0} Bildschirme"
+
+msgid "{0} action"
+msgid_plural "{0} actions"
+msgstr[0] "{0} Aktion"
+msgstr[1] "{0} Aktionen"
+
+msgid "{{count}} screen"
+msgstr "{{count}} Bildschirm"
+
+msgid "{{count}} screens"
+msgstr "{{count}} Bildschirme"
+
+msgid "{{count}} target not readable"
+msgstr "{{count}} Ziel nicht lesbar"
+
+msgid "{{count}} targets not readable"
+msgstr "{{count}} Ziele nicht lesbar"
+
+msgid "click for the list with file and line"
+msgstr "Klick zeigt die Liste mit Datei und Zeile"
+
+msgid "Targets not readable"
+msgstr "Nicht lesbare Ziele"
+
+msgid "Navigation targets of this source the rules could not read literally. Each one may hide a path."
+msgstr "Navigationsziele dieser Quelle, die die Regeln nicht wörtlich lesen konnten. Jedes kann einen Weg verbergen."
+
+msgid "Calls without a readable trigger ({})"
+msgstr "Aufrufe ohne lesbaren Auslöser ({})"
+
+msgid "Without a route"
+msgstr "Ohne Route"
+
+msgid "Two steps back"
+msgstr "Zwei Schritte zurück"
+
+msgid "Comes from"
+msgstr "Kommt von"
+
+msgid "Leads to"
+msgstr "Führt zu"
+
+msgid "Two steps ahead"
+msgstr "Zwei Schritte weiter"
+
+msgid "needs no sign-in or role"
+msgstr "braucht keine Anmeldung und keine Rolle"
+
+msgid "reached {{name}}"
+msgstr "erreicht {{name}}"
+
+msgid "no trigger read"
+msgstr "kein Auslöser gelesen"
+
+msgid "from the layout or menu"
+msgstr "aus Layout oder Menü"
+
+msgid "from the layout or menu: {{name}}"
+msgstr "aus Layout oder Menü: {{name}}"
+
+msgid "No known path from a start screen for this user."
+msgstr "Für diesen Benutzer ist kein Weg von einem Startbildschirm bekannt."
+
+msgid "This is a start screen."
+msgstr "Dies ist ein Startbildschirm."
+
+msgid "The project configuration could not be read."
+msgstr "Die Projektkonfiguration konnte nicht gelesen werden."
+
+msgid "Role …"
+msgstr "Rolle …"
+
+msgid "Where frontend and backend disagree: an action a simulated user reaches but every matching endpoint refuses, or an action the frontend guards but a matching endpoint leaves open."
+msgstr "Wo Frontend und Backend sich widersprechen: eine Aktion, die ein simulierter Benutzer erreicht, die aber jeder passende Endpunkt ablehnt, oder eine Aktion, die das Frontend schützt, die ein passender Endpunkt aber offen lässt."
+
+msgid "Navigation targets of this screen and of its layouts and menus the rules could not read literally. Each one may hide a path."
+msgstr "Navigationsziele dieses Bildschirms und seiner Layouts und Menüs, die die Regeln nicht wörtlich lesen konnten. Jedes kann einen Weg verbergen."
+
+msgid "Not declared: the code declares no access for this screen."
+msgstr "Nicht deklariert: Der Code deklariert für diesen Bildschirm keinen Zugriff."
+
+msgid "Declared open: everyone who reaches the screen may open it."
+msgstr "Offen (deklariert): Wer den Bildschirm erreicht, darf ihn öffnen."
+
+msgid "The code declares this screen open."
+msgstr "Der Code deklariert diesen Bildschirm als offen."
+
+msgid "weakly protected"
+msgstr "schwach geschützt"
+
+msgid "access not declared"
+msgstr "Zugriff nicht deklariert"
+
+msgid "No guard was read in the code for this screen."
+msgstr "Im Code wurde für diesen Bildschirm kein Schutz gelesen."
+
+msgid "Unknown: the rules cannot tell what {{name}} checks. Give it a meaning in [views.access] of the project configuration."
+msgstr "Unbekannt: Die Regeln können nicht sagen, was {{name}} prüft. Gib ihm eine Bedeutung in [views.access] der Projektkonfiguration."
+
+msgid "From [views.access]: {{name}}"
+msgstr "Aus [views.access]: {{name}}"
+
+msgid "From code: {{name}}"
+msgstr "Aus dem Code: {{name}}"
+
+msgid "Signed in"
+msgstr "Angemeldet"
+
+msgid "Not signed in"
+msgstr "Nicht angemeldet"
+
+msgid "Unknown conditions"
+msgstr "Unbekannte Bedingungen"
+
+msgid "Leave open ({})"
+msgstr "Offen lassen ({})"
+
+msgid "All hold"
+msgstr "Alle gelten"
+
+msgid "None hold"
+msgstr "Keine gilt"
+
+msgid "Guards the rules cannot evaluate stay unknown: such a screen counts as reached only possibly."
+msgstr "Schutzbedingungen, die die Regeln nicht auswerten können, bleiben unbekannt: Ein solcher Bildschirm gilt nur als möglicherweise erreicht."
+
+msgid "Assume every unknown guard lets the user through."
+msgstr "Annehmen, dass jede unbekannte Schutzbedingung den Benutzer durchlässt."
+
+msgid "Assume every unknown guard refuses the user."
+msgstr "Annehmen, dass jede unbekannte Schutzbedingung den Benutzer abweist."
+
+msgid "{} of {} navigations readable"
+msgstr "{} von {} Navigationen lesbar"
+
+msgid "Navigations whose target the rules could read literally. The others may hide a path."
+msgstr "Navigationen, deren Ziel die Regeln wörtlich lesen konnten. Die anderen können einen Weg verbergen."
+
+msgid "Filter by route or name"
+msgstr "Nach Route oder Name filtern"
+
+msgid "All {}"
+msgstr "Alle {}"
+
+msgid "Denied {}"
+msgstr "Verweigert {}"
+
+msgid "No path {}"
+msgstr "Kein Weg {}"
+
+msgid "Every screen of the application"
+msgstr "Jeder Bildschirm der Anwendung"
+
+msgid "Screens this user may not open"
+msgstr "Bildschirme, die dieser Benutzer nicht öffnen darf"
+
+msgid "Screens without a known path from a start screen"
+msgstr "Bildschirme ohne bekannten Weg von einem Startbildschirm"
+
+msgid "No screen matches."
+msgstr "Kein Bildschirm passt."
+
+msgid "Details: conditions, legend, lists"
+msgstr "Details: Bedingungen, Legende, Listen"
+
+msgid "Each condition"
+msgstr "Jede Bedingung einzeln"
+
+msgid "A switch set here wins over the choice for unknown conditions."
+msgstr "Ein hier gesetzter Schalter geht der Wahl für unbekannte Bedingungen vor."
+
+msgid "Lists"
+msgstr "Listen"
+
+msgid "via “{}”"
+msgstr "über „{}“"
+
+msgid "Path from start"
+msgstr "Weg vom Start"
+
+msgid "Replaying the path in a browser comes with the replay hookup; until then use: archguard ui-flow replay"
+msgstr "Das Nachspielen im Browser kommt mit der Replay-Anbindung; bis dahin: archguard ui-flow replay"
+
+msgid "‹ Back"
+msgstr "‹ Zurück"
+
+msgid "The screen shown before"
+msgstr "Der zuvor gezeigte Bildschirm"
+
+msgid "Focus"
+msgstr "Fokus"
+
+msgid "2 steps"
+msgstr "2 Schritte"
+
+msgid "Whole graph"
+msgstr "Ganzer Graph"
+
+msgid "The selected screen, where it comes from and where it leads"
+msgstr "Der gewählte Bildschirm, woher er kommt und wohin er führt"
+
+msgid "Also the screens one step further on both sides"
+msgstr "Dazu die Bildschirme einen Schritt weiter auf beiden Seiten"
+
+msgid "Every screen of every application with all navigations"
+msgstr "Jeder Bildschirm jeder Anwendung mit allen Navigationen"
+
+msgid "Click a screen for its details."
+msgstr "Klicke einen Bildschirm für seine Details."
+
+msgid "Click a card to move the focus there."
+msgstr "Klicke eine Karte, um den Fokus dorthin zu setzen."
+
+msgid "Pick a screen in the route tree."
+msgstr "Wähle einen Bildschirm im Routenbaum."
+
+msgid "Where the meaning comes from"
+msgstr "Woher die Bedeutung kommt"
+
+msgid "{0} gap"
+msgid_plural "{0} gaps"
+msgstr[0] "{0} Lücke"
+msgstr[1] "{0} Lücken"
+
+msgid "{0} mismatch"
+msgid_plural "{0} mismatches"
+msgstr[0] "{0} Widerspruch"
+msgstr[1] "{0} Widersprüche"
+
+msgid "{{count}} guard the rules cannot read: see the details panel"
+msgstr "{{count}} Schutz, den die Regeln nicht lesen können: siehe Detailbereich"
+
+msgid "{{count}} guards the rules cannot read: see the details panel"
+msgstr "{{count}} Schutzbedingungen, die die Regeln nicht lesen können: siehe Detailbereich"
+
+msgid "Action"
+msgstr "Aktion"
+
+msgid "Handler"
+msgstr "Handler-Methode"
+
+msgid "Domain event"
+msgstr "Domänenereignis"
+
+msgid "Integration event"
+msgstr "Integrationsereignis"
+
+msgid "No backend endpoint found for {{call}}"
+msgstr "Kein Backend-Endpunkt gefunden für {{call}}"
+
+msgid "No use case read for this endpoint."
+msgstr "Für diesen Endpunkt wurde kein Use Case gelesen."
+
+msgid "From the action through the backend to the services. Endpoint results are for the simulated user."
+msgstr "Von der Aktion über das Backend bis in die Services. Die Ergebnisse der Endpunkte gelten für den simulierten Benutzer."
+
+msgid "published by {{by}} in {{service}}"
+msgstr "veröffentlicht von {{by}} in {{service}}"
+
+msgid "Note for the coding agent"
+msgstr "Notiz für den Coding-Agenten"
+
+msgid "also holds {{names}}"
+msgstr "hat damit auch {{names}}"
+
+msgid "includes {{names}}"
+msgstr "schließt {{names}} ein"
+
+msgid "{{name}} requires {{needs}}"
+msgstr "{{name}} verlangt {{needs}}"
+
+msgid "role"
+msgstr "Rolle"
+
+msgid "permission"
+msgstr "Berechtigung"
+
+msgid "group"
+msgstr "Gruppe"
+
+msgid "policy {{name}} holds"
+msgstr "Policy {{name}} erfüllt"
+
+msgid "policy {{name}} does not hold"
+msgstr "Policy {{name}} nicht erfüllt"
+
+msgid "policy {{name}} unknown"
+msgstr "Policy {{name}} unbekannt"
+
+msgid "noted: fix"
+msgstr "notiert: beheben"
+
+msgid "accepted (intentional)"
+msgstr "akzeptiert (beabsichtigt)"
+
+msgid "Event handler"
+msgstr "Ereignis-Handler"
+
+msgid "noted: later"
+msgstr "notiert: später"
+
+msgid "This project requires an ADR link for an intentional decision ([review] adr_required_on_accept_risk)."
+msgstr "Dieses Projekt verlangt für eine beabsichtigte Entscheidung einen ADR-Link ([review] adr_required_on_accept_risk)."
+
+msgid "Open in editor"
+msgstr "Im Editor öffnen"
+
+msgid "Show here"
+msgstr "Hier zeigen"
+
+msgid "Edit note for agent…"
+msgstr "Notiz für den Agenten bearbeiten …"
+
+msgid "Note for agent…"
+msgstr "Notiz für den Agenten …"
+
+msgid "Show calls ›"
+msgstr "Aufrufe zeigen ›"
+
+msgid "Follow into the backend and services ›"
+msgstr "Ins Backend und in die Services folgen ›"
+
+msgid "Stored in .archguard/reviews.json under this id; the coding agent reads it with the MCP tool review_decisions or archguard review-decision list."
+msgstr "Gespeichert in .archguard/reviews.json unter dieser ID; der Coding-Agent liest sie mit dem MCP-Werkzeug review_decisions oder mit archguard review-decision list."
+
+msgid "Intentional"
+msgstr "Beabsichtigt"
+
+msgid "Suggested change (optional)"
+msgstr "Vorgeschlagene Änderung (optional)"
+
+msgid "ADR link (optional)"
+msgstr "ADR-Link (optional)"
+
+msgid "Save note"
+msgstr "Notiz speichern"
+
+msgid "The file could not be read."
+msgstr "Die Datei konnte nicht gelesen werden."
+
+msgid "Policies"
+msgstr "Policies"
+
+msgid "Custom command"
+msgstr "Eigener Befehl"
+
+msgid "{{file}} and {{line}} are filled in; the words run as one program with arguments, never through a shell. Enter stores a custom command."
+msgstr "{{file}} und {{line}} werden eingesetzt; die Wörter laufen als ein Programm mit Argumenten, nie über eine Shell. Enter speichert einen eigenen Befehl."
+
+msgid "Simulated user: {}"
+msgstr "Simulierter Benutzer: {}"
+
+msgid "· statuses, details, drill-down and mismatches follow this user"
+msgstr "· Status, Details, Drill-down und Widersprüche folgen diesem Benutzer"

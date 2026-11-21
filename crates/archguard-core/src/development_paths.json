@@ -255,5 +255,46 @@
         "arguments": {}
       }
     ]
+  },
+  {
+    "view": "screens",
+    "title": {
+      "en": "Screens and permissions",
+      "de": "Bildschirme und Berechtigungen"
+    },
+    "help": {
+      "en": "Inspect screens, navigations and the calls they make, simulate a role, and find where frontend and backend disagree. Unresolved navigations are gaps, not missing paths.",
+      "de": "Bildschirme, Navigationen und ihre Aufrufe prüfen, eine Rolle simulieren und finden, wo Frontend und Backend nicht übereinstimmen. Nicht aufgelöste Navigationen sind Lücken, keine fehlenden Wege."
+    },
+    "missions": [
+      "understand",
+      "verify"
+    ],
+    "tools": [
+      {
+        "name": "ui_flow",
+        "arguments": {}
+      }
+    ]
+  },
+  {
+    "view": "domain",
+    "title": {
+      "en": "Domain model",
+      "de": "Domänenmodell"
+    },
+    "help": {
+      "en": "Inspect entities by aggregate, the states an entity passes through, the guards of each transition and the events it raises. Guards are source text, never evaluated.",
+      "de": "Entitäten nach Aggregat, die Zustände einer Entität, die Bedingungen jedes Übergangs und die ausgelösten Ereignisse prüfen. Bedingungen sind Quelltext und werden nie ausgewertet."
+    },
+    "missions": [
+      "understand"
+    ],
+    "tools": [
+      {
+        "name": "domain_model",
+        "arguments": {}
+      }
+    ]
   }
 ]

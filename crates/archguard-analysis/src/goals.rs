@@ -22,6 +22,7 @@ pub fn finding_attribute(kind: FindingKind) -> QualityAttribute {
         | FindingKind::DependencyRule
         | FindingKind::OwnershipRule
         | FindingKind::TargetArchitecture
+        | FindingKind::Convention
         | FindingKind::MetricThreshold
         | FindingKind::Orphan => QualityAttribute::Maintainability,
         // Licence findings exist only in `check` output (ADR 0016); a

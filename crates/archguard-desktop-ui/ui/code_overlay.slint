@@ -1,0 +1,101 @@
+// "Show here" of the Screens and Domain views: the whole file over the
+// view, the asked line marked and scrolled into the middle. Filled from
+// src/screens_ui/code.rs; Esc, ✕ or a click beside the panel closes it.
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, Icons } from "widgets.slint";
+
+// A source line; `hit` is the line asked for.
+export struct CodeLine {
+    number: int,
+    text: string,
+    hit: bool,
+}
+
+export struct CodeView {
+    open: bool,
+    title: string,
+    location: string,
+    file: string,
+    line: int,
+    // Every line of the file; empty when it could not be read.
+    lines: [CodeLine],
+    // Index of the marked line in `lines`.
+    hit: int,
+    // The longest line in characters, for the horizontal scroll.
+    columns: int,
+}
+
+export component CodeOverlay inherits Rectangle {
+    in property <CodeView> code;
+    callback close();
+    callback open-editor(string, int);
+    property <length> row-h: 18px;
+    background: Theme.shadow;
+    // A click beside the panel closes it; nothing behind reacts.
+    TouchArea { clicked => { root.close(); } }
+    FocusScope {
+        init => { self.focus(); }
+        key-pressed(e) => {
+            if (e.text == Key.Escape) {
+                root.close();
+                return accept;
+            }
+            reject
+        }
+    }
+    panel := Rectangle {
+        x: root.width * 0.06;
+        y: root.height * 0.06;
+        width: root.width * 0.88;
+        height: root.height * 0.88;
+        background: Theme.panel;
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 30px;
+        drop-shadow-color: Theme.shadow;
+        TouchArea { }
+        VerticalLayout {
+            padding: 14px;
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 10px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    Text { text: code.title; color: Theme.text; font-size: Theme.font-section; font-weight: Theme.weight-strong; overflow: elide; }
+                    Text { text: code.location; color: Theme.muted; font-size: Theme.font-caption; font-family: Theme.mono-family; overflow: elide; }
+                }
+                Button { text: @tr("Open in editor"); compact: true; clicked => { root.open-editor(code.file, code.line); } }
+                Button { icon: Icons.close; compact: true; tip: @tr("Close (Esc)"); clicked => { root.close(); } }
+            }
+            if code.lines.length == 0: Text { text: @tr("The file could not be read."); color: Theme.danger; font-size: Theme.font-small; }
+            // A ListView creates only the rows in view, so the whole file fits.
+            if code.lines.length > 0: Rectangle {
+                vertical-stretch: 1;
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: Theme.bg;
+                list := ListView {
+                    init => {
+                        self.content-y = -max(0px, code.hit * root.row-h - self.visible-height / 2 + root.row-h / 2);
+                    }
+                    content-width: max(self.visible-width, code.columns * 7.4px + 80px);
+                    for l in code.lines: Rectangle {
+                        height: root.row-h;
+                        background: l.hit ? Theme.accent.with-alpha(0.2) : transparent;
+                        if l.hit: Rectangle { x: 0; width: 3px; background: Theme.accent; }
+                        HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 6px;
+                            spacing: 10px;
+                            Text { text: l.number; width: 44px; horizontal-alignment: right; vertical-alignment: center; color: l.hit ? Theme.accent : Theme.muted; font-family: Theme.mono-family; font-size: Theme.font-caption; }
+                            Text { text: l.text; vertical-alignment: center; color: Theme.text; font-family: Theme.mono-family; font-size: Theme.font-caption; font-weight: l.hit ? Theme.weight-strong : Theme.weight-regular; horizontal-stretch: 1; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -14,6 +14,8 @@ import { ServicesView, ServicesData } from "services_view.slint";
 import { RuntimeView, RuntimeData } from "runtime_view.slint";
 import { QualityView, QualityData } from "quality_view.slint";
 import { SecurityView, SecurityData } from "security_view.slint";
+import { ScreensView, ScreensData, ScreensNote } from "screens_view.slint";
+import { DomainView, DomainData } from "domain_view.slint";
 import { SettingsView, SettingsData, SettingsEdit, SettingsModel } from "settings_view.slint";
 import { DocumentStrip, DocItem, SubProjectItem, RecentItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
 import { SaveDialog, NoticeBar } from "shell_dialog.slint";
@@ -31,7 +33,7 @@ export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowI
 export { GraphData, Crumb, Hit, CycleItem, Neighbor, MatrixData, FileData, NodeDep }
 // Per-tab data globals, set from src/<tab>_ui.rs.
 export { RichData }
-export { StartData, ArchitectureData, CallsData, ServicesData, RuntimeData, QualityData, SecurityData }
+export { StartData, ArchitectureData, CallsData, ServicesData, RuntimeData, QualityData, SecurityData, ScreensData, ScreensNote, DomainData }
 export { SettingsData, SettingsEdit, SettingsModel }
 // Templates for text the Rust side composes (`tab_support::Texts`).
 export { Templates, Template, Fmt, KpiItem }
@@ -243,6 +245,8 @@ export component AppWindow inherits Window {
     pure function empty-reason(view: string) -> string {
         if view == "security" && SecurityData.model.status == "not_scanned" { return @tr("Not scanned: no dependency scan exists for this project."); }
         if view == "runtime" && RuntimeData.model.state == 2 { return @tr("No runtime recordings for this project."); }
+        if view == "screens" && ScreensData.model.state == 1 && ScreensData.model.cards.length == 0 { return @tr("No screens found."); }
+        if view == "domain" && DomainData.model.state == 1 && DomainData.model.cards.length == 0 && DomainData.model.boxes.length == 0 { return @tr("No entities found."); }
         if view == "services" && (ServicesData.model.state >= 2 || (ServicesData.model.state == 1
                 && ServicesData.model.services + ServicesData.model.applications + ServicesData.model.containers == 0)) { return @tr("No services found in this project."); }
         return "";
@@ -397,7 +401,7 @@ export component AppWindow inherits Window {
             }
             Menu {
                 title: @tr("Open in new tab");
-                for v in ["start", "architecture", "graph", "dsm", "calls", "services", "runtime", "quality", "security"]: MenuItem {
+                for v in ["start", "architecture", "graph", "dsm", "calls", "services", "runtime", "screens", "domain", "quality", "security"]: MenuItem {
                     title: Views.label(v);
                     enabled: root.ready;
                     activated => { root.open-view-tab(v); }
@@ -543,7 +547,7 @@ export component AppWindow inherits Window {
                 m-count := Button { compact: true; icon: Icons.package; text: Fmt.int(root.sub-projects.length); }
                 m-labels := Text {
                     text: Views.label("start") + Views.label("architecture") + Views.label("graph") + Views.label("dsm") + Views.label("calls")
-                        + Views.label("services") + Views.label("runtime") + Views.label("quality") + Views.label("security");
+                        + Views.label("services") + Views.label("runtime") + Views.label("screens") + Views.label("domain") + Views.label("quality") + Views.label("security");
                     font-size: Theme.font-body;
                     font-weight: Theme.weight-strong;
                 }
@@ -604,6 +608,8 @@ export component AppWindow inherits Window {
                         ViewBarTab { pad: header.tab-pad; view: "calls"; active: root.tab == "calls"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "services"; active: root.tab == "services"; empty-reason: root.empty-reason("services"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "runtime"; active: root.tab == "runtime"; empty-reason: root.empty-reason("runtime"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
+                        ViewBarTab { pad: header.tab-pad; view: "screens"; active: root.tab == "screens"; empty-reason: root.empty-reason("screens"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
+                        ViewBarTab { pad: header.tab-pad; view: "domain"; active: root.tab == "domain"; empty-reason: root.empty-reason("domain"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         Rectangle { width: 9px; Divider { } }
                         ViewBarTab { pad: header.tab-pad; view: "quality"; active: root.tab == "quality"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "security"; active: root.tab == "security"; empty-reason: root.empty-reason("security"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
@@ -815,6 +821,12 @@ export component AppWindow inherits Window {
                         vertical-stretch: 1;
                     }
                     if p.view == "runtime": RuntimeView {
+                        vertical-stretch: 1;
+                    }
+                    if p.view == "screens": ScreensView {
+                        vertical-stretch: 1;
+                    }
+                    if p.view == "domain": DomainView {
                         vertical-stretch: 1;
                     }
                     if p.view == "quality": QualityView {

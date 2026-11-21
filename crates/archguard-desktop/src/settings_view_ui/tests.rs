@@ -68,7 +68,9 @@ fn a_group_lists_its_fields_with_provenance() {
             "rules.max_instability_core",
             "licenses.allow",
             "licenses.deny",
-            "licenses.unknown"
+            "licenses.unknown",
+            "views.conventions",
+            "views.backends"
         ]
     );
     let acd = item(&items, "rules.max_acd");

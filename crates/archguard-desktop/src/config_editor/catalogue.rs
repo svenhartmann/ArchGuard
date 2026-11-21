@@ -101,6 +101,13 @@ pub struct Field {
     pub description: &'static str,
 }
 
+/// Config keys the editor does not list because their shape has no field
+/// kind: `views.run` holds one table per application with test users and
+/// `views.access` maps project-specific names to meanings; both are edited
+/// in `archguard.toml` only (ADR 0021, decision 7).
+#[cfg(test)]
+pub const FILE_ONLY: &[&str] = &["views.access", "views.run"];
+
 pub const SEVERITIES: &[&str] = &["error", "warning", "info"];
 pub const DENY_CYCLES: &[&str] = &["module", "file", "off"];
 pub const ORPHANS: &[&str] = &["off", "info", "warning", "error"];
@@ -333,6 +340,25 @@ pub const FIELDS: &[Field] = &[
         K::Enum(&["allow", "deny"]),
         G::Rules,
         "Whether a dependency whose files state no licence is a violation (deny) or only reported (allow).",
+    ),
+    // Views
+    f(
+        "views",
+        K::Table,
+        G::Rules,
+        "Conventions for the UI-flow and domain views; checked by archguard check (ADR 0021, 0022).",
+    ),
+    f(
+        "views.conventions",
+        K::List,
+        G::Rules,
+        "Convention rules to check, e.g. navigation_literal, endpoint_access_declared or screen_access_declared; empty checks nothing.",
+    ),
+    f(
+        "views.backends",
+        K::List,
+        G::Rules,
+        "Other repositories whose HTTP endpoints join the actions of this one, as paths relative to the project root or absolute.",
     ),
     // Review
     f(

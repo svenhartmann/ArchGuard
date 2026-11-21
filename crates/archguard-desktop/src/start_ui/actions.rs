@@ -5,15 +5,13 @@
 //! state exists, reveal the selection there: Calls focuses the class,
 //! Class metrics opens its card in the heatmap.
 
-use std::time::Duration;
-
-use slint::{ComponentHandle, Timer};
+use slint::ComponentHandle;
 
 use super::state::StartState;
 use crate::calls_ui::{self, CallsState};
-use crate::documents::{self, DocId};
 use crate::panes_ui;
 use crate::quality_ui::{self, QualityState};
+use crate::tab_support::when_ready;
 use crate::ui::{AppWindow, CallsData, QualityData};
 
 /// `StartData.detail-action` values.
@@ -96,44 +94,6 @@ impl StartState {
     }
 }
 
-/// Whether an action for document `doc` waiting for its `T` runs now
-/// (`Some(true)`), waits (`Some(false)`) or is dropped (`None`).
-fn ready<T: 'static>(doc: DocId) -> Option<bool> {
-    if documents::active_id() != Some(doc) {
-        return None;
-    }
-    Some(documents::with_state(doc, |_: &mut T| ()).is_some())
-}
-
-/// Run `f` once the active document has a `T` (a view's state is built
-/// when the view is first shown); dropped when the user switches to
-/// another document or closes it, and after a minute.
-fn when_ready<T: 'static>(ui: &AppWindow, f: impl FnOnce(&AppWindow) + 'static) {
-    if let Some(doc) = documents::active_id() {
-        poll::<T>(ui.as_weak(), doc, 0, f);
-    }
-}
-
-/// One check of [`when_ready`]; a single-shot timer per retry, so no
-/// timer outlives its wait.
-fn poll<T: 'static>(
-    w: slint::Weak<AppWindow>,
-    doc: DocId,
-    tries: u32,
-    f: impl FnOnce(&AppWindow) + 'static,
-) {
-    let Some(ui) = w.upgrade() else { return };
-    match ready::<T>(doc) {
-        Some(true) => f(&ui),
-        Some(false) if tries < 600 => {
-            Timer::single_shot(Duration::from_millis(100), move || {
-                poll::<T>(w, doc, tries + 1, f)
-            });
-        }
-        _ => {}
-    }
-}
-
 /// Run one of the [`action`]s for `t`; `node` is its graph node index.
 pub fn run(ui: &AppWindow, t: Target, node: Option<usize>, which: i32) {
     match which {
@@ -191,30 +151,4 @@ pub fn snapshot_hook(ui: &AppWindow) {
         module: false,
     };
     run(ui, t, None, which.parse().unwrap_or(-1));
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::documents::{set_state, with_store};
-    use std::path::Path;
-
-    /// An action waits only for the document it was started in: switching
-    /// to or closing that document drops it.
-    #[test]
-    fn a_waiting_action_belongs_to_its_document() {
-        with_store(|s| *s = Default::default());
-        let a = with_store(|s| s.open(Path::new("/a")).0);
-        let b = with_store(|s| s.open(Path::new("/b")).0);
-        assert_eq!(ready::<u16>(b), Some(false), "b is active, no state yet");
-        set_state(a, 1_u16);
-        assert_eq!(ready::<u16>(a), None, "a is not active");
-        set_state(b, 2_u16);
-        assert_eq!(ready::<u16>(b), Some(true));
-        with_store(|s| s.activate(0));
-        assert_eq!(ready::<u16>(b), None, "switched to a");
-        assert_eq!(ready::<u16>(a), Some(true));
-        with_store(|s| s.close(0));
-        assert_eq!(ready::<u16>(a), None, "a is closed");
-    }
 }

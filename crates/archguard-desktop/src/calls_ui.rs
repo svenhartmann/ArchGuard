@@ -126,6 +126,24 @@ pub fn focus_class(ui: &AppWindow, id: &str) {
     });
 }
 
+/// The Screens drill-down's "Show calls": switch to the Calls view with
+/// the class of `name` (`Class` or `Class.method`) focused, else with it
+/// as the search term.
+pub fn show_name(ui: &AppWindow, name: &str) {
+    let class = name.split('.').next().unwrap_or(name).to_string();
+    crate::panes_ui::change(ui, |l| l.navigate("calls"));
+    tab_support::when_ready::<CallsState>(ui, move |ui| {
+        tab_support::update::<CallsState>(ui, |s, _| {
+            let id = (s.idx.a.classes.iter())
+                .find(|c| c.name == class || c.name.ends_with(&format!(".{class}")))
+                .map(|c| c.id.clone());
+            if !id.is_some_and(|id| actions::focus_class(s, &id)) {
+                actions::set_query(s, class);
+            }
+        });
+    });
+}
+
 /// Picker index → value; 0 is "All".
 fn pick(list: Vec<String>, i: i32) -> Option<String> {
     index(i)

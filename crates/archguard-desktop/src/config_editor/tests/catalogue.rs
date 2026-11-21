@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use archguard_engine::core::Config;
 
-use super::super::catalogue::{self, FIELDS, Group, Kind};
+use super::super::catalogue::{self, FIELDS, FILE_ONLY, Group, Kind};
 use super::super::{ConfigEditor, FieldValue};
 use super::fixture;
 
@@ -47,7 +47,19 @@ fn catalogue_lists_every_field_config_accepts() {
         let listed: BTreeSet<String> = catalogue::children(&scope)
             .map(|f| f.path[if scope.is_empty() { 0 } else { scope.len() + 1 }..].to_string())
             .collect();
-        assert_eq!(listed, accepted(&scope), "fields of {scope:?}");
+        let file_only = |name: &String| {
+            let path = if scope.is_empty() {
+                name.clone()
+            } else {
+                format!("{scope}.{name}")
+            };
+            FILE_ONLY.contains(&path.as_str())
+        };
+        let editable: BTreeSet<String> = accepted(&scope)
+            .into_iter()
+            .filter(|n| !file_only(n))
+            .collect();
+        assert_eq!(listed, editable, "fields of {scope:?}");
     }
 }
 
@@ -99,6 +111,10 @@ fn every_field_takes_a_value_of_its_kind() {
         match f.kind {
             Kind::Table => {}
             Kind::TableArray => assert_eq!(editor.add_entry(&path), Ok(0), "{path}"),
+            // `views.conventions` only accepts rule names, not the generic glob sample.
+            Kind::List if f.path == "views.conventions" => editor
+                .set(&path, FieldValue::List(vec!["navigation_literal".into()]))
+                .unwrap(),
             kind => editor.set(&path, sample(kind)).unwrap(),
         }
     }

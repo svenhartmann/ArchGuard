@@ -16,8 +16,11 @@ mod compare_ui;
 mod config_editor;
 mod context;
 mod deferred;
+mod diagram;
 mod documents;
 mod documents_ui;
+mod domain_ui;
+mod editor;
 mod export;
 mod export_ui;
 #[cfg(test)]
@@ -50,6 +53,7 @@ mod review_decisions;
 mod review_decisions_ui;
 mod review_findings;
 mod runtime_ui;
+mod screens_ui;
 #[cfg(test)]
 mod security_check;
 mod security_ui;

@@ -1,0 +1,311 @@
+// The Screens tab's details panel: the selected screen with its access
+// and actions, or one of the lists of the left panel.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, TipArea, SectionHeading, Badge } from "widgets.slint";
+import { LineEdit, TextEdit } from "fields.slint";
+import { Para, LinkLine, PanelTitle, Fact } from "flow_parts.slint";
+import { Fmt } from "format.slint";
+
+// An action of the screen and what the backend says to it.
+export struct FlowAction {
+    trigger: string,
+    call: string,
+    backend: string,
+    agreement: string,
+    agree: bool,
+    location: string,
+    file: string,
+    line: int,
+    // Index into the flow's actions, for the drill-down.
+    index: int,
+}
+
+// A row of a list: what, and where. `id`: the item's stable id when it
+// takes a note for the coding agent; `badge` and `note` show a stored one.
+export struct FlowRow {
+    text: string,
+    location: string,
+    file: string,
+    line: int,
+    id: string,
+    badge: string,
+    note: string,
+}
+
+// A step of the drill-down from an action into the services. tone -1
+// neutral, 0 allowed, 1 denied, 2 unknown; `calls`: a class or method for
+// "Show calls".
+export struct DrillStep {
+    kind: string,
+    text: string,
+    location: string,
+    file: string,
+    line: int,
+    tone: int,
+    depth: int,
+    calls: string,
+}
+
+// The note form's fields; set when the form opens, read on Save.
+export global ScreensNote {
+    // 0 fix, 1 intentional, 2 later.
+    in-out property <int> kind;
+    in-out property <string> text;
+    in-out property <string> change;
+    in-out property <string> adr;
+}
+
+export struct FlowInspector {
+    // 0 hidden, 1 screen, 2 list, 3 drill-down, 4 note form.
+    mode: int,
+    title: string,
+    route: string,
+    location: string,
+    file: string,
+    line: int,
+    access: string,
+    result: string,
+    // 0 allowed, 1 denied, 2 unknown.
+    result-tone: int,
+    actions: [FlowAction],
+    // Actions without a readable trigger, listed last and collapsed.
+    untriggered: [FlowAction],
+    list-note: string,
+    rows: [FlowRow],
+    // The guard in words and where that meaning comes from.
+    meaning: string,
+    meaning-from: string,
+    steps: [DrillStep],
+    // The note form's item.
+    note-id: string,
+    note-subject: string,
+    // Why a note or an editor jump failed.
+    problem: string,
+}
+
+export component SmallLink inherits Text {
+    callback clicked();
+    color: touch.has-hover ? Theme.accent.darker(0.2) : Theme.accent;
+    font-size: Theme.font-caption;
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// A file:line with its two jumps: the configured editor, the File view.
+export component JumpLine inherits VerticalLayout {
+    in property <string> location;
+    in property <string> file;
+    in property <int> line;
+    callback open-editor(string, int);
+    callback show-line(string, int);
+    spacing: 1px;
+    Text { text: root.location; color: Theme.muted; font-size: Theme.font-caption; font-family: Theme.mono-family; wrap: word-wrap; }
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+        SmallLink { text: @tr("Open in editor"); clicked => { root.open-editor(root.file, root.line); } }
+        SmallLink { text: @tr("Show here"); clicked => { root.show-line(root.file, root.line); } }
+    }
+}
+
+// A list row: text, note badge, where, and "Note for agent…".
+export component ListRow inherits VerticalLayout {
+    in property <FlowRow> r;
+    callback open-editor(string, int);
+    callback show-line(string, int);
+    callback open-note(string, string);
+    padding-top: 4px;
+    padding-bottom: 4px;
+    spacing: 2px;
+    if r.badge != "": HorizontalLayout {
+        alignment: start;
+        Badge { text: r.badge; variant: "accent"; }
+    }
+    Para { text: r.text; }
+    if r.note != "": Para { text: r.note; muted: true; }
+    if r.file != "": JumpLine {
+        location: r.location;
+        file: r.file;
+        line: r.line;
+        open-editor(f, l) => { root.open-editor(f, l); }
+        show-line(f, l) => { root.show-line(f, l); }
+    }
+    if r.id != "": HorizontalLayout {
+        alignment: start;
+        SmallLink { text: r.badge != "" ? @tr("Edit note for agent…") : @tr("Note for agent…"); clicked => { root.open-note(r.id, r.text); } }
+    }
+}
+
+export component DrillLine inherits HorizontalLayout {
+    in property <DrillStep> step;
+    callback open-editor(string, int);
+    callback show-line(string, int);
+    callback show-calls(string);
+    padding-left: step.depth * 12px;
+    spacing: 6px;
+    Rectangle { width: 2px; background: step.depth == 0 ? Theme.accent : Theme.border; }
+    VerticalLayout {
+        padding-top: 4px;
+        padding-bottom: 4px;
+        spacing: 1px;
+        Text { text: step.kind; color: Theme.muted; font-size: Theme.font-caption; }
+        Para {
+            text: step.text;
+            color: step.tone == 0 ? Theme.success : step.tone == 1 ? Theme.priority : step.tone == 2 ? Theme.outgoing : Theme.text;
+        }
+        if step.location != "": JumpLine {
+            location: step.location;
+            file: step.file;
+            line: step.line;
+            open-editor(f, l) => { root.open-editor(f, l); }
+            show-line(f, l) => { root.show-line(f, l); }
+        }
+        if step.calls != "": HorizontalLayout {
+            alignment: start;
+            SmallLink { text: @tr("Show calls ›"); clicked => { root.show-calls(step.calls); } }
+        }
+    }
+}
+
+component ActionBox inherits VerticalLayout {
+    in property <FlowAction> item;
+    callback open-editor(string, int);
+    callback show-line(string, int);
+    callback drill(int);
+    spacing: 3px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    Rectangle { height: 1px; background: Theme.border; }
+    Text { text: item.trigger != "" ? item.trigger : @tr("(no trigger read)"); color: Theme.text; font-size: Theme.font-small; font-weight: Theme.weight-strong; wrap: word-wrap; }
+    Para { text: item.call; mono: true; }
+    Fact { label: @tr("Backend access"); value: item.backend; }
+    Para { text: item.agreement; color: item.agree ? Theme.success : Theme.priority; }
+    JumpLine {
+        location: item.location;
+        file: item.file;
+        line: item.line;
+        open-editor(f, l) => { root.open-editor(f, l); }
+        show-line(f, l) => { root.show-line(f, l); }
+    }
+    LinkLine { text: @tr("Follow into the backend and services ›"); clicked => { root.drill(item.index); } }
+}
+
+export component ScreensInspector inherits Rectangle {
+    in property <FlowInspector> data;
+    callback close();
+    callback open-editor(string, int);
+    callback show-line(string, int);
+    callback drill(int);
+    callback open-note(string, string);
+    callback save-note();
+    callback show-calls(string);
+    property <bool> show-untriggered;
+    background: Theme.panel;
+    sv := ScrollView {
+        VerticalLayout {
+            width: sv.visible-width;
+            padding: 14px;
+            spacing: 8px;
+            alignment: start;
+            PanelTitle { text: data.title; close => { root.close(); } }
+            if data.problem != "": Para { text: data.problem; color: Theme.danger; }
+            if data.mode == 3: VerticalLayout {
+                spacing: 2px;
+                Para { text: data.list-note; muted: true; }
+                for st in data.steps: DrillLine {
+                    step: st;
+                    open-editor(f, l) => { root.open-editor(f, l); }
+                    show-line(f, l) => { root.show-line(f, l); }
+                    show-calls(c) => { root.show-calls(c); }
+                }
+            }
+            if data.mode == 4: VerticalLayout {
+                spacing: 8px;
+                Para { text: data.note-subject; }
+                Text { text: data.note-id; color: Theme.muted; font-size: Theme.font-caption; font-family: Theme.mono-family; wrap: word-wrap; }
+                Para { text: @tr("Stored in .archguard/reviews.json under this id; the coding agent reads it with the MCP tool review_decisions or archguard review-decision list."); muted: true; }
+                Text { text: @tr("Decision"); color: Theme.muted; font-size: Theme.font-caption; }
+                HorizontalLayout {
+                    spacing: 0px;
+                    alignment: start;
+                    for k[i] in [@tr("Fix"), @tr("Intentional"), @tr("Later")]: Button {
+                        text: k;
+                        compact: true;
+                        pressed-state: ScreensNote.kind == i;
+                        clicked => { ScreensNote.kind = i; }
+                    }
+                }
+                Text { text: @tr("Note"); color: Theme.muted; font-size: Theme.font-caption; }
+                TextEdit { text <=> ScreensNote.text; height: 80px; }
+                Text { text: @tr("Suggested change (optional)"); color: Theme.muted; font-size: Theme.font-caption; }
+                TextEdit { text <=> ScreensNote.change; height: 60px; }
+                Text { text: @tr("ADR link (optional)"); color: Theme.muted; font-size: Theme.font-caption; }
+                LineEdit { text <=> ScreensNote.adr; placeholder-text: "docs/adr/0007-….md"; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    Button { text: @tr("Cancel"); compact: true; clicked => { root.close(); } }
+                    Button { text: @tr("Save note"); compact: true; clicked => { root.save-note(); } }
+                }
+            }
+            if data.mode == 2 && data.list-note != "": Para { text: data.list-note; muted: true; }
+            if data.mode == 2 && data.rows.length == 0: Para { text: @tr("Nothing to list."); muted: true; }
+            if data.mode == 2: VerticalLayout {
+                spacing: 2px;
+                for r in data.rows: ListRow {
+                    r: r;
+                    open-editor(f, l) => { root.open-editor(f, l); }
+                    show-line(f, l) => { root.show-line(f, l); }
+                    open-note(id, what) => { root.open-note(id, what); }
+                }
+            }
+            if data.mode == 1: VerticalLayout {
+                spacing: 8px;
+                if data.route != "": Fact { label: @tr("Route"); value: data.route; mono: true; }
+                VerticalLayout {
+                    spacing: 1px;
+                    Text { text: @tr("File"); color: Theme.muted; font-size: Theme.font-caption; }
+                    JumpLine {
+                        location: data.location;
+                        file: data.file;
+                        line: data.line;
+                        open-editor(f, l) => { root.open-editor(f, l); }
+                        show-line(f, l) => { root.show-line(f, l); }
+                    }
+                }
+                VerticalLayout {
+                    spacing: 1px;
+                    Text { text: @tr("For the simulated user"); color: Theme.muted; font-size: Theme.font-caption; }
+                    Para {
+                        text: data.result;
+                        font-weight: Theme.weight-strong;
+                        color: data.result-tone == 0 ? Theme.success : data.result-tone == 1 ? Theme.priority : Theme.outgoing;
+                    }
+                }
+                SectionHeading { label: @tr("Where the meaning comes from"); }
+                Para { text: data.meaning; }
+                Para { text: data.meaning-from; muted: true; }
+                SectionHeading { label: @tr("Actions"); }
+                if data.actions.length == 0: Para { text: @tr("No backend calls read on this screen."); muted: true; }
+                for a in data.actions: ActionBox {
+                    item: a;
+                    open-editor(f, l) => { root.open-editor(f, l); }
+                    show-line(f, l) => { root.show-line(f, l); }
+                    drill(i) => { root.drill(i); }
+                }
+                if data.untriggered.length > 0: LinkLine {
+                    text: (root.show-untriggered ? "▾ " : "▸ ") + @tr("Calls without a readable trigger ({})", Fmt.int(data.untriggered.length));
+                    clicked => { root.show-untriggered = !root.show-untriggered; }
+                }
+                if root.show-untriggered: VerticalLayout {
+                    for a in data.untriggered: ActionBox {
+                        item: a;
+                        open-editor(f, l) => { root.open-editor(f, l); }
+                        show-line(f, l) => { root.show-line(f, l); }
+                        drill(i) => { root.drill(i); }
+                    }
+                }
+            }
+        }
+    }
+}

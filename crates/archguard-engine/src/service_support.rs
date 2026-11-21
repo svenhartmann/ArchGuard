@@ -189,6 +189,24 @@ mod tests {
     use super::*;
 
     #[cfg(unix)]
+    /// A configuration that is a symlink is not read, and nothing of the
+    /// file it points to reaches a diagnostic (it may lie outside the root).
+    #[test]
+    fn a_symlinked_configuration_is_not_read_and_its_content_not_quoted() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, outside) = (dir.path().join("root"), dir.path().join("outside"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("leak.toml"), "LEAKMARK = = broken\n").unwrap();
+        std::os::unix::fs::symlink(outside.join("leak.toml"), root.join("archguard.toml")).unwrap();
+        let mut report = ServiceTopology::default();
+        Discovery::new(&root, &mut report).unwrap();
+        let text = format!("{:?}", report.diagnostics);
+        assert!(!text.contains("LEAKMARK"), "{text}");
+        assert!(!text.contains("broken"), "{text}");
+    }
+
+    #[cfg(unix)]
     #[test]
     fn a_symlinked_analysis_root_still_reads_its_config() {
         let dir = tempfile::tempdir().expect("tempdir");
