@@ -1,0 +1,144 @@
+{
+  "captured_on": "2026-11-21",
+  "artifact_commit": "6ed619a14f453e5e5bc784dc44b13f395c02a0ca",
+  "desktop_binary_revision": null,
+  "source_revisions": "Not independently recorded for this refresh; current local checkout revisions are not treated as capture pins.",
+  "unchanged": [
+    "flow video",
+    "assets/marketing/"
+  ],
+  "excluded": {
+    "runtime.png": "No recorded OTLP traces in the example."
+  },
+  "images": [
+    {
+      "file": "arc42-context.png",
+      "sha256": "4c24099443950be905c84c52586569a52522a2b584c5fe87603b076eaf23462a",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "arc42.png",
+      "sha256": "ed705ea223d6e1999bf9fd5b59a4fbd33f5388dc6931639afd75d51a6531f535",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "calls.png",
+      "sha256": "43589f86446413c9dbf14c9130a492dcacb366dd7a6c7c24bf9d911c19c5c8c8",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "domain.png",
+      "sha256": "279c6b1624e85280e636de43567eb05bac0a5084845bcacb85124a7f8f2a78d0",
+      "width": 4400,
+      "height": 1840,
+      "caption_en": "NetBox: module overview with entities and relationships. Analysis is incomplete; this capture does not demonstrate events or state transitions."
+    },
+    {
+      "file": "eshop-services.png",
+      "sha256": "a7ba224b6e8b5914cf8823366013e21c83be9d99b9afab29deffa235eb21754d",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "eshop-world.png",
+      "sha256": "ee2514e785545fe481d38d2fb561026ee38dfb2c2a467f7e5e4982a8b25b8052",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "graph.png",
+      "sha256": "24652a53e61bb3026f709a41a4d92ccab9e5fc614737d38cf1c51be952a3ead8",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "kafka-world.png",
+      "sha256": "7bca9a1430d43b7cede2762ae76957d0f0850c2f6d84b868d7e72e8cee294411",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "matrix.png",
+      "sha256": "e7390ca0d6c808d20df851fabc9e0d8ead5fca1a30319ca78156ce9812348bd4",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "otel-cycle.png",
+      "sha256": "beacc884379a42563509453eea56cfd9f0e3000d0b510542da5739638258fc74",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "otel-grpc.png",
+      "sha256": "9bd62cb32ebccf31385767cb6387c62b94f805321b7ed5f5462f72fac610c063",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "quality.png",
+      "sha256": "277ca3ceae8f03137c8da00782cfce079a25dd92f71e79d8b2fce88a2ea9dcca",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "screens.png",
+      "sha256": "8ece26ed05109d19d81fcc2882a05ff94664569fb645ea6d84c7a1e42ec7f50d",
+      "width": 2960,
+      "height": 1840,
+      "caption_en": "JHipster: the selected home screen has no declared access rule. Anonymous access stays unknown; readable navigation and gaps are shown separately."
+    },
+    {
+      "file": "security.png",
+      "sha256": "05325396fbbfed34f373a1aaffdcac7ec42aaca4b23cc767932ced9b96eae440",
+      "width": 2960,
+      "height": 1840,
+      "caption_en": "Jellyfin: partial dependency scan with 0 findings in the scanned scope. This does not establish that all dependencies are free of vulnerabilities."
+    },
+    {
+      "file": "services.png",
+      "sha256": "661d1fea77dbd181d73fd2a34a92fa6e5a26b2e00e278824267ed17129242b85",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "world-cbo.png",
+      "sha256": "6aef387a22edff9cc05217b65151d8d3cbd2dcd098181d41124d80b5d5cb9bf8",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "world-complexity.png",
+      "sha256": "e493741a85570e1c2c350259e5f5114e36f63c53018f0c148f82959ad10af54a",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "world-lcom4.png",
+      "sha256": "1b8ab395ff9bae12c0a5a9dd485c0fef0985b12bc3fc7a2157e64d1f69e80cd2",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "world-package.png",
+      "sha256": "5368e6e7e3ef5709fa438b3b0379940bef9fa6fc6e8db1a62ae4e1bd18a50bc7",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "world-wmc.png",
+      "sha256": "c4864077b04a52308f06b52a85fd70d0b9a710987613f4667c848e414f3e79ab",
+      "width": 2960,
+      "height": 1840
+    },
+    {
+      "file": "world.png",
+      "sha256": "c33fe4da3371fddaa23e650e186bff8280796612e66cbee469e04e3c76c8272b",
+      "width": 2960,
+      "height": 1840
+    }
+  ]
+}

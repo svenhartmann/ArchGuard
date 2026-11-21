@@ -55,3 +55,6 @@ body{font-size:16px}.wrap{max-width:1320px}.header{height:88px}.header nav{gap:2
 @media(prefers-reduced-motion:reduce){:root{scroll-behavior:auto}*,*::before,*::after{transition:none!important;animation:none!important}}
 
 .hero-screen a{display:block}.hero-caption{flex-wrap:wrap}.image-preview-hint{color:inherit;font-weight:600}
+
+/* Refreshed desktop evidence, with full-size detail available in the overlay. */
+.development-captures{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;margin-top:32px}.refreshed-capture{min-width:0;margin:32px 0}.development-captures .refreshed-capture{margin:0}.refreshed-capture img{display:block;width:100%;height:auto}.refreshed-capture figcaption{align-items:flex-start}.refreshed-capture figcaption h3{font-size:20px;margin:0 0 10px;color:#10233e}.refreshed-capture figcaption p{color:#45566f}.refreshed-capture figcaption>span{flex-shrink:0}.development-captures figcaption{flex-direction:column;gap:12px}.development-captures figcaption>span{max-width:none}@media(max-width:800px){.development-captures{grid-template-columns:1fr}}
