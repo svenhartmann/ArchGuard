@@ -21,7 +21,7 @@ if args.repository and not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', args
 if out.exists() and any(out.iterdir()):
     parser.error('output directory must be empty; choose a fresh directory')
 out.mkdir(parents=True, exist_ok=True)
-for name in ('index.html', 'about.html', 'styles.css', 'site.js', 'assets', 'examples', 'docs', 'docs.js',
+for name in ('index.html', 'about.html', 'styles.css', 'site.js', 'lightbox.js', 'assets', 'examples', 'docs', 'docs.js',
              'de', 'for', 'compare', 'stories', 'languages'):
     item = source / name
     if not item.exists():
@@ -91,6 +91,8 @@ for page in out.rglob('*.html'):
     evidence = 'Fehlende Evidenz ist keine Null.' if locale == 'de' else 'Missing evidence is not a zero.'
     if evidence not in text:
         text = text.replace('</footer>', f'<p class="evidence-motto">{evidence}</p></footer>')
+    overlay_url = Path(os.path.relpath(out / 'lightbox.js', page.parent)).as_posix()
+    text = text.replace('</body>', f'<script src="{overlay_url}" defer></script></body>')
     page.write_text(text)
 (out / '.nojekyll').touch()
 print(f'Built static site: {out}')

@@ -2,6 +2,7 @@
 """Regression checks for static locale output and portable directory links."""
 from html.parser import HTMLParser
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -55,6 +56,10 @@ class BuildTests(unittest.TestCase):
                 self.assertIn(f'Browse all {guides} guides', (out / 'index.html').read_text())
                 for page in out.rglob('*.html'):
                     self.assertNotIn('@@', page.read_text(), str(page))
+                    scripts = re.findall(r'<script src="([^"]*lightbox\.js)" defer></script>', page.read_text())
+                    self.assertEqual(len(scripts), 1, str(page))
+                    self.assertEqual((page.parent / scripts[0]).resolve(), (out / 'lightbox.js').resolve())
+                self.assertTrue((out / 'lightbox.js').is_file())
                 for private in ('data', 'media', 'test_build.py', 'README.md', 'build.py', 'check.py'):
                     self.assertFalse((out / private).exists(), private)
 
