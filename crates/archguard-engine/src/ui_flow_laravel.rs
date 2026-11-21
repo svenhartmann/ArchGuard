@@ -482,9 +482,9 @@ mod index {
             self.srcs.iter().position(|s| s.rel == rel)
         }
 
-        /// Adds what middleware `text` (`name:arg,…`) guards with; `false` when
-        /// its name has no meaning by rule.
-        pub(super) fn middleware(&self, text: &str, acc: &mut Acc, depth: u8) -> bool {
+        /// Adds what middleware `text` (`name:arg,…`) guards with. A project
+        /// middleware with no listed meaning adds `Unknown`; its text is returned.
+        pub(super) fn middleware(&self, text: &str, acc: &mut Acc, depth: u8) -> Vec<String> {
             let (name, args): (&str, Vec<String>) = match text.split_once(':') {
                 Some((n, a)) => {
                     let args = a.split(',').map(|x| x.trim().to_string());
@@ -499,22 +499,60 @@ mod index {
                 .or_else(|| class.and_then(|c| self.access.get(c)))
             {
                 acc.add(meaning(m, name, &args));
-                return true;
+                return vec![];
             }
             if let Some(members) = self.mw.groups.get(name) {
-                for m in members.iter().filter(|_| depth < 8) {
-                    self.middleware(m, acc, depth + 1);
+                return (members.iter().filter(|_| depth < 8))
+                    .flat_map(|m| self.middleware(m, acc, depth + 1))
+                    .collect();
+            }
+            // A project alias wins over a built-in of the same name.
+            let resolved = match class {
+                Some(c) => self.framework(c, 0),
+                None if access::builtin(name, &args, acc) => return vec![],
+                None => self.framework(name, 0),
+            };
+            match resolved {
+                Some(Some(a)) if access::builtin(a, &args, acc) => vec![],
+                Some(_) => vec![],
+                None => {
+                    acc.conds.push(Condition::Unknown(text.trim().into()));
+                    vec![text.trim().into()]
                 }
-                return true;
             }
-            if access::builtin(name, &args, acc) {
-                return true;
+        }
+
+        /// What the middleware class `class` (short name) is: `Some(Some(alias))`
+        /// a Laravel built-in, `Some(None)` a framework one without access meaning,
+        /// `None` project code (or an unscanned class that is none of the framework's).
+        fn framework(&self, class: &str, depth: u8) -> Option<Option<&'static str>> {
+            let known = |c: &str| match access::builtin_class(c) {
+                Some(a) => Some(Some(a)),
+                None => access::NO_ACCESS.contains(&c).then_some(None),
+            };
+            let Some((si, c)) = self.class(class).filter(|_| depth < 8) else {
+                return if self.class(class).is_some() {
+                    None
+                } else {
+                    known(class)
+                };
+            };
+            // A scanned class is the framework's only through its parent.
+            let s = &self.srcs[*si];
+            let header = s.text(&c.header);
+            let parent = header.split_once("extends")?.1.split_whitespace().next()?;
+            let parent = parent.trim_end_matches(['{', ',']);
+            let head = parent.trim_start_matches('\\').split('\\').next()?;
+            let full = match s.uses.get(head) {
+                Some(u) if parent.contains('\\') => format!("{u}{}", &parent[head.len()..]),
+                Some(u) => u.clone(),
+                None => parent.trim_start_matches('\\').to_string(),
+            };
+            if full.starts_with("Illuminate\\") {
+                known(short(&full)).or(Some(None))
+            } else {
+                self.framework(short(&full), depth + 1)
             }
-            let alias = (self.mw.aliases.iter())
-                .find(|(_, c)| short(c) == name)
-                .map(|(a, _)| a.as_str());
-            let alias = alias.or_else(|| access::builtin_class(name));
-            alias.is_some_and(|a| a != name && access::builtin(a, &args, acc))
         }
     }
 
@@ -799,9 +837,33 @@ mod access {
             "RedirectIfAuthenticated" => "guest",
             "Authorize" => "can",
             "ThrottleRequests" => "throttle",
+            "RoleMiddleware" => "role",
+            "PermissionMiddleware" => "permission",
+            "RoleOrPermissionMiddleware" => "role_or_permission",
             _ => return None,
         })
     }
+
+    /// Laravel's own middleware classes without an access meaning.
+    pub(super) const NO_ACCESS: [&str; 17] = [
+        "AddQueuedCookiesToResponse",
+        "AuthenticateSession",
+        "ConvertEmptyStringsToNull",
+        "EncryptCookies",
+        "EnsureEmailIsVerified",
+        "HandleCors",
+        "PreventRequestsDuringMaintenance",
+        "RequirePassword",
+        "SetCacheHeaders",
+        "ShareErrorsFromSession",
+        "StartSession",
+        "SubstituteBindings",
+        "TrimStrings",
+        "TrustHosts",
+        "TrustProxies",
+        "ValidatePostSize",
+        "ValidateSignature",
+    ];
 
     /// Ability per resource action (`authorizeResource`).
     pub(super) fn resource_ability(method: &str) -> Option<&'static str> {
@@ -1466,12 +1528,15 @@ mod controllers {
                     Mw::Name(n) if self.removed(n, &r.without) => {
                         let mut probe = Acc::default();
                         self.app.middleware(n, &mut probe, 0);
-                        acc.removed |= !probe.conds.is_empty();
+                        // An unknown middleware is no marker that something guarded.
+                        let known = |c: &Condition| !matches!(c, Condition::Unknown(_));
+                        acc.removed |= probe.conds.iter().any(known);
                     }
-                    Mw::Name(n) if !self.app.middleware(n, acc, 0) => {
-                        self.unknown_middleware(n, &r.file, r.line)
+                    Mw::Name(n) => {
+                        for u in self.app.middleware(n, acc, 0) {
+                            self.unknown_middleware(&u, &r.file, r.line)
+                        }
                     }
-                    Mw::Name(_) => {}
                     Mw::Unread(text) => acc.conds.push(Condition::Unknown(text.clone())),
                 }
             }
@@ -1481,21 +1546,22 @@ mod controllers {
             let base = name.split(':').next().unwrap_or(name).to_string();
             if self.noted.insert(base.clone()) {
                 let message = format!(
-                    "Middleware `{base}` has no access meaning by rule; list it in [views.access] if it guards access."
+                    "Middleware `{base}` is project code with no access meaning by rule; its routes are Unknown. List it in [views.access] if it guards access."
                 );
-                note(&mut self.out, file, line, message);
+                self.gap(file, line, message);
             }
         }
 
-        /// Whether `withoutMiddleware` names `name` (by name, alias or class).
+        /// Whether `withoutMiddleware` names `name`: the same text, alias or class
+        /// (arguments included, so `auth` does not remove `auth:admin`).
         fn removed(&self, name: &str, without: &[String]) -> bool {
-            let base = name.split(':').next().unwrap_or(name);
             let aliases = &self.app.mw.aliases;
-            without.iter().any(|w| {
-                w == base
-                    || aliases.get(base).is_some_and(|c| c == w)
-                    || aliases.get(w.as_str()).is_some_and(|c| c == base)
-            })
+            let class = |t: &str| match t.split_once(':') {
+                Some((n, a)) => format!("{}:{a}", aliases.get(n.trim()).map_or(n.trim(), |c| c)),
+                None => aliases.get(t.trim()).map_or(t.trim(), |c| c).to_string(),
+            };
+            let name = class(name);
+            without.iter().any(|w| class(w) == name)
         }
 
         fn controller(
@@ -1653,12 +1719,13 @@ mod controllers {
         fn guards(&mut self, si: usize, args: &[Range<usize>], acc: &mut Acc) {
             for m in self.mws(si, args) {
                 match m {
-                    Mw::Name(n) if !self.app.middleware(&n, acc, 0) => {
+                    Mw::Name(n) => {
                         let s = &self.app.srcs[si];
                         let (rel, line) = (s.rel.clone(), s.line(args[0].start));
-                        self.unknown_middleware(&n, &rel, line);
+                        for u in self.app.middleware(&n, acc, 0) {
+                            self.unknown_middleware(&u, &rel, line);
+                        }
                     }
-                    Mw::Name(_) => {}
                     Mw::Unread(text) => acc.conds.push(Condition::Unknown(text)),
                 }
             }
@@ -1978,6 +2045,15 @@ mod blade {
                 .map(String::from)
                 .collect();
             let arg = arg.unwrap_or_default();
+            let unread = matches!(name.as_str(), "if" | "elseif" | "unless")
+                && self.expr_cond(&arg).is_some_and(|c| unread_auth(&c));
+            if unread {
+                let text = collapse(&arg);
+                let message = format!(
+                    "Blade condition {text} checks the user but is not read; the links below it are Unknown."
+                );
+                self.gap(&p.tpl.rel, line, message);
+            }
             match name.as_str() {
                 "extends" => match args.first().and_then(|a| php::literal(a)) {
                     Some(v) => p.tpl.extends.push((v, line)),
@@ -2308,7 +2384,8 @@ mod blade {
                 }
                 _ => {}
             }
-            let unknown = (Condition::Unknown(collapse(e)), false);
+            // An auth check that is not read stays a condition: never dropped.
+            let unknown = (Condition::Unknown(collapse(e)), auth_text(&flat));
             let Some(open) = (e.ends_with(')'))
                 .then(|| matching_back(m.as_bytes(), e.len() - 1))
                 .flatten()
@@ -2342,6 +2419,24 @@ mod blade {
                 (r, "can") if user.contains(&r) => (ability(), true),
                 _ => unknown,
             }
+        }
+    }
+
+    /// Whether the whitespace-free operand `flat` starts at the auth system.
+    fn auth_text(flat: &str) -> bool {
+        let flat = flat.trim_start_matches('\\');
+        ["auth(", "Auth::", "Gate::"]
+            .iter()
+            .any(|p| flat.starts_with(p))
+    }
+
+    /// An `Unknown` of `c` that is an unread auth check.
+    fn unread_auth(c: &Condition) -> bool {
+        match c {
+            Condition::Unknown(t) => auth_text(&t.split_whitespace().collect::<String>()),
+            Condition::All(v) | Condition::Any(v) => v.iter().any(unread_auth),
+            Condition::Not(c) => unread_auth(c),
+            _ => false,
         }
     }
 
@@ -3233,7 +3328,8 @@ class RouteServiceProvider extends ServiceProvider
     fn kernel_groups_aliases_enums_closures_and_views_access() {
         let (_dir, flow) = configured_app();
         let auth = Condition::Authenticated;
-        let manage = policy("settings-manage");
+        // `can` is aliased to a project class: its meaning is not read.
+        let manage = Condition::Unknown("can:settings-manage".into());
         assert_eq!(
             access(&flow, "GET", "/settings"),
             all(vec![manage.clone(), policy("users-manage")])
@@ -3244,7 +3340,11 @@ class RouteServiceProvider extends ServiceProvider
         );
         assert_eq!(
             access(&flow, "GET", "/mfa"),
-            all(vec![manage.clone(), auth.clone()])
+            all(vec![
+                Condition::Unknown("mfa-setup".into()),
+                manage.clone(),
+                auth.clone()
+            ])
         );
         // The provider's `api` group (ApiAuthenticate) and prefix `v2`.
         assert_eq!(
@@ -3473,5 +3573,185 @@ class RouteServiceProvider extends ServiceProvider
             (delete.file.as_str(), delete.line),
             ("resources/views/books/parts/delete.blade.php", 1)
         );
+    }
+
+    fn unknown(text: &str) -> Condition {
+        Condition::Unknown(text.into())
+    }
+
+    fn kernel(aliases: &str, groups: &str) -> (&'static str, String) {
+        (
+            "shop/app/Http/Kernel.php",
+            format!(
+                "<?php\nnamespace App\\Http;\n\nclass Kernel extends HttpKernel\n{{\n\
+                 protected $middlewareAliases = [{aliases}];\n\
+                 protected $middlewareGroups = [{groups}];\n}}\n"
+            ),
+        )
+    }
+
+    fn project_class(name: &str) -> (String, String) {
+        (
+            format!("shop/app/Http/Middleware/{name}.php"),
+            format!(
+                "<?php\nnamespace App\\Http\\Middleware;\n\nclass {name}\n{{\n    \
+                 public function handle($request, $next) {{ return $next($request); }}\n}}\n"
+            ),
+        )
+    }
+
+    fn mw_app(web: &str, aliases: &str, groups: &str, classes: &[&str]) -> UiFlow {
+        let k = kernel(aliases, groups);
+        let cls: Vec<_> = classes.iter().map(|c| project_class(c)).collect();
+        let mut files: Vec<(&str, &str)> = vec![("shop/routes/web.php", web), (k.0, &k.1)];
+        files.extend(cls.iter().map(|(p, t)| (p.as_str(), t.as_str())));
+        app(&files).1
+    }
+
+    #[test]
+    fn project_middleware_is_unknown_on_routes_and_in_groups() {
+        // PY 5.6 #2, #3, #7
+        let web = "<?php\n\
+            Route::middleware(['auth', 'subscribed'])->get('/a', fn () => 1);\n\
+            Route::middleware('tenant')->get('/t', fn () => 1);\n\
+            Route::middleware('role:admin|editor,api')->get('/r', fn () => 1);\n";
+        let flow = mw_app(
+            web,
+            "'subscribed' => \\App\\Http\\Middleware\\Subscribed::class, \
+             'role' => \\App\\Http\\Middleware\\CheckRole::class",
+            "'tenant' => [\\App\\Http\\Middleware\\SetTenant::class, 'auth']",
+            &["Subscribed", "SetTenant", "CheckRole"],
+        );
+        let auth = Condition::Authenticated;
+        assert_eq!(
+            access(&flow, "GET", "/a"),
+            all(vec![auth.clone(), unknown("subscribed")])
+        );
+        assert_eq!(
+            access(&flow, "GET", "/t"),
+            all(vec![unknown("SetTenant"), auth])
+        );
+        assert_eq!(
+            access(&flow, "GET", "/r"),
+            AccessState::Protected(unknown("role:admin|editor,api"))
+        );
+        let found = messages(&flow).join("\n");
+        for name in ["subscribed", "SetTenant", "role"] {
+            assert!(found.contains(&format!("`{name}`")), "{name}: {found}");
+        }
+    }
+
+    #[test]
+    fn without_middleware_is_exact_and_removes_only_what_it_names() {
+        // PY 5.6 #9, #10
+        let web = "<?php\n\
+            Route::middleware('auth')->group(function () {\n    Route::get('/p', fn () => 1)->withoutMiddleware('auth');\n});\n\
+            Route::middleware(['auth', 'subscribed'])->group(function () {\n    Route::get('/q', fn () => 1)->withoutMiddleware('auth');\n});\n\
+            Route::middleware('auth:admin')->group(function () {\n    Route::get('/s', fn () => 1)->withoutMiddleware('auth');\n});\n";
+        let flow = mw_app(
+            web,
+            "'subscribed' => \\App\\Http\\Middleware\\Subscribed::class",
+            "",
+            &["Subscribed"],
+        );
+        assert_eq!(access(&flow, "GET", "/p"), AccessState::Open);
+        assert_eq!(
+            access(&flow, "GET", "/q"),
+            AccessState::Protected(unknown("subscribed"))
+        );
+        assert_eq!(
+            access(&flow, "GET", "/s"),
+            AccessState::Protected(Condition::Authenticated)
+        );
+    }
+
+    #[test]
+    fn project_alias_wins_over_the_builtin_name_and_kernel_groups_are_read() {
+        // PY 5.6 #25
+        let authenticate = (
+            "shop/app/Http/Middleware/Authenticate.php".to_string(),
+            "<?php\nnamespace App\\Http\\Middleware;\n\n\
+             use Illuminate\\Auth\\Middleware\\Authenticate as Middleware;\n\n\
+             class Authenticate extends Middleware\n{\n}\n"
+                .to_string(),
+        );
+        let web = "<?php\nRoute::get('/w', fn () => 1);\n\
+                   Route::get('/a', fn () => 1)->middleware('auth');\n\
+                   Route::get('/o', fn () => 1)->middleware('own');\n";
+        let k = kernel(
+            "'auth' => \\App\\Http\\Middleware\\Authenticate::class, \
+             'staff' => \\App\\Http\\Middleware\\Staff::class, \
+             'own' => \\App\\Http\\Middleware\\Own::class",
+            "'web' => ['staff']",
+        );
+        let (staff, own) = (project_class("Staff"), project_class("Own"));
+        let files: Vec<(&str, &str)> = vec![
+            ("shop/routes/web.php", web),
+            (k.0, &k.1),
+            (&authenticate.0, &authenticate.1),
+            (&staff.0, &staff.1),
+            (&own.0, &own.1),
+        ];
+        let flow = app(&files).1;
+        let staff = unknown("staff");
+        assert_eq!(
+            access(&flow, "GET", "/w"),
+            AccessState::Protected(staff.clone())
+        );
+        assert_eq!(
+            access(&flow, "GET", "/a"),
+            all(vec![staff.clone(), Condition::Authenticated])
+        );
+        assert_eq!(access(&flow, "GET", "/o"), all(vec![staff, unknown("own")]));
+        assert!(messages(&flow).join("\n").contains("`staff`"));
+    }
+
+    #[test]
+    fn project_alias_named_like_a_builtin_is_not_the_builtin() {
+        // PY 5.6 #25: an alias `auth` to a project class that does not extend the framework's
+        let web = "<?php\nRoute::get('/a', fn () => 1)->middleware('auth');\n";
+        let flow = mw_app(
+            web,
+            "'auth' => \\App\\Http\\Middleware\\Authenticate::class",
+            "",
+            &["Authenticate"],
+        );
+        assert_eq!(
+            access(&flow, "GET", "/a"),
+            AccessState::Protected(unknown("auth"))
+        );
+    }
+
+    #[test]
+    fn blade_if_with_unreadable_auth_atoms_is_unknown() {
+        // PY 5.6 #22
+        let view = "@if(auth()->user()->isAdmin())\n<a href=\"/x\">X</a>\n@endif\n\
+                    @if($post->published)\n<a href=\"/y\">Y</a>\n@endif\n\
+                    @if(auth()->check() && $post->published)\n<a href=\"/z\">Z</a>\n@endif\n";
+        let files = [
+            (
+                "shop/routes/web.php",
+                "<?php\nRoute::get('/', fn () => view('t'));\n",
+            ),
+            ("shop/resources/views/t.blade.php", view),
+        ];
+        let (_dir, flow) = app(&files);
+        let rows = transitions(&flow);
+        let cond = |to: &str| {
+            let r =
+                (rows.iter().find(|r| r.1.ends_with(to))).unwrap_or_else(|| panic!("{rows:#?}"));
+            r.3.clone()
+        };
+        assert_eq!(cond("/x"), Some(unknown("auth()->user()->isAdmin()")));
+        assert_eq!(cond("/y"), None);
+        assert_eq!(
+            cond("/z"),
+            Some(Condition::All(vec![
+                Condition::Authenticated,
+                unknown("$post->published")
+            ]))
+        );
+        let found = messages(&flow).join("\n");
+        assert!(found.contains("auth()->user()->isAdmin()"), "{found}");
     }
 }
