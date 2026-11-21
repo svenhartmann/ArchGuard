@@ -6,7 +6,8 @@ use std::path::Path;
 use std::collections::BTreeMap;
 
 use archguard_core::{
-    AccessMeaning, Condition, Config, DiagnosticSeverity, ServiceTopology, UiFlow, UiFlowDiagnostic,
+    AccessMeaning, AccessState, Condition, Config, DiagnosticSeverity, ServiceTopology, UiFlow,
+    UiFlowDiagnostic,
 };
 
 use crate::lang_ts::{Item, Value};
@@ -267,25 +268,26 @@ pub(crate) fn finish(flow: &mut UiFlow) {
     flow.complete = !(flow.diagnostics.iter()).any(|d| d.severity == DiagnosticSeverity::Gap);
 }
 
-/// The condition of check or guard `name` called with `args` under
-/// `[views.access]`: `custom(name)` when it is not listed, `Ok(None)` for `open`
-/// (always true); `$arg` forms take the string literal arguments (several are
-/// `any`). `Err(name)` when such a form has no argument or a non-literal one, or
-/// a fallback form is still unresolved. This is the SvelteKit copy; other
-/// extractors may read a missing argument differently.
+/// The access state of check or guard `name` called with `args` under
+/// `[views.access]`: `Protected(custom(name))` when it is not listed, `Open`
+/// for `open` (always true); `$arg` forms take the string literal arguments
+/// (several are `any`). `Err(name)` when such a form has no argument or a
+/// non-literal one, or a fallback form is still unresolved. This is the
+/// SvelteKit copy; other extractors may read a missing argument differently.
 pub(crate) fn access_condition(
     access: &BTreeMap<String, AccessMeaning>,
     name: &str,
     args: &[Item],
-) -> Result<Option<Condition>, String> {
+) -> Result<AccessState, String> {
+    use AccessState::Protected as P;
     let make: fn(String) -> Condition =
         match (access.get(name)).map(|m| m.at_use_site(!args.is_empty())) {
-            None => return Ok(Some(Condition::Custom(name.into()))),
-            Some(AccessMeaning::Open) => return Ok(None),
-            Some(AccessMeaning::Authenticated) => return Ok(Some(Condition::Authenticated)),
-            Some(AccessMeaning::Never) => return Ok(Some(Condition::Never)),
-            Some(AccessMeaning::Role(n)) => return Ok(Some(Condition::Role(n.clone()))),
-            Some(AccessMeaning::Policy(n)) => return Ok(Some(Condition::Policy(n.clone()))),
+            None => return Ok(P(Condition::Custom(name.into()))),
+            Some(AccessMeaning::Open) => return Ok(AccessState::Open),
+            Some(AccessMeaning::Authenticated) => return Ok(P(Condition::Authenticated)),
+            Some(AccessMeaning::Never) => return Ok(P(Condition::Never)),
+            Some(AccessMeaning::Role(n)) => return Ok(P(Condition::Role(n.clone()))),
+            Some(AccessMeaning::Policy(n)) => return Ok(P(Condition::Policy(n.clone()))),
             Some(AccessMeaning::RoleFromArguments) => Condition::Role,
             Some(AccessMeaning::PolicyFromArguments) => Condition::Policy,
             Some(AccessMeaning::FromArgumentsOr(..)) => return Err(name.into()),
@@ -297,8 +299,8 @@ pub(crate) fn access_condition(
         })
         .collect();
     match names {
-        Some(mut names) if names.len() == 1 => Ok(names.pop()),
-        Some(names) if !names.is_empty() => Ok(Some(Condition::Any(names))),
+        Some(mut names) if names.len() == 1 => Ok(P(names.remove(0))),
+        Some(names) if !names.is_empty() => Ok(P(Condition::Any(names))),
         _ => Err(name.into()),
     }
 }

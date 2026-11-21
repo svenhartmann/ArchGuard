@@ -641,11 +641,15 @@ impl Checks<'_> {
         }
         let name = t.replace("?.", ".");
         if is_name(&name) {
-            return access_condition(self.access, &name, &[]).map_err(|_| t.to_string());
+            return access_condition(self.access, &name, &[])
+                .map(|s| s.condition().cloned())
+                .map_err(|_| t.to_string());
         }
         match call_parts(t) {
             Some((f, args)) if self.access.contains_key(f) => {
-                access_condition(self.access, f, &args).map_err(|_| t.to_string())
+                access_condition(self.access, f, &args)
+                    .map(|s| s.condition().cloned())
+                    .map_err(|_| t.to_string())
             }
             _ => Err(t.to_string()),
         }
@@ -1047,7 +1051,7 @@ mod guard {
                     continue;
                 };
                 match access_condition(checks.access, name, &args(text, open)) {
-                    Ok(c) => found.extend(c.map(|c| (pos, c))),
+                    Ok(s) => found.extend(s.condition().cloned().map(|c| (pos, c))),
                     Err(n) => {
                         let message = format!(
                             "Guard call {n} has no string literal arguments for its $arg meaning; the condition is unknown."

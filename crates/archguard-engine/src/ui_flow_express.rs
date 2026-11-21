@@ -819,8 +819,8 @@ impl Scan<'_> {
         };
         if self.access.contains_key(&name) {
             return match access_condition(self.access, &name, &args) {
-                Ok(Some(c)) => Mw::Cond(c),
-                Ok(None) => Mw::Open,
+                Ok(AccessState::Protected(c)) => Mw::Cond(c),
+                Ok(_) => Mw::Open,
                 Err(name) => {
                     let message =
                         format!("Arguments of middleware `{name}` are not literal: {text}");

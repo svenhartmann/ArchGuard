@@ -77,7 +77,7 @@ fn arg(text: &str) -> crate::lang_ts::Item {
 
 #[test]
 fn access_condition_reads_meanings_arguments_and_fallbacks() {
-    use archguard_core::{AccessMeaning as M, Condition as C};
+    use archguard_core::{AccessMeaning as M, AccessState as S, Condition as C};
     let access: std::collections::BTreeMap<String, M> = [
         ("open", M::Open),
         ("auth", M::Authenticated),
@@ -98,16 +98,21 @@ fn access_condition_reads_meanings_arguments_and_fallbacks() {
     let cond = |name: &str, args: &[crate::lang_ts::Item]| access_condition(&access, name, args);
     assert_eq!(
         cond("unlisted", &[]),
-        Ok(Some(C::Custom("unlisted".into())))
+        Ok(S::Protected(C::Custom("unlisted".into())))
     );
-    assert_eq!(cond("open", &[]), Ok(None));
-    assert_eq!(cond("auth", &[]), Ok(Some(C::Authenticated)));
-    assert_eq!(cond("never", &[]), Ok(Some(C::Never)));
-    assert_eq!(cond("admin", &one), Ok(Some(C::Role("admin".into()))));
-    assert_eq!(cond("roles", &one), Ok(Some(C::Role("a".into()))));
+    assert_eq!(cond("open", &[]), Ok(S::Open));
+    assert_eq!(cond("open", &one), Ok(S::Open));
+    assert_ne!(cond("unlisted", &[]), Ok(S::Open));
+    assert_eq!(cond("auth", &[]), Ok(S::Protected(C::Authenticated)));
+    assert_eq!(cond("never", &[]), Ok(S::Protected(C::Never)));
+    assert_eq!(
+        cond("admin", &one),
+        Ok(S::Protected(C::Role("admin".into())))
+    );
+    assert_eq!(cond("roles", &one), Ok(S::Protected(C::Role("a".into()))));
     assert_eq!(
         cond("pols", &two),
-        Ok(Some(C::Any(vec![
+        Ok(S::Protected(C::Any(vec![
             C::Policy("a".into()),
             C::Policy("b".into())
         ])))
@@ -115,6 +120,6 @@ fn access_condition_reads_meanings_arguments_and_fallbacks() {
     // A `$arg` form needs string literal arguments; the fallback applies without any.
     assert_eq!(cond("roles", &[]), Err("roles".into()));
     assert_eq!(cond("roles", &dynamic), Err("roles".into()));
-    assert_eq!(cond("maybe", &[]), Ok(Some(C::Authenticated)));
-    assert_eq!(cond("maybe", &one), Ok(Some(C::Role("a".into()))));
+    assert_eq!(cond("maybe", &[]), Ok(S::Protected(C::Authenticated)));
+    assert_eq!(cond("maybe", &one), Ok(S::Protected(C::Role("a".into()))));
 }
