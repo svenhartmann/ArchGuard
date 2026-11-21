@@ -49,7 +49,7 @@ component TreeLine inherits Rectangle {
             toggle-touch := TouchArea {
                 enabled: item.expandable;
                 mouse-cursor: pointer;
-                clicked => { CallsData.tree-toggle(item.node); }
+                clicked => { root.clicked(); CallsData.tree-toggle(item.node); }
             }
         }
         Rectangle {
@@ -144,7 +144,7 @@ export component CallsTree inherits CallsColumn {
             // a ranking); also once the list has its height in a new view.
             property <int> focus-row: m.tree-focus;
             property <length> shown: list.visible-height;
-            changed focus-row => { self.reveal(); }
+            changed focus-row => { if self.focus-row >= 0 { keys.cursor = self.focus-row; } self.reveal(); }
             changed shown => { self.reveal(); }
             function reveal() {
                 if self.focus-row < 0 || self.focus-row >= m.tree.length || list.visible-height <= 0 {

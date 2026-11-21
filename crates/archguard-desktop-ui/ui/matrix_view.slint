@@ -376,142 +376,147 @@ export component MatrixView inherits Rectangle {
         // Body. The tree keys of the Explorer: arrows, Home/End, Left/Right
         // close/open a package, Enter and Space toggle it.
         keys := TreeKeys {
-          vertical-stretch: 1;
-          count: root.rows.length;
-          info(i) => { { expandable: root.rows[i].package, expanded: root.rows[i].expanded, parent: root.rows[i].parent } }
-          toggle(i) => { if (root.rows[i].package) { root.toggle(root.rows[i].node); } }
-          activate(i) => { if (root.rows[i].package) { root.toggle(root.rows[i].node); } }
-          changed cursor => {
-              if self.cursor < 0 || body.visible-height <= 0 { return; }
-              if self.cursor * root.row-h < -body.content-y { body.content-y = -self.cursor * root.row-h; }
-              else if (self.cursor + 1) * root.row-h > -body.content-y + body.visible-height { body.content-y = -((self.cursor + 1) * root.row-h - body.visible-height); }
-          }
-        body := ScrollView {
             vertical-stretch: 1;
-            // A view created after the reveal (a new pane) scrolls on start.
-            init => { root.scroll-to-marked(); }
-            content-width: max(self.visible-width, root.label-w + root.cols-w);
-            VerticalLayout {
-                alignment: start;
-                padding-bottom: Theme.scrollbar-w;
-                for r[i] in root.rows: Rectangle {
-                    height: root.row-h;
-                    background: r.package ? Theme.panel-2 : transparent;
-                    Rectangle {
-                        y: parent.height - 1px;
-                        height: 1px;
-                        background: Theme.border.with-alpha(0.55);
-                    }
-                        for value[j] in r.cells: cell := Rectangle {
-                            x: root.label-w + j * root.col-w;
-                            width: root.col-w;
-                            background: root.hover-col == j || root.hover-row == i ? Theme.accent.with-alpha(0.05) : transparent;
-                            // The diagonal: dependencies inside the row's own package, muted.
-                            property <bool> own: j == r.own-col;
-                            if value != "": Rectangle {
-                                width: max(30px, label.preferred-width + 14px);
-                                height: root.row-h - 8px;
-                                border-radius: 4px;
-                                background: cell.own
-                                    ? (area.has-hover ? Theme.muted.with-alpha(0.30) : Theme.muted.with-alpha(0.14))
-                                    : (area.has-hover ? Theme.accent.with-alpha(0.35) : Theme.accent.with-alpha(0.18));
-                                label := Text {
-                                    text: value;
-                                    color: cell.own ? Theme.muted : Theme.accent;
-                                    font-size: Theme.font-caption;
-                                    font-weight: Theme.weight-strong;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                }
-                                area := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => { root.cell(r.node, j); }
-                                }
-                            }
-                            hover := TouchArea {
-                                changed has-hover => {
-                                    if (self.has-hover) {
-                                        root.hover-row = i;
-                                        root.hover-col = j;
-                                    }
-                                    root.hover-tip(self.has-hover && cell.own && value != "", @tr("Within the same package: dependencies between its own files"), self.absolute-position.x, self.absolute-position.y + self.height);
-                                }
-                            }
+            count: root.rows.length;
+            // A search or the cycle filter shows every package open; toggling does nothing then.
+            property <bool> filtered: root.query != "" || root.only;
+            info(i) => { { expandable: root.rows[i].package && !self.filtered, expanded: root.rows[i].expanded && !self.filtered, parent: root.rows[i].parent } }
+            toggle(i) => { if (root.rows[i].package) { root.toggle(root.rows[i].node); } }
+            activate(i) => { if (root.rows[i].package && !self.filtered) { root.toggle(root.rows[i].node); } }
+            changed cursor => {
+                if self.cursor < 0 || body.visible-height <= 0 { return; }
+                if self.cursor * root.row-h < -body.content-y { body.content-y = -self.cursor * root.row-h; }
+                else if (self.cursor + 1) * root.row-h > -body.content-y + body.visible-height { body.content-y = -((self.cursor + 1) * root.row-h - body.visible-height); }
+            }
+            // A reveal or a page change moves the marked row; the cursor follows.
+            property <int> marked: root.marked-row;
+            changed marked => { if self.marked >= 0 { self.cursor = self.marked; } }
+            body := ScrollView {
+                vertical-stretch: 1;
+                // A view created after the reveal (a new pane) scrolls on start.
+                init => { root.scroll-to-marked(); }
+                content-width: max(self.visible-width, root.label-w + root.cols-w);
+                VerticalLayout {
+                    alignment: start;
+                    padding-bottom: Theme.scrollbar-w;
+                    for r[i] in root.rows: Rectangle {
+                        height: root.row-h;
+                        background: r.package ? Theme.panel-2 : transparent;
+                        Rectangle {
+                            y: parent.height - 1px;
+                            height: 1px;
+                            background: Theme.border.with-alpha(0.55);
                         }
-                        // Pinned left while the cells scroll under it.
-                        Rectangle {
-                            x: -body.content-x;
-                            width: root.label-w;
-                            background: r.package ? Theme.panel-2 : Theme.bg;
-                        Rectangle {
-                            border-width: keys.has-focus && keys.cursor == i ? 2px : 0;
-                            border-color: Theme.accent;
-                            background: r.marked ? Theme.accent.with-alpha(0.2) : r.in-cycle-path ? Theme.cycle.with-alpha(0.12) : root.hover-row == i ? Theme.accent.with-alpha(0.08) : transparent;
-                            row-menu := NodeMenu {
-                                package: r.package;
-                                chosen(kind, side) => { root.node-tab(kind, r.node, side); }
-                            }
-                            TouchArea {
-                                clicked => { keys.cursor = i; keys.focus(); }
-                                changed has-hover => {
-                                    root.hover-tip(self.has-hover, r.path, self.absolute-position.x + 22px + r.depth * 16px, self.absolute-position.y + self.height);
-                                }
-                                pointer-event(e) => {
-                                    if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
-                                        row-menu.open-at(self.mouse-x, self.mouse-y);
+                            for value[j] in r.cells: cell := Rectangle {
+                                x: root.label-w + j * root.col-w;
+                                width: root.col-w;
+                                background: root.hover-col == j || root.hover-row == i ? Theme.accent.with-alpha(0.05) : transparent;
+                                // The diagonal: dependencies inside the row's own package, muted.
+                                property <bool> own: j == r.own-col;
+                                if value != "": Rectangle {
+                                    width: max(30px, label.preferred-width + 14px);
+                                    height: root.row-h - 8px;
+                                    border-radius: 4px;
+                                    background: cell.own
+                                        ? (area.has-hover ? Theme.muted.with-alpha(0.30) : Theme.muted.with-alpha(0.14))
+                                        : (area.has-hover ? Theme.accent.with-alpha(0.35) : Theme.accent.with-alpha(0.18));
+                                    label := Text {
+                                        text: value;
+                                        color: cell.own ? Theme.muted : Theme.accent;
+                                        font-size: Theme.font-caption;
+                                        font-weight: Theme.weight-strong;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
                                     }
-                                }
-                            }
-                            HorizontalLayout {
-                                padding-left: 6px + r.depth * 16px;
-                                spacing: 6px;
-                                Rectangle {
-                                    width: 16px;
-                                    if r.package: Icon {
-                                        icon: r.expanded ? Icons.chevron-down : Icons.chevron-right;
-                                        tint: Theme.muted;
-                                        width: 12px;
-                                        height: 12px;
-                                    }
-                                    if !r.package: Text { text: "·"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
-                                    TouchArea {
-                                        enabled: r.package;
+                                    area := TouchArea {
                                         mouse-cursor: pointer;
-                                        clicked => { root.toggle(r.node); }
+                                        clicked => { root.cell(r.node, j); }
                                     }
                                 }
-                                Text {
-                                    text: r.label;
-                                    color: Theme.text;
-                                    font-size: Theme.font-small;
-                                    font-weight: r.package ? Theme.weight-strong : Theme.weight-regular;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                    horizontal-stretch: 1;
+                                hover := TouchArea {
+                                    changed has-hover => {
+                                        if (self.has-hover) {
+                                            root.hover-row = i;
+                                            root.hover-col = j;
+                                        }
+                                        root.hover-tip(self.has-hover && cell.own && value != "", @tr("Within the same package: dependencies between its own files"), self.absolute-position.x, self.absolute-position.y + self.height);
+                                    }
                                 }
-                                if r.badges != "": Text {
-                                    text: r.badges;
-                                    color: Theme.cycle;
-                                    font-size: Theme.font-micro;
-                                    font-weight: Theme.weight-strong;
-                                    vertical-alignment: center;
-                                    TouchArea {
-                                        changed has-hover => {
-                                            root.hover-tip(self.has-hover, root.cycle-legend, self.absolute-position.x, self.absolute-position.y + self.height);
+                            }
+                            // Pinned left while the cells scroll under it.
+                            Rectangle {
+                                x: -body.content-x;
+                                width: root.label-w;
+                                background: r.package ? Theme.panel-2 : Theme.bg;
+                            Rectangle {
+                                border-width: keys.has-focus && keys.cursor == i ? 2px : 0;
+                                border-color: Theme.accent;
+                                background: r.marked ? Theme.accent.with-alpha(0.2) : r.in-cycle-path ? Theme.cycle.with-alpha(0.12) : root.hover-row == i ? Theme.accent.with-alpha(0.08) : transparent;
+                                row-menu := NodeMenu {
+                                    package: r.package;
+                                    chosen(kind, side) => { root.node-tab(kind, r.node, side); }
+                                }
+                                TouchArea {
+                                    clicked => { keys.cursor = i; keys.focus(); }
+                                    changed has-hover => {
+                                        root.hover-tip(self.has-hover, r.path, self.absolute-position.x + 22px + r.depth * 16px, self.absolute-position.y + self.height);
+                                    }
+                                    pointer-event(e) => {
+                                        if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
+                                            row-menu.open-at(self.mouse-x, self.mouse-y);
+                                        }
+                                    }
+                                }
+                                HorizontalLayout {
+                                    padding-left: 6px + r.depth * 16px;
+                                    spacing: 6px;
+                                    Rectangle {
+                                        width: 16px;
+                                        if r.package: Icon {
+                                            icon: r.expanded ? Icons.chevron-down : Icons.chevron-right;
+                                            tint: Theme.muted;
+                                            width: 12px;
+                                            height: 12px;
+                                        }
+                                        if !r.package: Text { text: "·"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
+                                        TouchArea {
+                                            enabled: r.package;
+                                            mouse-cursor: pointer;
+                                            clicked => { keys.cursor = i; keys.focus(); root.toggle(r.node); }
+                                        }
+                                    }
+                                    Text {
+                                        text: r.label;
+                                        color: Theme.text;
+                                        font-size: Theme.font-small;
+                                        font-weight: r.package ? Theme.weight-strong : Theme.weight-regular;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                        horizontal-stretch: 1;
+                                    }
+                                    if r.badges != "": Text {
+                                        text: r.badges;
+                                        color: Theme.cycle;
+                                        font-size: Theme.font-micro;
+                                        font-weight: Theme.weight-strong;
+                                        vertical-alignment: center;
+                                        TouchArea {
+                                            changed has-hover => {
+                                                root.hover-tip(self.has-hover, root.cycle-legend, self.absolute-position.x, self.absolute-position.y + self.height);
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
-                        }
-                }
-                if root.rows.length == 0: Text {
-                    text: @tr("No matching files or packages. Adjust the search or cycle filter.");
-                    color: Theme.muted;
-                    font-size: Theme.font-body;
+                            }
+                    }
+                    if root.rows.length == 0: Text {
+                        text: @tr("No matching files or packages. Adjust the search or cycle filter.");
+                        color: Theme.muted;
+                        font-size: Theme.font-body;
+                    }
                 }
             }
-        }
         }
     }
 
