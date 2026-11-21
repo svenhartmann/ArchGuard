@@ -413,3 +413,41 @@ fn spring_role_hierarchy_builder_and_authority_target() {
     assert_eq!(c.role_prefix.as_deref(), Some("ROLE_"));
     assert_eq!(c.origins[0].line, 2);
 }
+
+// F43: the `RoleHierarchyImpl` builder; the default prefix or `withRolePrefix` is applied.
+#[test]
+fn role_hierarchy_builder_gives_includes_with_the_prefix() {
+    let java = "class H {\n    RoleHierarchy a() {\n        return RoleHierarchyImpl.withDefaultRolePrefix()\n            .role(\"ADMIN\").implies(\"STAFF\", \"AUDIT\")\n            .role(\"STAFF\").implies(\"USER\")\n            .build();\n    }\n    RoleHierarchy b() {\n        return RoleHierarchyImpl.withRolePrefix(\"X_\").role(\"A\").implies(\"B\").build();\n    }\n    RoleHierarchy c() {\n        return RoleHierarchyImpl.withDefaultRolePrefix().role(NAME).implies(\"B\").build();\n    }\n}\n";
+    let dir = project(&[("src/main/java/H.java", java)]);
+    let flow = extract(dir.path());
+    let h = "src/main/java/H.java";
+    assert_eq!(
+        roles(&flow),
+        [
+            format!("ROLE_ADMIN role {h}:4 [\"ROLE_STAFF\", \"ROLE_AUDIT\"]"),
+            format!("ROLE_STAFF role {h}:5 [\"ROLE_USER\"]"),
+            format!("X_A role {h}:9 [\"X_B\"]"),
+        ],
+        "{}",
+        notes(&flow)
+    );
+    assert!(
+        notes(&flow).contains("Role hierarchy not readable: NAME"),
+        "{}",
+        notes(&flow)
+    );
+}
+
+// F44: a right-hand side without the role prefix is a permission, never a role def.
+#[test]
+fn role_hierarchy_text_may_include_a_permission() {
+    let java = "class H { RoleHierarchy a() { return RoleHierarchyImpl.fromHierarchy(\"ROLE_ADMIN > permission:read\"); } }\n";
+    let dir = project(&[("src/main/java/H.java", java)]);
+    let flow = extract(dir.path());
+    assert_eq!(
+        roles(&flow),
+        ["ROLE_ADMIN role src/main/java/H.java:1 [\"permission:read\"]"],
+        "{}",
+        notes(&flow)
+    );
+}
