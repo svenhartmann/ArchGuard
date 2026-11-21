@@ -18,6 +18,8 @@ export struct CallsTreeRow {
     module: bool,
     cycle: bool,
     pressed: bool,
+    // The parent's row in the list, -1 for none (the Left key).
+    parent: int,
 }
 
 export struct CallsRelationRow {

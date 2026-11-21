@@ -5,9 +5,13 @@ import { Fmt } from "format.slint";
 import { Button, SectionHeading } from "widgets.slint";
 import { CallsData, CallsTreeRow, CallsModel } from "calls_data.slint";
 import { CallsColumn, Muted } from "calls_parts.slint";
+import { TreeKeys } from "tree_keys.slint";
 
 component TreeLine inherits Rectangle {
     in property <CallsTreeRow> item;
+    // The keyboard's row while the tree has focus.
+    in property <bool> focused;
+    callback clicked();
     property <string> prefix: item.kind == 1 ? "▣ " : item.kind == 2 ? "◇ " : item.kind == 3 ? "ƒ " : "";
     property <color> role-color: item.role == 1 ? Theme.outgoing : item.role == 2 ? Theme.incoming : item.role == 3 ? Theme.accent : Theme.muted;
     height: 30px;
@@ -45,15 +49,15 @@ component TreeLine inherits Rectangle {
             toggle-touch := TouchArea {
                 enabled: item.expandable;
                 mouse-cursor: pointer;
-                clicked => { CallsData.tree-toggle(item.node); }
+                clicked => { root.clicked(); CallsData.tree-toggle(item.node); }
             }
         }
         Rectangle {
             horizontal-stretch: 1;
             min-width: 40px;
             border-radius: 5px;
-            border-width: 1px;
-            border-color: item.pressed ? Theme.accent : transparent;
+            border-width: root.focused ? 2px : 1px;
+            border-color: item.pressed || root.focused ? Theme.accent : transparent;
             background: item.pressed ? Theme.package-selected : label-touch.has-hover ? Theme.panel-2 : transparent;
             if item.pressed: Rectangle { x: 0; width: 2px; background: Theme.accent; }
             Text {
@@ -69,7 +73,7 @@ component TreeLine inherits Rectangle {
             }
             label-touch := TouchArea {
                 mouse-cursor: pointer;
-                clicked => { CallsData.tree-select(item.node); }
+                clicked => { root.clicked(); CallsData.tree-select(item.node); }
             }
         }
         if item.module: Text {
@@ -140,7 +144,7 @@ export component CallsTree inherits CallsColumn {
             // a ranking); also once the list has its height in a new view.
             property <int> focus-row: m.tree-focus;
             property <length> shown: list.visible-height;
-            changed focus-row => { self.reveal(); }
+            changed focus-row => { if self.focus-row >= 0 { keys.cursor = self.focus-row; } self.reveal(); }
             changed shown => { self.reveal(); }
             function reveal() {
                 if self.focus-row < 0 || self.focus-row >= m.tree.length || list.visible-height <= 0 {
@@ -152,14 +156,31 @@ export component CallsTree inherits CallsColumn {
                 }
                 list.content-y = -max(0px, min(self.focus-row * 30px - list.visible-height / 3, list.content-height - list.visible-height));
             }
-            list := ListView {
-                for row in m.tree: VerticalLayout {
-                    if row.skipped > 0: Muted {
-                        text: @tr("{} additional rows · load more below", Fmt.int(row.skipped));
-                        height: 24px;
-                        vertical-alignment: center;
+            // The Explorer's tree keys; Enter and Space select as a click on the label.
+            keys := TreeKeys {
+                count: m.tree.length;
+                info(i) => { { expandable: m.tree[i].expandable, expanded: m.tree[i].expanded, parent: m.tree[i].parent } }
+                toggle(i) => { CallsData.tree-toggle(m.tree[i].node); }
+                activate(i) => { CallsData.tree-select(m.tree[i].node); }
+                changed cursor => {
+                    // TreeLine rows are 30px; "load more" notes are rare.
+                    if self.cursor < 0 || list.visible-height <= 0 { return; }
+                    if self.cursor * 30px < -list.content-y { list.content-y = -self.cursor * 30px; }
+                    else if (self.cursor + 1) * 30px > -list.content-y + list.visible-height { list.content-y = -((self.cursor + 1) * 30px - list.visible-height); }
+                }
+                list := ListView {
+                    for row[i] in m.tree: VerticalLayout {
+                        if row.skipped > 0: Muted {
+                            text: @tr("{} additional rows · load more below", Fmt.int(row.skipped));
+                            height: 24px;
+                            vertical-alignment: center;
+                        }
+                        TreeLine {
+                            item: row;
+                            focused: keys.has-focus && keys.cursor == i;
+                            clicked => { keys.cursor = i; keys.focus(); }
+                        }
                     }
-                    TreeLine { item: row; }
                 }
             }
         }
