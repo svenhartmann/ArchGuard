@@ -610,3 +610,171 @@ fn an_applications_convention_inherits_the_whole_flow_permissions_not_its_prefix
     assert_eq!(reach["api"], ScreenReach::Sure);
     assert_eq!(reach["node"], ScreenReach::Denied, "X is not ROLE_X there");
 }
+
+fn with_origin(mut c: RoleConvention, field: &str, source: &str) -> RoleConvention {
+    c.origins.push(ConventionOrigin {
+        field: field.into(),
+        file: "Sec.java".into(),
+        line: 3,
+        source: source.into(),
+    });
+    c
+}
+
+fn app(name: &str) -> RoleConvention {
+    RoleConvention {
+        application: Some(name.into()),
+        ..RoleConvention::default()
+    }
+}
+
+// W5 item 2: two different read permission formats are a gap, not first wins.
+#[test]
+fn two_different_read_permission_formats_are_a_gap() {
+    let dotted = |w: &str| {
+        let mut c = app("api");
+        c.permissions = PermissionFormat::Dotted { wildcard: w.into() };
+        with_origin(c, "permissions", "read")
+    };
+    let merged = merge_ui_flows(flow_of(vec![dotted("*")]), flow_of(vec![dotted("#")]));
+    assert_eq!(
+        merged.convention(Some("api")).permissions,
+        PermissionFormat::Exact
+    );
+    assert!(!merged.complete);
+    assert!(
+        merged
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("permissions"))
+    );
+}
+
+// W5 item 3: a read exact case beats the insensitive framework default.
+#[test]
+fn a_read_exact_case_beats_the_insensitive_framework_default() {
+    let mut default = app("api");
+    default.policy_case = NameCase::Insensitive;
+    let default = with_origin(default, "policy_case", "framework default aspnetcore 8");
+    let read = with_origin(app("api"), "policy_case", "options.CaseSensitive = true");
+    let merged = merge_ui_flows(flow_of(vec![default]), flow_of(vec![read]));
+    assert_eq!(merged.convention(Some("api")).policy_case, NameCase::Exact);
+    assert!(merged.complete);
+}
+
+// W5: with two read role prefixes the check depends on the unread one: Unknown, unless the name is held literally.
+#[test]
+fn a_role_prefix_clash_makes_a_role_check_unknown_for_that_app() {
+    let merged = merge_ui_flows(
+        flow_of(vec![prefixed("api", "X_", "a", 1)]),
+        flow_of(vec![prefixed("api", "Y_", "b", 2)]),
+    );
+    let check = |held: &str| {
+        let a = Assignment {
+            roles: [held.to_string()].into(),
+            held: [held.to_string()].into(),
+            ..Assignment::default()
+        };
+        let a = resolve_assignment_for(&merged, Some("api"), &a);
+        evaluate_condition(&Condition::Role("X_A".into()), &a)
+    };
+    assert_eq!(check("X_A"), Outcome::Allowed);
+    assert_eq!(check("A"), Outcome::Unknown);
+    assert_eq!(check("Y_A"), Outcome::Unknown);
+}
+
+// W5 review: a clash cleared by the merge is never refilled from the whole-flow entry,
+// and its checks are Unknown unless the user literally holds the name.
+fn clash_flow(entries: Vec<RoleConvention>, roles: Vec<RoleDef>) -> UiFlow {
+    let mut api = screen("home", AccessState::default());
+    api.application = Some("api".into());
+    let flow = UiFlow {
+        screens: vec![api],
+        roles,
+        ..flow_of(vec![])
+    };
+    merge_ui_flows(flow, flow_of(entries))
+}
+
+fn check(flow: &UiFlow, held: &str, wanted: &str) -> Outcome {
+    let a = Assignment {
+        roles: [held.to_string()].into(),
+        ..Assignment::default()
+    };
+    let a = resolve_assignment_for(flow, Some("api"), &a);
+    evaluate_condition(&Condition::Role(wanted.into()), &a)
+}
+
+fn whole_flow(mut c: RoleConvention) -> RoleConvention {
+    c.application = None;
+    c
+}
+
+#[test]
+fn a_permission_clash_is_not_refilled_from_the_whole_flow_entry() {
+    let dotted = |app: RoleConvention, w: &str| {
+        let mut c = app;
+        c.permissions = PermissionFormat::Dotted { wildcard: w.into() };
+        with_origin(c, "permissions", "read")
+    };
+    let flow = clash_flow(
+        vec![
+            dotted(app("api"), "*"),
+            dotted(app("api"), "#"),
+            whole_flow(dotted(app("api"), "*")),
+        ],
+        vec![],
+    );
+    assert_eq!(
+        flow.convention(Some("api")).permissions,
+        PermissionFormat::Exact
+    );
+    assert_eq!(check(&flow, "orders.*", "orders.read"), Outcome::Unknown);
+    assert_eq!(check(&flow, "orders.read", "orders.read"), Outcome::Allowed);
+}
+
+#[test]
+fn a_prefix_clash_is_not_refilled_from_the_whole_flow_entry() {
+    let flow = clash_flow(
+        vec![
+            prefixed("api", "X_", "a", 1),
+            prefixed("api", "Y_", "b", 2),
+            whole_flow(prefixed("api", "X_", "c", 3)),
+        ],
+        vec![],
+    );
+    assert_eq!(flow.convention(Some("api")).role_prefix, None);
+    assert_eq!(check(&flow, "A", "X_A"), Outcome::Unknown);
+}
+
+#[test]
+fn a_read_exact_case_is_not_replaced_by_the_whole_flow_case() {
+    let mut whole = whole_flow(app("api"));
+    whole.role_case = NameCase::Insensitive;
+    let read = with_origin(app("api"), "role_case", "read exact");
+    let flow = clash_flow(vec![read, whole], vec![]);
+    assert_eq!(flow.convention(Some("api")).role_case, NameCase::Exact);
+}
+
+#[test]
+fn under_a_prefix_clash_only_what_the_user_entered_counts_as_held() {
+    let flow = clash_flow(
+        vec![prefixed("api", "X_", "a", 1), prefixed("api", "Y_", "b", 2)],
+        vec![def("Y_A", RoleKind::Role, &["Y_B"])],
+    );
+    assert_eq!(check(&flow, "Y_A", "Y_A"), Outcome::Allowed);
+    assert_eq!(check(&flow, "Y_A", "Y_B"), Outcome::Unknown);
+}
+
+#[test]
+fn a_case_clash_makes_role_checks_unknown() {
+    let insensitive = {
+        let mut c = app("api");
+        c.role_case = NameCase::Insensitive;
+        with_origin(c, "role_case", "read insensitive")
+    };
+    let exact = with_origin(app("api"), "role_case", "read exact");
+    let flow = clash_flow(vec![insensitive, exact], vec![]);
+    assert_eq!(check(&flow, "ADMIN", "admin"), Outcome::Unknown);
+    assert_eq!(check(&flow, "admin", "admin"), Outcome::Allowed);
+}

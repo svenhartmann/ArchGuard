@@ -93,23 +93,7 @@ impl UiFlow {
         if own.is_none() && single {
             return w.clone();
         }
-        if c.permissions == PermissionFormat::Exact {
-            c.permissions = w.permissions.clone();
-        }
-        if c.action_aliases.is_empty() {
-            c.action_aliases = w.action_aliases.clone();
-        }
-        if single {
-            c.role_prefix = c.role_prefix.or_else(|| w.role_prefix.clone());
-            c.scope_prefix = c.scope_prefix.or_else(|| w.scope_prefix.clone());
-            c.role_claim = c.role_claim.or_else(|| w.role_claim.clone());
-            if c.role_case == NameCase::Exact {
-                c.role_case = w.role_case;
-            }
-            if c.policy_case == NameCase::Exact {
-                c.policy_case = w.policy_case;
-            }
-        }
+        c.fill_from_whole_flow(w, single);
         c
     }
 
@@ -582,12 +566,20 @@ pub fn evaluate_condition(condition: &Condition, assignment: &Assignment) -> Out
         Condition::Not(inner) => negate(evaluate_condition(inner, assignment)),
         Condition::Authenticated => known(Some(&assignment.authenticated)),
         Condition::Never => Outcome::Denied,
-        Condition::Role(name) => known(Some(&holds(
-            &assignment.convention,
-            AtomKind::Role,
-            &assignment.roles,
-            name,
-        ))),
+        Condition::Role(name) => {
+            let conv = &assignment.convention;
+            let unsure = ["role_prefix", "role_case", "permissions"]
+                .iter()
+                .any(|f| conv.conflicts.iter().any(|c| c == f));
+            if unsure {
+                // the check depends on an unread value: only what the user entered counts
+                return match assignment.held.contains(name) {
+                    true => Outcome::Allowed,
+                    false => Outcome::Unknown,
+                };
+            }
+            known(Some(&holds(conv, AtomKind::Role, &assignment.roles, name)))
+        }
         Condition::Policy(name) => known(assignment.policy_switch(name)),
         Condition::Custom(name) => known(assignment.custom.get(name)),
         Condition::Unknown(_) => Outcome::Unknown,
@@ -597,6 +589,9 @@ pub fn evaluate_condition(condition: &Condition, assignment: &Assignment) -> Out
 impl Assignment {
     /// The switch of a policy; names compare by `policy_case`.
     fn policy_switch(&self, name: &str) -> Option<&bool> {
+        if (self.convention.conflicts.iter()).any(|c| c == "policy_case") {
+            return None; // two read cases: unknown
+        }
         match self.convention.policy_case {
             NameCase::Exact => self.policies.get(name),
             NameCase::Insensitive => (self.policies.iter())
