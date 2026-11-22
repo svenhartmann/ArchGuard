@@ -74,7 +74,6 @@ fn a_group_lists_its_fields_with_provenance() {
             "licenses.unknown",
             "views.conventions",
             "views.backends",
-            "views.access_layers.chain",
             "views.access_layers.show_unguarded"
         ]
     );

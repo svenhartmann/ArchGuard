@@ -76,37 +76,61 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
     });
 }
 
-/// 0 none, 1 enforced, 2 path only, 3 hint, 4 data filter; the strongest of `layers`.
+/// 0 none, 1 enforced, 2 enforced with an unreadable condition (never open), 3 path only,
+/// 4 hint, 5 data filter; the strongest of `layers`.
 fn how_kind<'a>(layers: impl IntoIterator<Item = &'a ServiceLayer>) -> i32 {
     layers
         .into_iter()
         .map(|l| match l.how {
             ServiceHow::Enforced if matches!(l.state, AccessState::Protected(_)) => 1,
-            // an enforced layer without a readable condition is no protection
-            ServiceHow::Enforced | ServiceHow::PathOnly => 2,
-            ServiceHow::Hint => 3,
-            ServiceHow::DataFilter => 4,
+            ServiceHow::Enforced => 2,
+            ServiceHow::PathOnly => 3,
+            ServiceHow::Hint => 4,
+            ServiceHow::DataFilter => 5,
         })
         .min()
         .unwrap_or(0)
 }
 
-/// `Class.method` -> its strongest layer kind over all endpoints; empty when the flow cannot be read.
-pub fn method_layers(root: &std::path::Path) -> std::collections::HashMap<String, i32> {
+/// (file, `Class.method`) -> its strongest layer kind over all endpoints; empty when the flow cannot be read.
+pub type MethodLayers = std::collections::HashMap<(String, String), i32>;
+
+pub fn method_layers(root: &std::path::Path) -> MethodLayers {
     let Ok(flow) = archguard_engine::ui_flow::analyze(root) else {
         return Default::default();
     };
     layers_by_target(&flow)
 }
 
-fn layers_by_target(flow: &UiFlow) -> std::collections::HashMap<String, i32> {
+fn layers_by_target(flow: &UiFlow) -> MethodLayers {
     let mut out = std::collections::HashMap::new();
     for l in &flow.service_layers {
         let kind = how_kind([l]);
-        let e = out.entry(l.target.clone()).or_insert(kind);
+        let e = out
+            .entry((l.file.clone(), l.target.clone()))
+            .or_insert(kind);
         *e = (*e).min(kind);
     }
     out
+}
+
+/// The badge of a method declared in `file` (class id `class_id`): none when no layer names
+/// that file and `Class.method`, or when `same_name_in_file` > 1 (overloads cannot be told apart).
+pub fn badge(
+    layers: &MethodLayers,
+    file: &str,
+    class_id: &str,
+    name: &str,
+    same_name_in_file: usize,
+) -> i32 {
+    let class = class_id.rsplit('.').next().unwrap_or(class_id);
+    if same_name_in_file > 1 {
+        return 0;
+    }
+    layers
+        .get(&(file.to_string(), format!("{class}.{name}")))
+        .copied()
+        .unwrap_or(0)
 }
 
 fn state_kind(s: &AccessState) -> i32 {
@@ -301,7 +325,7 @@ mod tests {
         // /a: open endpoint, enforced service check: flagged service only
         assert_eq!((rows[0].enforced_at, rows[0].service_kind), (2, 1));
         // /b: undeclared endpoint, path-only layer: no protection, still undeclared
-        assert_eq!((rows[1].enforced_at, rows[1].service_kind), (0, 2));
+        assert_eq!((rows[1].enforced_at, rows[1].service_kind), (0, 3));
         assert_eq!(
             (rows[1].effective_kind, rows[1].effective.as_str()),
             (0, "undeclared")
@@ -309,9 +333,54 @@ mod tests {
         assert_eq!(m.detail.row_count(), 2);
         // both endpoints name S.m: the enforced layer wins over the path-only one
         assert_eq!(
-            layers_by_target(state(false).flow.as_ref().unwrap())["S.m"],
+            layers_by_target(state(false).flow.as_ref().unwrap())[&("S.java".into(), "S.m".into())],
             1
         );
         assert_eq!(build(&state(true), &Texts::default()).rows.row_count(), 1);
+    }
+
+    /// Two classes named `UserService` in different files: only the guarded one is badged.
+    #[test]
+    fn a_badge_needs_the_same_file_and_no_overload() {
+        let mut st = state(false);
+        let Ok(flow) = st.flow.as_mut() else { panic!() };
+        flow.service_layers.truncate(1);
+        flow.service_layers[0].target = "UserService.delete".into();
+        flow.service_layers[0].file = "admin/UserService.java".into();
+        let map = layers_by_target(flow);
+        assert_eq!(
+            badge(
+                &map,
+                "admin/UserService.java",
+                "admin.UserService",
+                "delete",
+                1
+            ),
+            1
+        );
+        assert_eq!(
+            badge(&map, "web/UserService.java", "web.UserService", "delete", 1),
+            0
+        );
+        // an overload in the same file cannot be told apart: no badge
+        assert_eq!(
+            badge(
+                &map,
+                "admin/UserService.java",
+                "admin.UserService",
+                "delete",
+                2
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn enforced_with_unreadable_condition_is_not_path_only() {
+        let mut st = state(false);
+        let Ok(flow) = st.flow.as_mut() else { panic!() };
+        flow.service_layers[0].state = AccessState::Undeclared;
+        assert_eq!(how_kind([&flow.service_layers[0]]), 2);
+        assert_eq!(how_kind([&flow.service_layers[1]]), 3, "path only");
     }
 }

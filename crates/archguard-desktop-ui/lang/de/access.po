@@ -45,3 +45,6 @@ msgstr "Wirksam"
 
 msgid "Effective: {}"
 msgstr "Wirksam: {}"
+
+msgid "enforced, condition unknown"
+msgstr "erzwungen, Bedingung unbekannt"

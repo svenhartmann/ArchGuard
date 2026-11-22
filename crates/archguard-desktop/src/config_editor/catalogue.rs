@@ -367,12 +367,6 @@ pub const FIELDS: &[Field] = &[
         "Which layers the access-layers view shows.",
     ),
     f(
-        "views.access_layers.chain",
-        K::List,
-        G::Rules,
-        "Names of [[layers]] in chain order (screen to data); empty uses the roles the readers recognise.",
-    ),
-    f(
         "views.access_layers.show_unguarded",
         K::Bool,
         G::Rules,

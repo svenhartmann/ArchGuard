@@ -83,9 +83,10 @@ component TreeLine inherits Rectangle {
             vertical-alignment: center;
         }
         if item.layer == 1: Badge { variant: "success"; text: @tr("enforced"); }
-        if item.layer == 2: Badge { variant: "warning"; text: @tr("path only"); }
-        if item.layer == 3: Badge { variant: "neutral"; text: @tr("hint"); }
-        if item.layer == 4: Badge { variant: "neutral"; text: @tr("data filter"); }
+        if item.layer == 2: Badge { variant: "warning"; text: @tr("enforced, condition unknown"); }
+        if item.layer == 3: Badge { variant: "warning"; text: @tr("path only"); }
+        if item.layer == 4: Badge { variant: "neutral"; text: @tr("hint"); }
+        if item.layer == 5: Badge { variant: "neutral"; text: @tr("data filter"); }
         if item.cycle: Text {
             text: "↻";
             color: Theme.cycle;

@@ -107,8 +107,6 @@ fn analyze_with_zones(
     Ok(run)
 }
 
-/// Parse-free core: everything after argument parsing, mapped to a Kap. 9
-/// exit code.
 /// `doctor` and `update` need no project.
 fn tool_command(cli: &Cli) -> Option<i32> {
     match &cli.command {
@@ -118,6 +116,8 @@ fn tool_command(cli: &Cli) -> Option<i32> {
     }
 }
 
+/// Parse-free core: everything after argument parsing, mapped to a Kap. 9
+/// exit code.
 fn run(cli: &Cli) -> i32 {
     if let Command::Mcp { root } = &cli.command {
         return mcp(root);

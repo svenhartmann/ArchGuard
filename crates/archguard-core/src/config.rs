@@ -101,20 +101,17 @@ pub struct ViewsConfig {
     pub access_layers: AccessLayersConfig,
 }
 
-/// `[views.access_layers]`: `chain` names `[[layers]]` in chain order (empty:
-/// the roles the readers recognise); `show_unguarded` keeps layers without a
-/// check of their own in the view.
+/// `[views.access_layers]`: `show_unguarded` keeps layers that do not enforce a
+/// check (path only, hint, data filter) in the view.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AccessLayersConfig {
-    pub chain: Vec<String>,
     pub show_unguarded: bool,
 }
 
 impl Default for AccessLayersConfig {
     fn default() -> Self {
         Self {
-            chain: vec![],
             show_unguarded: true,
         }
     }
@@ -418,13 +415,8 @@ mod access_layers_tests {
     #[test]
     fn views_access_layers_default_and_parse() {
         let none: Config = toml::from_str("").unwrap();
-        assert!(none.views.access_layers.chain.is_empty());
         assert!(none.views.access_layers.show_unguarded);
-        let c: Config = toml::from_str(
-            "[views.access_layers]\nchain = [\"web\", \"api\"]\nshow_unguarded = false\n",
-        )
-        .unwrap();
-        assert_eq!(c.views.access_layers.chain, ["web", "api"]);
+        let c: Config = toml::from_str("[views.access_layers]\nshow_unguarded = false\n").unwrap();
         assert!(!c.views.access_layers.show_unguarded);
         let text = toml::to_string(&c.views).unwrap();
         assert_eq!(

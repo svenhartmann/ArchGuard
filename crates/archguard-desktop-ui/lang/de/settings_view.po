@@ -786,19 +786,12 @@ msgstr "Ebenen der Paketkarte"
 msgid "Which layers the access-layers view shows."
 msgstr "Welche Schichten die Ansicht Zugriffsschichten zeigt."
 
-msgid "Names of [[layers]] in chain order (screen to data); empty uses the roles the readers recognise."
-msgstr "Namen der [[layers]] in Kettenfolge (Screen bis Daten); leer nimmt die Rollen, die die Leser erkennen."
-
 msgid "Show layers without a check of their own (default true)."
 msgstr "Schichten ohne eigene Prüfung trotzdem zeigen (Standard: true)."
 
 msgctxt "Settings"
 msgid "Access layers view"
 msgstr "Ansicht Zugriffsschichten"
-
-msgctxt "Settings"
-msgid "Layer chain"
-msgstr "Schichtenkette"
 
 msgctxt "Settings"
 msgid "Show unguarded layers"

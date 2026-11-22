@@ -13,7 +13,7 @@ export struct AlRow {
     // 0 undeclared, 1 open (declared), 2 protected.
     endpoint-kind: int,
     service: string,
-    // Worst-first kind of the service/data layers: 0 none, 1 enforced, 2 path only, 3 hint, 4 data filter.
+    // Worst-first kind of the service/data layers: 0 none, 1 enforced, 2 enforced with unreadable condition, 3 path only, 4 hint, 5 data filter.
     service-kind: int,
     data: string,
     data-kind: int,
@@ -70,9 +70,10 @@ component HowBadge inherits Rectangle {
     in property <int> how;
     horizontal-stretch: 0;
     if how == 1: Badge { variant: "success"; text: @tr("enforced"); }
-    if how == 2: Badge { variant: "warning"; text: @tr("path only"); }
-    if how == 3: Badge { variant: "neutral"; text: @tr("hint"); }
-    if how == 4: Badge { variant: "neutral"; text: @tr("data filter"); }
+    if how == 2: Badge { variant: "warning"; text: @tr("enforced, condition unknown"); }
+    if how == 3: Badge { variant: "warning"; text: @tr("path only"); }
+    if how == 4: Badge { variant: "neutral"; text: @tr("hint"); }
+    if how == 5: Badge { variant: "neutral"; text: @tr("data filter"); }
 }
 
 component ChainRow inherits Rectangle {

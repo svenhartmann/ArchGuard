@@ -17,7 +17,7 @@ export struct CallsTreeRow {
     count: int,
     module: bool,
     cycle: bool,
-    // How the method's access check holds: 0 none, 1 enforced, 2 path only, 3 hint, 4 data filter.
+    // How the method's access check holds: 0 none, 1 enforced, 2 enforced with unreadable condition, 3 path only, 4 hint, 5 data filter.
     layer: int,
     pressed: bool,
     // The parent's row in the list, -1 for none (the Left key).

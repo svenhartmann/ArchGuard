@@ -68,7 +68,7 @@ impl Default for CycleLimits {
 pub struct State {
     pub idx: Index,
     /// `Class.method` -> how its access check holds (`access_ui::how_kind`); from the UI flow.
-    pub layers: HashMap<String, i32>,
+    pub layers: crate::access_ui::MethodLayers,
     pub cycles: CycleModel,
     pub labels: Labels,
     pub filter: Filter,
