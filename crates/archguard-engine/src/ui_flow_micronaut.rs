@@ -144,8 +144,142 @@ struct TypeInfo {
     name: String,
     attrs: Vec<Attr>,
     bases: Vec<String>,
-    methods: Vec<(String, Vec<Attr>)>,
+    methods: Vec<(String, Vec<Attr>, Sig)>,
 }
+
+/// Overload matching by parameter types.
+mod sig {
+    use super::*;
+
+    /// Normalised parameter types of a method; `None` when not readable.
+    pub(super) type Sig = Option<Vec<String>>;
+
+    /// The parameter types of the method whose parameter list opens at `open`.
+    pub(super) fn sig_of(src: &Source, open: usize) -> Sig {
+        let close = src.pair(open)?;
+        let text = &src.text[open + 1..close];
+        if text.trim().is_empty() {
+            return Some(vec![]);
+        }
+        let (mut parts, mut depth, mut from) = (vec![], 0i32, 0);
+        for (i, c) in text.char_indices() {
+            match c {
+                '(' | '<' | '[' | '{' => depth += 1,
+                ')' | '>' | ']' | '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    parts.push(&text[from..i]);
+                    from = i + 1;
+                }
+                _ => {}
+            }
+        }
+        parts.push(&text[from..]);
+        parts.into_iter().map(param_type).collect()
+    }
+
+    /// `final @A String name`, `name: String = x` -> `String`; generics and
+    /// package prefixes are dropped (erased comparison).
+    pub(super) fn param_type(p: &str) -> Option<String> {
+        let mut p = p.trim().to_string();
+        while let Some(at) = p.find('@') {
+            let rest = &p[at + 1..];
+            let end = rest.find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '.')));
+            let mut cut = at + 1 + end.unwrap_or(rest.len());
+            if p[cut..].trim_start().starts_with('(') {
+                cut = at + 1 + p[at + 1..].find(')')? + 1;
+            }
+            p.replace_range(at..cut, " ");
+        }
+        let ty = if let Some((_, t)) = p.split_once(':') {
+            t.split('=').next().unwrap_or(t).to_string()
+        } else {
+            let mut words: Vec<&str> = p.split_whitespace().collect();
+            words.pop()?;
+            words.join(" ")
+        };
+        let mut out = String::new();
+        let mut depth = 0;
+        for c in ty.chars() {
+            match c {
+                '<' => depth += 1,
+                '>' => depth -= 1,
+                _ if depth == 0 => out.push(c),
+                _ => {}
+            }
+        }
+        let out = out.replace("...", "[]").replace('?', "");
+        let words: Vec<&str> = (out.split_whitespace())
+            .filter(|w| !matches!(*w, "final" | "vararg"))
+            .collect();
+        let ty = words.join("").rsplit('.').next()?.to_string();
+        (!ty.is_empty()).then_some(ty)
+    }
+
+    #[derive(PartialEq)]
+    pub(super) enum Fit {
+        Yes,
+        No,
+        Maybe,
+    }
+
+    /// Whether two parameter lists are the same overload. A type variable
+    /// (`T`) or an unreadable list may stand for anything: `Maybe`.
+    pub(super) fn fits(a: &Sig, b: &Sig) -> Fit {
+        let (Some(a), Some(b)) = (a, b) else {
+            return Fit::Maybe;
+        };
+        if a.len() != b.len() {
+            return Fit::No;
+        }
+        let var = |t: &str| t.len() <= 2 && t.starts_with(|c: char| c.is_ascii_uppercase());
+        let mut maybe = false;
+        for (x, y) in a.iter().zip(b) {
+            if x == y {
+                continue;
+            }
+            if !(var(x) || var(y)) {
+                return Fit::No;
+            }
+            maybe = true;
+        }
+        if maybe { Fit::Maybe } else { Fit::Yes }
+    }
+
+    /// The methods named `name` declared in the body of `class`: `(offset of the
+    /// parameter list, parameter types)`. Annotation-less ones are not `Decl`s.
+    pub(super) fn declared(src: &Source, class: &Decl, name: &str) -> Vec<(usize, Sig)> {
+        let kotlin = src.rel.ends_with(".kt");
+        let mut out = vec![];
+        for (at, _) in src.text[class.open..class.end.min(src.text.len())].match_indices(name) {
+            let start = class.open + at;
+            let (before, after) = (&src.text[..start], &src.text[start + name.len()..]);
+            let ident = |c: char| c.is_alphanumeric() || c == '_';
+            if before.ends_with(ident) || after.starts_with(ident) {
+                continue;
+            }
+            let open = start + name.len() + (after.len() - after.trim_start().len());
+            if !src.text[open..].starts_with('(') {
+                continue;
+            }
+            let tail = src
+                .pair(open)
+                .map_or("", |c| src.text[c + 1..].trim_start());
+            let head = before.trim_end();
+            let is_decl = if kotlin {
+                head.ends_with("fun")
+            } else {
+                !head.ends_with('.')
+                    && (tail.starts_with('{') || tail.starts_with("throws"))
+                    && !head.ends_with("new")
+            };
+            if is_decl {
+                out.push((open, sig_of(src, open)));
+            }
+        }
+        out
+    }
+}
+use sig::{Fit, Sig, declared, fits, sig_of};
 
 /// The annotated types and methods of a project by simple name.
 struct Types(Vec<TypeInfo>);
@@ -177,7 +311,9 @@ impl Types {
                         methods: vec![],
                     });
                 } else if let Some(o) = open.last() {
-                    all[o.1].methods.push((d.name, d.attrs));
+                    all[o.1]
+                        .methods
+                        .push((d.name, d.attrs, sig_of(src, d.open)));
                 }
             }
         }
@@ -270,7 +406,8 @@ impl Project {
                 let methods = own.remove(&class.open).unwrap_or_default();
                 let at = Site { src, class };
                 for m in &methods {
-                    self.routes(&at, (&m.name, &m.attrs, &m.attrs), &env, flow);
+                    let sig = sig_of(src, m.open);
+                    self.routes(&at, (&m.name, &m.attrs, &m.attrs, &sig), &env, flow);
                 }
                 self.inherited_routes(&at, &methods, &env, flow);
             }
@@ -289,18 +426,39 @@ impl Project {
             gap(&mut flow.diagnostics, &at.src.rel, line, message);
         }
         let verbs = |attrs: &[Attr]| attrs.iter().any(|a| VERBS.iter().any(|v| v.0 == a.name));
-        let mut seen: BTreeSet<&str> = (methods.iter())
-            .filter(|m| verbs(&m.attrs))
-            .map(|m| m.name.as_str())
-            .collect();
+        let mut seen: BTreeSet<(&str, Sig)> = BTreeSet::new();
         for t in supers {
-            for (name, attrs) in t.methods.iter().filter(|m| verbs(&m.1)) {
-                if !seen.insert(name) {
+            for (name, attrs, sig) in t.methods.iter().filter(|m| verbs(&m.1)) {
+                if !seen.insert((name, sig.clone())) {
                     continue;
                 }
-                let own: &[Attr] =
-                    (methods.iter().find(|m| &m.name == name)).map_or(&[], |m| &m.attrs);
-                self.routes(at, (name, own, attrs), env, flow);
+                // Which method of the controller overrides it (by parameters)?
+                let found = declared(at.src, at.class, name);
+                let fit: Vec<_> = found.iter().map(|f| fits(&f.1, sig)).collect();
+                let chosen = if found.len() <= 1 {
+                    found.first()
+                } else if fit.iter().filter(|f| **f == Fit::Yes).count() == 1
+                    && !fit.contains(&Fit::Maybe)
+                {
+                    fit.iter().position(|f| *f == Fit::Yes).map(|i| &found[i])
+                } else if fit.iter().all(|f| *f == Fit::No) {
+                    None
+                } else {
+                    let message = format!(
+                        "Route {name} of supertype {} is not inherited: the controller overloads \
+                         {name} and the override cannot be told from the parameters.",
+                        t.name
+                    );
+                    gap(&mut flow.diagnostics, &at.src.rel, line, message);
+                    continue;
+                };
+                let overriding = chosen.and_then(|c| methods.iter().find(|m| m.open == c.0));
+                if overriding.is_some_and(|m| verbs(&m.attrs)) {
+                    continue;
+                }
+                let own: &[Attr] = overriding.map_or(&[], |m| &m.attrs);
+                let route_sig = chosen.map_or(sig, |c| &c.1);
+                self.routes(at, (name, own, attrs, route_sig), env, flow);
             }
         }
     }
@@ -310,7 +468,7 @@ impl Project {
     fn routes(
         &self,
         at: &Site,
-        (name, own, route_attrs): (&str, &[Attr], &[Attr]),
+        (name, own, route_attrs, sig): (&str, &[Attr], &[Attr], &Sig),
         env: &Env,
         flow: &mut UiFlow,
     ) {
@@ -329,6 +487,7 @@ impl Project {
             );
             return;
         };
+        let overloaded = declared(src, class, name).len() > 1;
         for a in route_attrs {
             let Some((_, verb)) = VERBS.iter().find(|v| v.0 == a.name) else {
                 continue;
@@ -351,18 +510,19 @@ impl Project {
                 .iter()
                 .flat_map(|b| paths.iter().map(move |p| join(b, p)))
             {
-                let access = match self.decide(class, (name, own), verb, &path, env) {
-                    Ok(a) => a,
-                    Err(why) => {
-                        gap(
-                            &mut flow.diagnostics,
-                            &src.rel,
-                            line,
-                            format!("Access of {verb} {path} not read: {why}"),
-                        );
-                        AccessState::Protected(Condition::Unknown(why))
-                    }
-                };
+                let access =
+                    match self.decide(class, (name, own, sig, overloaded), verb, &path, env) {
+                        Ok(a) => a,
+                        Err(why) => {
+                            gap(
+                                &mut flow.diagnostics,
+                                &src.rel,
+                                line,
+                                format!("Access of {verb} {path} not read: {why}"),
+                            );
+                            AccessState::Protected(Condition::Unknown(why))
+                        }
+                    };
                 if access == AccessState::Protected(Condition::Never)
                     && env.denied.borrow_mut().insert(src.rel.clone())
                 {
@@ -392,7 +552,7 @@ impl Project {
     fn decide(
         &self,
         class: &Decl,
-        method: (&str, &[Attr]),
+        method: (&str, &[Attr], &Sig, bool),
         verb: &str,
         path: &str,
         env: &Env,
@@ -451,7 +611,12 @@ impl Project {
     /// The annotation decision of a route method: its own, then those of the
     /// methods it overrides, then the class's, then its supertypes'. A
     /// supertype outside the scan may carry any of them: unknown.
-    fn inherited(&self, class: &Decl, method: (&str, &[Attr]), types: &Types) -> Option<Decision> {
+    fn inherited(
+        &self,
+        class: &Decl,
+        method: (&str, &[Attr], &Sig, bool),
+        types: &Types,
+    ) -> Option<Decision> {
         if let Some(a) = self.annotation(method.1) {
             return Some(a);
         }
@@ -462,11 +627,26 @@ impl Project {
             ));
         }
         for t in &supers {
-            let same: Vec<_> = t.methods.iter().filter(|m| m.0 == method.0).collect();
-            if same.len() > 1 {
+            let named: Vec<_> = t.methods.iter().filter(|m| m.0 == method.0).collect();
+            // A name declared once is the override target, whatever its types.
+            let single = named.len() == 1 && !method.3;
+            let same: Vec<_> = (named.into_iter())
+                .map(|m| {
+                    (
+                        m,
+                        if single {
+                            Fit::Yes
+                        } else {
+                            fits(&m.2, method.2)
+                        },
+                    )
+                })
+                .filter(|m| m.1 != Fit::No)
+                .collect();
+            if same.len() > 1 || same.iter().any(|m| m.1 == Fit::Maybe) {
                 return Some(Err(format!("{} is overloaded in {}", method.0, t.name)));
             }
-            if let Some(a) = same.first().and_then(|m| self.annotation(&m.1)) {
+            if let Some(a) = same.first().and_then(|m| self.annotation(&m.0.1)) {
                 return Some(a);
             }
         }
@@ -1234,6 +1414,66 @@ mod tests {
                 .any(|d| d.severity == DiagnosticSeverity::Gap
                     && d.message
                         .contains("route may be inherited from supertype Lib")),
+            "{:#?}",
+            f.diagnostics
+        );
+    }
+
+    #[test]
+    fn overload_inherits_only_the_matching_supertype_method() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Secured(\"ROLE_ADMIN\") String i(String a);",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Get(\"/n\") public String i(int a) { return \"\"; }\n\
+             @Get(\"/s\") public String i(String a) { return \"\"; }",
+        );
+        let f = run(
+            SEC,
+            &[("src/Api.java", &api), ("src/C.java", &ctl), (YML, ANY_URL)],
+        );
+        assert_eq!(ep(&f, "GET", "/c/s").access, prot(role("ROLE_ADMIN")));
+        assert_eq!(ep(&f, "GET", "/c/n").access, AccessState::Open);
+    }
+
+    #[test]
+    fn overloaded_override_takes_its_own_annotations_by_parameters() {
+        let api = java_type("interface", "Api", "@Get(\"/i\") String i(String a);");
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Secured(\"ROLE_Y\") public String i(int a) { return \"\"; }\n\
+             @Secured(\"ROLE_X\") public String i(String a) { return \"\"; }",
+        );
+        let f = run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]);
+        assert_eq!(ep(&f, "GET", "/c/i").access, prot(role("ROLE_X")));
+    }
+
+    #[test]
+    fn ambiguous_overload_gets_a_gap_and_no_route() {
+        let api = java_type("interface", "Api", "@Get(\"/i\") String i(T a);");
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "public String i(int a) { return \"\"; }\n\
+             public String i(String a) { return \"\"; }",
+        );
+        let f = run(
+            SEC,
+            &[("src/Api.java", &api), ("src/C.java", &ctl), (YML, ANY_URL)],
+        );
+        assert!(
+            f.endpoints.iter().all(|e| e.path != "/c/i"),
+            "{:#?}",
+            f.endpoints
+        );
+        assert!(
+            f.diagnostics.iter().any(|d| d.severity == DiagnosticSeverity::Gap
+                && d.message.contains("overloads i")),
             "{:#?}",
             f.diagnostics
         );
