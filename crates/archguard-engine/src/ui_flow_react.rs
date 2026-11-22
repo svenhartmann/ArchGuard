@@ -637,7 +637,7 @@ mod next {
         if name.is_empty() || keyword || !text[j + name.len()..].starts_with('(') {
             return AccessState::Undeclared;
         }
-        match read_wrapped(app, access, out, (file, text), name) {
+        let own = match read_wrapped(app, access, out, (file, text), name) {
             Ok(state) => state,
             Err(why) => {
                 let message = format!(
@@ -646,7 +646,10 @@ mod next {
                 diag(out, file, line_of(text, j), message);
                 AccessState::Protected(Condition::Unknown(name.into()))
             }
-        }
+        };
+        // `W(V(h))`: the wrapped call is read the same way, both must hold.
+        let inner = j + name.len() + 1;
+        own.and(wrapped((app, access, out), (file, text), inner))
     }
 
     /// The state the wrapper function `name` gives its handler.
@@ -3172,6 +3175,45 @@ mod paths {
             );
         call && denies(stmt) && !stmt.contains("=>") && !has_branching(stmt)
     }
+    /// React's own hooks (<https://react.dev/reference/react/hooks>) that, called
+    /// as a bare statement, say nothing about access. The effect hooks are not
+    /// among them: their callback may navigate.
+    const PLAIN_HOOKS: [&str; 11] = [
+        "useState",
+        "useReducer",
+        "useContext",
+        "useRef",
+        "useImperativeHandle",
+        "useMemo",
+        "useCallback",
+        "useId",
+        "useDebugValue",
+        "useSyncExternalStore",
+        "useTransition",
+    ];
+
+    /// A statement of a wrapper body (no `return`/`throw`) that acts without
+    /// its result being read: a bare call that is no plain React hook (a custom
+    /// hook may redirect), an effect hook, or an imperative navigation.
+    pub(super) fn wrapper_side_effect(stmt: &str) -> Result<(), String> {
+        let first = ident_at(stmt, 0);
+        let rest = stmt[first.len()..].trim_start_matches(|c: char| is_ident_char(c) || c == '.');
+        let bare_call = !first.is_empty()
+            && !matches!(first, "const" | "let" | "var" | "function" | "class" | "if")
+            && rest.starts_with('(');
+        let navigates = ["navigate", "redirect", "push", "replace"].iter().any(|w| {
+            words(stmt, w)
+                .into_iter()
+                .any(|p| stmt[p + w.len()..].trim_start().starts_with('('))
+        });
+        if navigates || (bare_call && !PLAIN_HOOKS.contains(&first)) {
+            return Err(format!(
+                "it calls code that may redirect: {}",
+                head_of(stmt)
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// TanStack Router file routes (`createFileRoute('/a/$id')`) and `beforeLoad` guards.
@@ -3710,7 +3752,7 @@ mod tanstack {
             path: &[Option<Condition>],
         ) -> Result<Ended, String> {
             if !matches!(first, "return" | "throw") {
-                return Ok(Ended::No);
+                return wrapper_side_effect(stmt).map(|()| Ended::No);
             }
             let renders = !words(stmt, "children").is_empty() || !words(stmt, "Outlet").is_empty();
             if !renders {
@@ -6643,5 +6685,86 @@ export default Instrument(handler);
             flow.diagnostics
         );
         assert!(flow.complete, "{:?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn hooks_and_imperative_navigation_in_a_wrapper_are_unknown() {
+        for gate in [
+            "export function Gate({ children }) { useRequireAuth(); return children; }\n",
+            "export const Gate = ({ children }) => { useRequireAuth(); return children; };\n",
+            "export function Gate({ children }) { useEffect(() => { if (!user) nav('/login'); }); return children; }\n",
+            "export function Gate({ children }) { if (!user) { navigate('/login'); } return children; }\n",
+        ] {
+            let flow = gated(GATE_APP, gate);
+            assert!(
+                unknown_state(&state(&flow, "c:/a")),
+                "{gate}: {:?}",
+                flow.diagnostics
+            );
+            assert!(!flow.complete, "{gate}");
+        }
+        // Built-in hooks and a hook whose result is used stay readable.
+        let gate = "export function Gate({ children }) {
+  const [n] = useState(0);
+  const user = useAuth();
+  if (!user) return <Navigate to=\"/login\" />;
+  return children;
+}
+";
+        let flow = gated(GATE_APP, gate);
+        assert_eq!(
+            state(&flow, "c:/a"),
+            protected("user"),
+            "{:?}",
+            flow.diagnostics
+        );
+    }
+
+    #[test]
+    fn nested_handler_wrappers_are_all_read() {
+        let handler = "import { withA, withB } from '../../../lib/auth';
+export const GET = withA(withB(async () => Response.json({})));
+";
+        let deny = "return async (req) => { if (!user) return new Response(null, { status: 401 }); return h(req); };";
+        let run = |lib: &str, handler: &str| {
+            extract(
+                project(&[
+                    ("web/package.json", NEXT_PKG),
+                    ("web/app/api/user/route.ts", handler),
+                    ("web/lib/auth.ts", lib),
+                ])
+                .path(),
+            )
+        };
+        let pass = "export function withA(h) { return h; }\n";
+        let lib = format!("{pass}export function withB(h) {{ {deny} }}\n");
+        let flow = run(&lib, handler);
+        assert_eq!(
+            flow.endpoints[0].access,
+            protected("withB"),
+            "{:?}",
+            flow.diagnostics
+        );
+        let lib = format!(
+            "export function withA(h) {{ {deny} }}\nexport function withB(h) {{ return h; }}\n"
+        );
+        let flow = run(&lib, handler);
+        assert_eq!(
+            flow.endpoints[0].access,
+            protected("withA"),
+            "{:?}",
+            flow.diagnostics
+        );
+        let pkg = handler.replace(
+            "import { withA, withB } from '../../../lib/auth';",
+            "import { withA } from '../../../lib/auth';\nimport { withB } from 'some-pkg';",
+        );
+        let flow = run(pass, &pkg);
+        assert!(
+            matches!(&flow.endpoints[0].access, AccessState::Protected(Condition::Unknown(n)) if n == "withB"),
+            "{:?}",
+            flow.endpoints[0].access
+        );
+        assert!(!flow.complete);
     }
 }
