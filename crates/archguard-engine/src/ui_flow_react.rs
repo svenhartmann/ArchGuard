@@ -20,7 +20,7 @@
 //!   objects (`path`, `element`, `Component`, `index`, `children`) passed as a
 //!   literal array or a same-file array variable to `createBrowserRouter`,
 //!   `createHashRouter`, `createMemoryRouter` or `useRoutes`. Child paths join the
-//!   parent's; the screen name is the first capitalized element tag. A route
+//!   parent's; the screen name is the first self-closing component tag of the element. A route
 //!   whose children hold an index route is a layout (no screen of its own);
 //!   `<Navigate>` elements are redirects (no screen).
 //!
@@ -33,21 +33,37 @@
 //!   ancestor routes (by route id) requires `not c`; `c` is `custom(name)` unless
 //!   `[views.access]` lists it. A redirect without `if` is no access. Only arrow
 //!   functions with a block body are read.
-//! - A route element wrapped in `RequireAuth`, `ProtectedRoute`, `PrivateRoute` or
-//!   `AuthGuard` (also as pathless parent route) is `custom(name)`; children
-//!   inherit it, several are `all`.
-//! - Next.js `middleware.{ts,js}` (app or `src/`): every literal `matcher` path
-//!   (`/x`, `/x/:id`, trailing `/:path*`, `/:path+`, `/:path?`) adds
-//!   `custom(middleware)` to the screens and endpoints it covers; without a
-//!   matcher it covers all. Regular-expression matchers are diagnostics.
+//! - Wrapper components (`<W><Page/></W>`, also a pathless parent route's element):
+//!   every component element around the screen is read by import, never by name.
+//!   A project component's body is walked: an early `return` that does not render
+//!   `children` / `<Outlet/>` is a deny exit (`<Navigate/>`, `null`), its path
+//!   conditions are the requirement (`custom(name)` unless `[views.access]` lists
+//!   it); a body without one is transparent. React's `Fragment`, `Suspense`,
+//!   `StrictMode`, `Profiler` are transparent; a component from a package, one
+//!   declared nowhere, one that never renders its children or renders them under a
+//!   condition is `unknown(W)` and a gap. Children inherit, several are `all`.
+//!   Fragments around a guard are transparent. A route behind `{c && <Route/>}` or
+//!   `{c ? <Route/> : …}` exists under `unknown(c)` and is a gap.
+//! - Next.js `proxy.{ts,js}` / `middleware.{ts,js}` (root or `src/`): the matcher
+//!   only scopes what the body is read to require. Matchers: literal paths with
+//!   `:p*`, `:p+`, `:p?`, the `/((?!a|b).*)` form; `has`/`missing`, other regular
+//!   expressions and a bare literal's descendants are `unknown` and a gap; a
+//!   non-literal matcher covers all with a gap. The body is walked per route:
+//!   `if (…) return NextResponse.redirect(…)` / `Response` with 401|403 /
+//!   `redirect()` / `notFound()` / `unauthorized()` / `forbidden()` are deny exits,
+//!   `pathname.startsWith('/x')` and `pathname === '/x'` are evaluated on the route;
+//!   other checks are `custom(name)`. A body that is not readable is `unknown` on
+//!   everything the matcher covers. `clerkMiddleware()` without callback protects
+//!   nothing.
 //!
 //! Backend endpoints (the Next.js server side): `pages/api/**` is one endpoint per
 //! file with method `ANY`; `app/**/route.*` one per exported `GET`, `POST`, …
 //! (`export function M(`, `export async function M(`, `export const M =`). Access
-//! is `undeclared` unless the handler is wrapped literally as
-//! `export default withAuth(…)` / `withApiAuthRequired(…)` (or `export const M =
-//! withAuth(…)`), which is `custom(name)`. Checks written inside a handler stay
-//! `undeclared` (ADR 0021, consequences).
+//! is `undeclared` unless the handler is wrapped as `export default W(…)` /
+//! `export const M = W(…)`: `W` is read by import (a project function by the deny
+//! exits of the function it returns, `custom(W)`; `withApiAuthRequired` from
+//! `@auth0/nextjs-auth0` is `authenticated`), any other `W` is `unknown(W)` and a
+//! gap. Checks written inside a handler stay `undeclared` (ADR 0021, consequences).
 //!
 //! Transitions: `<Link href|to>` and `<NavLink to>` (also `<X.Link>`, a default
 //! import of `next/link` and `styled(…)` wrappers of these), `router.push|replace`
@@ -99,6 +115,14 @@ use std::path::Path;
 
 const SOURCE: &str = "react";
 type Access = BTreeMap<String, AccessMeaning>;
+
+/// A test on a route that may be undecidable.
+#[derive(Clone, Copy, PartialEq)]
+enum Tri {
+    Yes,
+    No,
+    Maybe,
+}
 const MAX_FILES: usize = 5_000;
 /// Nesting bound for parsed literals and route trees.
 const MAX_DEPTH: usize = 32;
@@ -112,8 +136,6 @@ const SKIPPED_DIRS: [&str; 5] = [".next", "cypress", "e2e", ".storybook", "cover
 // `.mjs`, `.cjs`, `.mts` and `.cts` are not read (node scripts such as epic-stack's
 // remix.init would add calls to the UI); for imports they count as existing files.
 const EXTENSIONS: [&str; 4] = [".tsx", ".ts", ".jsx", ".js"];
-const GUARDS: [&str; 4] = ["RequireAuth", "ProtectedRoute", "PrivateRoute", "AuthGuard"];
-const API_GUARDS: [&str; 2] = ["withAuth", "withApiAuthRequired"];
 /// Screens, transitions, HTTP actions and Next.js endpoints of every React
 /// application below `root`. Read errors and everything not literal become diagnostics.
 pub fn extract(root: &Path) -> UiFlow {
@@ -195,7 +217,10 @@ fn applications(root: &Path, files: Vec<String>, out: &mut Vec<UiFlowDiagnostic>
             if let Some(app) = manifest_app(root, dir, &rel) {
                 apps.insert(dir.to_string(), app);
             }
-        } else if name == "tsconfig.json" {
+        } else if matches!(
+            name,
+            "tsconfig.json" | "tsconfig.app.json" | "jsconfig.json"
+        ) {
             tsconfigs.push(rel);
         } else if is_source(&rel, name) {
             sources.push(rel);
@@ -210,7 +235,8 @@ fn applications(root: &Path, files: Vec<String>, out: &mut Vec<UiFlowDiagnostic>
     for rel in tsconfigs {
         let dir = rel.rsplit_once('/').map_or("", |(d, _)| d);
         if let Some(app) = apps.get_mut(dir) {
-            app.aliases = tsconfig_aliases(&rel, &|p| read(root, p).ok());
+            app.aliases
+                .extend(tsconfig_aliases(&rel, &|p| read(root, p).ok()));
         }
     }
     read_sources(root, &mut apps, sources, out);
@@ -286,13 +312,13 @@ impl App {
         let mut endpoints = Vec::new();
         let out = &mut flow.diagnostics;
         if self.next {
-            next::file_routes(self, &mut screens, &mut endpoints);
+            next::file_routes(self, access, &mut screens, &mut endpoints, out);
         }
         for (file, text) in &self.files {
-            router::routes(self, file, text, &mut screens, out);
+            router::routes(self, access, file, text, &mut screens, out);
         }
         if self.next {
-            next::middleware(self, &mut screens, &mut endpoints, out);
+            proxy::middleware(self, access, &mut screens, &mut endpoints, out);
         }
         if self.tanstack && !tanstack::file_routes(self, access, &mut screens, out) {
             let message =
@@ -530,7 +556,7 @@ mod next {
         }
     }
 
-    fn stem(path: &str) -> &str {
+    pub(super) fn stem(path: &str) -> &str {
         EXTENSIONS
             .iter()
             .find_map(|e| path.strip_suffix(e))
@@ -542,6 +568,7 @@ mod next {
         let inner = file.strip_prefix(app.prefix.as_str()).unwrap_or(file);
         let inner = stem(inner.strip_prefix("src/").unwrap_or(inner));
         inner == "middleware"
+            || inner == "proxy"
             || match routed(app, file) {
                 Some((true, rest)) => rest.starts_with("api/"),
                 Some((false, rest)) => stem(rest) == "route" || stem(rest).ends_with("/route"),
@@ -571,13 +598,13 @@ mod next {
     }
 
     /// Offset after `export default` and the identifier following it.
-    fn default_export(text: &str) -> Option<(usize, &str)> {
+    pub(super) fn default_export(text: &str) -> Option<(usize, &str)> {
         let pos = text.find("export default")?;
         let j = skip_ws(text.as_bytes(), pos + "export default".len());
         Some((pos, ident_at(text, j)))
     }
 
-    fn default_name(text: &str) -> Option<String> {
+    pub(super) fn default_name(text: &str) -> Option<String> {
         let (pos, mut word) = default_export(text)?;
         let b = text.as_bytes();
         let mut j = skip_ws(b, pos + "export default".len());
@@ -593,15 +620,78 @@ mod next {
             .then(|| word.to_string())
     }
 
-    /// `name(` right after `at` with `name` one of [`API_GUARDS`].
-    fn api_guard(text: &str, at: usize) -> AccessState {
+    /// A handler wrapped as `W(…)` right after `at` (`export default W(handler)`,
+    /// `export const GET = W(handler)`): `W` is read by import (S1), a project
+    /// function by the deny exits of the function it returns; anything else is
+    /// unknown. A handler that is no call stays undeclared (checks inside it are
+    /// not read).
+    fn wrapped(
+        ctx: (&App, &Access, &mut Vec<UiFlowDiagnostic>),
+        (file, text): (&str, &str),
+        at: usize,
+    ) -> AccessState {
+        let (app, access, out) = ctx;
         let j = skip_ws(text.as_bytes(), at);
         let name = ident_at(text, j);
-        if API_GUARDS.contains(&name) && text[j + name.len()..].starts_with('(') {
-            AccessState::Protected(Condition::Custom(name.into()))
-        } else {
-            AccessState::Undeclared
+        let keyword = matches!(name, "async" | "function" | "await" | "new" | "class");
+        if name.is_empty() || keyword || !text[j + name.len()..].starts_with('(') {
+            return AccessState::Undeclared;
         }
+        let own = match read_wrapped(app, access, out, (file, text), name) {
+            Ok(state) => state,
+            Err(why) => {
+                let message = format!(
+                    "Handler wrapper {name} is not read ({why}); the handler's access is unknown."
+                );
+                diag(out, file, line_of(text, j), message);
+                AccessState::Protected(Condition::Unknown(name.into()))
+            }
+        };
+        // `W(V(h))`: the wrapped call is read the same way, both must hold.
+        let inner = j + name.len() + 1;
+        own.and(wrapped((app, access, out), (file, text), inner))
+    }
+
+    /// The state the wrapper function `name` gives its handler.
+    fn read_wrapped(
+        app: &App,
+        access: &Access,
+        out: &mut Vec<UiFlowDiagnostic>,
+        (file, text): (&str, &str),
+        name: &str,
+    ) -> Result<AccessState, String> {
+        let import = imports(text).into_iter().find(|i| i.local == name);
+        let found = match &import {
+            Some(i)
+                if i.module.starts_with("@auth0/nextjs-auth0")
+                    && i.imported.as_deref() == Some("withApiAuthRequired") =>
+            {
+                return Ok(AccessState::Protected(Condition::Authenticated));
+            }
+            Some(i) => {
+                let from = app.resolve(file, &i.module);
+                let from = from.ok_or_else(|| {
+                    format!("imported from {}, which is no scanned file", i.module)
+                })?;
+                guard::higher_order(access, out, (from, &app.files[from]), i.imported.as_deref())?
+            }
+            None if declares(text, name) => {
+                guard::higher_order(access, out, (file, text), Some(name))?
+            }
+            None => return Err("neither imported nor declared in this file".into()),
+        };
+        if found.is_empty() {
+            return Ok(AccessState::Undeclared);
+        }
+        if found.iter().any(|c| matches!(c, Condition::Unknown(_))) {
+            return Err("it holds a check that is not read".into());
+        }
+        Ok(AccessState::Protected(
+            match tanstack::check(name, access) {
+                Ok(Some(c)) => c,
+                _ => Condition::Custom(name.into()),
+            },
+        ))
     }
 
     /// What a routed file is.
@@ -637,13 +727,22 @@ mod next {
     }
 
     /// `(method, line, access)` of each handler in an API or route-handler file.
-    fn handlers(kind: &Routed, text: &str) -> Vec<(String, u32, AccessState)> {
+    fn handlers(
+        ctx: (&App, &Access, &mut Vec<UiFlowDiagnostic>),
+        kind: &Routed,
+        (file, text): (&str, &str),
+    ) -> Vec<(String, u32, AccessState)> {
+        let (app, access, diags) = ctx;
         if let Routed::Api = kind {
             return vec![match default_export(text) {
                 Some((pos, _)) => (
                     ANY_METHOD.into(),
                     line_of(text, pos),
-                    api_guard(text, pos + "export default".len()),
+                    wrapped(
+                        (app, access, &mut *diags),
+                        (file, text),
+                        pos + "export default".len(),
+                    ),
                 ),
                 None => (ANY_METHOD.into(), 1, AccessState::Undeclared),
             }];
@@ -659,7 +758,7 @@ mod next {
                     continue;
                 };
                 let access = if pat.ends_with('=') {
-                    api_guard(text, pos + pat.len())
+                    wrapped((app, access, &mut *diags), (file, text), pos + pat.len())
                 } else {
                     AccessState::Undeclared
                 };
@@ -671,8 +770,10 @@ mod next {
 
     pub(super) fn file_routes(
         app: &App,
+        access: &Access,
         screens: &mut Vec<(Screen, Owner)>,
         endpoints: &mut Vec<EndpointAccess>,
+        out: &mut Vec<UiFlowDiagnostic>,
     ) {
         for (file, text) in &app.files {
             let Some((kind, route)) = route_file(app, file) else {
@@ -685,11 +786,11 @@ mod next {
                 screens.push((screen, Owner::File(file.clone())));
                 continue;
             }
-            for (method, line, access) in handlers(&kind, text) {
+            for (method, line, state) in handlers((app, access, out), &kind, (file, text)) {
                 endpoints.push(EndpointAccess {
                     method,
                     path: route.clone(),
-                    access,
+                    access: state,
                     application: Some(app.name.clone()),
                     file: file.clone(),
                     line,
@@ -700,6 +801,13 @@ mod next {
             }
         }
     }
+}
+
+/// Next.js `proxy` / `middleware`: the matcher scopes, the body decides.
+mod proxy {
+    use super::next::{default_export, stem};
+    use super::tanstack::{Callable, callable_at, declared_body};
+    use super::*;
 
     /// A matcher path without regular-expression parts.
     fn literal_matcher(m: &str) -> bool {
@@ -719,43 +827,136 @@ mod next {
                 })
     }
 
-    /// Whether the literal matcher `m` covers `route`.
-    fn matcher_hits(m: &str, route: &str) -> bool {
-        let ms: Vec<&str> = m.split('/').filter(|s| !s.is_empty()).collect();
-        let rs: Vec<&str> = route.split('/').filter(|s| !s.is_empty()).collect();
-        let (prefix, min_tail) = match ms.split_last() {
-            Some((last, rest)) if last.starts_with(':') && last.ends_with(['*', '?']) => {
-                (rest, Some(0))
-            }
-            Some((last, rest)) if last.starts_with(':') && last.ends_with('+') => (rest, Some(1)),
-            _ => (&ms[..], None),
-        };
-        let len_ok = match min_tail {
-            None => rs.len() == prefix.len(),
-            Some(n) => rs.len() >= prefix.len() + n,
-        };
-        len_ok
-            && prefix
-                .iter()
-                .zip(&rs)
-                .all(|(p, r)| p.starts_with(':') || p.eq_ignore_ascii_case(r))
+    /// One `matcher` pattern.
+    enum Pattern {
+        /// A literal path, the last segment optionally `:p*`, `:p+` or `:p?`.
+        Path(String),
+        /// `/((?!a|b).*)`: every path that starts with none of the literals.
+        Lookahead(Vec<String>),
+        /// Any other regular expression.
+        Opaque,
     }
 
-    /// A matcher entry as a literal path: a string or `{ source: '…' }`.
-    fn matcher_text(item: &Item) -> Option<String> {
-        let value = match &item.value {
-            Value::Obj(fields) => &fields.iter().find(|(k, _)| k == "source")?.1.value,
-            v => v,
-        };
-        match value {
-            Value::Str(s) if literal_matcher(s) => Some(s.clone()),
-            _ => None,
+    struct Entry {
+        pattern: Pattern,
+        /// `has`, `missing` or `locale`: the match depends on the request.
+        conditional: bool,
+    }
+
+    fn pattern(s: &str) -> Pattern {
+        if literal_matcher(s) {
+            return Pattern::Path(s.to_string());
+        }
+        let alts = s
+            .strip_prefix("/((?!")
+            .and_then(|r| r.strip_suffix(").*)"))
+            .map(|inner| inner.split('|').collect::<Vec<_>>())
+            .filter(|alts| {
+                alts.iter().all(|a| {
+                    !a.is_empty()
+                        && a.chars()
+                            .all(|c| is_ident_char(c) || matches!(c, '-' | '.' | '/'))
+                })
+            });
+        match alts {
+            Some(a) => Pattern::Lookahead(a.into_iter().map(String::from).collect()),
+            None => Pattern::Opaque,
         }
     }
 
-    /// The literal `matcher` paths of `config`; `None` without a matcher, since
-    /// Next.js then runs the middleware on every path.
-    fn matchers(file: &str, text: &str, out: &mut Vec<UiFlowDiagnostic>) -> Option<Vec<String>> {
+    /// Whether the literal matcher `m` covers `route`. A bare path (no
+    /// modifier) end-anchors in Next's source but not in its docs: descendants
+    /// are undecided.
+    fn path_hit(m: &str, route: &str) -> Tri {
+        let ms: Vec<&str> = m.split('/').filter(|s| !s.is_empty()).collect();
+        let rs: Vec<&str> = route.split('/').filter(|s| !s.is_empty()).collect();
+        let (prefix, modifier) = match ms.split_last() {
+            Some((last, rest)) if last.starts_with(':') && last.ends_with(['*', '?', '+']) => {
+                (rest, last.chars().last())
+            }
+            _ => (&ms[..], None),
+        };
+        if rs.len() < prefix.len() {
+            return Tri::No;
+        }
+        let head = prefix_hit(prefix, &rs);
+        match (head, tail_hit(modifier, rs.len() - prefix.len())) {
+            (Tri::No, _) | (_, Tri::No) => Tri::No,
+            (Tri::Yes, Tri::Yes) if !rs.contains(&"*") => Tri::Yes,
+            _ => Tri::Maybe,
+        }
+    }
+
+    /// The literal segments of the matcher against the route's: a `:param` of
+    /// the route is not decidable.
+    fn prefix_hit(prefix: &[&str], route: &[&str]) -> Tri {
+        let mut head = Tri::Yes;
+        for (p, r) in prefix.iter().zip(route) {
+            if p.starts_with(':') {
+                continue;
+            }
+            if r.starts_with(':') || *r == "*" {
+                head = Tri::Maybe;
+            } else if !p.eq_ignore_ascii_case(r) {
+                return Tri::No;
+            }
+        }
+        head
+    }
+
+    /// The segments after the matcher's literal part, by its modifier.
+    fn tail_hit(modifier: Option<char>, tail: usize) -> Tri {
+        match modifier {
+            Some('*') => Tri::Yes,
+            Some('+') if tail >= 1 => Tri::Yes,
+            Some('?') if tail <= 1 => Tri::Yes,
+            Some(_) => Tri::No,
+            None if tail == 0 => Tri::Yes,
+            None => Tri::Maybe,
+        }
+    }
+
+    fn hit(e: &Entry, route: &str) -> Tri {
+        let t = match &e.pattern {
+            Pattern::Path(m) => path_hit(m, route),
+            Pattern::Lookahead(alts) => {
+                let mut t = Tri::Yes;
+                for a in alts {
+                    match paths::route_starts_with(route, &format!("/{a}")) {
+                        Tri::Yes => return Tri::No,
+                        Tri::Maybe => t = Tri::Maybe,
+                        Tri::No => {}
+                    }
+                }
+                t
+            }
+            Pattern::Opaque => Tri::Maybe,
+        };
+        match t {
+            Tri::Yes if e.conditional => Tri::Maybe,
+            t => t,
+        }
+    }
+
+    /// Whether the matcher entries cover `route`; `None` entries cover all.
+    fn covers(entries: &Option<Vec<Entry>>, route: &str) -> Tri {
+        let Some(entries) = entries else {
+            return Tri::Yes;
+        };
+        let mut best = Tri::No;
+        for e in entries {
+            match hit(e, route) {
+                Tri::Yes => return Tri::Yes,
+                Tri::Maybe => best = Tri::Maybe,
+                Tri::No => {}
+            }
+        }
+        best
+    }
+
+    /// The `matcher` entries of `config`; `None` covers every path: no matcher,
+    /// or one that is not a literal (Next then ignores it, and so is a gap).
+    fn matchers(file: &str, text: &str, out: &mut Vec<UiFlowDiagnostic>) -> Option<Vec<Entry>> {
         let b = text.as_bytes();
         let colon = words(text, "matcher")
             .into_iter()
@@ -770,57 +971,378 @@ mod next {
             Value::Arr(items) => items.iter().collect(),
             _ => vec![&item],
         };
-        let mut found = Vec::new();
-        for it in list {
-            match matcher_text(it) {
-                Some(m) => found.push(m),
-                None => {
-                    let message = format!(
-                        "Middleware matcher is not a literal path; the screens it guards are unknown: {}",
-                        it.source(text)
-                    );
-                    diag(out, file, line_of(text, it.at), message);
-                }
+        if let [one] = list[..]
+            && matches!(one.value, Value::Raw(_))
+        {
+            let message = format!(
+                "Middleware matcher is not a literal ({}); every path is treated as covered.",
+                one.source(text)
+            );
+            diag(out, file, line_of(text, one.at), message);
+            return None;
+        }
+        Some(
+            list.into_iter()
+                .map(|it| match &it.value {
+                    Value::Str(s) => Entry {
+                        pattern: pattern(s),
+                        conditional: false,
+                    },
+                    Value::Obj(fields) => {
+                        let get = |k: &str| fields.iter().find(|(f, _)| f == k);
+                        Entry {
+                            pattern: match get("source").map(|(_, v)| &v.value) {
+                                Some(Value::Str(s)) => pattern(s),
+                                _ => Pattern::Opaque,
+                            },
+                            conditional: ["has", "missing", "locale"]
+                                .iter()
+                                .any(|k| get(k).is_some()),
+                        }
+                    }
+                    _ => Entry {
+                        pattern: Pattern::Opaque,
+                        conditional: false,
+                    },
+                })
+                .collect(),
+        )
+    }
+
+    /// What a middleware or proxy file does with a request.
+    enum Body {
+        /// A Clerk middleware without callback.
+        Passes,
+        Range(usize, usize),
+        Unreadable(String),
+    }
+
+    fn body_of(text: &str, m: &str) -> Body {
+        for name in ["proxy", "middleware"] {
+            if let Some((s, e)) = declared_body(m, name) {
+                return Body::Range(s, e);
             }
         }
+        let Some((pos, word)) = default_export(m) else {
+            return Body::Unreadable("no function named proxy or middleware".into());
+        };
+        let at = pos + "export default".len();
+        let b = m.as_bytes();
+        if (imports(text).iter()).any(|i| {
+            i.local == word
+                && i.module.starts_with("@clerk/nextjs")
+                && i.imported.as_deref() == Some("clerkMiddleware")
+        }) {
+            let open = skip_ws(b, skip_ws(b, at) + word.len());
+            let empty = b.get(open) == Some(&b'(') && b.get(skip_ws(b, open + 1)) == Some(&b')');
+            return if empty {
+                Body::Passes
+            } else {
+                Body::Unreadable("clerkMiddleware callback".into())
+            };
+        }
+        match callable_at(m, at) {
+            Callable::Body(s, e) => Body::Range(s, e),
+            Callable::Reference(n) => declared_body(m, &n)
+                .map(|(s, e)| Body::Range(s, e))
+                .unwrap_or_else(|| Body::Unreadable(format!("{n} is not declared in the file"))),
+            Callable::Unreadable => Body::Unreadable("the default export".into()),
+        }
+    }
+
+    /// The proxy or middleware file of the application: the proxy wins, having
+    /// both is a gap.
+    fn proxy_file<'a>(
+        app: &'a App,
+        out: &mut Vec<UiFlowDiagnostic>,
+    ) -> Option<(&'a String, &'a String)> {
+        let present: Vec<(&String, &String)> =
+            ["proxy", "src/proxy", "middleware", "src/middleware"]
+                .iter()
+                .flat_map(|n| [".ts", ".js"].map(|e| format!("{}{n}{e}", app.prefix)))
+                .filter_map(|f| app.files.get_key_value(&f))
+                .collect();
+        let is = |f: &str, n: &str| stem(f.rsplit('/').next().unwrap_or(f)) == n;
+        let proxy = present.iter().find(|(f, _)| is(f, "proxy"));
+        let found = proxy.or(present.first()).copied()?;
+        if proxy.is_some() && present.iter().any(|(f, _)| is(f, "middleware")) {
+            let message = "Both a proxy and a middleware file exist; Next.js accepts only one. The proxy is read.";
+            diag(out, found.0, 1, message);
+        }
+        base_path(app, out);
         Some(found)
+    }
+
+    /// A `basePath` in the Next.js config: the routes here are read without it.
+    fn base_path(app: &App, out: &mut Vec<UiFlowDiagnostic>) {
+        for name in ["next.config.js", "next.config.ts"] {
+            let config = format!("{}{name}", app.prefix);
+            if let Some(t) = app.files.get(&config)
+                && let Some(&at) = words(t, "basePath").first()
+            {
+                let message = "basePath is set; matchers and tests are read on paths without it, as the routes here are.";
+                diag(out, &config, line_of(t, at), message);
+            }
+        }
+    }
+
+    /// One proxy or middleware file, read once and asked per route.
+    struct Proxy<'a> {
+        file: &'a str,
+        name: String,
+        /// The masked source.
+        m: String,
+        access: &'a Access,
+        entries: Option<Vec<Entry>>,
+        body: Body,
+    }
+
+    impl Proxy<'_> {
+        fn state(&self, route: &str, out: &mut Vec<UiFlowDiagnostic>) -> AccessState {
+            match covers(&self.entries, route) {
+                Tri::No => AccessState::Undeclared,
+                Tri::Maybe => {
+                    let message = format!(
+                        "Whether the {} matcher covers {route} cannot be decided (a regular expression, has/missing, or a bare path); the route is unknown.",
+                        self.name
+                    );
+                    diag(out, self.file, 1, message);
+                    AccessState::Protected(Condition::Unknown(format!("{} matcher", self.name)))
+                }
+                Tri::Yes => self.body_state(route, out),
+            }
+        }
+
+        /// What the body requires of `route`; an unreadable body is unknown.
+        fn body_state(&self, route: &str, out: &mut Vec<UiFlowDiagnostic>) -> AccessState {
+            let why = match &self.body {
+                Body::Passes => return AccessState::Undeclared,
+                Body::Unreadable(why) => why.clone(),
+                Body::Range(s, e) => match self.walked((*s, *e), route, out) {
+                    Ok(state) => return state,
+                    Err(why) => why,
+                },
+            };
+            let message = format!(
+                "The {} is not read ({why}); every route it covers is unknown.",
+                self.name
+            );
+            diag(out, self.file, 1, message);
+            AccessState::Protected(Condition::Unknown(format!("{} {why}", self.name)))
+        }
+
+        fn walked(
+            &self,
+            (s, e): (usize, usize),
+            route: &str,
+            out: &mut Vec<UiFlowDiagnostic>,
+        ) -> Result<AccessState, String> {
+            let mut walker = tanstack::Walker {
+                m: &self.m,
+                file: self.file,
+                access: self.access,
+                out,
+                found: Vec::new(),
+                mode: tanstack::Mode::Handler,
+                route: Some(route),
+                allowed: false,
+                catch_param: None,
+                declared: Vec::new(),
+                seen: String::new(),
+            };
+            walker.walk(s, e, &mut Vec::new())?;
+            let found = std::mem::take(&mut walker.found);
+            Ok(AccessState::from_parts(tanstack::all(found), false))
+        }
     }
 
     pub(super) fn middleware(
         app: &App,
+        access: &Access,
         screens: &mut [(Screen, Owner)],
         endpoints: &mut [EndpointAccess],
         out: &mut Vec<UiFlowDiagnostic>,
     ) {
-        let Some((file, text)) = ["middleware", "src/middleware"]
-            .iter()
-            .flat_map(|n| [".ts", ".js"].map(|e| format!("{}{n}{e}", app.prefix)))
-            .find_map(|f| app.files.get_key_value(&f))
-        else {
+        let Some((file, text)) = proxy_file(app, out) else {
             return;
         };
-        let matchers = matchers(file, text, out);
-        let hits = |route: &str| {
-            matchers
-                .as_ref()
-                .is_none_or(|ms| ms.iter().any(|m| matcher_hits(m, route)))
+        let m = mask(text, true);
+        let proxy = Proxy {
+            file,
+            name: stem(file.rsplit('/').next().unwrap_or(file)).to_string(),
+            access,
+            entries: matchers(file, &m, out),
+            body: body_of(text, &m),
+            m,
         };
-        let mw = Condition::Custom("middleware".into());
         for (screen, _) in screens.iter_mut() {
-            if screen.route.as_deref().is_some_and(hits) {
-                screen.access = archguard_core::AccessState::Protected(
-                    match screen.access.condition().cloned() {
-                        None => mw.clone(),
-                        Some(c) => Condition::All(vec![c, mw.clone()]),
-                    },
-                );
+            if let Some(route) = screen.route.clone() {
+                let s = proxy.state(&route, out);
+                screen.access = std::mem::take(&mut screen.access).and(s);
             }
         }
-        for e in endpoints.iter_mut().filter(|e| hits(&e.path)) {
-            e.access = AccessState::Protected(match &e.access {
-                AccessState::Protected(c) => Condition::All(vec![c.clone(), mw.clone()]),
-                _ => mw.clone(),
-            });
+        for e in endpoints.iter_mut() {
+            let s = proxy.state(&e.path, out);
+            e.access = std::mem::take(&mut e.access).and(s);
+        }
+    }
+}
+
+/// Reading the body of a wrapper component or a higher-order handler function
+/// for deny exits (S3, S6).
+mod guard {
+    use super::paths::*;
+    use super::tanstack::*;
+    use super::*;
+
+    /// `(start, end)` of the expression of `const name = (…) => expr` (no block).
+    fn expr_arrow(m: &str, name: &str) -> Option<(usize, usize)> {
+        let b = m.as_bytes();
+        for pos in words(m, name) {
+            let before = m[..pos].trim_end();
+            let j = skip_ws(b, pos + name.len());
+            if !matches!(
+                trailing_ident(before).as_deref(),
+                Some("const" | "let" | "var")
+            ) || b.get(j) != Some(&b'=')
+            {
+                continue;
+            }
+            let mut i = skip_ws(b, j + 1);
+            if ident_at(m, i) == "async" {
+                i = skip_ws(b, i + "async".len());
+            }
+            let after = if b.get(i) == Some(&b'(') {
+                block_end(m, i, b'(', b')')
+            } else {
+                i + ident_at(m, i).len()
+            };
+            let mut k = skip_ws(b, after);
+            if b.get(k) == Some(&b':')
+                && let Some(d) = m[k..].find("=>")
+            {
+                k += d;
+            }
+            if m[k..].starts_with("=>") {
+                let s = skip_ws(b, k + 2);
+                return (b.get(s) != Some(&b'{')).then(|| (s, simple_end(m, s)));
+            }
+        }
+        None
+    }
+
+    /// The declared name: the given one, or the file's default export.
+    fn declared_name(m: &str, name: Option<&str>) -> Result<String, String> {
+        match name {
+            Some(n) => Ok(n.to_string()),
+            None => next::default_name(m)
+                .ok_or_else(|| "its default export is not a declared name".to_string()),
+        }
+    }
+
+    /// What component `name` (`None`: the default export) of a file requires of
+    /// what it renders. Deny exits are early `return`s that do not render the
+    /// children; a component that never renders them, or renders them under a
+    /// condition, is not read.
+    pub(super) fn component(
+        access: &Access,
+        out: &mut Vec<UiFlowDiagnostic>,
+        (file, text): (&str, &str),
+        name: Option<&str>,
+    ) -> Result<Vec<Condition>, String> {
+        let m = mask(text, true);
+        let name = declared_name(&m, name)?;
+        if let Some((s, e)) = declared_body(&m, &name) {
+            let mut walker = Walker {
+                m: &m,
+                file,
+                access,
+                out,
+                found: Vec::new(),
+                mode: Mode::Wrapper,
+                route: None,
+                allowed: false,
+                catch_param: None,
+                declared: Vec::new(),
+                seen: String::new(),
+            };
+            walker.walk(s, e, &mut Vec::new())?;
+            if !walker.allowed {
+                return Err("it never renders its children".into());
+            }
+            if let Some(n) = walker
+                .declared
+                .iter()
+                .find(|n| words(&walker.seen, n).is_empty())
+            {
+                return Err(format!("{n} comes from a call and is used in no check"));
+            }
+            return Ok(all(walker.found).into_iter().collect());
+        }
+        let (s, e) = expr_arrow(&m, &name)
+            .ok_or_else(|| format!("{name} is not a function declaration in {file}"))?;
+        let expr = &m[s..e];
+        if words(expr, "children").is_empty() && words(expr, "Outlet").is_empty() {
+            return Err("it never renders its children".into());
+        }
+        if children_branching(expr) {
+            return Err("it renders its children under a condition".into());
+        }
+        Ok(Vec::new())
+    }
+
+    /// What higher-order function `name` of a file requires of the handler it
+    /// wraps: the deny exits of the function it returns.
+    pub(super) fn higher_order(
+        access: &Access,
+        out: &mut Vec<UiFlowDiagnostic>,
+        (file, text): (&str, &str),
+        name: Option<&str>,
+    ) -> Result<Vec<Condition>, String> {
+        let m = mask(text, true);
+        let name = declared_name(&m, name)?;
+        let b = m.as_bytes();
+        let from = if let Some((s, e)) = declared_body(&m, &name) {
+            let r = words(&m[s..e], "return")
+                .into_iter()
+                .next()
+                .ok_or("it returns nothing")?;
+            s + r + "return".len()
+        } else {
+            expr_arrow(&m, &name)
+                .map(|(s, _)| s)
+                .ok_or_else(|| format!("{name} is not a function declaration in {file}"))?
+        };
+        match callable_at(&m, from) {
+            Callable::Body(s, e) => {
+                let mut walker = Walker {
+                    m: &m,
+                    file,
+                    access,
+                    out,
+                    found: Vec::new(),
+                    mode: Mode::Handler,
+                    route: None,
+                    allowed: false,
+                    catch_param: None,
+                    declared: Vec::new(),
+                    seen: String::new(),
+                };
+                walker.walk(s, e, &mut Vec::new())?;
+                Ok(all(walker.found).into_iter().collect())
+            }
+            // It returns the wrapped handler: transparent.
+            Callable::Reference(_) => Ok(Vec::new()),
+            Callable::Unreadable => {
+                let i = skip_ws(b, from);
+                let id = ident_at(&m, i);
+                let rest = m[i + id.len()..].trim_start();
+                if !id.is_empty() && (rest.is_empty() || rest.starts_with([';', '}'])) {
+                    Ok(Vec::new())
+                } else {
+                    Err("it returns something that is not read".into())
+                }
+            }
         }
     }
 }
@@ -1143,6 +1665,9 @@ mod shape {
         while let Some(inner) = t.strip_prefix('(').and_then(|r| r.strip_suffix(')')) {
             t = inner.trim();
         }
+        if let Some(inner) = t.strip_prefix("<>").and_then(|r| r.strip_suffix("</>")) {
+            return single_element(inner);
+        }
         let Some((0, name)) = start_tags(t).into_iter().next() else {
             return false;
         };
@@ -1312,8 +1837,68 @@ mod shape {
     }
 }
 
+/// Routes rendered behind a conditional operator.
+mod conditional {
+    use super::shape::*;
+
+    /// `(not read, condition)` of the `<Route` at `pos`: inside a `{…}` container
+    /// that is not read, or behind a conditional operator in one.
+    pub(super) fn container_state(text: &str, bare: &str, pos: usize) -> (bool, Option<String>) {
+        if !route_in_container(text, bare, pos) {
+            return (false, None);
+        }
+        let cond = conditional_container(text, bare, pos);
+        (cond.is_none(), cond)
+    }
+
+    /// The condition text when the `<Route` at `pos` stands right behind a
+    /// conditional operator in a `{…}` container (`{c && <Route/>}`,
+    /// `{c ? <Route/> : null}`, also inside a fragment there): the route exists
+    /// only under that condition.
+    pub(super) fn conditional_container(text: &str, bare: &str, pos: usize) -> Option<String> {
+        let open = open_elements(text, pos)?;
+        let at = open
+            .iter()
+            .rposition(|e| matches!(e.0, "Route" | "Routes"))?;
+        let from = open[at].1;
+        let mut depth = 0i32;
+        let brace = bare[from..pos]
+            .bytes()
+            .enumerate()
+            .rev()
+            .find_map(|(i, c)| {
+                match c {
+                    b'}' => depth += 1,
+                    b'{' if depth == 0 => return Some(from + i),
+                    b'{' => depth -= 1,
+                    _ => {}
+                }
+                None
+            })?;
+        let mut pre = text[brace + 1..pos].trim();
+        loop {
+            let t = pre
+                .trim_end_matches(['(', ' ', '\n', '\t'])
+                .trim_end_matches("<>")
+                .trim_end_matches("<React.Fragment>")
+                .trim_end();
+            if t.len() == pre.len() {
+                break;
+            }
+            pre = t;
+        }
+        let cond = ["&&", "||", "??", "?"]
+            .iter()
+            .find_map(|op| pre.strip_suffix(op))
+            .or_else(|| pre.ends_with(':').then_some(pre))?;
+        let cond = cond.trim();
+        (!cond.is_empty() && !cond.contains("<Route")).then(|| cond.to_string())
+    }
+}
+
 /// React Router route trees from JSX and route objects.
 mod router {
+    use super::conditional::*;
     use super::scope::*;
     use super::shape::*;
     use super::*;
@@ -1338,6 +1923,9 @@ mod router {
         maps: Vec<usize>,
         /// Sits in a conditional expression (`a && <Route/>`): not read.
         stray: bool,
+        /// The condition text when the route is the direct operand of `c && <Route/>`
+        /// or `c ? <Route/> : …`: the route exists only under it.
+        container: Option<String>,
         /// Where the `<Routes>` or router call holding this route is rendered
         /// under a condition, and why.
         cond: Option<(usize, String)>,
@@ -1345,6 +1933,7 @@ mod router {
 
     struct Ctx<'a> {
         app: &'a App,
+        access: &'a Access,
         file: &'a str,
         text: &'a str,
         maps: &'a [Mapped<'a>],
@@ -1360,6 +1949,7 @@ mod router {
 
     pub(super) fn routes(
         app: &App,
+        access: &Access,
         file: &str,
         text: &str,
         screens: &mut Vec<(Screen, Owner)>,
@@ -1368,6 +1958,7 @@ mod router {
         let mapped = mapped(text);
         let mut ctx = Ctx {
             app,
+            access,
             file,
             text,
             maps: &mapped,
@@ -1537,6 +2128,7 @@ mod router {
         };
         let mut other = Ctx {
             app,
+            access: ctx.access,
             file,
             text,
             maps: &[],
@@ -1682,7 +2274,7 @@ mod router {
                 1 => {
                     let tag = tag(text, pos + "<Route".len());
                     let mut node = jsx_node(text, pos, &tag);
-                    node.stray = route_in_container(text, bare, pos);
+                    (node.stray, node.container) = container_state(text, bare, pos);
                     if stack.is_empty() {
                         node.cond = routes_condition(text, bare, pos);
                     }
@@ -1799,34 +2391,148 @@ mod router {
             children,
             maps: Vec::new(),
             stray: false,
+            container: None,
             cond: None,
         })
     }
 
-    /// Guards wrapping the element, its screen component, and whether it redirects.
-    fn element_parts(element: &str) -> (Vec<Condition>, Option<String>, bool) {
-        let mut guards = Vec::new();
-        for (_, name) in start_tags(element) {
-            if GUARDS.contains(&name) {
-                guards.push(Condition::Custom(name.into()));
-            } else if name == "Navigate" {
-                return (guards, None, true);
-            } else if name.starts_with(|c: char| c.is_ascii_uppercase()) {
-                return (guards, Some(name.into()), false);
-            }
-        }
-        (guards, None, false)
+    /// The components around a route element's screen component (outermost
+    /// first), the screen component, and whether the element only redirects.
+    #[derive(Default)]
+    struct Chain<'e> {
+        wrappers: Vec<&'e str>,
+        screen: Option<&'e str>,
+        redirect: bool,
     }
 
-    /// The guards around the route's element and its screen component; an
-    /// element that is neither is a diagnostic.
-    fn component(ctx: &mut Ctx, node: &Node) -> (Vec<Condition>, Option<String>) {
-        let (guards, element_component, redirect) = node
-            .element
-            .as_deref()
-            .map(element_parts)
-            .unwrap_or_default();
+    /// The screen is the first self-closing component tag; every component
+    /// element open around it is a wrapper. Tags inside attributes and plain
+    /// DOM tags are skipped; a fragment is transparent.
+    fn chain(element: &str) -> Chain<'_> {
+        let mut events: Vec<(usize, Option<&str>)> = start_tags(element)
+            .into_iter()
+            .map(|(i, n)| (i, Some(n)))
+            .chain(element.match_indices("<>").map(|(i, _)| (i, Some(""))))
+            .chain(element.match_indices("</").map(|(i, _)| (i, None)))
+            .collect();
+        events.sort();
+        let (mut stack, mut skip, mut first): (Vec<&str>, usize, Option<&str>) =
+            (Vec::new(), 0, None);
+        fn done<'e>(screen: &'e str, stack: &[&'e str]) -> Chain<'e> {
+            Chain {
+                wrappers: stack.iter().copied().filter(|w| !w.is_empty()).collect(),
+                screen: Some(screen),
+                redirect: screen == "Navigate",
+            }
+        }
+        for (pos, name) in events {
+            if pos < skip {
+                continue;
+            }
+            let Some(name) = name else {
+                stack.pop();
+                continue;
+            };
+            if name.is_empty() {
+                skip = pos + 2;
+                stack.push("");
+                continue;
+            }
+            let t = tag(element, pos + 1 + name.len());
+            skip = t.end;
+            let component =
+                name.starts_with(|c: char| c.is_ascii_uppercase()) && !name.ends_with("Fragment");
+            if !component {
+                if !t.self_closing {
+                    stack.push("");
+                }
+                continue;
+            }
+            first.get_or_insert(name);
+            if t.self_closing {
+                return done(name, &stack);
+            }
+            stack.push(name);
+        }
+        first.map_or_else(Chain::default, |f| done(f, &[]))
+    }
+
+    /// React's own components, transparent as wrappers.
+    const REACT_BUILTINS: [&str; 4] = ["Fragment", "Suspense", "StrictMode", "Profiler"];
+
+    /// What wrapper `name`, used in this file, requires of what it renders: its
+    /// body read by S3 when it is a project component, nothing for React's
+    /// own, else `Unknown(name)` and a gap.
+    fn wrapper(ctx: &mut Ctx, at: usize, name: &str) -> Vec<Condition> {
+        match read_wrapper(ctx, name) {
+            Ok(conditions) => conditions,
+            Err(why) => {
+                let message = format!(
+                    "Wrapper {name} is not read ({why}); the access of the route is unknown."
+                );
+                ctx.diag(at, message);
+                vec![Condition::Unknown(name.into())]
+            }
+        }
+    }
+
+    fn read_wrapper(ctx: &mut Ctx, name: &str) -> Result<Vec<Condition>, String> {
+        if name.ends_with("Fragment") {
+            return Ok(Vec::new());
+        }
+        let (head, member) = name
+            .split_once('.')
+            .map_or((name, None), |(h, m)| (h, Some(m)));
+        let all = imports(ctx.text);
+        let import = all.iter().find(|i| i.local == head);
+        let builtin = |m: &str| REACT_BUILTINS.contains(&m);
+        match (import, member) {
+            (Some(i), Some(m)) if i.module == "react" && builtin(m) => Ok(Vec::new()),
+            (_, Some(_)) => Err("a member of an object".into()),
+            (Some(i), None) if i.module == "react" => match i.imported.as_deref() {
+                Some(n) if builtin(n) => Ok(Vec::new()),
+                _ => Err("imported from react".into()),
+            },
+            (Some(i), None) => {
+                let Some(file) = ctx.app.resolve(ctx.file, &i.module) else {
+                    return Err(format!(
+                        "imported from {}, which is no scanned file",
+                        i.module
+                    ));
+                };
+                let text = &ctx.app.files[file];
+                super::guard::component(ctx.access, ctx.out, (file, text), i.imported.as_deref())
+            }
+            (None, None) if declares(ctx.text, name) => {
+                super::guard::component(ctx.access, ctx.out, (ctx.file, ctx.text), Some(name))
+            }
+            (None, None) => Err("neither imported nor declared in this file".into()),
+        }
+    }
+
+    /// The guards around the route's element, its screen component and, when
+    /// the route has children, what that component requires of them (a
+    /// layout); an element that is no component is a diagnostic.
+    fn component(ctx: &mut Ctx, node: &Node) -> (Vec<Condition>, Option<String>, Vec<Condition>) {
+        let parts = node.element.as_deref().map(chain).unwrap_or_default();
+        let mut guards = Vec::new();
+        for w in &parts.wrappers {
+            guards.extend(wrapper(ctx, node.at, w));
+        }
+        let redirect = parts.redirect;
+        let element_component = parts.screen.filter(|_| !redirect).map(String::from);
         let component = node.component.clone().or(element_component);
+        let layout = match &component {
+            Some(name)
+                if !redirect
+                    && node.path.is_none()
+                    && !node.index
+                    && !(node.children.is_empty() && node.maps.is_empty()) =>
+            {
+                wrapper(ctx, node.at, name)
+            }
+            _ => Vec::new(),
+        };
         if let Some(name) = &component {
             let missing = ctx.app.missing_imports(ctx.file, ctx.text);
             if let Some(i) = missing.iter().find(|i| i.local == *name) {
@@ -1839,14 +2545,14 @@ mod router {
         }
         if let Some(element) = &node.element
             && component.is_none()
-            && guards.is_empty()
+            && parts.wrappers.is_empty()
             && !redirect
         {
             let message =
                 format!("Route element is not a JSX component; the screen is unknown: {element}");
             ctx.diag(node.at, message);
         }
-        (guards, component)
+        (guards, component, layout)
     }
 
     fn push_screen(ctx: &mut Ctx, node: &Node, full: &str, name: String, guards: &[Condition]) {
@@ -1909,6 +2615,15 @@ mod router {
         if let Some(message) = misplaced(node, path, prefix) {
             return ctx.diag(node.at, message);
         }
+        let mut inherited = inherited.to_vec();
+        if let Some(cond) = &node.container {
+            // The route exists only where the condition holds; what it is, is not read.
+            let message =
+                format!("Route rendered under a condition ({cond}); the route is unknown.");
+            ctx.diag(node.at, message);
+            inherited.push(Condition::Unknown(cond.clone()));
+        }
+        let inherited = &inherited[..];
         let full = match path {
             Some(p) if p.starts_with('/') => p.trim_matches('/').to_string(),
             Some(p) => [prefix, p.trim_matches('/')]
@@ -1918,7 +2633,7 @@ mod router {
                 .join("/"),
             None => prefix.to_string(),
         };
-        let (mut guards_here, component) = component(ctx, node);
+        let (mut guards_here, component, mut layout_guards) = component(ctx, node);
         let mut guards = inherited.to_vec();
         guards.append(&mut guards_here);
         let layout = node.children.iter().any(|c| c.index);
@@ -1928,6 +2643,8 @@ mod router {
         {
             push_screen(ctx, node, &full, name, &guards);
         }
+        // What the layout component requires holds for the routes it renders.
+        guards.append(&mut layout_guards);
         descend(ctx, node, &full, &guards, depth);
     }
 }
@@ -2251,8 +2968,310 @@ mod nav {
     }
 }
 
+/// Pure text helpers of the deny-exit walker: branching tests, `pathname` tests on a route.
+mod paths {
+    use super::tanstack::simple_end;
+    use super::*;
+
+    pub(super) fn head_of(s: &str) -> String {
+        s.lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .chars()
+            .take(80)
+            .collect()
+    }
+
+    /// Whether `text` branches: `&&`, `||`, `??` or a `?` that is no `?.`.
+    pub(super) fn has_branching(text: &str) -> bool {
+        let b = text.as_bytes();
+        text.contains("&&")
+            || text.contains("||")
+            || text.contains("??")
+            || (0..b.len()).any(|i| b[i] == b'?' && b.get(i + 1) != Some(&b'.'))
+    }
+
+    /// Whether the children (or `<Outlet/>`) are rendered under a condition in
+    /// the `return` expression `stmt`: a branching return value, or a `{…}`
+    /// group that mentions them.
+    pub(super) fn children_branching(stmt: &str) -> bool {
+        let body = stmt.trim().strip_prefix("return").unwrap_or(stmt).trim();
+        if !body.trim_start_matches('(').trim_start().starts_with('<') {
+            return has_branching(body);
+        }
+        let b = body.as_bytes();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == b'{' {
+                let e = block_end(body, i, b'{', b'}');
+                let g = &body[i..e];
+                if (!words(g, "children").is_empty() || !words(g, "Outlet").is_empty())
+                    && has_branching(g)
+                {
+                    return true;
+                }
+                i = e;
+            } else {
+                i += 1;
+            }
+        }
+        false
+    }
+
+    /// Words that make a statement a deny exit in a handler (S2).
+    pub(super) const DENY_CALLS: [&str; 5] = [
+        "redirect",
+        "notFound",
+        "unauthorized",
+        "forbidden",
+        "protect",
+    ];
+
+    pub(super) fn denies(stmt: &str) -> bool {
+        DENY_CALLS.iter().any(|w| {
+            words(stmt, w)
+                .into_iter()
+                .any(|p| stmt[p + w.len()..].trim_start().starts_with('('))
+        }) || ["401", "403"].iter().any(|code| {
+            words(stmt, code).into_iter().any(|p| {
+                let before = stmt[..p].trim_end();
+                before.ends_with("status:")
+                    || before.ends_with("status(")
+                    || before.ends_with("status")
+            })
+        })
+    }
+
+    /// The literal a `pathname` test compares with: a string, or a constant of the file.
+    pub(super) fn literal_of(arg: &str) -> Option<String> {
+        let a = arg.trim();
+        let q = a.chars().next().filter(|c| matches!(c, '\'' | '"' | '`'))?;
+        if a.len() >= 2 && a.ends_with(q) {
+            return Some(a[1..a.len() - 1].to_string());
+        }
+        None
+    }
+
+    pub(super) fn constant<'m>(m: &'m str, name: &str) -> Option<&'m str> {
+        words(m, name).into_iter().find_map(|p| {
+            let before = m[..p].trim_end();
+            matches!(
+                trailing_ident(before).as_deref(),
+                Some("const" | "let" | "var")
+            )
+            .then_some(())?;
+            let b = m.as_bytes();
+            let j = skip_ws(b, p + name.len());
+            (b.get(j) == Some(&b'=') && b.get(j + 1) != Some(&b'=')).then(|| {
+                let s = skip_ws(b, j + 1);
+                m[s..simple_end(m, s)].trim().trim_end_matches(';')
+            })
+        })
+    }
+
+    /// Whether route pattern `route` starts with `lit` (a difference inside a
+    /// `:param` or `*` segment is undecidable).
+    pub(super) fn route_starts_with(route: &str, lit: &str) -> Tri {
+        let (r, l) = (route.as_bytes(), lit.as_bytes());
+        let mut seg = 0;
+        for i in 0..l.len() {
+            if i >= r.len() {
+                return Tri::No;
+            }
+            if r[i] == b'/' {
+                seg = i + 1;
+            }
+            if r[i] != l[i] {
+                return match r.get(seg) {
+                    Some(b':' | b'*') => Tri::Maybe,
+                    _ => Tri::No,
+                };
+            }
+        }
+        Tri::Yes
+    }
+
+    /// Whether route pattern `route` is exactly `lit`.
+    pub(super) fn route_equals(route: &str, lit: &str) -> Tri {
+        let (rs, ls): (Vec<&str>, Vec<&str>) =
+            (route.split('/').collect(), lit.split('/').collect());
+        if rs.contains(&"*") {
+            return Tri::Maybe;
+        }
+        if rs.len() != ls.len() {
+            return Tri::No;
+        }
+        let mut maybe = false;
+        for (r, l) in rs.iter().zip(&ls) {
+            if r.starts_with(':') {
+                maybe = true;
+            } else if r != l {
+                return Tri::No;
+            }
+        }
+        if maybe { Tri::Maybe } else { Tri::Yes }
+    }
+
+    /// A `pathname` test (`pathname.startsWith('/x')`, `pathname === '/x'`, or a
+    /// constant holding one) evaluated on `route`; `None` when `t` is no such test.
+    pub(super) fn path_test(m: &str, t: &str, route: &str) -> Option<Tri> {
+        let t = t.trim();
+        let is_path = |x: &str| x == "pathname" || x.ends_with(".pathname");
+        if let Some((x, rest)) = t.split_once(".startsWith(") {
+            let arg = rest.strip_suffix(')')?;
+            let lit = literal_of(arg).or_else(|| {
+                let c = constant(m, arg.trim())?;
+                literal_of(c)
+            })?;
+            return is_path(x.trim()).then(|| route_starts_with(route, &lit));
+        }
+        for (op, yes) in [("===", true), ("!==", false)] {
+            if let Some((x, lit)) = t.split_once(op) {
+                let lit = literal_of(lit)?;
+                if !is_path(x.trim()) {
+                    return None;
+                }
+                return Some(match (route_equals(route, &lit), yes) {
+                    (Tri::Maybe, _) => Tri::Maybe,
+                    (Tri::Yes, true) | (Tri::No, false) => Tri::Yes,
+                    _ => Tri::No,
+                });
+            }
+        }
+        if is_name(t) && !t.contains('.') {
+            return path_test(m, constant(m, t)?, route);
+        }
+        None
+    }
+
+    /// Splits `t` at the top-level `op`.
+    pub(super) fn split_top<'t>(t: &'t str, op: &str) -> Vec<&'t str> {
+        let (b, mut depth, mut from, mut out) = (t.as_bytes(), 0i32, 0, Vec::new());
+        let mut i = 0;
+        while i < b.len() {
+            match b[i] {
+                b'\'' | b'"' | b'`' => {
+                    i = Parser { s: t, i }.string_end();
+                    continue;
+                }
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                _ if depth == 0 && t[i..].starts_with(op) => {
+                    out.push(&t[from..i]);
+                    from = i + op.len();
+                    i += op.len();
+                    continue;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        out.push(&t[from..]);
+        out
+    }
+
+    /// A control-flow statement (`switch`, `for`, …) that holds an exit.
+    pub(super) fn nested_exit(stmt: &str, first: &str, handler: bool) -> bool {
+        matches!(first, "switch" | "try" | "for" | "while" | "do")
+            && (!words(stmt, "return").is_empty()
+                || !words(stmt, "throw").is_empty()
+                || (handler && denies(stmt)))
+    }
+
+    /// A bare statement that is a deny call: `redirect(…)`, `await auth.protect()`.
+    pub(super) fn is_bare_deny(stmt: &str, first: &str) -> bool {
+        let call = first == "await"
+            || matches!(
+                first,
+                "redirect" | "permanentRedirect" | "notFound" | "unauthorized" | "forbidden"
+            );
+        call && denies(stmt) && !stmt.contains("=>") && !has_branching(stmt)
+    }
+    /// React's own hooks (<https://react.dev/reference/react/hooks>) that, called
+    /// as a bare statement, say nothing about access. The effect hooks are not
+    /// among them: their callback may navigate.
+    const PLAIN_HOOKS: [&str; 11] = [
+        "useState",
+        "useReducer",
+        "useContext",
+        "useRef",
+        "useImperativeHandle",
+        "useMemo",
+        "useCallback",
+        "useId",
+        "useDebugValue",
+        "useSyncExternalStore",
+        "useTransition",
+    ];
+
+    /// A statement of a wrapper body (no `return`/`throw`) that acts without
+    /// its result being read: a bare call that is no plain React hook (a custom
+    /// hook may redirect), an effect hook, or an imperative navigation.
+    pub(super) fn wrapper_side_effect(stmt: &str) -> Result<(), String> {
+        let first = ident_at(stmt, 0);
+        let rest = stmt[first.len()..].trim_start_matches(|c: char| is_ident_char(c) || c == '.');
+        let bare_call = !first.is_empty()
+            && !matches!(first, "const" | "let" | "var" | "function" | "class" | "if")
+            && rest.starts_with('(');
+        let navigates = ["navigate", "redirect", "push", "replace"].iter().any(|w| {
+            words(stmt, w)
+                .into_iter()
+                .any(|p| stmt[p + w.len()..].trim_start().starts_with('('))
+        });
+        if navigates || (bare_call && !PLAIN_HOOKS.contains(&first)) {
+            return Err(format!(
+                "it calls code that may redirect: {}",
+                head_of(stmt)
+            ));
+        }
+        Ok(())
+    }
+    /// The names a `const`/`let`/`var` statement binds when its initialiser is a
+    /// call that is no plain React hook (`const user = useAuth()`).
+    pub(super) fn declared_by_call(stmt: &str) -> Vec<String> {
+        let kw = ident_at(stmt, 0);
+        if !matches!(kw, "const" | "let" | "var") {
+            return Vec::new();
+        }
+        let rest = &stmt[kw.len()..];
+        let Some(eq) = rest
+            .find('=')
+            .filter(|&i| !rest[i + 1..].starts_with(['>', '=']))
+        else {
+            return Vec::new();
+        };
+        let init = rest[eq + 1..].trim();
+        let init = init.strip_prefix("await ").unwrap_or(init).trim_start();
+        let callee = init.trim_start_matches(|c: char| is_ident_char(c) || c == '.');
+        let name_len = init.len() - callee.len();
+        let last = init[..name_len].rsplit('.').next().unwrap_or("");
+        if name_len == 0 || !callee.starts_with('(') || PLAIN_HOOKS.contains(&last) {
+            return Vec::new();
+        }
+        let raw = rest[..eq].trim();
+        let parts: Vec<&str> = match raw.as_bytes().first() {
+            Some(&o @ (b'{' | b'[')) => {
+                let close = block_end(raw, 0, o, if o == b'{' { b'}' } else { b']' });
+                raw[1..close.saturating_sub(1).max(1)]
+                    .split(',')
+                    .map(|p| p.rsplit(':').next().unwrap_or(p))
+                    .collect()
+            }
+            _ => vec![raw.split(':').next().unwrap_or(raw)],
+        };
+        parts
+            .into_iter()
+            .map(|p| p.trim().trim_start_matches("...").trim())
+            .filter(|p| is_ident(p))
+            .map(String::from)
+            .collect()
+    }
+}
+
 /// TanStack Router file routes (`createFileRoute('/a/$id')`) and `beforeLoad` guards.
 mod tanstack {
+    use super::paths::*;
     use super::*;
 
     /// A route module: its id (`/_layout/items/$id`, `""` for the root), the
@@ -2329,7 +3348,7 @@ mod tanstack {
     }
 
     /// The condition that check `text` is true; `Ok(None)` is always true.
-    fn check(text: &str, access: &Access) -> Result<Option<Condition>, String> {
+    pub(super) fn check(text: &str, access: &Access) -> Result<Option<Condition>, String> {
         let t = text.trim();
         let t = t
             .strip_prefix('(')
@@ -2360,7 +3379,7 @@ mod tanstack {
         }
     }
 
-    fn negate(c: Option<Condition>) -> Option<Condition> {
+    pub(super) fn negate(c: Option<Condition>) -> Option<Condition> {
         match c {
             None => Some(Condition::Never),
             Some(Condition::Never) => None,
@@ -2370,14 +3389,14 @@ mod tanstack {
     }
 
     /// A readable function: the interior of its block body, or a function name.
-    enum Callable {
+    pub(super) enum Callable {
         Body(usize, usize),
         Reference(String),
         Unreadable,
     }
 
     /// The interior of the `{ … }` after offset `at` (a `: Type` may come first).
-    fn block_after(m: &str, at: usize) -> Callable {
+    pub(super) fn block_after(m: &str, at: usize) -> Callable {
         let b = m.as_bytes();
         let j = skip_ws(b, at);
         let open = match b.get(j) {
@@ -2393,14 +3412,20 @@ mod tanstack {
 
     /// The function expression starting at `at`: `async`, `function`, an arrow with a
     /// block body, or a name.
-    fn callable_at(m: &str, at: usize) -> Callable {
+    pub(super) fn callable_at(m: &str, at: usize) -> Callable {
         let b = m.as_bytes();
         let mut i = skip_ws(b, at);
         if ident_at(m, i) == "async" {
             i = skip_ws(b, i + "async".len());
         }
         let arrow = |after_params: usize| {
-            let j = skip_ws(b, after_params);
+            let mut j = skip_ws(b, after_params);
+            // shortcut: a return type annotation is skipped to the first `=>`, upgrade if a function type appears in it.
+            if b.get(j) == Some(&b':')
+                && let Some(k) = m[j..].find("=>")
+            {
+                j += k;
+            }
             if !m[j..].starts_with("=>") {
                 return Callable::Unreadable;
             }
@@ -2434,7 +3459,7 @@ mod tanstack {
     }
 
     /// The body of `function name(…) {…}` or `const name = (…) => {…}` in `m`.
-    fn declared_body(m: &str, name: &str) -> Option<(usize, usize)> {
+    pub(super) fn declared_body(m: &str, name: &str) -> Option<(usize, usize)> {
         let b = m.as_bytes();
         for pos in words(m, name) {
             let before = m[..pos].trim_end();
@@ -2473,20 +3498,42 @@ mod tanstack {
         Some((pos, callable))
     }
 
-    /// The statements of one `beforeLoad` body, read with fixed rules: `if`/`else`
-    /// chains, early `return`, `throw redirect(…)`. A redirect anywhere else is not read.
-    struct Walker<'a> {
-        m: &'a str,
-        file: &'a str,
-        access: &'a Access,
-        out: &'a mut Vec<UiFlowDiagnostic>,
-        /// `not (path conditions)` for each redirect found.
-        found: Vec<Condition>,
+    /// What a [`Walker`] reads: a TanStack `beforeLoad` (`throw redirect(…)` only),
+    /// a wrapper component (every `return`/`throw` that does not render the
+    /// children denies), or a Next handler (S2 deny exits).
+    #[derive(Clone, Copy, PartialEq)]
+    pub(super) enum Mode {
+        Redirect,
+        Wrapper,
+        Handler,
+    }
+
+    /// The statements of one body, read with fixed rules: `if`/`else` chains,
+    /// early exits. A deny exit anywhere else is not read.
+    pub(super) struct Walker<'a> {
+        pub(super) m: &'a str,
+        pub(super) file: &'a str,
+        pub(super) access: &'a Access,
+        pub(super) out: &'a mut Vec<UiFlowDiagnostic>,
+        /// `not (path conditions)` for each deny exit found.
+        pub(super) found: Vec<Condition>,
+        pub(super) mode: Mode,
+        /// Handler mode: the route whose requirement is read; `pathname` tests
+        /// are evaluated against it.
+        pub(super) route: Option<&'a str>,
+        /// Wrapper mode: a `return` renders the children.
+        pub(super) allowed: bool,
+        /// Handler mode: the parameter of the `catch` being read; `throw` of it re-throws.
+        pub(super) catch_param: Option<String>,
+        /// Wrapper mode: names bound by a call that is no plain hook.
+        pub(super) declared: Vec<String>,
+        /// Wrapper mode: the texts of the checks and exits read so far.
+        pub(super) seen: String,
     }
 
     /// How control leaves a statement list.
     #[derive(Clone, Copy, PartialEq)]
-    enum Ended {
+    pub(super) enum Ended {
         /// It runs on.
         No,
         /// It throws a redirect under exactly the condition the list started with.
@@ -2511,7 +3558,7 @@ mod tanstack {
     }
 
     /// End of the simple statement at `i`: `;`, a line break, or the closing `}`.
-    fn simple_end(m: &str, i: usize) -> usize {
+    pub(super) fn simple_end(m: &str, i: usize) -> usize {
         let b = m.as_bytes();
         let (mut depth, mut k) = (0usize, i);
         while k < b.len() {
@@ -2553,6 +3600,53 @@ mod tanstack {
 
         /// The condition `text` as a path element; `None` is always true.
         fn cond(&mut self, text: &str, at: usize) -> Option<Condition> {
+            if self.mode != Mode::Redirect {
+                self.seen.push_str(text);
+                self.seen.push(' ');
+                return self.cond_ext(text, at);
+            }
+            self.atom(text, at)
+        }
+
+        /// Wrapper and handler checks: `a && b`, `!a`, `pathname` tests on the
+        /// route being read, then the same atoms as `beforeLoad`.
+        fn cond_ext(&mut self, text: &str, at: usize) -> Option<Condition> {
+            let mut t = text.trim();
+            while t.starts_with('(') && block_end(t, 0, b'(', b')') == t.len() {
+                t = t[1..t.len() - 1].trim();
+            }
+            let parts = split_top(t, "&&");
+            if parts.len() > 1 {
+                let cs: Vec<Option<Condition>> =
+                    parts.iter().map(|p| self.cond_ext(p, at)).collect();
+                if cs.contains(&Some(Condition::Never)) {
+                    return Some(Condition::Never);
+                }
+                return all(cs.into_iter().flatten().collect());
+            }
+            if let Some(rest) = t.strip_prefix('!')
+                && !rest.starts_with('=')
+            {
+                let inner = self.cond_ext(rest, at);
+                return negate(inner);
+            }
+            if let Some(tri) = self.route.and_then(|r| path_test(self.m, t, r)) {
+                return match tri {
+                    Tri::Yes => None,
+                    Tri::No => Some(Condition::Never),
+                    Tri::Maybe => {
+                        let message = format!(
+                            "Path test {t} cannot be decided for a parameterised route; the condition is unknown."
+                        );
+                        diag(self.out, self.file, line_of(self.m, at), message);
+                        Some(Condition::Unknown(t.to_string()))
+                    }
+                };
+            }
+            self.atom(t, at)
+        }
+
+        fn atom(&mut self, text: &str, at: usize) -> Option<Condition> {
             match check(text, self.access) {
                 Ok(c) => c,
                 Err(t) => {
@@ -2640,6 +3734,133 @@ mod tanstack {
             Ok(Ended::Redirect)
         }
 
+        /// `try { A } catch (e) { B } finally { C }` in a handler: the blocks are
+        /// walked under the same path; what `B` denies holds only after an exception,
+        /// which is an unknown condition. `throw e` of the caught value is no deny.
+        fn try_catch(
+            &mut self,
+            (i, end): (usize, usize),
+            path: &[Option<Condition>],
+        ) -> Result<Ended, String> {
+            let (m, b) = (self.m, self.m.as_bytes());
+            let block = |at: usize| -> Result<(usize, usize, usize), String> {
+                let open = skip_ws(b, at);
+                if b.get(open) != Some(&b'{') {
+                    return Err(format!("try without a block: {}", head_of(&m[i..end])));
+                }
+                let close = block_end(m, open, b'{', b'}');
+                Ok((open + 1, close - 1, close))
+            };
+            let (s, e, mut at) = block(i + "try".len())?;
+            self.walk(s, e, &mut path.to_vec())?;
+            at = skip_ws(b, at);
+            if ident_at(m, at) == "catch" {
+                let mut j = skip_ws(b, at + "catch".len());
+                let mut param = None;
+                if b.get(j) == Some(&b'(') {
+                    let close = block_end(m, j, b'(', b')');
+                    param = Some(ident_at(m, skip_ws(b, j + 1)).to_string());
+                    j = close;
+                }
+                let (s, e, after) = block(j)?;
+                let mut p = path.to_vec();
+                p.push(Some(Condition::Unknown("an exception".into())));
+                let (before, saved) = (self.found.len(), self.catch_param.take());
+                self.catch_param = param;
+                let walked = self.walk(s, e, &mut p);
+                self.catch_param = saved;
+                walked?;
+                if self.found.len() > before {
+                    let message = "A deny exit in a catch block holds only after an exception; the condition is unknown.";
+                    diag(self.out, self.file, line_of(m, s), message.to_string());
+                }
+                at = skip_ws(b, after);
+            }
+            if ident_at(m, at) == "finally" {
+                let (s, e, _) = block(at + "finally".len())?;
+                self.walk(s, e, &mut path.to_vec())?;
+            }
+            Ok(Ended::No)
+        }
+
+        /// A statement of a wrapper or handler body that is no `if` or block.
+        fn exit(
+            &mut self,
+            (i, end): (usize, usize),
+            path: &[Option<Condition>],
+        ) -> Result<Ended, String> {
+            let stmt = self.m[i..end].trim();
+            let first = ident_at(stmt, 0);
+            if first == "try" && self.mode == Mode::Handler {
+                return self.try_catch((i, end), path);
+            }
+            if nested_exit(stmt, first, self.mode == Mode::Handler) {
+                return Err(format!("exit inside {first}: {}", head_of(stmt)));
+            }
+            match self.mode {
+                Mode::Wrapper => self.exit_wrapper(stmt, first, path),
+                _ => self.exit_handler(stmt, first, path),
+            }
+        }
+
+        /// A wrapper's `return`/`throw`: it denies unless it renders the children.
+        fn exit_wrapper(
+            &mut self,
+            stmt: &str,
+            first: &str,
+            path: &[Option<Condition>],
+        ) -> Result<Ended, String> {
+            if !matches!(first, "return" | "throw") {
+                self.declared.extend(declared_by_call(stmt));
+                return wrapper_side_effect(stmt).map(|()| Ended::No);
+            }
+            let renders = !words(stmt, "children").is_empty() || !words(stmt, "Outlet").is_empty();
+            if !renders {
+                self.seen.push_str(stmt);
+                self.seen.push(' ');
+                self.reached(path);
+                return Ok(Ended::Redirect);
+            }
+            if children_branching(stmt) {
+                let why = head_of(stmt);
+                return Err(format!("children rendered conditionally: {why}"));
+            }
+            self.allowed = true;
+            Ok(Ended::Stop)
+        }
+
+        /// A handler statement: S2 deny exits, a `throw` of the caught value excepted.
+        fn exit_handler(
+            &mut self,
+            stmt: &str,
+            first: &str,
+            path: &[Option<Condition>],
+        ) -> Result<Ended, String> {
+            let thrown = stmt
+                .strip_prefix("throw")
+                .map(|t| t.trim().trim_end_matches(';').trim());
+            if thrown.is_some() && thrown == self.catch_param.as_deref() {
+                return Ok(Ended::Stop);
+            }
+            let deny = match first {
+                "return" => denies(stmt),
+                "throw" => true,
+                _ => is_bare_deny(stmt, first),
+            };
+            if deny {
+                self.reached(path);
+                return Ok(Ended::Redirect);
+            }
+            match first {
+                "return" => Ok(Ended::Stop),
+                _ if denies(stmt) => Err(format!(
+                    "deny exit in an unsupported form: {}",
+                    head_of(stmt)
+                )),
+                _ => Ok(Ended::No),
+            }
+        }
+
         /// How control leaves the statement `i..end`.
         fn statement(
             &mut self,
@@ -2650,6 +3871,7 @@ mod tanstack {
             Ok(match ident_at(m, i) {
                 _ if m.as_bytes()[i] == b'{' => self.walk(i + 1, end - 1, path)?,
                 "if" => self.walk_if((i, end), path)?,
+                _ if self.mode != Mode::Redirect => self.exit((i, end), path)?,
                 _ if has_redirect(stmt) => self.throw_redirect(stmt, path)?,
                 "throw" | "return" => Ended::Stop,
                 _ => Ended::No,
@@ -2657,7 +3879,7 @@ mod tanstack {
         }
 
         /// Walks the statements in `s..e` and tells how control leaves them.
-        fn walk(
+        pub(super) fn walk(
             &mut self,
             s: usize,
             e: usize,
@@ -2732,6 +3954,12 @@ mod tanstack {
             access,
             out,
             found: Vec::new(),
+            mode: Mode::Redirect,
+            route: None,
+            allowed: false,
+            catch_param: None,
+            declared: Vec::new(),
+            seen: String::new(),
         };
         let read = match body {
             Some((s, e)) => walker.walk(s, e, &mut Vec::new()).map(|_| ()),
@@ -2749,7 +3977,7 @@ mod tanstack {
         found
     }
 
-    fn all(conditions: Vec<Condition>) -> Option<Condition> {
+    pub(super) fn all(conditions: Vec<Condition>) -> Option<Condition> {
         let mut kept: Vec<Condition> = Vec::new();
         for c in conditions {
             if !kept.contains(&c) {
@@ -3384,7 +4612,7 @@ export default Product;
             ),
             (
                 "shop/pages/api/admin.ts",
-                "const handler = (req, res) => res.json({});\nexport default withAuth(handler);\n",
+                "const handler = (req, res) => res.json({});\nexport default withAuth(handler);\nfunction withAuth(h) { return (req, res) => { if (!user) return res.status(401).end(); return h(req, res); }; }\n",
             ),
             (
                 "shop/src/components/Nav.tsx",
@@ -3559,7 +4787,8 @@ export const POST = async (req: Request) => Response.json({});
             ),
             (
                 "web/middleware.ts",
-                "export const config = { matcher: ['/orders/:path*', '/api/items'] };\n",
+                "export function middleware(request) { if (!s) return NextResponse.redirect(new URL('/login', request.url)); }
+export const config = { matcher: ['/orders/:path*', '/api/items'] };\n",
             ),
         ]);
         let flow = extract(dir.path());
@@ -3567,7 +4796,7 @@ export const POST = async (req: Request) => Response.json({});
             screens(&flow),
             vec![
                 screen("web:/", "Home", None),
-                screen("web:/orders/:id", "OrderPage", Some("middleware")),
+                screen("web:/orders/:id", "OrderPage", Some("s")),
             ]
         );
         assert_eq!(
@@ -3579,7 +4808,7 @@ export const POST = async (req: Request) => Response.json({});
             .iter()
             .map(|e| (e.method.clone(), e.path.clone(), e.access.clone()))
             .collect();
-        let mw = AccessState::Protected(Condition::Custom("middleware".into()));
+        let mw = AccessState::Protected(Condition::Custom("s".into()));
         assert_eq!(
             endpoints,
             vec![
@@ -3592,6 +4821,7 @@ export const POST = async (req: Request) => Response.json({});
     }
 
     const SPA_APP: &str = "import { Routes, Route, Navigate } from 'react-router-dom';
+import { RequireAuth, ProtectedRoute } from './guards';
 export default function App() {
   return (
     <Routes>
@@ -3617,6 +4847,18 @@ export default function App() {
                 r#"{"dependencies":{"react":"19","react-router-dom":"7"}}"#,
             ),
             ("spa/src/App.tsx", SPA_APP),
+            (
+                "spa/src/guards.tsx",
+                "export function RequireAuth({ children }) {
+  if (!authed) return <Navigate to=\"/login\" />;
+  return children;
+}
+export function ProtectedRoute() {
+  if (!admin) return <Navigate to=\"/\" />;
+  return <Outlet />;
+}
+",
+            ),
             (
                 "spa/src/Layout.tsx",
                 "export function Layout() {
@@ -3666,13 +4908,13 @@ export function Orders() {
             screens(&flow),
             vec![
                 screen("spa:/", "Home", None),
-                screen("spa:/admin", "Admin", Some("ProtectedRoute")),
-                screen("spa:/orders", "Orders", Some("RequireAuth")),
-                screen("spa:/orders/:id", "OrderDetail", Some("RequireAuth")),
+                screen("spa:/admin", "Admin", Some("admin")),
+                screen("spa:/orders", "Orders", Some("authed")),
+                screen("spa:/orders/:id", "OrderDetail", Some("authed")),
             ]
         );
         let orders = &flow.screens[2];
-        assert_eq!((orders.file.as_str(), orders.line), ("spa/src/App.tsx", 7));
+        assert_eq!((orders.file.as_str(), orders.line), ("spa/src/App.tsx", 8));
     }
 
     #[test]
@@ -3729,7 +4971,8 @@ export function Orders() {
             ),
             (
                 "dash/src/router.tsx",
-                "export const router = createBrowserRouter([
+                "import { AuthGuard } from './AuthGuard';
+export const router = createBrowserRouter([
   { path: '/', Component: Root, children: [
     { index: true, element: <Dashboard /> },
     { path: 'settings', element: <AuthGuard><Settings /></AuthGuard>, children: [
@@ -3739,6 +4982,10 @@ export function Orders() {
   ] },
 ]);
 ",
+            ),
+            (
+                "dash/src/AuthGuard.tsx",
+                "export function AuthGuard({ children }) { if (!ok) return <Navigate to=\"/\" />; return children; }\n",
             ),
             (
                 "dash/src/Help.tsx",
@@ -3751,11 +4998,11 @@ export function Orders() {
             vec![
                 screen("dash:/", "Dashboard", None),
                 screen("dash:/help", "Help", None),
-                screen("dash:/settings", "Settings", Some("AuthGuard")),
-                screen("dash:/settings/profile", "Profile", Some("AuthGuard")),
+                screen("dash:/settings", "Settings", Some("ok")),
+                screen("dash:/settings/profile", "Profile", Some("ok")),
             ]
         );
-        assert!(has_diag(&flow, "dash/src/router.tsx", 7));
+        assert!(has_diag(&flow, "dash/src/router.tsx", 8));
         assert!(!flow.complete);
     }
 
@@ -4207,6 +5454,7 @@ const AppRoutes = [
   { path: '/weather', element: <ProtectedRoute><Weather /></ProtectedRoute> },
 ];
 export default AppRoutes;
+function ProtectedRoute({ children }) { if (!ok) return <Navigate to=\"/\" />; return children; }
 ";
     const MAPPED: &str = "<Routes>
   {AppRoutes.map((route, index) => {
@@ -4231,7 +5479,7 @@ export default AppRoutes;
             vec![
                 screen("c:/", "Home", None),
                 screen("c:/counter", "Counter", None),
-                screen("c:/weather", "Weather", Some("ProtectedRoute")),
+                screen("c:/weather", "Weather", Some("ok")),
             ]
         );
         assert_eq!(flow.screens[0].file, "c/src/AppRoutes.jsx");
@@ -4324,14 +5572,15 @@ export const App = () => (
   {secret.map((r) => <Route key={r.path} {...r} />)}
   <Route path=\"/open\" element={<Open />} />
 </Route></Routes>);
+function ProtectedRoute() { if (!ok) return <Navigate to=\"/\" />; return <Outlet />; }
 ";
         let routes = "export const secret = [{ path: '/vault', element: <Vault /> }];\n";
         let flow = mapped_in(app, routes);
         assert_eq!(
             screens(&flow),
             vec![
-                screen("c:/open", "Open", Some("ProtectedRoute")),
-                screen("c:/vault", "Vault", Some("ProtectedRoute")),
+                screen("c:/open", "Open", Some("ok")),
+                screen("c:/vault", "Vault", Some("ok")),
             ]
         );
     }
@@ -4537,7 +5786,7 @@ export function Page() { items.map((i) => i); load(); return null; }
     }
 
     #[test]
-    fn routes_inside_a_conditional_expression_are_gaps() {
+    fn routes_inside_a_conditional_expression_exist_with_an_unknown_condition() {
         for body in [
             "<Routes>{user && <Route path='/plain' element={<Plain />} />}</Routes>",
             "<Routes>{user ? <Route path='/plain' element={<Plain />} /> : null}</Routes>",
@@ -4545,7 +5794,8 @@ export function Page() { items.map((i) => i); load(); return null; }
             "<Routes>{user || <Route path='/plain' element={<Plain />} />}</Routes>",
         ] {
             let flow = map_app(body);
-            assert!(flow.screens.is_empty(), "{body}: {:?}", screens(&flow));
+            assert_eq!(flow.screens.len(), 1, "{body}: {:?}", screens(&flow));
+            assert!(unknown_state(&flow.screens[0].access), "{body}");
             assert!(has_diag(&flow, "c/src/App.jsx", 3), "{body}");
             assert!(!flow.complete);
         }
@@ -4634,12 +5884,9 @@ export function Page() { items.map((i) => i); load(); return null; }
         let flow = map_app(
             "<Routes><Route path=\"/g\" element={<RequireAuth><G a={x ? 1 : 2} /></RequireAuth>} /></Routes>",
         );
-        assert_eq!(
-            screens(&flow),
-            vec![screen("c:/g", "G", Some("RequireAuth"))],
-            "{:?}",
-            flow.diagnostics
-        );
+        assert_eq!(flow.screens.len(), 1, "{:?}", flow.diagnostics);
+        assert_eq!(flow.screens[0].name, "G");
+        assert!(unknown_state(&flow.screens[0].access));
     }
 
     #[test]
@@ -4662,9 +5909,8 @@ export function Page() { items.map((i) => i); load(); return null; }
         ] {
             let flow = map_app(&body);
             assert!(
-                flow.screens
-                    .iter()
-                    .all(|s| s.id != "c:/admin" && s.id != "c:/login"),
+                flow.screens.iter().all(|s| s.id != "c:/login"
+                    && (s.id != "c:/admin" || unknown_state(&s.access))),
                 "{body}: {:?}",
                 screens(&flow)
             );
@@ -4964,5 +6210,673 @@ export function Page() { items.map((i) => i); load(); return null; }
             "{:?}",
             flow.diagnostics
         );
+    }
+
+    // ---- wave 2d: wrappers by body, Next middleware by body ----
+
+    fn rr_flow(files: &[(&str, &str)]) -> UiFlow {
+        let mut all = vec![("c/package.json", ROUTER_PKG)];
+        all.extend_from_slice(files);
+        extract(project(&all).path())
+    }
+
+    fn state(flow: &UiFlow, id: &str) -> AccessState {
+        flow.screens
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap_or_else(|| panic!("no screen {id}: {:?}", screens(flow)))
+            .access
+            .clone()
+    }
+
+    fn protected(name: &str) -> AccessState {
+        AccessState::Protected(custom(name))
+    }
+
+    fn unknown_state(s: &AccessState) -> bool {
+        unknown(&s.condition().cloned())
+    }
+
+    const GATE: &str = "export function Gate({ children }) {
+  if (!ok) return <Navigate to=\"/login\" />;
+  return children;
+}
+";
+
+    fn gated(app: &str, gate: &str) -> UiFlow {
+        rr_flow(&[("c/src/App.jsx", app), ("c/src/Gate.jsx", gate)])
+    }
+
+    const GATE_APP: &str = "import { Routes, Route } from 'react-router-dom';
+import { Gate } from './Gate';
+export const App = () => <Routes><Route path=\"/a\" element={<Gate><A /></Gate>} /></Routes>;
+";
+
+    #[test]
+    fn a_wrapper_with_a_deny_exit_protects_and_the_screen_is_the_inner_component() {
+        let flow = gated(GATE_APP, GATE);
+        assert_eq!(
+            screens(&flow),
+            vec![screen("c:/a", "A", Some("ok"))],
+            "{:?}",
+            flow.diagnostics
+        );
+    }
+
+    #[test]
+    fn a_transparent_wrapper_or_a_wrapper_named_like_a_guard_protects_nothing() {
+        let flow = gated(
+            GATE_APP,
+            "export const Gate = ({ children }) => <div>{children}</div>;\n",
+        );
+        assert_eq!(screens(&flow), vec![screen("c:/a", "A", None)]);
+        assert!(flow.complete, "{:?}", flow.diagnostics);
+        let app = "import { Routes, Route } from 'react-router-dom';
+import ProtectedRoute from './ProtectedRoute';
+export const App = () => <Routes><Route path=\"/a\" element={<ProtectedRoute><A /></ProtectedRoute>} /></Routes>;
+";
+        let flow = rr_flow(&[
+            ("c/src/App.jsx", app),
+            (
+                "c/src/ProtectedRoute.jsx",
+                "export default function ProtectedRoute({ children }) { return children; }\n",
+            ),
+        ]);
+        assert_eq!(screens(&flow), vec![screen("c:/a", "A", None)]);
+        assert!(flow.complete, "{:?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn a_wrapper_from_a_package_is_unknown_and_a_gap() {
+        let app = GATE_APP.replace("'./Gate'", "'some-pkg'");
+        let flow = rr_flow(&[("c/src/App.jsx", &app)]);
+        assert_eq!(
+            state(&flow, "c:/a"),
+            AccessState::Protected(Condition::Unknown("Gate".into()))
+        );
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn react_builtins_are_transparent_and_an_unreadable_wrapper_is_unknown() {
+        let app = "import { Routes, Route } from 'react-router-dom';
+import { Suspense } from 'react';
+export const App = () => <Routes><Route path=\"/a\" element={<Suspense><A /></Suspense>} /></Routes>;
+";
+        let flow = rr_flow(&[("c/src/App.jsx", app)]);
+        assert_eq!(screens(&flow), vec![screen("c:/a", "A", None)]);
+        assert!(flow.complete, "{:?}", flow.diagnostics);
+        // A ternary between children and something else is not read.
+        let flow = gated(
+            GATE_APP,
+            "export const Gate = ({ children }) => ok ? children : <Login />;\n",
+        );
+        assert!(
+            unknown_state(&state(&flow, "c:/a")),
+            "{:?}",
+            flow.diagnostics
+        );
+        assert!(!flow.complete);
+        // A wrapper that never renders its children is not transparent.
+        let flow = gated(GATE_APP, "export function Gate() { return <Login />; }\n");
+        assert!(unknown_state(&state(&flow, "c:/a")));
+        // Declared nowhere.
+        let app = GATE_APP.replace("import { Gate } from './Gate';\n", "");
+        let flow = rr_flow(&[("c/src/App.jsx", &app)]);
+        assert!(unknown_state(&state(&flow, "c:/a")));
+    }
+
+    const PATHLESS: &str = "import { Routes, Route } from 'react-router-dom';
+import { Gate } from './Gate';
+export const App = () => (
+  <Routes>
+    <Route element={<Gate />}>
+      <Route path=\"a\" element={<A />} />
+      <Route path=\"b\" element={<B />} />
+    </Route>
+    <Route path=\"c\" element={<C />} />
+  </Routes>
+);
+";
+
+    #[test]
+    fn a_pathless_layout_route_protects_its_children_by_its_body() {
+        let gate = "export function Gate() {
+  if (!ok) return <Navigate to=\"/login\" />;
+  return <Outlet />;
+}
+";
+        let flow = gated(PATHLESS, gate);
+        assert_eq!(
+            screens(&flow),
+            vec![
+                screen("c:/a", "A", Some("ok")),
+                screen("c:/b", "B", Some("ok")),
+                screen("c:/c", "C", None),
+            ],
+            "{:?}",
+            flow.diagnostics
+        );
+        let flow = gated(PATHLESS, "export const Gate = () => <Outlet />;\n");
+        assert_eq!(
+            screens(&flow),
+            vec![
+                screen("c:/a", "A", None),
+                screen("c:/b", "B", None),
+                screen("c:/c", "C", None),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_guard_wrapped_in_a_fragment_is_still_read() {
+        let app = GATE_APP.replace("<Gate><A /></Gate>", "<><Gate><A /></Gate></>");
+        let flow = gated(&app, GATE);
+        assert_eq!(
+            screens(&flow),
+            vec![screen("c:/a", "A", Some("ok"))],
+            "{:?}",
+            flow.diagnostics
+        );
+    }
+
+    #[test]
+    fn a_route_in_a_conditional_expression_exists_with_an_unknown_condition() {
+        let app = "import { Routes, Route } from 'react-router-dom';
+export const App = () => <Routes>{flag && <Route path=\"/x\" element={<X />} />}</Routes>;
+";
+        let flow = rr_flow(&[("c/src/App.jsx", app)]);
+        let s = state(&flow, "c:/x");
+        assert!(unknown_state(&s), "{s:?}");
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn tsconfig_app_and_jsconfig_aliases_resolve_wrapper_imports() {
+        let app = GATE_APP.replace("'./Gate'", "'@/Gate'");
+        for config in ["c/jsconfig.json", "c/tsconfig.app.json"] {
+            let flow = rr_flow(&[
+                ("c/src/App.jsx", &app),
+                ("c/src/Gate.jsx", GATE),
+                (config, r#"{"compilerOptions":{"paths":{"@/*":["src/*"]}}}"#),
+            ]);
+            assert_eq!(
+                screens(&flow),
+                vec![screen("c:/a", "A", Some("ok"))],
+                "{config}: {:?}",
+                flow.diagnostics
+            );
+            assert!(flow.complete, "{config}: {:?}", flow.diagnostics);
+        }
+    }
+
+    // ---- Next middleware / proxy ----
+
+    const DENY: &str = "import { NextResponse } from 'next/server';
+export function middleware(request) {
+  if (!s) return NextResponse.redirect(new URL('/login', request.url));
+  return NextResponse.next();
+}
+";
+
+    fn next_flow(mw_name: &str, mw: &str, extra: &[(&str, &str)]) -> UiFlow {
+        let page = |n: &str| format!("export default function {n}() {{ return null; }}\n");
+        let pages = [
+            ("web/app/page.tsx", "Home"),
+            ("web/app/about/page.tsx", "About"),
+            ("web/app/about/team/page.tsx", "Team"),
+            ("web/app/blog/about/page.tsx", "BlogAbout"),
+            ("web/app/dashboard/page.tsx", "Dash"),
+            ("web/app/dashboard/a/b/page.tsx", "Deep"),
+            ("web/app/dashboardx/page.tsx", "Dx"),
+            ("web/app/x/page.tsx", "X"),
+            ("web/app/x/a/page.tsx", "Xa"),
+            ("web/app/x/a/b/page.tsx", "Xab"),
+            ("web/app/apiary/page.tsx", "Apiary"),
+        ];
+        let texts: Vec<String> = pages.iter().map(|(_, n)| page(n)).collect();
+        let mut all: Vec<(&str, &str)> = vec![
+            ("web/package.json", NEXT_PKG),
+            (
+                "web/app/api/user/route.ts",
+                "export async function GET() { return Response.json({}); }\n",
+            ),
+        ];
+        all.extend(pages.iter().zip(&texts).map(|((p, _), t)| (*p, t.as_str())));
+        all.push((mw_name, mw));
+        all.extend_from_slice(extra);
+        extract(project(&all).path())
+    }
+
+    /// Routes that are `Protected(custom(s))`; endpoints as `GET /path`.
+    fn guarded(flow: &UiFlow) -> Vec<String> {
+        let mut got: Vec<String> = flow
+            .screens
+            .iter()
+            .filter(|s| s.access == protected("s"))
+            .map(|s| s.route.clone().unwrap())
+            .chain(
+                flow.endpoints
+                    .iter()
+                    .filter(|e| e.access == protected("s"))
+                    .map(|e| format!("GET {}", e.path)),
+            )
+            .collect();
+        got.sort();
+        got
+    }
+
+    fn with_config(config: &str) -> String {
+        format!("{DENY}export const config = {{ matcher: {config} }};\n")
+    }
+
+    #[test]
+    fn no_matcher_covers_every_page_and_handler() {
+        let flow = next_flow("web/middleware.ts", DENY, &[]);
+        let all = guarded(&flow);
+        assert_eq!(all.len(), 12, "{all:?}");
+        assert!(all.contains(&"GET /api/user".to_string()));
+        assert!(flow.complete, "{:?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn a_bare_literal_matcher_is_unknown_for_descendants() {
+        let flow = next_flow("web/middleware.ts", &with_config("'/about'"), &[]);
+        assert_eq!(guarded(&flow), vec!["/about"]);
+        assert!(unknown_state(&state(&flow, "web:/about/team")));
+        assert_eq!(state(&flow, "web:/blog/about"), AccessState::Undeclared);
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn path_star_plus_and_optional_matchers() {
+        let flow = next_flow(
+            "web/middleware.ts",
+            &with_config("['/dashboard/:path*']"),
+            &[],
+        );
+        assert_eq!(guarded(&flow), vec!["/dashboard", "/dashboard/a/b"]);
+        let flow = next_flow("web/middleware.ts", &with_config("'/x/:p+'"), &[]);
+        assert_eq!(guarded(&flow), vec!["/x/a", "/x/a/b"]);
+        let flow = next_flow("web/middleware.ts", &with_config("'/x/:p?'"), &[]);
+        assert_eq!(guarded(&flow), vec!["/x", "/x/a"]);
+        assert_eq!(state(&flow, "web:/x/a/b"), AccessState::Undeclared);
+    }
+
+    #[test]
+    fn the_negative_lookahead_matcher_excludes_by_prefix() {
+        let m = "'/((?!api|_next/static|_next/image|favicon.ico).*)'";
+        let flow = next_flow("web/middleware.ts", &with_config(m), &[]);
+        let got = guarded(&flow);
+        assert!(got.contains(&"/".to_string()) && got.contains(&"/dashboard".to_string()));
+        assert!(!got.contains(&"GET /api/user".to_string()), "{got:?}");
+        assert!(!got.contains(&"/apiary".to_string()), "{got:?}");
+        assert!(flow.complete, "{:?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn has_and_missing_make_the_matched_routes_unknown() {
+        let m = "[{ source: '/api/:path*', missing: [{ type: 'header', key: 'x-internal' }] }]";
+        let flow = next_flow("web/middleware.ts", &with_config(m), &[]);
+        let e = (flow.endpoints.iter()).find(|e| e.path == "/api/user");
+        let e = e.unwrap();
+        assert!(
+            matches!(&e.access, AccessState::Protected(Condition::Unknown(_))),
+            "{:?}",
+            e.access
+        );
+        assert!(guarded(&flow).is_empty());
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn a_non_constant_matcher_covers_everything_and_is_a_gap() {
+        let mw = format!("const m = ['/a'];\n{DENY}export const config = {{ matcher: m }};\n");
+        let flow = next_flow("web/middleware.ts", &mw, &[]);
+        assert_eq!(guarded(&flow).len(), 12);
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn proxy_ts_is_read_like_middleware_and_both_files_are_a_gap() {
+        let proxy = DENY.replace("function middleware", "function proxy");
+        let flow = next_flow("web/proxy.ts", &proxy, &[]);
+        assert_eq!(guarded(&flow).len(), 12);
+        assert!(flow.complete, "{:?}", flow.diagnostics);
+        let flow = next_flow("web/src/proxy.ts", &proxy, &[]);
+        assert_eq!(guarded(&flow).len(), 12);
+        let flow = next_flow("web/proxy.ts", &proxy, &[("web/middleware.ts", DENY)]);
+        assert!(!flow.complete);
+        let cfg = "module.exports = { basePath: '/app' };\n";
+        let flow = next_flow("web/proxy.ts", &proxy, &[("web/next.config.js", cfg)]);
+        assert!(!flow.complete);
+        assert_eq!(guarded(&flow).len(), 12);
+    }
+
+    #[test]
+    fn the_body_decides_which_paths_are_protected() {
+        let mw = "import { NextResponse } from 'next/server';
+export async function middleware(request) {
+  const { pathname } = request.nextUrl;
+  if (pathname.startsWith('/dashboard') && !s) {
+    return NextResponse.redirect(new URL('/sign-in', request.url));
+  }
+  return NextResponse.next();
+}
+";
+        let flow = next_flow("web/middleware.ts", mw, &[]);
+        assert_eq!(
+            guarded(&flow),
+            vec!["/dashboard", "/dashboard/a/b", "/dashboardx"]
+        );
+        assert_eq!(state(&flow, "web:/about"), AccessState::Undeclared);
+        assert!(flow.complete, "{:?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn a_body_without_a_deny_exit_protects_nothing() {
+        let mw = "import { NextResponse } from 'next/server';
+export function middleware(request) {
+  const res = NextResponse.next();
+  res.cookies.set('seen', '1');
+  return res;
+}
+";
+        let flow = next_flow("web/middleware.ts", mw, &[]);
+        assert!(
+            flow.screens
+                .iter()
+                .all(|s| s.access == AccessState::Undeclared)
+        );
+        assert!(
+            flow.endpoints
+                .iter()
+                .all(|e| e.access == AccessState::Undeclared)
+        );
+        assert!(flow.complete, "{:?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn an_unreadable_body_is_unknown_on_every_covered_route() {
+        let mw = "import { NextResponse } from 'next/server';
+export function middleware(request) {
+  switch (true) {
+    case /^\\/admin/.test(request.nextUrl.pathname):
+      return NextResponse.redirect(new URL('/login', request.url));
+  }
+  return NextResponse.next();
+}
+";
+        let flow = next_flow("web/middleware.ts", mw, &[]);
+        assert!(
+            flow.screens.iter().all(|s| unknown_state(&s.access)),
+            "{:?}",
+            screens(&flow)
+        );
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn a_pass_through_hof_protects_nothing_and_a_denying_one_does() {
+        let handler = "import { withAuth } from '../../../lib/auth';
+export const GET = withAuth(async () => Response.json({}));
+";
+        let base = |lib: &str| {
+            extract(
+                project(&[
+                    ("web/package.json", NEXT_PKG),
+                    ("web/app/api/user/route.ts", handler),
+                    ("web/lib/auth.ts", lib),
+                ])
+                .path(),
+            )
+        };
+        let flow = base("export function withAuth(h) { return h; }\n");
+        assert_eq!(flow.endpoints[0].access, AccessState::Undeclared);
+        let flow = base(
+            "export function withAuth(h) {
+  return async (req) => {
+    if (!user) return new Response(null, { status: 401 });
+    return h(req);
+  };
+}
+",
+        );
+        assert_eq!(
+            flow.endpoints[0].access,
+            protected("withAuth"),
+            "{:?}",
+            flow.diagnostics
+        );
+        let pkg = handler.replace("../../../lib/auth", "some-pkg");
+        let flow = extract(
+            project(&[
+                ("web/package.json", NEXT_PKG),
+                ("web/app/api/user/route.ts", &pkg),
+            ])
+            .path(),
+        );
+        assert_eq!(
+            flow.endpoints[0].access,
+            AccessState::Protected(Condition::Unknown("withAuth".into()))
+        );
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn clerk_middleware_without_a_callback_protects_nothing() {
+        let mw = "import { clerkMiddleware } from '@clerk/nextjs/server';
+export default clerkMiddleware();
+export const config = { matcher: ['/((?!_next).*)'] };
+";
+        let flow = next_flow("web/middleware.ts", mw, &[]);
+        assert!(
+            flow.screens
+                .iter()
+                .all(|s| s.access == AccessState::Undeclared),
+            "{:?}",
+            screens(&flow)
+        );
+        assert!(flow.complete, "{:?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn try_catch_in_a_middleware_keeps_the_dashboard_protected_and_the_rest_undeclared() {
+        let mw = "import { NextResponse } from 'next/server';
+const protectedRoutes = '/dashboard';
+export async function middleware(request) {
+  const { pathname } = request.nextUrl;
+  const s = request.cookies.get('session');
+  const isProtectedRoute = pathname.startsWith(protectedRoutes);
+  if (isProtectedRoute && !s) {
+    return NextResponse.redirect(new URL('/sign-in', request.url));
+  }
+  let res = NextResponse.next();
+  if (s && request.method === 'GET') {
+    try {
+      res.cookies.set('session', 'x');
+    } catch (error) {
+      res.cookies.delete('session');
+      if (isProtectedRoute) {
+        return NextResponse.redirect(new URL('/sign-in', request.url));
+      }
+    }
+  }
+  return res;
+}
+";
+        let flow = next_flow("web/middleware.ts", mw, &[]);
+        assert!(matches!(
+            state(&flow, "web:/dashboard"),
+            AccessState::Protected(_)
+        ));
+        assert_eq!(state(&flow, "web:/about"), AccessState::Undeclared);
+        assert_eq!(state(&flow, "web:/"), AccessState::Undeclared);
+        assert!(!flow.complete, "the unknown exception condition is a gap");
+    }
+
+    #[test]
+    fn a_typed_pass_through_wrapper_that_logs_and_rethrows_protects_nothing() {
+        let lib = "export const Instrument = (handler: Handler): Handler => {
+  return async (req, res) => {
+    try {
+      await handler(req, res);
+    } catch (error) {
+      log(error);
+      throw error;
+    } finally {
+      done();
+    }
+  };
+};
+export default Instrument;
+";
+        let handler = "import Instrument from '../../lib/instrument';
+export default Instrument(handler);
+";
+        let flow = extract(
+            project(&[
+                ("web/package.json", NEXT_PKG),
+                ("web/pages/api/x.ts", handler),
+                ("web/lib/instrument.ts", lib),
+            ])
+            .path(),
+        );
+        assert_eq!(
+            flow.endpoints[0].access,
+            AccessState::Undeclared,
+            "{:?}",
+            flow.diagnostics
+        );
+        assert!(flow.complete, "{:?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn hooks_and_imperative_navigation_in_a_wrapper_are_unknown() {
+        for gate in [
+            "export function Gate({ children }) { useRequireAuth(); return children; }\n",
+            "export const Gate = ({ children }) => { useRequireAuth(); return children; };\n",
+            "export function Gate({ children }) { useEffect(() => { if (!user) nav('/login'); }); return children; }\n",
+            "export function Gate({ children }) { if (!user) { navigate('/login'); } return children; }\n",
+        ] {
+            let flow = gated(GATE_APP, gate);
+            assert!(
+                unknown_state(&state(&flow, "c:/a")),
+                "{gate}: {:?}",
+                flow.diagnostics
+            );
+            assert!(!flow.complete, "{gate}");
+        }
+        // Built-in hooks and a hook whose result is used stay readable.
+        let gate = "export function Gate({ children }) {
+  const [n] = useState(0);
+  const user = useAuth();
+  if (!user) return <Navigate to=\"/login\" />;
+  return children;
+}
+";
+        let flow = gated(GATE_APP, gate);
+        assert_eq!(
+            state(&flow, "c:/a"),
+            protected("user"),
+            "{:?}",
+            flow.diagnostics
+        );
+    }
+
+    #[test]
+    fn nested_handler_wrappers_are_all_read() {
+        let handler = "import { withA, withB } from '../../../lib/auth';
+export const GET = withA(withB(async () => Response.json({})));
+";
+        let deny = "return async (req) => { if (!user) return new Response(null, { status: 401 }); return h(req); };";
+        let run = |lib: &str, handler: &str| {
+            extract(
+                project(&[
+                    ("web/package.json", NEXT_PKG),
+                    ("web/app/api/user/route.ts", handler),
+                    ("web/lib/auth.ts", lib),
+                ])
+                .path(),
+            )
+        };
+        let pass = "export function withA(h) { return h; }\n";
+        let lib = format!("{pass}export function withB(h) {{ {deny} }}\n");
+        let flow = run(&lib, handler);
+        assert_eq!(
+            flow.endpoints[0].access,
+            protected("withB"),
+            "{:?}",
+            flow.diagnostics
+        );
+        let lib = format!(
+            "export function withA(h) {{ {deny} }}\nexport function withB(h) {{ return h; }}\n"
+        );
+        let flow = run(&lib, handler);
+        assert_eq!(
+            flow.endpoints[0].access,
+            protected("withA"),
+            "{:?}",
+            flow.diagnostics
+        );
+        let pkg = handler.replace(
+            "import { withA, withB } from '../../../lib/auth';",
+            "import { withA } from '../../../lib/auth';\nimport { withB } from 'some-pkg';",
+        );
+        let flow = run(pass, &pkg);
+        assert!(
+            matches!(&flow.endpoints[0].access, AccessState::Protected(Condition::Unknown(n)) if n == "withB"),
+            "{:?}",
+            flow.endpoints[0].access
+        );
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn a_wrapper_declaration_from_an_unused_call_is_unknown() {
+        for gate in [
+            "export function Gate({ children }) { const _ = useRequireAuth(); return children; }\n",
+            "export function Gate({ children }) { const user = useAuth(); return children; }\n",
+            "export const Gate = ({ children }) => { const { user } = useSession(); return children; };\n",
+        ] {
+            let flow = gated(GATE_APP, gate);
+            assert!(
+                unknown_state(&state(&flow, "c:/a")),
+                "{gate}: {:?}",
+                flow.diagnostics
+            );
+            assert!(!flow.complete, "{gate}");
+        }
+        // Used in the check, or a plain hook: still read.
+        let gate = "export function Gate({ children }) {
+  const [n] = useState(0);
+  const { user } = useAuth();
+  if (!user) return <Navigate to=\"/login\" />;
+  return children;
+}
+";
+        let flow = gated(GATE_APP, gate);
+        assert_eq!(
+            state(&flow, "c:/a"),
+            protected("user"),
+            "{:?}",
+            flow.diagnostics
+        );
+    }
+
+    #[test]
+    fn a_hook_value_only_passed_to_the_rendered_children_is_unknown() {
+        for gate in [
+            "export function Gate({ children }) { const user = useRequireAuth(); return <Layout user={user}>{children}</Layout>; }\n",
+            "export function Gate({ children }) { const user = useRequireAuth(); if (loading) return null; return <Layout user={user}>{children}</Layout>; }\n",
+        ] {
+            let flow = gated(GATE_APP, gate);
+            assert!(
+                unknown_state(&state(&flow, "c:/a")),
+                "{gate}: {:?}",
+                flow.diagnostics
+            );
+            assert!(!flow.complete, "{gate}");
+        }
     }
 }
