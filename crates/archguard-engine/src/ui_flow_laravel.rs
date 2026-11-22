@@ -319,7 +319,10 @@ impl Run<'_> {
                 }
                 flow.policies.push(PolicyDef {
                     application: None,
-                    name: m.name.clone(),
+                    name: match c.name.strip_suffix("Policy").filter(|m| !m.is_empty()) {
+                        Some(model) => format!("{model}.{}", m.name),
+                        None => m.name.clone(),
+                    },
                     requires: Condition::Unknown(format!("{}::{}", c.name, m.name)),
                     file: s.rel.clone(),
                     line: s.line(m.at),
@@ -367,6 +370,8 @@ mod index {
         prefixes: Values,
         pub(super) mw: Tables,
         pub(super) api_prefix: String,
+        /// `defaults.guard` of `config/auth.php`; `None` when not readable.
+        pub(super) default_guard: Option<String>,
         /// View name → (file, text).
         pub(super) templates: BTreeMap<String, (String, String)>,
     }
@@ -394,6 +399,7 @@ mod index {
                 prefixes: BTreeMap::new(),
                 mw: Tables::default(),
                 api_prefix: "api".into(),
+                default_guard: None,
                 templates: BTreeMap::new(),
             };
             let (sources, views) = app_files(&prefix, files, out);
@@ -431,6 +437,9 @@ mod index {
                     self.classes.insert(fq, (i, c));
                 }
             }
+            let config = format!("{}config/auth.php", self.dir);
+            self.default_guard =
+                (self.srcs.iter().find(|s| s.rel == config)).and_then(default_guard);
             let bootstrap = format!("{}bootstrap/app.php", self.dir);
             if let Some(s) = self.srcs.iter().find(|s| s.rel == bootstrap) {
                 bootstrap_calls(s, &mut self.mw);
@@ -509,11 +518,15 @@ mod index {
             // A project alias wins over a built-in of the same name.
             let resolved = match class {
                 Some(c) => self.framework(c, 0),
-                None if access::builtin(name, &args, acc) => return vec![],
-                None => self.framework(name, 0),
+                None => match access::builtin(name, &args, &self.default_guard, acc) {
+                    Some(unread) => return unread,
+                    None => self.framework(name, 0),
+                },
             };
             match resolved {
-                Some(Some(a)) if access::builtin(a, &args, acc) => vec![],
+                Some(Some(a)) => {
+                    access::builtin(a, &args, &self.default_guard, acc).unwrap_or_default()
+                }
                 Some(_) => vec![],
                 None => {
                     acc.conds.push(Condition::Unknown(text.trim().into()));
@@ -574,7 +587,7 @@ mod index {
                 views.push((f, v.replace('/', ".")));
             } else if f.ends_with(".php")
                 && !test_path(inner)
-                && !SKIP.iter().any(|d| inner.starts_with(d))
+                && (inner == "config/auth.php" || !SKIP.iter().any(|d| inner.starts_with(d)))
             {
                 sources.push(f);
             }
@@ -709,6 +722,22 @@ mod index {
         }
     }
 
+    /// The literal `'defaults' => ['guard' => 'web' | env('X', 'web')]` of `config/auth.php`.
+    fn default_guard(s: &Src) -> Option<String> {
+        let at = s.code.find("'defaults'")?;
+        let rest = &s.code[at..];
+        let rest = rest[rest.find("'guard'")? + 7..]
+            .trim_start()
+            .strip_prefix("=>")?;
+        let rest = rest.trim_start();
+        let lit = match rest.strip_prefix("env(") {
+            Some(env) => env.split_once(',')?.1.trim_start(),
+            None => rest,
+        };
+        let end = lit.get(1..)?.find(&lit[..1])? + 2;
+        php::literal(&lit[..end]).filter(|g| !g.is_empty())
+    }
+
     /// The literal `apiPrefix:` of `bootstrap/app.php`.
     fn api_prefix(s: &Src) -> Option<String> {
         let b = s.mask.as_bytes();
@@ -802,31 +831,105 @@ mod access {
         })
     }
 
-    /// Built-in middleware by name; `false` when the name is none of them.
-    pub(super) fn builtin(name: &str, args: &[String], acc: &mut Acc) -> bool {
-        let names = || {
-            let split = args
-                .iter()
-                .flat_map(|a| a.split('|'))
-                .map(|a| a.trim().to_string());
-            split.filter(|a| !a.is_empty())
+    /// The model class of `Post::class` or `App\Models\Post` (short name); a route
+    /// parameter name or anything else is none.
+    pub(super) fn model(text: &str) -> Option<String> {
+        let t = text.trim().trim_end_matches("::class");
+        let name = t.rsplit('\\').next()?;
+        let class = name.chars().next().is_some_and(|c| c.is_ascii_uppercase());
+        (class && name.chars().all(|c| c.is_alphanumeric() || c == '_')).then(|| name.to_string())
+    }
+
+    /// Prefix of the text returned for a guard that cannot be compared (not a middleware name).
+    pub(super) const DEFAULT_GUARD: &str = "\u{0}guard ";
+
+    /// The guards `auth:a,b` or `role:x,guard` name, as a condition (D3): none for
+    /// the default guard and Sanctum's, `guard:<g>` otherwise, unknown when the
+    /// default is not readable (then also returned, for the diagnostic).
+    fn guard(guards: &[String], default: &Option<String>, acc: &mut Acc) -> Vec<String> {
+        let same = |g: &String| g == "sanctum" || default.as_ref() == Some(g);
+        if guards.is_empty() || guards.iter().any(same) {
+            return vec![];
+        }
+        let make = |g: &String| match default {
+            Some(_) => Condition::Custom(format!("guard:{g}")),
+            None => Condition::Unknown(format!("guard:{g}")),
         };
+        acc.conds.push(any(guards.iter().map(make).collect()));
+        match default {
+            Some(_) => vec![],
+            None => vec![format!("{DEFAULT_GUARD}{}", guards.join(","))],
+        }
+    }
+
+    /// `Model.ability` when the model is known, else the ability alone.
+    pub(super) fn policy_of(model: Option<String>, ability: &str) -> Condition {
+        Condition::Policy(match model {
+            Some(m) => format!("{m}.{ability}"),
+            None => ability.into(),
+        })
+    }
+
+    /// Sanctum `abilities:a,b` (all) and `ability:a,b` (any).
+    fn sanctum(name: &str, args: &[String]) -> Condition {
+        let policies = args.iter().cloned().map(Condition::Policy).collect();
+        match (name, args.is_empty()) {
+            (_, true) => Condition::Unknown(name.into()),
+            ("abilities", _) => Condition::All(policies),
+            _ => any(policies),
+        }
+    }
+
+    /// spatie `role:a|b,guard`: the names are the first parameter only.
+    fn spatie(name: &str, args: &[String]) -> Condition {
+        let first = args.first().map(|a| a.as_str());
+        let names = first.into_iter().flat_map(|a| a.split('|'));
+        let names = names
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty());
         let both = |n: String| [Condition::Role(n.clone()), Condition::Policy(n)];
+        match name {
+            "role" => any(names.map(Condition::Role).collect()),
+            "permission" => any(names.map(Condition::Policy).collect()),
+            _ => any(names.flat_map(both).collect()),
+        }
+    }
+
+    /// Built-in middleware by name; `None` when the name is none of them, else
+    /// the guard texts that could not be compared with the default guard.
+    pub(super) fn builtin(
+        name: &str,
+        args: &[String],
+        default: &Option<String>,
+        acc: &mut Acc,
+    ) -> Option<Vec<String>> {
+        let mut guards: &[String] = &[];
         let c = match name {
-            "auth" | "auth.basic" => Condition::Authenticated,
+            "auth" => {
+                guards = args;
+                Condition::Authenticated
+            }
+            "auth.basic" => Condition::Authenticated,
+            "verified" => {
+                acc.conds.push(Condition::Authenticated);
+                Condition::Custom("verified".into())
+            }
+            "signed" => Condition::Custom("signed".into()),
+            "abilities" | "ability" => sanctum(name, args),
             "guest" => not(Condition::Authenticated),
             "can" => args.first().map_or(Condition::Unknown("can".into()), |a| {
-                Condition::Policy(a.clone())
+                policy_of(args.get(1).and_then(|m| model(m)), a)
             }),
-            "role" => any(names().map(Condition::Role).collect()),
-            "permission" => any(names().map(Condition::Policy).collect()),
-            "role_or_permission" => any(names().flat_map(both).collect()),
-            "throttle" | "verified" | "signed" | "bindings" | "cache.headers"
-            | "password.confirm" | "precognitive" | "auth.session" | "web" | "api" => return true,
-            _ => return false,
+            "role" | "permission" | "role_or_permission" => {
+                guards = args.get(1..).unwrap_or_default();
+                spatie(name, args)
+            }
+            "throttle" | "bindings" | "cache.headers" | "password.confirm" | "precognitive"
+            | "auth.session" | "web" | "api" => return Some(vec![]),
+            _ => return None,
         };
         acc.conds.push(c);
-        true
+        Some(guard(guards, default, acc))
     }
 
     /// Laravel's own middleware classes of the built-in aliases.
@@ -836,6 +939,10 @@ mod access {
             "AuthenticateWithBasicAuth" => "auth.basic",
             "RedirectIfAuthenticated" => "guest",
             "Authorize" => "can",
+            "EnsureEmailIsVerified" => "verified",
+            "ValidateSignature" => "signed",
+            "CheckAbilities" => "abilities",
+            "CheckForAnyAbility" => "ability",
             "ThrottleRequests" => "throttle",
             "RoleMiddleware" => "role",
             "PermissionMiddleware" => "permission",
@@ -845,12 +952,11 @@ mod access {
     }
 
     /// Laravel's own middleware classes without an access meaning.
-    pub(super) const NO_ACCESS: [&str; 17] = [
+    pub(super) const NO_ACCESS: [&str; 15] = [
         "AddQueuedCookiesToResponse",
         "AuthenticateSession",
         "ConvertEmptyStringsToNull",
         "EncryptCookies",
-        "EnsureEmailIsVerified",
         "HandleCors",
         "PreventRequestsDuringMaintenance",
         "RequirePassword",
@@ -862,7 +968,6 @@ mod access {
         "TrustHosts",
         "TrustProxies",
         "ValidatePostSize",
-        "ValidateSignature",
     ];
 
     /// Ability per resource action (`authorizeResource`).
@@ -1378,8 +1483,15 @@ mod routes {
                             .for_each(|r| r.without.extend(names.iter().cloned()));
                     }
                     "can" => {
+                        let model = (c.args.get(1)).and_then(|r| {
+                            let text = s.text(r);
+                            access::model(text).or_else(|| php::literal(text))
+                        });
                         let mw = match first.and_then(|r| app.value(s, r)) {
-                            Some(a) => Mw::Name(format!("can:{a}")),
+                            Some(a) => Mw::Name(match model {
+                                Some(m) => format!("can:{a},{m}"),
+                                None => format!("can:{a}"),
+                            }),
                             None => Mw::Unread(first.map_or("can".into(), |r| collapse(s.text(r)))),
                         };
                         routes.iter_mut().for_each(|r| r.mw.push(mw.clone()));
@@ -1533,7 +1645,8 @@ mod controllers {
                         acc.removed |= probe.conds.iter().any(known);
                     }
                     Mw::Name(n) => {
-                        for u in self.app.middleware(n, acc, 0) {
+                        let n = self.qualify_can(r, n);
+                        for u in self.app.middleware(&n, acc, 0) {
                             self.unknown_middleware(&u, &r.file, r.line)
                         }
                     }
@@ -1542,9 +1655,42 @@ mod controllers {
             }
         }
 
+        /// `can:update,post` with a route parameter: the model is the type of that
+        /// parameter in the action (`Post $post`) -> `can:update,Post`.
+        fn qualify_can(&self, r: &RouteDef, n: &str) -> String {
+            let model = || {
+                let (ability, param) = n.strip_prefix("can:")?.split_once(',')?;
+                let param = param.split(',').next()?.trim();
+                let Handler::Action(class, method) = &r.handler else {
+                    return None;
+                };
+                let (ci, c) = self.app.class(class)?;
+                let m = c.methods.iter().find(|m| m.name == *method)?;
+                let wanted = format!("${param}");
+                let model = self.app.srcs[*ci].mask[m.params.clone()]
+                    .split(',')
+                    .find_map(|p| {
+                        let (ty, name) = p
+                            .split('=')
+                            .next()?
+                            .trim()
+                            .rsplit_once(char::is_whitespace)?;
+                        (name.trim() == wanted)
+                            .then(|| access::model(ty.trim().trim_start_matches('?')))?
+                    })?;
+                Some(format!("can:{ability},{model}"))
+            };
+            model().unwrap_or_else(|| n.to_string())
+        }
+
         fn unknown_middleware(&mut self, name: &str, file: &str, line: u32) {
             let base = name.split(':').next().unwrap_or(name).to_string();
-            if self.noted.insert(base.clone()) {
+            if let Some(guard) = name.strip_prefix(access::DEFAULT_GUARD) {
+                let message = format!(
+                    "Guard `{guard}` cannot be compared: `defaults.guard` of config/auth.php is not readable; its routes are Unknown."
+                );
+                self.gap(file, line, message);
+            } else if self.noted.insert(base.clone()) {
                 let message = format!(
                     "Middleware `{base}` is project code with no access meaning by rule; its routes are Unknown. List it in [views.access] if it guards access."
                 );
@@ -1617,9 +1763,10 @@ mod controllers {
                         continue;
                     }
                     if pat.ends_with("authorizeResource(") {
+                        let model = access::model(s.text(&args[0]));
                         let ability = access::resource_ability(method);
                         acc.conds
-                            .extend(ability.map(|a| Condition::Policy(a.into())));
+                            .extend(ability.map(|a| access::policy_of(model, a)));
                     } else {
                         self.constructor_middleware(ci, &args, close, method, acc);
                     }
@@ -2102,7 +2249,7 @@ mod blade {
                 "empty" if parens => open(p, None),
                 "elseif" => p.branch(self.expr_cond(arg)),
                 "else" => p.branch(None),
-                "elsecan" | "elsecannot" | "elseauth" | "elseguest" => {
+                "elsecan" | "elsecannot" | "elsecanany" | "elseauth" | "elseguest" => {
                     p.branch(self.directive_cond(&name[4..], arg, args))
                 }
                 "endif" | "endunless" | "endcan" | "endcannot" | "endcanany" | "endauth"
@@ -2327,7 +2474,20 @@ mod blade {
                     let list = list.as_deref().map(split_args).unwrap_or_default();
                     Some(any(list.iter().map(|a| ability(a)).collect()))
                 }
-                "auth" => Some(Condition::Authenticated),
+                "auth" => {
+                    let guard = (args.first()).and_then(|g| self.app.value_of(g));
+                    let guard = guard.filter(|g| self.app.default_guard.as_ref() != Some(g));
+                    Some(match guard {
+                        None => Condition::Authenticated,
+                        Some(g) => Condition::All(vec![
+                            Condition::Authenticated,
+                            match self.app.default_guard {
+                                Some(_) => Condition::Custom(format!("guard:{g}")),
+                                None => Condition::Unknown(format!("guard:{g}")),
+                            },
+                        ]),
+                    })
+                }
                 "guest" => Some(not(Condition::Authenticated)),
                 _ => None,
             }
@@ -3368,7 +3528,11 @@ class RouteServiceProvider extends ServiceProvider
             "{found:#?}"
         );
         assert!(!flow.complete);
-        let book = flow.policies.iter().find(|p| p.name == "view").unwrap();
+        let book = flow
+            .policies
+            .iter()
+            .find(|p| p.name == "Book.view")
+            .unwrap();
         assert_eq!(book.requires, Condition::Unknown("BookPolicy::view".into()));
         assert_eq!(
             (book.file.as_str(), book.line),
@@ -3661,7 +3825,8 @@ class RouteServiceProvider extends ServiceProvider
         );
         assert_eq!(
             access(&flow, "GET", "/s"),
-            AccessState::Protected(Condition::Authenticated)
+            // No config/auth.php here: the guard cannot be compared (D3).
+            all(vec![Condition::Authenticated, unknown("guard:admin")])
         );
     }
 
@@ -3753,5 +3918,247 @@ class RouteServiceProvider extends ServiceProvider
         );
         let found = messages(&flow).join("\n");
         assert!(found.contains("auth()->user()->isAdmin()"), "{found}");
+    }
+
+    const AUTH_CFG: (&str, &str) = (
+        "shop/config/auth.php",
+        "<?php\nreturn ['defaults' => ['guard' => env('AUTH_GUARD', 'web'), 'passwords' => 'users']];\n",
+    );
+
+    fn with_cfg(web: &str, aliases: &str, extra: &[(&str, &str)]) -> UiFlow {
+        let k = kernel(aliases, "");
+        let mut files: Vec<(&str, &str)> =
+            vec![("shop/routes/web.php", web), (k.0, &k.1), AUTH_CFG];
+        files.extend(extra);
+        app(&files).1
+    }
+
+    fn custom(name: &str) -> Condition {
+        Condition::Custom(name.into())
+    }
+
+    fn not_any(items: Vec<Condition>) -> Condition {
+        Condition::Not(Box::new(Condition::Any(items)))
+    }
+
+    #[test]
+    fn verified_and_signed_have_an_access_meaning() {
+        // PY 5.6 #4, #5
+        let web = "<?php\n\
+            Route::middleware(['auth', 'verified'])->get('/v', fn () => 1);\n\
+            Route::middleware('signed')->get('/s', fn () => 1);\n";
+        let flow = with_cfg(web, "", &[]);
+        assert_eq!(
+            access(&flow, "GET", "/v"),
+            all(vec![Condition::Authenticated, custom("verified")])
+        );
+        assert_eq!(
+            access(&flow, "GET", "/s"),
+            AccessState::Protected(custom("signed"))
+        );
+    }
+
+    #[test]
+    fn spatie_guard_is_the_second_parameter_not_a_role() {
+        // PY 5.6 #6, D3
+        let web = "<?php\n\
+            Route::middleware('role:admin|editor,api')->get('/r', fn () => 1);\n\
+            Route::middleware('permission:a|b,web')->get('/p', fn () => 1);\n";
+        let flow = with_cfg(
+            web,
+            "'role' => \\Spatie\\Permission\\Middleware\\RoleMiddleware::class, \
+             'permission' => \\Spatie\\Permission\\Middleware\\PermissionMiddleware::class",
+            &[],
+        );
+        assert_eq!(
+            access(&flow, "GET", "/r"),
+            all(vec![
+                Condition::Any(vec![
+                    Condition::Role("admin".into()),
+                    Condition::Role("editor".into())
+                ]),
+                custom("guard:api")
+            ])
+        );
+        assert_eq!(
+            access(&flow, "GET", "/p"),
+            AccessState::Protected(Condition::Any(vec![policy("a"), policy("b")]))
+        );
+    }
+
+    #[test]
+    fn explicit_guard_needs_a_readable_default() {
+        // D3
+        let web = "<?php\nRoute::middleware('auth:api')->get('/a', fn () => 1);\n\
+                   Route::middleware('auth:web')->get('/w', fn () => 1);\n";
+        let flow = with_cfg(web, "", &[]);
+        assert_eq!(
+            access(&flow, "GET", "/a"),
+            all(vec![Condition::Authenticated, custom("guard:api")])
+        );
+        assert_eq!(
+            access(&flow, "GET", "/w"),
+            AccessState::Protected(Condition::Authenticated)
+        );
+        let k = kernel("", "");
+        let (_d, flow) = app(&[("shop/routes/web.php", web), (k.0, &k.1)]);
+        assert_eq!(
+            access(&flow, "GET", "/a"),
+            all(vec![Condition::Authenticated, unknown("guard:api")])
+        );
+        assert!(
+            messages(&flow).join("\n").contains("guard"),
+            "{:?}",
+            messages(&flow)
+        );
+    }
+
+    #[test]
+    fn a_project_middleware_named_guard_is_not_a_guard_gap() {
+        // BookStack: `guard:standard,ldap` is project code
+        let web = "<?php\nRoute::middleware('guard:standard')->get('/g', fn () => 1);\n";
+        let flow = with_cfg(
+            web,
+            "'guard' => \\App\\Http\\Middleware\\CheckGuard::class",
+            &[(
+                "shop/app/Http/Middleware/CheckGuard.php",
+                "<?php\nnamespace App\\Http\\Middleware;\nclass CheckGuard {}\n",
+            )],
+        );
+        assert_eq!(
+            access(&flow, "GET", "/g"),
+            AccessState::Protected(unknown("guard:standard"))
+        );
+        let found = messages(&flow).join("\n");
+        assert!(
+            found.contains("Middleware `guard` is project code"),
+            "{found}"
+        );
+    }
+
+    #[test]
+    fn sanctum_abilities_are_policies() {
+        // PY 5.6 #8
+        let web = "<?php\n\
+            Route::middleware(['auth:sanctum', 'abilities:orders.read,orders.write'])->get('/a', fn () => 1);\n\
+            Route::middleware(['auth:sanctum', 'ability:x,y'])->get('/b', fn () => 1);\n";
+        let flow = with_cfg(
+            web,
+            "'abilities' => \\Laravel\\Sanctum\\Http\\Middleware\\CheckAbilities::class, \
+             'ability' => \\Laravel\\Sanctum\\Http\\Middleware\\CheckForAnyAbility::class",
+            &[],
+        );
+        assert_eq!(
+            access(&flow, "GET", "/a"),
+            all(vec![
+                Condition::Authenticated,
+                policy("orders.read"),
+                policy("orders.write")
+            ])
+        );
+        assert_eq!(
+            access(&flow, "GET", "/b"),
+            all(vec![
+                Condition::Authenticated,
+                Condition::Any(vec![policy("x"), policy("y")])
+            ])
+        );
+    }
+
+    #[test]
+    fn can_with_a_model_is_qualified() {
+        // PY 5.6 #11
+        let post = controller(
+            "PostController",
+            "public function update(Request $r, Post $post) { }\npublic function other($x) { }",
+        );
+        let web = "<?php\n\
+            Route::put('/post/{post}', [PostController::class, 'update'])->can('update', 'post');\n\
+            Route::get('/m', fn () => 1)->middleware('can:update,App\\Models\\Post');\n\
+            Route::get('/c', fn () => 1)->can('create', Post::class);\n";
+        let flow = with_cfg(web, "", &[(post.0.as_str(), post.1.as_str())]);
+        assert_eq!(
+            access(&flow, "PUT", "/post/{post}"),
+            AccessState::Protected(policy("Post.update"))
+        );
+        assert_eq!(
+            access(&flow, "GET", "/m"),
+            AccessState::Protected(policy("Post.update"))
+        );
+        assert_eq!(
+            access(&flow, "GET", "/c"),
+            AccessState::Protected(policy("Post.create"))
+        );
+    }
+
+    #[test]
+    fn authorize_resource_and_policy_defs_carry_the_model() {
+        // PY 5.6 #15, #19
+        let post = controller(
+            "PostController",
+            "public function __construct() { $this->authorizeResource(Post::class, 'post'); }\n\
+             public function index() { }\npublic function publish() { }",
+        );
+        let policy_src = "<?php\nnamespace App\\Policies;\nclass PostPolicy\n{\n    public function update($u, $p) { return true; }\n}\n";
+        let web = "<?php\nRoute::resource('posts', PostController::class)->only(['index']);\n\
+                   Route::get('/pub', [PostController::class, 'publish']);\n";
+        let flow = with_cfg(
+            web,
+            "",
+            &[
+                (post.0.as_str(), post.1.as_str()),
+                ("shop/app/Policies/PostPolicy.php", policy_src),
+            ],
+        );
+        assert_eq!(
+            access(&flow, "GET", "/posts"),
+            AccessState::Protected(policy("Post.viewAny"))
+        );
+        assert_eq!(access(&flow, "GET", "/pub"), AccessState::Undeclared);
+        assert!(
+            flow.policies.iter().any(|p| p.name == "Post.update"),
+            "{:?}",
+            flow.policies
+        );
+    }
+
+    #[test]
+    fn blade_elsecanany_and_guarded_auth() {
+        // PY 5.6 #20, #23
+        let view = "@canany(['update','delete'], $post)\n<a href=\"/e\">E</a>\n\
+                    @elsecanany(['create'], Post::class)\n<a href=\"/c\">C</a>\n@endcanany\n\
+                    @auth('admin')\n<a href=\"/adm\">A</a>\n@endauth\n";
+        let (_d, flow) = app(&[
+            (
+                "shop/routes/web.php",
+                "<?php\nRoute::get('/', fn () => view('t'));\n",
+            ),
+            ("shop/resources/views/t.blade.php", view),
+            AUTH_CFG,
+        ]);
+        let rows = transitions(&flow);
+        let cond = |to: &str| {
+            let r =
+                (rows.iter().find(|r| r.1.ends_with(to))).unwrap_or_else(|| panic!("{rows:#?}"));
+            r.3.clone()
+        };
+        assert_eq!(
+            cond("/e"),
+            Some(Condition::Any(vec![policy("update"), policy("delete")]))
+        );
+        assert_eq!(
+            cond("/c"),
+            Some(Condition::All(vec![
+                not_any(vec![policy("update"), policy("delete")]),
+                policy("create")
+            ]))
+        );
+        assert_eq!(
+            cond("/adm"),
+            Some(Condition::All(vec![
+                Condition::Authenticated,
+                custom("guard:admin")
+            ]))
+        );
     }
 }
