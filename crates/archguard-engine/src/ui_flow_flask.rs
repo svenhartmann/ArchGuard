@@ -3,7 +3,16 @@
 //! A text-level scan of the `.py` files below the root (test files left out)
 //! on the shared Python helpers of `lang_python`; only when some file creates
 //! a `Flask` app or a `Blueprint`. It fills `endpoints` and `diagnostics`.
-//! Templates (screens, links) are not read.
+//! Screens and links: a GET route whose handler calls `render_template('x')`
+//! with a literal is a screen; the Jinja template (`templates/**`, with its
+//! `{% include %}`s and `{% extends %}` layouts) gives its `<a href>` and
+//! `<form action>` with a literal path or `url_for('bp.view')` as transitions
+//! and actions. `{% if %}` / `{% elif %}` / `{% else %}` around a link read
+//! `current_user.is_authenticated`, `is_anonymous`, `has_role('x')` and
+//! `has_permission('x')` (with `and`/`or`/`not`); any other user check is
+//! `unknown` with a gap, a condition without one gives no guard. `{% for %}`
+//! `else` is not a branch. Not read: `url_for('.x')`, `template_folder`
+//! lookup order (an ambiguous template name is a gap), `Permission.can()`.
 //!
 //! Objects: `x = Flask(…)` and `x = Blueprint(name, …, url_prefix=…)` (also
 //! inside an app factory), `p.register_blueprint(c, url_prefix=…)` (the
@@ -38,8 +47,8 @@ use crate::lang_text::line;
 use crate::services::support::test_path;
 use crate::ui_flow_fastapi::all;
 use archguard_core::{
-    AccessMeaning, AccessState, Condition, DiagnosticSeverity, EndpointAccess, UiFlow,
-    UiFlowDiagnostic,
+    AccessMeaning, AccessState, Action, Call, Condition, DiagnosticSeverity, EndpointAccess,
+    Origin, Screen, ScreenKind, Target, Transition, UiFlow, UiFlowDiagnostic,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -76,6 +85,7 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
         }
     };
     let (mut paths, mut build_dirs) = (Vec::new(), BTreeSet::new());
+    let all_files = walked.files.clone();
     for rel in walked.files {
         let (dir, name) = rel.rsplit_once('/').unwrap_or(("", &rel));
         if BUILD_FILES.contains(&name) {
@@ -115,13 +125,17 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
         let message = format!("Configuration not read; [views.access] not applied: {e}");
         note(&mut flow.diagnostics, ".", 0, message);
     }
+    let templates = jinja::read_templates(ctx, &all_files, &mut flow.diagnostics);
     let set = files.iter().map(|f| f.rel.clone()).collect();
     let index = files
         .iter()
         .enumerate()
         .map(|(i, f)| (f.rel.clone(), i))
         .collect();
+    let login_unread = login_unread(&files);
     let project = Project {
+        login_unread,
+        templates,
         files,
         set,
         index,
@@ -130,6 +144,12 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     project.emit(&mut flow);
     finish(&mut flow);
     flow
+}
+
+/// Some `LOGIN_DISABLED` is set to something that is not a literal.
+fn login_unread(files: &[FileInfo]) -> bool {
+    let unread = |f: &FileInfo| f.login_settings().iter().any(|(_, v)| v.is_none());
+    files.iter().any(unread)
 }
 
 fn note(out: &mut Vec<UiFlowDiagnostic>, file: &str, at: u32, message: impl Into<String>) {
@@ -181,6 +201,29 @@ impl FileInfo {
             assigns,
             application,
         }
+    }
+
+    /// Each statement that names `LOGIN_DISABLED`: its line and the literal
+    /// it is set to (`None`: set to or read as something not a literal).
+    fn login_settings(&self) -> Vec<(u32, Option<bool>)> {
+        let mut out = vec![];
+        for s in &self.stmts {
+            let text = &self.src[s.at..s.end];
+            let Some(k) = text.find("LOGIN_DISABLED") else {
+                continue;
+            };
+            let head = text[..k].trim_end_matches(['\'', '"']);
+            let direct = head.trim().is_empty() || head.ends_with('[');
+            let rest = text[k + "LOGIN_DISABLED".len()..]
+                .trim_start_matches(['\'', '"', ']'])
+                .trim_start();
+            let value = rest
+                .strip_prefix('=')
+                .filter(|v| direct && !v.starts_with('='))
+                .and_then(|v| bool_lit(v.trim()));
+            out.push((self.line(s.at), value));
+        }
+        out
     }
 
     fn line(&self, at: usize) -> u32 {
@@ -356,6 +399,10 @@ struct Project<'a> {
     set: BTreeSet<String>,
     index: HashMap<String, usize>,
     access: &'a BTreeMap<String, AccessMeaning>,
+    /// `LOGIN_DISABLED` is set to something that is not a literal.
+    login_unread: bool,
+    /// Template name (below a `templates/` directory) → (file, text).
+    templates: BTreeMap<String, Vec<(String, String)>>,
 }
 
 impl Project<'_> {
@@ -468,6 +515,18 @@ impl Project<'_> {
     }
 
     /// The effect of one decorator expression `src[at..end]` of file `f`.
+    /// A library decorator's effect; Flask-Login's is unknown while
+    /// `LOGIN_DISABLED` is not a literal.
+    fn external(&self, full: &str, args: &Option<Vec<Arg<'_>>>, shown: &str) -> Option<Eff> {
+        let (root, last) = root_last(full);
+        let login =
+            root == "flask_login" && matches!(last, "login_required" | "fresh_login_required");
+        match login && self.login_unread {
+            true => Some(Eff::unknown(last, "LOGIN_DISABLED is not a literal")),
+            false => library(full, args, shown),
+        }
+    }
+
     fn decorator(&self, f: usize, at: usize, end: usize) -> Eff {
         let fi = &self.files[f];
         let text = fi.src[at..end].trim_end();
@@ -491,7 +550,9 @@ impl Project<'_> {
         let (q, attrs) = self.qualify(f, callee);
         let by_name = || self.listed(callee, args.as_deref().unwrap_or(&[]));
         match (q, attrs.as_slice()) {
-            (Q::Ext(full), []) => library(&full, &args, &shown(&args)).unwrap_or_else(by_name),
+            (Q::Ext(full), []) => self
+                .external(&full, &args, &shown(&args))
+                .unwrap_or_else(by_name),
             (Q::Local(lf, ln), [attr]) => match (self.obj(lf, &ln, 0), attr.as_str()) {
                 (Some(Obj::Perm(needs, bad)), "require") => {
                     let mut e = Eff::cond(any_of(needs));
@@ -693,6 +754,10 @@ struct Route {
     line: u32,
     path: String,
     items: Vec<Item>,
+    /// The function name, empty when `endpoint=` renames it or there is none.
+    func: String,
+    /// Literal `render_template(…)` names in the handler.
+    views: Vec<String>,
 }
 
 struct Hook {
@@ -774,12 +839,17 @@ impl<'a> Scanner<'a> {
 
     fn login_disabled(&mut self, f: usize) {
         let fi = &self.p.files[f];
-        for s in &fi.stmts {
-            let text = &fi.src[s.at..s.end];
-            if text.contains("LOGIN_DISABLED") && !text.contains("False") {
-                let message = "LOGIN_DISABLED is set: login checks may be switched off by configuration; protection by login decorators is unknown there.";
-                gap(&mut self.out.diags, &fi.rel, fi.line(s.at), message);
-            }
+        for (line, value) in fi.login_settings() {
+            let message = match value {
+                Some(false) => continue,
+                Some(true) => {
+                    "LOGIN_DISABLED is True: login checks are switched off by configuration; protection by login decorators is unknown there."
+                }
+                None => {
+                    "LOGIN_DISABLED is not a literal True/False; whether login checks are switched off is unknown, so login decorators give an unknown access."
+                }
+            };
+            gap(&mut self.out.diags, &fi.rel, line, message);
         }
     }
 
@@ -798,7 +868,7 @@ impl<'a> Scanner<'a> {
         let (receiver, verb) = callee.rsplit_once('.')?;
         if !matches!(
             verb,
-            "register_blueprint" | "add_url_rule" | "before_request"
+            "register_blueprint" | "add_url_rule" | "before_request" | "before_app_request"
         ) {
             return None;
         }
@@ -808,7 +878,7 @@ impl<'a> Scanner<'a> {
         match verb {
             "register_blueprint" => self.register(f, owner, &args, at),
             "add_url_rule" => self.add_url_rule(f, owner, &args, at),
-            _ => self.hook_call(f, owner, &args),
+            _ => self.hook_call(f, owner, &args, verb == "before_app_request"),
         }
         Some(())
     }
@@ -834,8 +904,8 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    /// `app.before_request(f)`: every decorator of `f` is applied.
-    fn hook_call(&mut self, f: usize, owner: Key, args: &[Arg<'_>]) {
+    /// `app.before_request(f)` / `bp.before_app_request(f)`: every decorator of `f` is applied.
+    fn hook_call(&mut self, f: usize, owner: Key, args: &[Arg<'_>], wide: bool) {
         let p = self.p;
         let first = args.iter().find(|a| a.name.is_none());
         let Some((lf, di)) = first.and_then(|a| p.local_def(f, a.value)) else {
@@ -844,7 +914,7 @@ impl<'a> Scanner<'a> {
         let d = &p.files[lf].defs[di];
         if d.kind == DefKind::Function {
             let eff = self.applied(lf, d, 0, &[]);
-            self.push_hook(lf, di, owner, false, eff);
+            self.push_hook(lf, di, owner, wide, eff);
         }
     }
 
@@ -956,17 +1026,55 @@ impl<'a> Scanner<'a> {
                     })
                     .collect();
                 let owner = r.owner.clone();
+                let renamed = r.args.iter().any(|a| a.name == Some("endpoint"));
                 let route = Route {
                     owner,
                     file: f,
                     line: line_at,
                     path,
                     items,
+                    func: if renamed {
+                        String::new()
+                    } else {
+                        d.name.clone()
+                    },
+                    views: self.render_templates(f, d),
                 };
                 self.out.routes.push(route);
             }
             Err(message) => gap(&mut self.out.diags, &fi.rel, line_at, message),
         }
+    }
+
+    /// The literal names of the `render_template(…)` calls in the body of `d`.
+    fn render_templates(&mut self, f: usize, d: &Def) -> Vec<String> {
+        let fi = &self.p.files[f];
+        let body = &fi.masked[d.body.0..d.body.1];
+        let (mut out, mut from) = (vec![], 0);
+        while let Some(k) = body[from..].find("render_template(") {
+            let at = d.body.0 + from + k;
+            from += k + 1;
+            if at > 0
+                && (fi.masked.as_bytes()[at - 1].is_ascii_alphanumeric()
+                    || fi.masked.as_bytes()[at - 1] == b'_')
+            {
+                continue;
+            }
+            let open = at + "render_template".len();
+            let name = py::call_args(&fi.src, &fi.masked, open).and_then(|(args, _)| {
+                let a = args.into_iter().find(|a| a.name.is_none())?;
+                py::string_value(a.value)
+            });
+            match name {
+                Some(n) => out.push(n),
+                None => {
+                    let message =
+                        "`render_template` has no literal template name; its links are unknown.";
+                    gap(&mut self.out.diags, &fi.rel, fi.line(at), message);
+                }
+            }
+        }
+        out
     }
 
     fn add_url_rule(&mut self, f: usize, owner: Key, args: &[Arg<'_>], line_at: u32) {
@@ -977,7 +1085,7 @@ impl<'a> Scanner<'a> {
         let path = (pos.first().copied().or(named("rule"))).and_then(|a| py::string_value(a.value));
         let view = named("view_func").or(pos.get(2).copied());
         let (Some(path), Some(view)) = (path, view) else {
-            let message = "`add_url_rule` has no readable literal path and `view_func`; this endpoint is skipped.";
+            let message = "`add_url_rule` has no literal rule string or no view function argument; this endpoint is skipped.";
             return gap(&mut self.out.diags, &fi.rel, line_at, message);
         };
         match self.view_items(f, view, named("methods"), line_at) {
@@ -987,12 +1095,20 @@ impl<'a> Scanner<'a> {
                 line: line_at,
                 path,
                 items,
+                func: String::new(),
+                views: vec![],
             }),
             None => {
-                let message = format!(
-                    "`view_func={}` is no function or `as_view` class of the project; this endpoint is skipped.",
-                    view.value
-                );
+                let message = match named("methods") {
+                    Some(m) if p.local_def(f, view.value).is_some() => format!(
+                        "`add_url_rule` `methods={}` is not a literal list of strings; this endpoint is skipped.",
+                        m.value
+                    ),
+                    _ => format!(
+                        "`add_url_rule` view `{}` is no function or `as_view` class of the project; this endpoint is skipped.",
+                        view.value
+                    ),
+                };
                 gap(&mut self.out.diags, &fi.rel, line_at, message);
             }
         }
@@ -1200,6 +1316,7 @@ impl Project<'_> {
 
     fn emit(&self, flow: &mut UiFlow) {
         let scan = Scanner::run(self);
+        let mut acc = Acc::default();
         flow.diagnostics.extend(scan.diags.iter().cloned());
         for root in self.roots(&scan, &mut flow.diagnostics) {
             let Some(start) = self.root_prefix(&root, &mut flow.diagnostics) else {
@@ -1208,12 +1325,22 @@ impl Project<'_> {
             let mut places = Vec::new();
             let diags = &mut flow.diagnostics;
             self.walk(&scan, &mut vec![root], &start, &mut places, diags);
-            self.emit_places(&scan, &places, flow);
+            self.emit_places(&scan, &places, &mut acc, flow);
         }
+        self.emit_templates(&acc, flow);
+    }
+
+    /// The name of blueprint `key`, when it is a literal.
+    fn bp_name(&self, key: &Key) -> Option<String> {
+        let fi = &self.files[key.0];
+        let &(a, _) = fi.assigns.get(&key.1)?;
+        let (_, open) = fi.call_at(a)?;
+        let (args, _) = py::call_args(&fi.src, &fi.masked, open)?;
+        py::string_value(args.iter().find(|a| a.name.is_none())?.value)
     }
 
     /// The routes of every place of one app tree, with the hooks that guard them.
-    fn emit_places(&self, scan: &Scan, places: &[Place], flow: &mut UiFlow) {
+    fn emit_places(&self, scan: &Scan, places: &[Place], acc: &mut Acc, flow: &mut UiFlow) {
         let app_wide: Vec<&Hook> = (scan.hooks.iter())
             .filter(|h| h.app_wide && places.iter().any(|p| p.chain.contains(&h.owner)))
             .collect();
@@ -1226,7 +1353,7 @@ impl Project<'_> {
                 continue;
             };
             for route in scan.routes.iter().filter(|r| &r.owner == last) {
-                self.endpoints(route, place, &hooks, flow);
+                self.endpoints(route, place, &hooks, acc, flow);
             }
         }
     }
@@ -1275,7 +1402,14 @@ impl Project<'_> {
         }
     }
 
-    fn endpoints(&self, route: &Route, place: &Place, hooks: &[&Hook], flow: &mut UiFlow) {
+    fn endpoints(
+        &self,
+        route: &Route,
+        place: &Place,
+        hooks: &[&Hook],
+        acc: &mut Acc,
+        flow: &mut UiFlow,
+    ) {
         let fi = &self.files[route.file];
         let mut path = join_prefix(&place.prefix, &convert(&route.path));
         if !path.starts_with('/') {
@@ -1286,6 +1420,48 @@ impl Project<'_> {
             hooks.iter().for_each(|h| eff.extend(h.eff.clone()));
             for message in &eff.gaps {
                 gap(&mut flow.diagnostics, &fi.rel, route.line, message.clone());
+            }
+            if !route.func.is_empty() {
+                let mut parts: Vec<String> =
+                    place.chain.iter().filter_map(|k| self.bp_name(k)).collect();
+                parts.push(route.func.clone());
+                let key = (fi.application.clone(), parts.join("."));
+                acc.names
+                    .entry(key)
+                    .or_default()
+                    .push((item.method.clone(), path.clone()));
+            }
+            if item.method == "GET" && !route.views.is_empty() {
+                let id = format!(
+                    "{}:{}",
+                    fi.application.as_deref().unwrap_or(""),
+                    item.handler
+                );
+                flow.screens.push(Screen {
+                    weak: false,
+                    id: id.clone(),
+                    name: item
+                        .handler
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or(&item.handler)
+                        .to_string(),
+                    kind: ScreenKind::Page,
+                    route: Some(path.clone()),
+                    application: fi.application.clone(),
+                    file: fi.rel.clone(),
+                    line: route.line,
+                    access: eff.state(),
+                    source: "flask".into(),
+                });
+                acc.screens.push(ScreenViews {
+                    id,
+                    application: fi.application.clone(),
+                    route: path.clone(),
+                    file: fi.rel.clone(),
+                    line: route.line,
+                    views: route.views.clone(),
+                });
             }
             flow.endpoints.push(EndpointAccess {
                 method: item.method.clone(),
@@ -1298,6 +1474,618 @@ impl Project<'_> {
                 handler: Some(item.handler.clone()),
                 sends: Vec::new(),
             });
+        }
+    }
+}
+
+/// (application, endpoint name).
+type EndpointKey = (Option<String>, String);
+
+/// What the routes give the template reader.
+#[derive(Default)]
+struct Acc {
+    /// (application, endpoint name `bp.func`) → (method, path).
+    names: BTreeMap<EndpointKey, Vec<(String, String)>>,
+    screens: Vec<ScreenViews>,
+}
+
+struct ScreenViews {
+    id: String,
+    application: Option<String>,
+    route: String,
+    file: String,
+    line: u32,
+    views: Vec<String>,
+}
+
+/// Jinja templates: links, includes, layouts and the conditions around them.
+mod jinja {
+    use super::*;
+    use crate::lang_markup::{Tag, all_tags, attributes, blank};
+
+    /// The Jinja templates by the name `render_template` uses; unreadable ones are gaps.
+    pub(super) fn read_templates(
+        ctx: &ExtractContext,
+        files: &[String],
+        diags: &mut Vec<UiFlowDiagnostic>,
+    ) -> BTreeMap<String, Vec<(String, String)>> {
+        let mut templates: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+        let mut paths: Vec<&String> = files.iter().filter(|r| is_template(r)).collect();
+        paths.sort();
+        for rel in paths.into_iter().take(MAX_FILES) {
+            match read_text(ctx.root, rel, 1 << 20) {
+                Ok(text) => {
+                    let name = template_name(rel).unwrap_or_default().to_string();
+                    templates.entry(name).or_default().push((rel.clone(), text));
+                }
+                Err(e) => {
+                    let message = format!("Template not read ({e}); its links are unknown.");
+                    gap(diags, rel, 0, message);
+                }
+            }
+        }
+        templates
+    }
+
+    fn is_template(rel: &str) -> bool {
+        template_name(rel).is_some() && !test_path(rel)
+    }
+
+    /// The name `render_template` uses for template file `rel`.
+    fn template_name(rel: &str) -> Option<&str> {
+        let ext = rel.rsplit_once('.')?.1;
+        if !["html", "htm", "jinja", "jinja2", "j2"].contains(&ext) {
+            return None;
+        }
+        rel.strip_prefix("templates/")
+            .or_else(|| rel.split_once("/templates/").map(|x| x.1))
+    }
+
+    #[derive(Clone)]
+    pub(super) enum Dest {
+        Endpoint(String),
+        Path(String),
+        Unread,
+    }
+
+    #[derive(Clone)]
+    pub(super) struct Link {
+        pub(super) line: u32,
+        pub(super) cond: Option<Condition>,
+        /// Upper-case form method; none for `<a>`.
+        pub(super) method: Option<String>,
+        pub(super) dest: Dest,
+        pub(super) source: String,
+    }
+
+    #[derive(Clone, Default)]
+    pub(super) struct Tpl {
+        pub(super) extends: Vec<(String, u32)>,
+        pub(super) includes: Vec<(String, Option<Condition>, u32)>,
+        pub(super) links: Vec<Link>,
+    }
+
+    /// An open `{% if %}`: earlier branches, the own condition, what holds.
+    struct Frame {
+        seen: Vec<Condition>,
+        own: Option<Condition>,
+        current: Option<Condition>,
+    }
+
+    fn and2(a: Option<Condition>, b: Option<Condition>) -> Option<Condition> {
+        match (a, b) {
+            (Some(a), Some(b)) => Some(all(vec![a, b])),
+            (a, b) => a.or(b),
+        }
+    }
+
+    fn not(c: Condition) -> Condition {
+        match c {
+            Condition::Not(inner) => *inner,
+            c => Condition::Not(Box::new(c)),
+        }
+    }
+
+    fn collapse(s: &str) -> String {
+        s.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    fn now(stack: &[Option<Frame>]) -> Option<Condition> {
+        let cs: Vec<Condition> = (stack.iter().flatten())
+            .filter_map(|f| f.current.clone())
+            .collect();
+        (!cs.is_empty()).then(|| all(cs))
+    }
+
+    fn branch(f: &mut Frame, own: Option<Condition>) {
+        f.seen.extend(f.own.take());
+        let negated: Vec<Condition> = f.seen.iter().cloned().map(not).collect();
+        f.current = and2((!negated.is_empty()).then(|| all(negated)), own.clone());
+        f.own = own;
+    }
+
+    /// `text` split at top-level `word` (outside parentheses and quotes).
+    fn split_top<'t>(text: &'t str, word: &str) -> Vec<&'t str> {
+        let (b, mut depth, mut quote) = (text.as_bytes(), 0i32, None);
+        let (mut out, mut last, mut i) = (vec![], 0, 0);
+        while i < b.len() {
+            match (quote, b[i]) {
+                (Some(q), c) if c == q => quote = None,
+                (Some(_), _) => {}
+                (None, c @ (b'\'' | b'"')) => quote = Some(c),
+                (None, b'(' | b'[') => depth += 1,
+                (None, b')' | b']') => depth -= 1,
+                (None, _) if depth == 0 && text[i..].starts_with(word) => {
+                    out.push(&text[last..i]);
+                    i += word.len();
+                    last = i;
+                    continue;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        out.push(&text[last..]);
+        out
+    }
+
+    fn unparen(e: &str) -> &str {
+        let e = e.trim();
+        match e.strip_prefix('(').and_then(|r| r.strip_suffix(')')) {
+            Some(inner) if balanced(inner) => unparen(inner),
+            _ => e,
+        }
+    }
+
+    fn balanced(e: &str) -> bool {
+        let mut depth = 0i32;
+        for c in e.chars() {
+            depth += i32::from(c == '(') - i32::from(c == ')');
+            if depth < 0 {
+                return false;
+            }
+        }
+        depth == 0
+    }
+
+    fn atom(e: &str, unread: &mut Vec<String>) -> Option<Condition> {
+        match e {
+            "current_user.is_authenticated" => return Some(Condition::Authenticated),
+            "current_user.is_anonymous" => return Some(not(Condition::Authenticated)),
+            _ => {}
+        }
+        type Make = fn(String) -> Condition;
+        let makers: [(&str, Make); 2] = [
+            ("current_user.has_role(", Condition::Role),
+            ("current_user.has_permission(", Condition::Policy),
+        ];
+        for (head, make) in makers {
+            if let Some(arg) = e.strip_prefix(head).and_then(|r| r.strip_suffix(')'))
+                && let Some(v) = py::string_value(arg.trim())
+            {
+                return Some(make(v));
+            }
+        }
+        const USER: [&str; 7] = [
+            "current_user",
+            ".can(",
+            "is_authenticated",
+            "is_anonymous",
+            "has_role",
+            "has_permission",
+            "is_admin",
+        ];
+        USER.iter().any(|k| e.contains(k)).then(|| {
+            unread.push(collapse(e));
+            Condition::Unknown(collapse(e))
+        })
+    }
+
+    /// The access condition of a Jinja expression when some part checks the
+    /// user; the other parts of a mixed expression stay `unknown`.
+    fn expr(e: &str, unread: &mut Vec<String>) -> Option<Condition> {
+        let e = unparen(e);
+        for (word, any) in [(" or ", true), (" and ", false)] {
+            let parts = split_top(e, word);
+            if parts.len() > 1 {
+                let cs: Vec<Option<Condition>> = parts.iter().map(|p| expr(p, unread)).collect();
+                if cs.iter().all(Option::is_none) {
+                    return None;
+                }
+                let cs: Vec<Condition> = (cs.into_iter().zip(parts))
+                    .map(|(c, p)| c.unwrap_or_else(|| Condition::Unknown(collapse(p))))
+                    .collect();
+                return Some(if any { any_of(cs) } else { all(cs) });
+            }
+        }
+        match e.strip_prefix("not ") {
+            Some(rest) => expr(rest, unread).map(not),
+            None => atom(e, unread),
+        }
+    }
+
+    fn cond(e: &str, rel: &str, line: u32, diags: &mut Vec<UiFlowDiagnostic>) -> Option<Condition> {
+        let mut unread = vec![];
+        let c = expr(e, &mut unread);
+        for u in unread {
+            let message = format!(
+                "Jinja condition `{u}` checks the user but is not read; the links below it are Unknown."
+            );
+            gap(diags, rel, line, message);
+        }
+        c
+    }
+
+    /// The first word of `text` when it is a quoted literal.
+    fn quoted(text: &str) -> Option<String> {
+        let q = text.chars().next().filter(|c| matches!(c, '\'' | '"'))?;
+        let end = text[1..].find(q)?;
+        Some(text[1..1 + end].to_string())
+    }
+
+    fn url_for(inner: &str) -> Option<Dest> {
+        let Some(args) = inner.strip_prefix("url_for(") else {
+            return Some(Dest::Unread);
+        };
+        match quoted(args.trim_start()) {
+            Some(n) if n == "static" || n.ends_with(".static") => None,
+            Some(n) if !n.starts_with('.') => Some(Dest::Endpoint(n)),
+            _ => Some(Dest::Unread),
+        }
+    }
+
+    fn link(
+        tag: &Tag<'_>,
+        (rel, line): (&str, u32),
+        cond: Option<Condition>,
+        t: &mut Tpl,
+        diags: &mut Vec<UiFlowDiagnostic>,
+    ) {
+        let form = tag.name.eq_ignore_ascii_case("form");
+        let attrs = attributes(tag.attrs);
+        let get = |n: &str| {
+            (attrs.iter())
+                .find(|(k, _)| k.eq_ignore_ascii_case(n))
+                .map(|(_, v)| *v)
+        };
+        let Some(value) = get(if form { "action" } else { "href" }) else {
+            return;
+        };
+        let value = value.trim();
+        let dest = match value.strip_prefix("{{").and_then(|v| v.strip_suffix("}}")) {
+            Some(inner) => url_for(inner.trim()),
+            None if value.contains("{{") || value.contains("{%") => Some(Dest::Unread),
+            None if value.starts_with('/') && !value.starts_with("//") => Some(Dest::Path(
+                value.split(['?', '#']).next().unwrap_or(value).to_string(),
+            )),
+            None => None,
+        };
+        let Some(dest) = dest else {
+            return;
+        };
+        if matches!(dest, Dest::Unread) {
+            let message = format!(
+                "Navigation target `{value}` is not read literally; its target is unknown."
+            );
+            gap(diags, rel, line, message);
+        }
+        t.links.push(Link {
+            line,
+            cond,
+            method: form.then(|| get("method").unwrap_or("GET").trim().to_uppercase()),
+            dest,
+            source: value.to_string(),
+        });
+    }
+
+    /// One `{% … %}` tag: opens, branches or closes a frame, or names a template.
+    fn block(
+        kw: &str,
+        rest: &str,
+        (rel, ln): (&str, u32),
+        stack: &mut Vec<Option<Frame>>,
+        t: &mut Tpl,
+        diags: &mut Vec<UiFlowDiagnostic>,
+    ) {
+        match kw {
+            "if" => {
+                let c = cond(rest, rel, ln, diags);
+                stack.push(Some(Frame {
+                    seen: vec![],
+                    own: c.clone(),
+                    current: c,
+                }));
+            }
+            "elif" => {
+                let c = cond(rest, rel, ln, diags);
+                if let Some(Some(f)) = stack.last_mut() {
+                    branch(f, c);
+                }
+            }
+            "else" => {
+                if let Some(Some(f)) = stack.last_mut() {
+                    branch(f, None);
+                }
+            }
+            "for" | "block" | "macro" | "call" | "filter" | "with" | "autoescape" | "trans" => {
+                stack.push(None);
+            }
+            "endif" | "endfor" | "endblock" | "endmacro" | "endcall" | "endfilter" | "endwith"
+            | "endautoescape" | "endtrans" => {
+                stack.pop();
+            }
+            "extends" | "include" => match quoted(rest) {
+                Some(n) if kw == "extends" => t.extends.push((n, ln)),
+                Some(n) => t.includes.push((n, now(stack), ln)),
+                None => {
+                    let message = format!(
+                        "`{{% {kw} {rest} %}}` is not a literal template name; its links are unknown."
+                    );
+                    gap(diags, rel, ln, message);
+                }
+            },
+            _ => {}
+        }
+    }
+
+    enum Ev {
+        Block(usize),
+        Html(usize),
+    }
+
+    /// The links, includes, layouts and conditions of one template.
+    pub(super) fn parse(rel: &str, text: &str, diags: &mut Vec<UiFlowDiagnostic>) -> Tpl {
+        let text = blank(&blank(text, "{#", "#}"), "<!--", "-->");
+        let tags = all_tags(&text);
+        let mut events: Vec<(usize, Ev)> = vec![];
+        let mut from = 0;
+        while let Some(o) = text[from..].find("{%") {
+            let open = from + o;
+            let Some(c) = text[open..].find("%}") else {
+                break;
+            };
+            events.push((open, Ev::Block(open + c)));
+            from = open + c + 2;
+        }
+        for (i, t) in tags.iter().enumerate() {
+            let wanted = t.name.eq_ignore_ascii_case("a") || t.name.eq_ignore_ascii_case("form");
+            if !t.closing && wanted {
+                events.push((t.at, Ev::Html(i)));
+            }
+        }
+        events.sort_by_key(|e| e.0);
+        let (mut t, mut stack) = (Tpl::default(), Vec::<Option<Frame>>::new());
+        for (at, ev) in events {
+            let ln = crate::lang_text::line(&text, at);
+            let Ev::Block(close) = ev else {
+                if let Ev::Html(i) = ev {
+                    link(&tags[i], (rel, ln), now(&stack), &mut t, diags);
+                }
+                continue;
+            };
+            let inner = text[at + 2..close].trim().trim_matches('-').trim();
+            let (kw, rest) = inner.split_once(char::is_whitespace).unwrap_or((inner, ""));
+            let rest = rest.trim();
+            block(kw, rest, (rel, ln), &mut stack, &mut t, diags);
+        }
+        t
+    }
+
+    /// Template walk: which template renders where, under what condition.
+    struct Tr<'a> {
+        templates: &'a BTreeMap<String, Vec<(String, String)>>,
+        diags: Vec<UiFlowDiagnostic>,
+        tpls: BTreeMap<String, Option<(String, Tpl)>>,
+        map: BTreeMap<String, BTreeSet<(Origin, Option<Condition>)>>,
+        /// (layout, file and line of its `extends`, application).
+        layouts: Vec<(String, String, u32, String)>,
+    }
+
+    impl Tr<'_> {
+        fn load(&mut self, name: &str, site: (&str, u32)) -> bool {
+            if !self.tpls.contains_key(name) {
+                let entry = match self.templates.get(name).map(Vec::as_slice) {
+                    Some([(rel, text)]) => Some((rel.clone(), parse(rel, text, &mut self.diags))),
+                    Some(many) if many.len() > 1 => {
+                        let message = format!(
+                            "Template `{name}` exists {} times; its links are unknown.",
+                            many.len()
+                        );
+                        gap(&mut self.diags, site.0, site.1, message);
+                        None
+                    }
+                    _ => {
+                        let message =
+                            format!("Template `{name}` not found; its links are unknown.");
+                        gap(&mut self.diags, site.0, site.1, message);
+                        None
+                    }
+                };
+                self.tpls.insert(name.to_string(), entry);
+            }
+            self.tpls[name].is_some()
+        }
+
+        fn visit(
+            &mut self,
+            name: &str,
+            from: (&Origin, Option<Condition>),
+            app: &str,
+            site: (&str, u32),
+            stack: &mut Vec<String>,
+        ) {
+            let (origin, cond) = from;
+            if stack.iter().any(|s| s == name) || stack.len() > 16 || !self.load(name, site) {
+                return;
+            }
+            let fresh = (self.map.entry(name.to_string()).or_default())
+                .insert((origin.clone(), cond.clone()));
+            if !fresh {
+                return;
+            }
+            let Some((rel, tpl)) = self.tpls[name].clone() else {
+                return;
+            };
+            stack.push(name.to_string());
+            for (include, c, line) in &tpl.includes {
+                let next = and2(cond.clone(), c.clone());
+                self.visit(include, (origin, next), app, (&rel, *line), stack);
+            }
+            for (layout, line) in &tpl.extends {
+                self.layouts
+                    .push((layout.clone(), rel.clone(), *line, app.to_string()));
+            }
+            stack.pop();
+        }
+    }
+
+    impl Project<'_> {
+        /// Transitions and actions of the templates the screens render.
+        pub(super) fn emit_templates(&self, acc: &Acc, flow: &mut UiFlow) {
+            if acc.screens.is_empty() {
+                return;
+            }
+            let mut tr = Tr {
+                templates: &self.templates,
+                diags: vec![],
+                tpls: BTreeMap::new(),
+                map: BTreeMap::new(),
+                layouts: vec![],
+            };
+            for s in &acc.screens {
+                let app = s.application.clone().unwrap_or_default();
+                for v in &s.views {
+                    let origin = Origin::Screen(s.id.clone());
+                    let site = (s.file.as_str(), s.line);
+                    tr.visit(v, (&origin, None), &app, site, &mut vec![]);
+                }
+            }
+            let mut seen = BTreeSet::new();
+            while let Some((name, file, line, app)) = tr.layouts.pop() {
+                if seen.insert((name.clone(), app.clone())) {
+                    let every = Origin::AnyScreen {
+                        application: app.clone(),
+                    };
+                    tr.visit(&name, (&every, None), &app, (&file, line), &mut vec![]);
+                }
+            }
+            for (name, origins) in &tr.map {
+                if let Some(Some((rel, tpl))) = tr.tpls.get(name) {
+                    emit_links(acc, (rel, tpl), origins, &mut tr.diags, flow);
+                }
+            }
+            flow.diagnostics.append(&mut tr.diags);
+        }
+    }
+
+    /// Every link of one template at every origin it renders from.
+    fn emit_links(
+        acc: &Acc,
+        (rel, tpl): (&str, &Tpl),
+        origins: &BTreeSet<(Origin, Option<Condition>)>,
+        diags: &mut Vec<UiFlowDiagnostic>,
+        flow: &mut UiFlow,
+    ) {
+        for (link, (origin, c)) in tpl
+            .links
+            .iter()
+            .flat_map(|l| origins.iter().map(move |o| (l, o)))
+        {
+            let app = match origin {
+                Origin::Screen(id) => (acc.screens.iter())
+                    .find(|s| &s.id == id)
+                    .and_then(|s| s.application.clone()),
+                Origin::AnyScreen { application } => {
+                    (!application.is_empty()).then(|| application.clone())
+                }
+            };
+            let emit = Emit {
+                acc,
+                rel,
+                link,
+                origin,
+                app,
+                condition: and2(c.clone(), link.cond.clone()),
+            };
+            emit.run(diags, flow);
+        }
+    }
+
+    /// One link placed at one origin.
+    struct Emit<'e> {
+        acc: &'e Acc,
+        rel: &'e str,
+        link: &'e Link,
+        origin: &'e Origin,
+        app: Option<String>,
+        condition: Option<Condition>,
+    }
+
+    impl Emit<'_> {
+        fn run(&self, diags: &mut Vec<UiFlowDiagnostic>, flow: &mut UiFlow) {
+            let link = self.link;
+            let method = link.method.clone().unwrap_or_else(|| "GET".into());
+            let target: Result<String, String> = match &link.dest {
+                Dest::Path(p) => Ok(p.clone()),
+                Dest::Endpoint(ep) => {
+                    let routes = self.acc.names.get(&(self.app.clone(), ep.clone()));
+                    let any = routes.and_then(|r| r.first());
+                    let by_method = routes.and_then(|r| r.iter().find(|x| x.0 == method));
+                    by_method
+                        .or(if method == "GET" { None } else { any })
+                        .map(|r| r.1.clone())
+                        .ok_or_else(|| format!("Endpoint `{ep}` names no {method} route of the application; its target is unknown."))
+                }
+                Dest::Unread => Err(String::new()),
+            };
+            let condition = AccessState::from_parts(self.condition.clone(), false);
+            let (file, line, source) = (self.rel.to_string(), link.line, "flask".to_string());
+            let action = |call| Action {
+                weak: false,
+                screen: self.origin.clone(),
+                trigger: None,
+                call,
+                file: file.clone(),
+                line,
+                condition: condition.clone(),
+                source: source.clone(),
+            };
+            let transition = |target| Transition {
+                weak: false,
+                from: self.origin.clone(),
+                target,
+                trigger: None,
+                file: file.clone(),
+                line,
+                condition: condition.clone(),
+                source: source.clone(),
+            };
+            match target {
+                Ok(path) if method == "GET" => {
+                    let screen = (self.acc.screens.iter())
+                        .find(|s| s.application == self.app && s.route == path);
+                    match screen {
+                        Some(s) => flow
+                            .transitions
+                            .push(transition(Target::Screen(s.id.clone()))),
+                        None => flow.actions.push(action(Call::Http { method, path })),
+                    }
+                }
+                Ok(path) => flow.actions.push(action(Call::Http { method, path })),
+                Err(why) => {
+                    if !why.is_empty() {
+                        gap(diags, self.rel, line, why);
+                    }
+                    match method == "GET" {
+                        true => flow
+                            .transitions
+                            .push(transition(Target::Unresolved(link.source.clone()))),
+                        false => flow
+                            .actions
+                            .push(action(Call::Unresolved(link.source.clone()))),
+                    }
+                }
+            }
         }
     }
 }
@@ -1645,5 +2433,131 @@ mod tests {
     fn no_flask_gives_nothing() {
         let flow = run(&[("a.py", "def f():\n    pass\n")], "");
         assert!(flow.endpoints.is_empty() && flow.diagnostics.is_empty());
+    }
+    #[test]
+    fn login_disabled_non_literal_makes_login_required_unknown() {
+        let app = "from flask import Flask\nfrom flask_login import login_required\napp = Flask(__name__)\n\
+                   @app.route('/a')\n@login_required\ndef a():\n    pass\n";
+        let flow = run(
+            &[(
+                "app.py",
+                &format!("{app}app.config['LOGIN_DISABLED'] = os.environ.get('X')\n"),
+            )],
+            "",
+        );
+        assert_eq!(eps(&flow), [get("/a", prot(unknown("login_required")))]);
+        assert!(!no_gap(&flow));
+        let flow = run(
+            &[(
+                "app.py",
+                &format!("{app}app.config['LOGIN_DISABLED'] = False\n"),
+            )],
+            "",
+        );
+        assert_eq!(eps(&flow), [get("/a", prot(Condition::Authenticated))]);
+        assert!(no_gap(&flow), "{:?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn before_app_request_called_as_function_guards_the_whole_app() {
+        let flow = one(
+            "@login_required\ndef guard():\n    pass\nbp.before_app_request(guard)\n\
+             @app.route('/z')\ndef z():\n    pass\n",
+            "",
+        );
+        assert_eq!(eps(&flow), [get("/z", prot(Condition::Authenticated))]);
+    }
+
+    #[test]
+    fn add_url_rule_gap_names_the_real_cause() {
+        let flow = one(
+            "def f():\n    pass\napp.add_url_rule('/u', 'f', f, methods=METHODS)\n\
+             app.add_url_rule('/v', 'g', g)\n",
+            "",
+        );
+        let m: Vec<&str> = flow
+            .diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .collect();
+        assert!(
+            m.iter()
+                .any(|t| t.contains("methods=METHODS") && t.contains("not a literal list")),
+            "{m:?}"
+        );
+        assert!(
+            m.iter()
+                .any(|t| t.contains("`g`") && !t.contains("view_func=g")),
+            "{m:?}"
+        );
+    }
+    const JINJA_APP: &str = "from flask import Flask, Blueprint, render_template\n\
+        app = Flask(__name__)\nmain = Blueprint('main', __name__)\nauth = Blueprint('auth', __name__)\n\
+        app.register_blueprint(main)\napp.register_blueprint(auth, url_prefix='/auth')\n\
+        @main.route('/')\ndef index():\n    return render_template('index.html')\n\
+        @main.route('/user/<username>')\ndef user(username):\n    return render_template('user.html')\n\
+        @auth.route('/login')\ndef login():\n    return render_template('login.html')\n";
+
+    /// (target route, condition, trigger line) of every transition.
+    fn jinja(view: &str) -> (UiFlow, Vec<(String, Option<AccessState>)>) {
+        let files = [
+            ("app.py", JINJA_APP),
+            ("templates/index.html", view),
+            ("templates/user.html", "<p>u</p>"),
+            ("templates/login.html", "<p>l</p>"),
+        ];
+        let flow = run(&files, "");
+        let route = |id: &str| {
+            let s = flow.screens.iter().find(|s| s.id == id);
+            s.and_then(|s| s.route.clone()).unwrap_or(id.to_string())
+        };
+        let rows = (flow.transitions.iter())
+            .map(|t| match &t.target {
+                archguard_core::Target::Screen(id) => (route(id), Some(t.condition.clone())),
+                archguard_core::Target::Unresolved(x) => (x.clone(), Some(t.condition.clone())),
+            })
+            .collect();
+        (flow, rows)
+    }
+
+    #[test]
+    fn jinja_if_around_links_is_the_screen_guard() {
+        // fixture 13
+        let view = "{% if current_user.is_anonymous %}<a href=\"{{ url_for('auth.login') }}\">in</a>\n\
+                    {% else %}<a href=\"{{ url_for('main.user', username=current_user.username) }}\">me</a>\n\
+                    {% endif %}<a href=\"{{ url_for('main.index') }}\">home</a>";
+        let (flow, rows) = jinja(view);
+        let want = [
+            (
+                "/auth/login",
+                Some(prot(Condition::Not(Box::new(Condition::Authenticated)))),
+            ),
+            ("/user/:username", Some(prot(Condition::Authenticated))),
+            ("/", Some(AccessState::Undeclared)),
+        ];
+        for (to, cond) in want {
+            assert!(
+                rows.iter().any(|r| r.0 == to && r.1 == cond),
+                "{to} {rows:?}"
+            );
+        }
+        assert!(no_gap(&flow), "{:?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn jinja_unreadable_user_check_is_unknown_and_a_gap() {
+        let view = "{% if current_user.can_edit(post) %}<a href=\"{{ url_for('main.index') }}\">e</a>{% endif %}\
+                    {% if posts %}<a href=\"{{ url_for('auth.login') }}\">l</a>{% endif %}";
+        let (flow, rows) = jinja(view);
+        let c = |to: &str| rows.iter().find(|r| r.0 == to).and_then(|r| r.1.clone());
+        assert_eq!(c("/"), Some(prot(unknown("current_user.can_edit(post)"))));
+        assert_eq!(c("/auth/login"), Some(AccessState::Undeclared));
+        let gaps: Vec<_> = (flow.diagnostics.iter())
+            .filter(|d| d.severity == DiagnosticSeverity::Gap)
+            .collect();
+        assert!(
+            gaps.len() == 1 && gaps[0].file.ends_with("index.html") && gaps[0].line == 1,
+            "{gaps:?}"
+        );
     }
 }
