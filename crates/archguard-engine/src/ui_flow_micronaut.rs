@@ -30,7 +30,8 @@ use archguard_core::{
     AccessState, Condition, DiagnosticSeverity, EndpointAccess, UiFlow, UiFlowDiagnostic,
 };
 use serde::Deserialize;
-use std::collections::{BTreeMap, BTreeSet};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 const SOURCE: &str = "micronaut";
@@ -134,6 +135,9 @@ struct Rule {
 struct Env {
     rule: Option<Rule>,
     types: Types,
+    app: Option<String>,
+    /// Files that already carry the default-deny note.
+    denied: RefCell<BTreeSet<String>>,
 }
 
 struct TypeInfo {
@@ -182,8 +186,8 @@ impl Types {
 
     /// The supertypes of `bases` (transitively), and whether one is not
     /// found exactly once in the scan.
-    fn supers(&self, bases: &[String]) -> (Vec<&TypeInfo>, bool) {
-        let (mut out, mut unresolved) = (Vec::new(), false);
+    fn supers(&self, bases: &[String]) -> (Vec<&TypeInfo>, Vec<String>) {
+        let (mut out, mut unresolved) = (Vec::new(), Vec::new());
         let mut todo: Vec<&String> = bases.iter().rev().collect();
         let mut seen = BTreeSet::new();
         while let Some(name) = todo.pop() {
@@ -196,7 +200,7 @@ impl Types {
                     out.push(*t);
                     todo.extend(t.bases.iter().rev());
                 }
-                _ => unresolved = true,
+                _ => unresolved.push(name.clone()),
             }
         }
         (out, unresolved)
@@ -206,7 +210,6 @@ impl Types {
 struct Site<'a> {
     src: &'a Source,
     class: &'a Decl,
-    method: &'a Decl,
 }
 
 #[derive(Default)]
@@ -249,29 +252,69 @@ impl Project {
         let env = Env {
             rule,
             types: Types::new(&self.sources),
+            app,
+            denied: RefCell::default(),
         };
-        let mut denied = BTreeSet::new();
         for src in &self.sources {
             if !src.text.contains("io.micronaut.http.annotation") {
                 continue;
             }
+            let mut own: HashMap<usize, Vec<Decl>> = HashMap::new();
             each_method(src, true, |class, method| {
-                let at = Site { src, class, method };
-                self.routes(&at, &app, &env, &mut denied, flow);
+                own.entry(class.open).or_default().push(method.clone());
             });
+            for class in decls(src, true).iter().filter(|d| d.class) {
+                if !class.attrs.iter().any(|a| a.name == "Controller") {
+                    continue;
+                }
+                let methods = own.remove(&class.open).unwrap_or_default();
+                let at = Site { src, class };
+                for m in &methods {
+                    self.routes(&at, (&m.name, &m.attrs, &m.attrs), &env, flow);
+                }
+                self.inherited_routes(&at, &methods, &env, flow);
+            }
         }
     }
 
-    /// The endpoints of one controller method.
+    /// Routes a controller inherits from the verb annotations of the methods
+    /// it overrides; a supertype that cannot be read may hold more.
+    fn inherited_routes(&self, at: &Site, methods: &[Decl], env: &Env, flow: &mut UiFlow) {
+        let (supers, unresolved) = env.types.supers(&at.class.bases);
+        let line = at.src.line(at.class.attrs.first().map_or(0, |a| a.at));
+        for name in unresolved {
+            let message = format!(
+                "A route may be inherited from supertype {name}, which is not in the scan."
+            );
+            gap(&mut flow.diagnostics, &at.src.rel, line, message);
+        }
+        let verbs = |attrs: &[Attr]| attrs.iter().any(|a| VERBS.iter().any(|v| v.0 == a.name));
+        let mut seen: BTreeSet<&str> = (methods.iter())
+            .filter(|m| verbs(&m.attrs))
+            .map(|m| m.name.as_str())
+            .collect();
+        for t in supers {
+            for (name, attrs) in t.methods.iter().filter(|m| verbs(&m.1)) {
+                if !seen.insert(name) {
+                    continue;
+                }
+                let own: &[Attr] =
+                    (methods.iter().find(|m| &m.name == name)).map_or(&[], |m| &m.attrs);
+                self.routes(at, (name, own, attrs), env, flow);
+            }
+        }
+    }
+
+    /// The endpoints of one controller method `(name, own annotations,
+    /// annotations that carry the verb)`.
     fn routes(
         &self,
         at: &Site,
-        app: &Option<String>,
+        (name, own, route_attrs): (&str, &[Attr], &[Attr]),
         env: &Env,
-        denied: &mut BTreeSet<String>,
         flow: &mut UiFlow,
     ) {
-        let Site { src, class, method } = at;
+        let Site { src, class } = at;
         let Some(ctl) = class.attrs.iter().find(|a| a.name == "Controller") else {
             return;
         };
@@ -286,11 +329,15 @@ impl Project {
             );
             return;
         };
-        for a in &method.attrs {
+        for a in route_attrs {
             let Some((_, verb)) = VERBS.iter().find(|v| v.0 == a.name) else {
                 continue;
             };
-            let line = src.line(a.at);
+            let line = if std::ptr::eq(own, route_attrs) {
+                src.line(a.at)
+            } else {
+                src.line(ctl.at)
+            };
             let Some(paths) = route_paths(a) else {
                 gap(
                     &mut flow.diagnostics,
@@ -304,7 +351,7 @@ impl Project {
                 .iter()
                 .flat_map(|b| paths.iter().map(move |p| join(b, p)))
             {
-                let access = match self.decide(class, method, verb, &path, env) {
+                let access = match self.decide(class, (name, own), verb, &path, env) {
                     Ok(a) => a,
                     Err(why) => {
                         gap(
@@ -317,7 +364,7 @@ impl Project {
                     }
                 };
                 if access == AccessState::Protected(Condition::Never)
-                    && denied.insert(src.rel.clone())
+                    && env.denied.borrow_mut().insert(src.rel.clone())
                 {
                     flow.diagnostics.push(UiFlowDiagnostic {
                         file: src.rel.clone(),
@@ -330,11 +377,11 @@ impl Project {
                     method: (*verb).into(),
                     path,
                     access,
-                    application: app.clone(),
+                    application: env.app.clone(),
                     file: src.rel.clone(),
                     line,
                     source: SOURCE.into(),
-                    handler: Some(format!("{}.{}", class.name, method.name)),
+                    handler: Some(format!("{}.{}", class.name, name)),
                     sends: vec![],
                 });
             }
@@ -342,7 +389,14 @@ impl Project {
     }
 
     /// `Ok` is the access; `Err` the reason it cannot be read (unknown + gap).
-    fn decide(&self, class: &Decl, method: &Decl, verb: &str, path: &str, env: &Env) -> Decision {
+    fn decide(
+        &self,
+        class: &Decl,
+        method: (&str, &[Attr]),
+        verb: &str,
+        path: &str,
+        env: &Env,
+    ) -> Decision {
         if !self.dependency || self.config.enabled == Some(false) {
             return Ok(AccessState::Undeclared);
         }
@@ -397,20 +451,20 @@ impl Project {
     /// The annotation decision of a route method: its own, then those of the
     /// methods it overrides, then the class's, then its supertypes'. A
     /// supertype outside the scan may carry any of them: unknown.
-    fn inherited(&self, class: &Decl, method: &Decl, types: &Types) -> Option<Decision> {
-        if let Some(a) = self.annotation(&method.attrs) {
+    fn inherited(&self, class: &Decl, method: (&str, &[Attr]), types: &Types) -> Option<Decision> {
+        if let Some(a) = self.annotation(method.1) {
             return Some(a);
         }
         let (supers, unresolved) = types.supers(&class.bases);
-        if unresolved {
+        if !unresolved.is_empty() {
             return Some(Err(
                 "a supertype is not in the scan; its annotations are unread".into(),
             ));
         }
         for t in &supers {
-            let same: Vec<_> = t.methods.iter().filter(|m| m.0 == method.name).collect();
+            let same: Vec<_> = t.methods.iter().filter(|m| m.0 == method.0).collect();
             if same.len() > 1 {
-                return Some(Err(format!("{} is overloaded in {}", method.name, t.name)));
+                return Some(Err(format!("{} is overloaded in {}", method.0, t.name)));
             }
             if let Some(a) = same.first().and_then(|m| self.annotation(&m.1)) {
                 return Some(a);
@@ -1126,5 +1180,62 @@ mod tests {
                     class MyRule implements SecurityRule<Object> { public int getOrder() { return -500; } }\n";
         let f = run(SEC, &[("src/B.java", &src), ("src/MyRule.java", rule)]);
         assert!(is_unknown(&f, "GET", "/r/b"));
+    }
+
+    #[test]
+    fn route_declared_on_an_interface_is_served_by_the_controller() {
+        let api = java_type(
+            "interface",
+            "Pets",
+            "@Post(\"/save\") @Secured(\"ROLE_ADMIN\") String save();\n@Get(\"/list\") String list();",
+        );
+        let ctl = java_type(
+            "@Controller(\"/pets\") class",
+            "P implements Pets",
+            "public String save() { return \"\"; }\n@Get(\"/own\") String own() { return \"\"; }",
+        );
+        let f = run(SEC, &[("src/Pets.java", &api), ("src/P.java", &ctl)]);
+        assert_eq!(
+            ep(&f, "POST", "/pets/save").access,
+            prot(role("ROLE_ADMIN"))
+        );
+        assert_eq!(
+            ep(&f, "POST", "/pets/save").handler.as_deref(),
+            Some("P.save")
+        );
+        assert_eq!(ep(&f, "GET", "/pets/list").access, prot(Condition::Never));
+        assert!(f.endpoints.iter().any(|e| e.path == "/pets/own"));
+    }
+
+    #[test]
+    fn controller_override_with_its_own_verb_is_not_duplicated() {
+        let api = java_type("interface", "Pets", "@Get(\"/a\") String a();");
+        let ctl = java_type(
+            "@Controller(\"/p\") class",
+            "P implements Pets",
+            "@Get(\"/b\") String a() { return \"\"; }",
+        );
+        let f = run(SEC, &[("src/Pets.java", &api), ("src/P.java", &ctl)]);
+        assert!(
+            f.endpoints.iter().all(|e| e.path != "/p/a"),
+            "{:#?}",
+            f.endpoints
+        );
+        assert!(f.endpoints.iter().any(|e| e.path == "/p/b"));
+    }
+
+    #[test]
+    fn unreadable_supertype_gets_a_route_gap() {
+        let ctl = java_type("@Controller(\"/c\") class", "C implements Lib", "");
+        let f = run(SEC, &[("src/C.java", &ctl)]);
+        assert!(
+            f.diagnostics
+                .iter()
+                .any(|d| d.severity == DiagnosticSeverity::Gap
+                    && d.message
+                        .contains("route may be inherited from supertype Lib")),
+            "{:#?}",
+            f.diagnostics
+        );
     }
 }
