@@ -160,8 +160,11 @@ pub mod ui_flow_quarkus;
 pub mod ui_flow_react;
 pub mod ui_flow_replay;
 pub mod ui_flow_roles;
+pub mod ui_flow_service;
 #[cfg(test)]
 mod ui_flow_roles_tests;
+#[cfg(test)]
+mod ui_flow_service_tests;
 pub mod ui_flow_go;
 pub mod ui_flow_micronaut;
 pub mod ui_flow_rust;

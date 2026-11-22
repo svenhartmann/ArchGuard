@@ -64,10 +64,13 @@ pub use ui_flow_matrix::{
 // Declared here, not in `ui_flow`: a test file importing its parent closes a file cycle.
 #[cfg(test)]
 mod ui_flow_role_tests;
+#[cfg(test)]
+mod ui_flow_service_tests;
 pub use ui_flow::{
     ANY_METHOD, AccessState, Action, Assignment, AtomKind, Call, Condition, ConventionOrigin,
     DiagnosticSeverity, EndpointAccess, EndpointCounts, HandlerSite, NameCase, Origin, Outcome,
     PermissionFormat, PolicyDef, Reach, RoleConvention, RoleDef, RoleKind, Screen, ScreenKind,
+    ServiceHow, ServiceKind, ServiceLayer,
     ScreenReach, SimulatedRole, Target, Transition, UI_FLOW_DEFINITION, UI_FLOW_IMPORT_SOURCE,
     UiFlow, UiFlowActionRef, UiFlowDiagnostic, UiFlowEndpointRef, UiFlowFinding, UiFlowFindingKind,
     UiFlowSummary, best_route, canonical, evaluate_access, evaluate_condition, holds,

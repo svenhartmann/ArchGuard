@@ -250,6 +250,7 @@ fn flow_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData> {
     );
     for e in &flow.endpoints {
         let mut row = json!({"kind":"endpoint","endpoint":e});
+        add_service_layers(&mut row, flow, e);
         if let Some((_, a, _)) = &sim {
             row["simulated"] = json!(simulated_endpoint(e, a));
         }
@@ -278,6 +279,15 @@ fn flow_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData> {
         &p.page,
         Clone::clone,
     )
+}
+
+/// The checks below the endpoint and the access they add up to, when there are any.
+fn add_service_layers(row: &mut Value, flow: &UiFlow, e: &EndpointAccess) {
+    let layers: Vec<_> = flow.service_layers_of(e).collect();
+    if !layers.is_empty() {
+        row["service_layers"] = json!(layers);
+        row["effective_access"] = json!(flow.effective_access(e));
+    }
 }
 
 #[tool_router(router = ui_flow_router, vis = "pub(crate)")]
