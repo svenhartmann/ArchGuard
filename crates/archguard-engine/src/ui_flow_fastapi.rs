@@ -109,7 +109,7 @@ fn note(out: &mut Vec<UiFlowDiagnostic>, file: &str, line: u32, message: impl In
 }
 
 /// All of `items`, nested `all` flattened, sorted and deduplicated.
-fn all(items: Vec<Condition>) -> Condition {
+pub(crate) fn all(items: Vec<Condition>) -> Condition {
     let mut flat = Vec::new();
     for c in items {
         match c {

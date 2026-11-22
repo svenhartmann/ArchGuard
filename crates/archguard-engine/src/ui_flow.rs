@@ -260,6 +260,7 @@ fn extract_all(ctx: &ExtractContext) -> UiFlow {
         crate::ui_flow_svelte::extract_with,
         crate::ui_flow_django::extract_with,
         crate::ui_flow_fastapi::extract_with,
+        crate::ui_flow_flask::extract_with,
         crate::ui_flow_laravel::extract_with,
         crate::ui_flow_rust::extract_with,
         crate::ui_flow_roles::extract_with,
