@@ -498,7 +498,9 @@ fn permission(roles: &str, method: &str) -> String {
     )
 }
 fn with_jar(xml: &str) -> Option<UiFlow> {
-    let plain = EJB.replace("  @RolesAllowed(\"B\") ", "  ");
+    let plain = EJB
+        .replace("  @RolesAllowed(\"B\") ", "  ")
+        .replace("import jakarta.annotation.security.RolesAllowed;\n", "");
     run(
         SPRING_POM,
         &[
@@ -519,18 +521,39 @@ fn an_ejb_jar_method_permission_protects_like_the_annotation() {
     assert!(flow.complete, "{:#?}", flow.diagnostics);
 }
 
+// Jakarta EJB 4.0 section 11.3.2.2: the permissions of all matching method-permission
+// elements are united; `unchecked` among them permits every role. (An earlier version
+// of this test asserted that a named method beats `*`; that rule exists only for transactions.)
 #[test]
-fn an_ejb_jar_wildcard_applies_and_a_named_method_beats_it() {
+fn an_ejb_jar_unites_the_matching_permissions_of_wildcard_and_named_method() {
     let xml = jar(&format!(
         "{}{}",
         permission("<role-name>W</role-name>", "*"),
         permission("<role-name>B</role-name>", "run")
     ));
     let Some(flow) = with_jar(&xml) else { return };
-    assert_eq!(flow.effective_access(endpoint(&flow)), role("B"));
+    assert_eq!(
+        flow.effective_access(endpoint(&flow)),
+        AccessState::Protected(Condition::Any(vec![
+            Condition::Role("W".into()),
+            Condition::Role("B".into())
+        ]))
+    );
     let xml = jar(&permission("<role-name>W</role-name>", "*"));
     let flow = with_jar(&xml).unwrap();
     assert_eq!(flow.effective_access(endpoint(&flow)), role("W"));
+}
+
+#[test]
+fn an_unchecked_wildcard_permits_every_role_even_next_to_a_named_role() {
+    let xml = jar(&format!(
+        "{}{}",
+        permission("<unchecked/>", "*"),
+        permission("<role-name>B</role-name>", "run")
+    ));
+    let Some(flow) = with_jar(&xml) else { return };
+    let l: Vec<_> = flow.service_layers_of(endpoint(&flow)).collect();
+    assert_eq!(l[0].state, AccessState::Open, "{l:?}");
 }
 
 #[test]
@@ -584,5 +607,117 @@ fn a_service_call_whose_class_declaration_cannot_be_read_leaves_a_gap() {
     assert_eq!(
         flow.effective_access(endpoint(&flow)),
         endpoint(&flow).access
+    );
+}
+
+fn aspectj_conf(extra: &str) -> String {
+    ENABLE_ASPECTJ.replace("mode = ", &format!("{extra}mode = "))
+}
+fn secured_svc(class_ann: &str, method: &str) -> String {
+    svc(class_ann, method).replace(
+        "prepost.*;",
+        "prepost.*;\nimport org.springframework.security.access.annotation.Secured;",
+    )
+}
+
+#[test]
+fn aspectj_does_not_weave_a_class_level_pre_authorize() {
+    let class_level = svc(
+        "@Service @PreAuthorize(\"hasRole('B')\")",
+        "String run() { return \"\"; }",
+    );
+    let Some(flow) = run(
+        SPRING_POM,
+        &[
+            ("Conf.java", ENABLE_ASPECTJ),
+            ("Ctl.java", &ctl("return svc.run();", "")),
+            ("Svc.java", &class_level),
+        ],
+    ) else {
+        return;
+    };
+    let l = layers(&flow);
+    assert_eq!(l[0].0, ServiceHow::Hint, "{l:?}");
+    assert_eq!(
+        flow.effective_access(endpoint(&flow)),
+        endpoint(&flow).access
+    );
+}
+
+#[test]
+fn aspectj_weaves_a_class_level_secured_on_public_methods_only() {
+    let conf = aspectj_conf("securedEnabled = true, ");
+    let public = secured_svc(
+        "@Service @Secured(\"ROLE_B\")",
+        "public String run() { return \"\"; }",
+    );
+    let Some(flow) = run(
+        SPRING_POM,
+        &[
+            ("Conf.java", &conf),
+            ("Ctl.java", &ctl("return svc.run();", "")),
+            ("Svc.java", &public),
+        ],
+    ) else {
+        return;
+    };
+    let l = layers(&flow);
+    assert_eq!(l[0].0, ServiceHow::Enforced, "{l:?}");
+    let package_private = secured_svc(
+        "@Service @Secured(\"ROLE_B\")",
+        "String run() { return \"\"; }",
+    );
+    let flow = run(
+        SPRING_POM,
+        &[
+            ("Conf.java", &conf),
+            ("Ctl.java", &ctl("return svc.run();", "")),
+            ("Svc.java", &package_private),
+        ],
+    )
+    .unwrap();
+    let l = layers(&flow);
+    assert_eq!(l[0].0, ServiceHow::Hint, "{l:?}");
+}
+
+#[test]
+fn an_ejb_jar_applies_only_to_the_beans_of_its_own_module() {
+    const ORDER: &str = "package app;\nimport jakarta.ejb.Stateless;\n@Stateless\nclass OrderBean {\n  String run() { return \"\"; }\n}\n";
+    const RESOURCE: &str = "package app;\nimport jakarta.ws.rs.*;\n@Path(\"/a\")\nclass Res {\n  OrderBean bean;\n  @GET String a() { return bean.run(); }\n}\n";
+    let xml = jar(&permission("<role-name>B</role-name>", "run").replace("Svc", "OrderBean"));
+    let m = "../../../../";
+    let files = [
+        (format!("{m}a/pom.xml"), SPRING_POM),
+        (format!("{m}a/src/main/java/app/Res.java"), RESOURCE),
+        (format!("{m}a/src/main/java/app/OrderBean.java"), ORDER),
+        (
+            format!("{m}a/src/main/resources/META-INF/ejb-jar.xml"),
+            xml.as_str(),
+        ),
+        (format!("{m}b/pom.xml"), SPRING_POM),
+        (format!("{m}b/src/main/java/app/Res.java"), RESOURCE),
+        (format!("{m}b/src/main/java/app/OrderBean.java"), ORDER),
+    ];
+    let borrowed: Vec<(&str, &str)> = files.iter().map(|(n, t)| (n.as_str(), *t)).collect();
+    let Some(flow) = run(SPRING_POM, &borrowed) else {
+        return;
+    };
+    let of = |dir: &str| {
+        flow.endpoints
+            .iter()
+            .find(|e| e.file.starts_with(dir))
+            .unwrap()
+    };
+    assert_eq!(
+        flow.effective_access(of("a/")),
+        role("B"),
+        "{:#?}",
+        flow.service_layers
+    );
+    assert_eq!(
+        flow.effective_access(of("b/")),
+        of("b/").access,
+        "{:#?}",
+        flow.service_layers
     );
 }
