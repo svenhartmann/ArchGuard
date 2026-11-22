@@ -5629,7 +5629,7 @@ mod razor {
     /// `_ViewImports.cshtml` files above it where it has none (the closest one
     /// wins); none without `@page`. Docs:
     /// <https://learn.microsoft.com/en-us/aspnet/core/mvc/views/layout#importing-shared-directives>
-    fn page_directives(page: &Source, pages: &[Source]) -> Option<Directives> {
+    fn page_directives(page: &Source, pages: &[Source], out: &mut Out) -> Option<Directives> {
         let (mut d, found) = directives(page);
         if !found {
             return None;
@@ -5640,6 +5640,11 @@ mod razor {
             let name = format!("{dir}/_ViewImports.cshtml");
             if let Some(imp) = pages.iter().find(|p| p.rel == name) {
                 let (imp, _) = directives(imp);
+                if !imp.attrs.is_empty() {
+                    // Whether Razor applies it is not confirmed by the docs.
+                    let message = format!("@attribute in _ViewImports not read: {name}");
+                    out.at(page, d.at, message);
+                }
                 d.model = d.model.or(imp.model);
                 d.inherits = d.inherits.or(imp.inherits);
             }
@@ -5763,7 +5768,7 @@ mod razor {
         conventions: &[Convention],
         out: &mut Out,
     ) {
-        let (Some(d), Some(place)) = (page_directives(page, pages), locate(&page.rel)) else {
+        let (Some(d), Some(place)) = (page_directives(page, pages, out), locate(&page.rel)) else {
             return;
         };
         let route = route(page, &place, &d, out);
@@ -9487,6 +9492,44 @@ builder.Services.AddRazorPages(o => { o.Conventions.AuthorizeFolder(Folders.Priv
         // The page's own @model is RootModel (open); @inherits adds BaseP; open wins.
         assert_eq!(access(&flow, "GET", "/Inh/Page"), &AccessState::Open);
         assert!(gaps(&flow, "Nowhere") >= 1, "{:#?}", flow.diagnostics);
+    }
+
+    // Review: `@attribute` in `_ViewImports` is not confirmed by the docs: a gap,
+    // and the access is never upgraded by it.
+    #[test]
+    fn w5e_razor_view_imports_attribute_is_a_gap() {
+        let flow = web(
+            &tfm("net10.0"),
+            &[
+                ("Program.cs", "var x = 1;"),
+                ("Pages/_ViewImports.cshtml", "@attribute [AllowAnonymous]\n"),
+                ("Pages/P.cshtml", "@page\n"),
+            ],
+        );
+        assert_eq!(access(&flow, "GET", "/P"), &AccessState::Undeclared);
+        assert!(
+            gaps(&flow, "@attribute in _ViewImports") >= 1,
+            "{:#?}",
+            flow.diagnostics
+        );
+    }
+
+    // Review: blanking a comment with multi-byte text keeps byte offsets.
+    #[test]
+    fn w5e_razor_comment_with_multibyte_text_keeps_lines() {
+        let flow = web(
+            &tfm("net10.0"),
+            &[
+                ("Program.cs", "var x = 1;"),
+                ("Pages/P.cshtml", "@* für Admins *@\n@page\n"),
+            ],
+        );
+        let e = flow
+            .endpoints
+            .iter()
+            .find(|e| e.path == "/P")
+            .expect("endpoint");
+        assert_eq!(e.line, 2);
     }
 
     // Guard: `MapControllers().AllowAnonymous()` opens controllers, not pages;
