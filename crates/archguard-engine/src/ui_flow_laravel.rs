@@ -730,12 +730,9 @@ mod index {
             .trim_start()
             .strip_prefix("=>")?;
         let rest = rest.trim_start();
-        let lit = match rest.strip_prefix("env(") {
-            Some(env) => env.split_once(',')?.1.trim_start(),
-            None => rest,
-        };
-        let end = lit.get(1..)?.find(&lit[..1])? + 2;
-        php::literal(&lit[..end]).filter(|g| !g.is_empty())
+        // env(...) can change at runtime: not read.
+        let end = rest.get(1..)?.find(&rest[..1])? + 2;
+        php::literal(&rest[..end]).filter(|g| !g.is_empty())
     }
 
     /// The literal `apiPrefix:` of `bootstrap/app.php`.
@@ -2475,15 +2472,20 @@ mod blade {
                     Some(any(list.iter().map(|a| ability(a)).collect()))
                 }
                 "auth" => {
-                    let guard = (args.first()).and_then(|g| self.app.value_of(g));
-                    let guard = guard.filter(|g| self.app.default_guard.as_ref() != Some(g));
+                    // A guard that is not a literal is unreadable, never plain `auth`.
+                    let guard = args.first().map(|g| match self.app.value_of(g) {
+                        Some(v) => (v, true),
+                        None => (collapse(g), false),
+                    });
+                    let guard = guard
+                        .filter(|(g, read)| !*read || self.app.default_guard.as_ref() != Some(g));
                     Some(match guard {
                         None => Condition::Authenticated,
-                        Some(g) => Condition::All(vec![
+                        Some((g, read)) => Condition::All(vec![
                             Condition::Authenticated,
-                            match self.app.default_guard {
-                                Some(_) => Condition::Custom(format!("guard:{g}")),
-                                None => Condition::Unknown(format!("guard:{g}")),
+                            match (&self.app.default_guard, read) {
+                                (Some(_), true) => Condition::Custom(format!("guard:{g}")),
+                                _ => Condition::Unknown(format!("guard:{g}")),
                             },
                         ]),
                     })
@@ -3922,7 +3924,7 @@ class RouteServiceProvider extends ServiceProvider
 
     const AUTH_CFG: (&str, &str) = (
         "shop/config/auth.php",
-        "<?php\nreturn ['defaults' => ['guard' => env('AUTH_GUARD', 'web'), 'passwords' => 'users']];\n",
+        "<?php\nreturn ['defaults' => ['guard' => 'web', 'passwords' => 'users']];\n",
     );
 
     fn with_cfg(web: &str, aliases: &str, extra: &[(&str, &str)]) -> UiFlow {
@@ -4010,6 +4012,42 @@ class RouteServiceProvider extends ServiceProvider
             messages(&flow).join("\n").contains("guard"),
             "{:?}",
             messages(&flow)
+        );
+    }
+
+    #[test]
+    fn env_default_guard_and_variable_blade_guard_are_unknown() {
+        // D3: env() can change the default at runtime; `@auth($g)` is not readable
+        let env_cfg = (
+            "shop/config/auth.php",
+            "<?php\nreturn ['defaults' => ['guard' => env('AUTH_GUARD', 'web')]];\n",
+        );
+        let web = "<?php\nRoute::middleware('auth:web')->get('/w', fn () => view('t'));\n";
+        let (_d, flow) = app(&[
+            ("shop/routes/web.php", web),
+            (
+                "shop/resources/views/t.blade.php",
+                "@auth($g)\n<a href=\"/x\">X</a>\n@endauth\n",
+            ),
+            env_cfg,
+        ]);
+        assert_eq!(
+            access(&flow, "GET", "/w"),
+            all(vec![Condition::Authenticated, unknown("guard:web")])
+        );
+        assert!(
+            messages(&flow).join("\n").contains("Guard `web`"),
+            "{:?}",
+            messages(&flow)
+        );
+        let rows = transitions(&flow);
+        let r = rows.iter().find(|r| r.1.ends_with("/x")).expect("link");
+        assert_eq!(
+            r.3,
+            Some(Condition::All(vec![
+                Condition::Authenticated,
+                unknown("guard:$g")
+            ]))
         );
     }
 
