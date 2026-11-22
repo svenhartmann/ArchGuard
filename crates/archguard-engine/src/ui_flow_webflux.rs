@@ -1,11 +1,28 @@
-// Spring WebFlux (child module of `ui_flow_backend`, so it reuses the Spring
-// helpers there): functional `RouterFunction` routes as endpoints. The
-// reactive `SecurityWebFilterChain` (`authorizeExchange`, `pathMatchers`,
-// `anyExchange`) is read by the servlet chain code in `spring::chain`, which
-// accepts these names too; routes are emitted before it runs so the chain
-// decides them like annotated controllers.
-use super::lex::{skip_ws, skip_ws_back, split_top, words};
-use super::*;
+//! Spring WebFlux: functional `RouterFunction` routes as endpoints. The
+//! reactive `SecurityWebFilterChain` (`authorizeExchange`, `pathMatchers`,
+//! `anyExchange`) is read by the servlet chain code in `ui_flow_backend`
+//! (`spring::chain`), which accepts these names too. This module hooks into
+//! the backend's extraction (`extract_with`) so the routes exist before the
+//! chain runs and it decides them like annotated controllers.
+use crate::extract_ctx::{ExtractContext, with_root_config};
+use crate::ui_flow_backend::lex::{self, skip_ws, skip_ws_back, split_top, words};
+use crate::ui_flow_backend::spring::{Conf, declared_access, family};
+use crate::ui_flow_backend::{
+    Decl, Index, Out, Source, decls, each_method, extract_with as backend_extract,
+    path as join_path,
+};
+use archguard_core::{AccessState, UiFlow};
+use std::collections::BTreeSet;
+
+/// The backend flow with the functional routes of the project.
+pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
+    backend_extract(ctx, Some(scan))
+}
+
+/// [`extract_with`] with the root's configuration.
+pub fn extract(root: &std::path::Path) -> UiFlow {
+    with_root_config(root, extract_with)
+}
 
 const VERBS: [&str; 7] = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
 
@@ -14,7 +31,7 @@ struct Ctx<'a> {
     src: &'a Source,
     sources: &'a [Source],
     index: &'a Index<'a>,
-    conf: &'a spring::Conf,
+    conf: &'a Conf,
 }
 
 /// A call `name(args)` whose name starts at `at`.
@@ -68,13 +85,7 @@ fn route_of<'a>(
 /// method's annotations; the chain applies afterwards like for controllers). A
 /// route whose predicate, path or `nest` prefix is not literal is skipped with a
 /// gap, never shown as a guessed endpoint.
-pub(super) fn scan(
-    src: &Source,
-    sources: &[Source],
-    index: &Index,
-    conf: &spring::Conf,
-    out: &mut Out,
-) {
+fn scan(src: &Source, sources: &[Source], index: &Index, conf: &Conf, out: &mut Out) {
     kotlin_chain_gap(src, out);
     let dsl = dsl_blocks(src);
     if !(src.text.contains("RouterFunction") || !dsl.is_empty()) {
@@ -117,7 +128,7 @@ fn emit(ctx: &Ctx, out: &mut Out, at: usize, (name, route, handler): Read) {
         .chain([p.as_str()])
         .collect();
     let access = handler_access(ctx, out, at, handler);
-    out.endpoint(src, at, method, super::path(&parts), &access);
+    out.endpoint(src, at, method, join_path(&parts), &access);
 }
 
 /// `(method, path argument)` of a route predicate starting with a verb call.
@@ -278,13 +289,13 @@ fn handler_access(ctx: &Ctx, out: &mut Out, at: usize, handler: Option<&str>) ->
                 flag: true,
             };
             let d = own.first().unwrap_or(&plain);
-            return spring::declared_access(conf, index, out, (csrc, &class, d), 1).0;
+            return declared_access(conf, index, out, (csrc, &class, d), 1).0;
         }
     }
     let secured = sources.iter().any(|s| {
         let mut hit = false;
         each_method(s, true, |_, d| {
-            hit |= d.name == method && d.attrs.iter().any(|a| spring::family(&a.name).is_some());
+            hit |= d.name == method && d.attrs.iter().any(|a| family(&a.name).is_some());
         });
         hit
     });
@@ -357,6 +368,7 @@ fn kotlin_chain_gap(src: &Source, out: &mut Out) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use archguard_core::{Condition, DiagnosticSeverity};
 
     const ENABLE: &str = "@EnableReactiveMethodSecurity\npublic class Enable {}\n";
     const CTRL: &str = "@RestController\npublic class C {\n  @GetMapping(\"/a\") String a() { return \"\"; }\n  @GetMapping(\"/b\") String b() { return \"\"; }\n}\n";

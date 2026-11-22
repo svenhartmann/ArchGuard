@@ -90,11 +90,16 @@ const SOURCES: [&str; 3] = [".cs", ".java", ".kt"];
 /// Endpoints with their declared access, plus diagnostics. `[views.access]`
 /// comes from the root's configuration; an unreadable one is a note.
 pub fn extract(root: &Path) -> UiFlow {
-    with_root_config(root, extract_with)
+    with_root_config(root, |ctx| extract_with(ctx, None))
 }
 
-/// [`extract`] with the run's `[views.access]`.
-pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
+/// Reads further endpoints of a source file before the central rules run
+/// (`ui_flow_webflux`: functional routes).
+pub(crate) type RouteHook = fn(&Source, &[Source], &Index, &spring::Conf, &mut Out);
+
+/// [`extract`] with the run's `[views.access]`; `hook` adds endpoints per
+/// Java/Kotlin file.
+pub(crate) fn extract_with(ctx: &ExtractContext, hook: Option<RouteHook>) -> UiFlow {
     let mut out = Out(
         UiFlow::default(),
         Ignored::default(),
@@ -119,7 +124,9 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
                 minimal::scan(src, sources, &index, &mut call_sites, &mut out);
             } else {
                 spring::scan(src, &index, &conf, &mut out);
-                webflux::scan(src, sources, &index, &conf, &mut out);
+                if let Some(hook) = hook {
+                    hook(src, sources, &index, &conf, &mut out);
+                }
             }
         }
         spring::central_rules(sources, &index, &conf, &mut out, first);
@@ -281,7 +288,7 @@ struct Ignored {
     endpoints: BTreeSet<(String, u32)>,
 }
 
-struct Out(UiFlow, Ignored, aspnet::Defaults);
+pub(crate) struct Out(UiFlow, Ignored, aspnet::Defaults);
 impl Out {
     /// A diagnostic for something not read literally: the flow is incomplete.
     fn diag(&mut self, file: &str, line: u32, message: String) {
@@ -302,14 +309,14 @@ impl Out {
             severity: DiagnosticSeverity::Note,
         });
     }
-    fn at(&mut self, src: &Source, at: usize, message: String) {
+    pub(crate) fn at(&mut self, src: &Source, at: usize, message: String) {
         self.diag(&src.rel, src.line(at), message);
     }
-    fn unknown(&mut self, src: &Source, at: usize, text: &str) -> Condition {
+    pub(crate) fn unknown(&mut self, src: &Source, at: usize, text: &str) -> Condition {
         self.at(src, at, format!("Access condition not readable: {text}"));
         Condition::Unknown(text.into())
     }
-    fn endpoint(
+    pub(crate) fn endpoint(
         &mut self,
         src: &Source,
         at: usize,
@@ -356,8 +363,8 @@ impl Out {
 
 /// A source file with comments blanked (offsets and lines unchanged).
 pub(crate) struct Source {
-    rel: String,
-    text: String,
+    pub(crate) rel: String,
+    pub(crate) text: String,
     pairs: HashMap<usize, usize>,
     lines: Vec<usize>,
 }
@@ -380,13 +387,13 @@ impl Source {
             lines,
         }
     }
-    fn line(&self, at: usize) -> u32 {
+    pub(crate) fn line(&self, at: usize) -> u32 {
         self.lines.partition_point(|&s| s <= at) as u32
     }
-    fn pair(&self, at: usize) -> Option<usize> {
+    pub(crate) fn pair(&self, at: usize) -> Option<usize> {
         self.pairs.get(&at).copied()
     }
-    fn bytes(&self) -> &[u8] {
+    pub(crate) fn bytes(&self) -> &[u8] {
         self.text.as_bytes()
     }
 }
@@ -424,7 +431,7 @@ fn combine(mut items: Vec<Condition>, many: fn(Vec<Condition>) -> Condition) -> 
     }
 }
 
-fn path(parts: &[&str]) -> String {
+pub(crate) fn path(parts: &[&str]) -> String {
     let segments: Vec<&str> = parts
         .iter()
         .flat_map(|p| p.split('/'))
@@ -446,14 +453,14 @@ pub(crate) struct Decl {
     pub(crate) name: String,
     pub(crate) attrs: Vec<Attr>,
     /// Offset of a method's parameter list; a class's header start.
-    open: usize,
+    pub(crate) open: usize,
     /// A class's body end (`}`, or `;` without a body); 0 for a method.
-    end: usize,
+    pub(crate) end: usize,
     /// A class's base list as simple names (`: Base<T>, IFoo`, `extends`,
     /// `implements`); empty for a method.
     pub(crate) bases: Vec<String>,
     /// `interface` for a class; `public` and not `static` for a method.
-    flag: bool,
+    pub(crate) flag: bool,
 }
 
 /// The header of a type declaration: from its modifiers to the body (or `;`).
@@ -463,7 +470,7 @@ fn class_header<'a>(src: &'a Source, d: &Decl) -> &'a str {
 }
 
 /// Calls `f(class, method)` for each method with the innermost class around it.
-fn each_method(src: &Source, annotations: bool, mut f: impl FnMut(&Decl, &Decl)) {
+pub(crate) fn each_method(src: &Source, annotations: bool, mut f: impl FnMut(&Decl, &Decl)) {
     let mut open: Vec<Decl> = Vec::new();
     for d in decls(src, annotations) {
         while open.last().is_some_and(|c| c.end < d.open) {
@@ -698,21 +705,21 @@ fn base_names(header: &str) -> Vec<String> {
 }
 
 /// Literals, brackets, identifiers and argument lists on raw text.
-mod lex {
+pub(crate) mod lex {
     pub(super) use crate::lang_csharp::{code as strip_comments, literal, literal_end};
 
-    pub(super) fn is_ident(c: u8) -> bool {
+    pub(crate) fn is_ident(c: u8) -> bool {
         c.is_ascii_alphanumeric() || c == b'_'
     }
 
-    pub(super) fn skip_ws(b: &[u8], i: usize) -> usize {
+    pub(crate) fn skip_ws(b: &[u8], i: usize) -> usize {
         i + b[i.min(b.len())..]
             .iter()
             .take_while(|c| c.is_ascii_whitespace())
             .count()
     }
 
-    pub(super) fn skip_ws_back(b: &[u8], mut i: usize) -> usize {
+    pub(crate) fn skip_ws_back(b: &[u8], mut i: usize) -> usize {
         while i > 0 && b[i - 1].is_ascii_whitespace() {
             i -= 1;
         }
@@ -720,7 +727,7 @@ mod lex {
     }
 
     /// The identifier right before `end` (exclusive), skipping blanks and one `<…>`.
-    pub(super) fn ident_before(b: &[u8], end: usize) -> (usize, usize) {
+    pub(crate) fn ident_before(b: &[u8], end: usize) -> (usize, usize) {
         let mut k = skip_ws_back(b, end);
         if k > 0 && b[k - 1] == b'>' {
             let mut depth = 0;
@@ -742,7 +749,7 @@ mod lex {
     }
 
     /// Whole-word occurrences of `word`.
-    pub(super) fn words<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
+    pub(crate) fn words<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
         let b = text.as_bytes();
         text.match_indices(word).map(|(i, _)| i).filter(move |&i| {
             (i == 0 || !is_ident(b[i - 1])) && b.get(i + word.len()).is_none_or(|c| !is_ident(*c))
@@ -750,7 +757,7 @@ mod lex {
     }
 
     /// Splits on commas outside brackets and literals.
-    pub(super) fn split_top(s: &str) -> Vec<&str> {
+    pub(crate) fn split_top(s: &str) -> Vec<&str> {
         split_by(s, b',')
     }
 
@@ -865,7 +872,7 @@ mod index {
         pub ambiguous: Vec<String>,
     }
 
-    pub(super) struct Index<'a> {
+    pub(crate) struct Index<'a> {
         access: BTreeMap<String, AccessMeaning>,
         /// `Class.Member` → the initializer texts found for it.
         constants: HashMap<String, BTreeSet<String>>,
@@ -927,7 +934,7 @@ mod index {
         }
 
         /// A string value: a literal, `nameof(X)`, a constant of the scan, or `+` of these.
-        pub(super) fn text(&self, raw: &str) -> Option<String> {
+        pub(crate) fn text(&self, raw: &str) -> Option<String> {
             self.text_at(raw, 0)
         }
 
@@ -1270,7 +1277,7 @@ mod index {
         found
     }
 }
-use index::Index;
+pub(crate) use index::Index;
 
 /// ASP.NET Core controllers: attribute routes, else the project's
 /// conventional routes ([`conventional`]). A class without its own `[Route]`
@@ -3131,13 +3138,8 @@ mod aspnet {
     pub(super) use uses::{Use, argument, custom};
 }
 
-// Spring WebFlux functional routes; the text lives in its own file.
-mod webflux {
-    include!("ui_flow_webflux.rs");
-}
-
 /// Spring MVC controllers and Spring Security / JSR-250 annotations.
-mod spring {
+pub(crate) mod spring {
     use super::lex::{literals, named, positional};
     use super::*;
 
@@ -3158,7 +3160,7 @@ mod spring {
     }
 
     pub(super) use chain::central_rules;
-    pub(super) use conf::Conf;
+    pub(crate) use conf::Conf;
     use conf::{Atom, Flag};
 
     /// The conventions and method-security switches of ONE application as its
@@ -3205,7 +3207,7 @@ mod spring {
             jsr250: Flag,
         }
 
-        pub(in super::super) struct Conf {
+        pub(crate) struct Conf {
             quarkus: bool,
             /// `None`: set by code that is not readable.
             role_prefix: Option<String>,
@@ -4812,7 +4814,7 @@ mod spring {
     /// The access the annotations of method `d` of `class` declare (own,
     /// inherited and class level) and whether an annotation was not applied.
     /// Shared with the WebFlux handler methods.
-    pub(super) fn declared_access(
+    pub(crate) fn declared_access(
         conf: &Conf,
         index: &Index,
         out: &mut Out,
@@ -4908,7 +4910,7 @@ mod spring {
     /// The security annotation family of `name`: Spring overrides per family
     /// (a method's annotation replaces the class's of the same family) and
     /// checks every family in turn.
-    pub(super) fn family(name: &str) -> Option<&'static str> {
+    pub(crate) fn family(name: &str) -> Option<&'static str> {
         Some(match name {
             "PreAuthorize" => "PreAuthorize",
             "PostAuthorize" => "PostAuthorize",
@@ -6449,7 +6451,7 @@ public sealed class AppsController : ControllerBase
              ApiPermissionOrAnonymous = \"policy:$arg|open\"\n",
         )
         .unwrap();
-        let flow = extract_with(&ExtractContext::new(dir.path(), &config));
+        let flow = extract_with(&ExtractContext::new(dir.path(), &config), None);
         assert_eq!(
             access(&flow, "GET", "/api/apps"),
             &protected(Condition::Authenticated)
