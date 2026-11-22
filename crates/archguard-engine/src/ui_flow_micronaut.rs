@@ -190,15 +190,30 @@ mod sig {
             }
             p.replace_range(at..cut, " ");
         }
-        let ty = if let Some((_, t)) = p.split_once(':') {
-            t.split('=').next().unwrap_or(t).to_string()
+        let (ty, vararg) = if let Some((name, t)) = p.split_once(':') {
+            let vararg = name.split_whitespace().any(|w| w == "vararg");
+            (t.split('=').next().unwrap_or(t).to_string(), vararg)
         } else {
             let mut words: Vec<&str> = p.split_whitespace().collect();
-            words.pop()?;
-            words.join(" ")
+            // `String ids[]`: the brackets belong to the type.
+            let dims = words.pop()?.matches("[]").count();
+            (format!("{}{}", words.join(" "), "[]".repeat(dims)), false)
         };
-        let mut out = String::new();
-        let mut depth = 0;
+        let ty = erase(ty.trim().trim_end_matches('?'))?;
+        Some(if vararg { ty + "[]" } else { ty })
+    }
+
+    /// `Array<out String>` -> `String[]`; other generics and packages dropped.
+    fn erase(ty: &str) -> Option<String> {
+        let ty = ty.trim().trim_end_matches('?');
+        if let Some(inner) = ty.strip_prefix("Array<").and_then(|r| r.strip_suffix('>')) {
+            let inner = inner
+                .trim()
+                .trim_start_matches("out ")
+                .trim_start_matches("in ");
+            return Some(erase(inner)? + "[]");
+        }
+        let (mut out, mut depth) = (String::new(), 0);
         for c in ty.chars() {
             match c {
                 '<' => depth += 1,
@@ -222,6 +237,31 @@ mod sig {
         Maybe,
     }
 
+    /// Java and Kotlin spell some types differently (`int`/`Int`, `Object`/`Any`).
+    fn canon(t: &str) -> String {
+        let (word, dims) = (t.trim_end_matches("[]"), t.matches("[]").count());
+        let (word, extra) = match word.strip_suffix("Array").filter(|w| !w.is_empty()) {
+            Some(w) => (w, 1),
+            None => (word, 0),
+        };
+        let word = match word.to_ascii_lowercase().as_str() {
+            "integer" => "int".to_string(),
+            "character" => "char".to_string(),
+            "any" => "object".to_string(),
+            "unit" => "void".to_string(),
+            w if [
+                "int", "long", "short", "byte", "char", "boolean", "float", "double", "object",
+                "void",
+            ]
+            .contains(&w) =>
+            {
+                w.to_string()
+            }
+            _ => word.to_string(),
+        };
+        format!("{word}{}", "[]".repeat(dims + extra))
+    }
+
     /// Whether two parameter lists are the same overload. A type variable
     /// (`T`) or an unreadable list may stand for anything: `Maybe`.
     pub(super) fn fits(a: &Sig, b: &Sig) -> Fit {
@@ -231,10 +271,13 @@ mod sig {
         if a.len() != b.len() {
             return Fit::No;
         }
-        let var = |t: &str| t.len() <= 2 && t.starts_with(|c: char| c.is_ascii_uppercase());
+        let var = |t: &str| {
+            let word = t.trim_end_matches("[]");
+            word.len() <= 2 && word.starts_with(|c: char| c.is_ascii_uppercase())
+        };
         let mut maybe = false;
         for (x, y) in a.iter().zip(b) {
-            if x == y {
+            if canon(x) == canon(y) {
                 continue;
             }
             if !(var(x) || var(y)) {
@@ -266,7 +309,12 @@ mod sig {
                 .map_or("", |c| src.text[c + 1..].trim_start());
             let head = before.trim_end();
             let is_decl = if kotlin {
-                head.ends_with("fun")
+                // `fun name(` or `fun <T> name(`
+                head.rfind("fun").is_some_and(|i| {
+                    let rest = head[i + 3..].trim();
+                    !head[..i].ends_with(ident)
+                        && (rest.is_empty() || rest.starts_with('<') && rest.ends_with('>'))
+                })
             } else {
                 !head.ends_with('.')
                     && (tail.starts_with('{') || tail.starts_with("throws"))
@@ -435,18 +483,16 @@ impl Project {
                 // Which method of the controller overrides it (by parameters)?
                 let found = declared(at.src, at.class, name);
                 let fit: Vec<_> = found.iter().map(|f| fits(&f.1, sig)).collect();
-                let chosen = if found.len() <= 1 {
-                    found.first()
+                let chosen = if found.is_empty() || fit.iter().all(|f| *f == Fit::No) {
+                    None
                 } else if fit.iter().filter(|f| **f == Fit::Yes).count() == 1
                     && !fit.contains(&Fit::Maybe)
                 {
                     fit.iter().position(|f| *f == Fit::Yes).map(|i| &found[i])
-                } else if fit.iter().all(|f| *f == Fit::No) {
-                    None
                 } else {
                     let message = format!(
-                        "Route {name} of supertype {} is not inherited: the controller overloads \
-                         {name} and the override cannot be told from the parameters.",
+                        "Route {name} of supertype {} is not inherited: the controller declares \
+                         {name} and which one overrides it cannot be told from the parameters.",
                         t.name
                     );
                     gap(&mut flow.diagnostics, &at.src.rel, line, message);
@@ -487,7 +533,6 @@ impl Project {
             );
             return;
         };
-        let overloaded = declared(src, class, name).len() > 1;
         for a in route_attrs {
             let Some((_, verb)) = VERBS.iter().find(|v| v.0 == a.name) else {
                 continue;
@@ -510,19 +555,18 @@ impl Project {
                 .iter()
                 .flat_map(|b| paths.iter().map(move |p| join(b, p)))
             {
-                let access =
-                    match self.decide(class, (name, own, sig, overloaded), verb, &path, env) {
-                        Ok(a) => a,
-                        Err(why) => {
-                            gap(
-                                &mut flow.diagnostics,
-                                &src.rel,
-                                line,
-                                format!("Access of {verb} {path} not read: {why}"),
-                            );
-                            AccessState::Protected(Condition::Unknown(why))
-                        }
-                    };
+                let access = match self.decide(class, (name, own, sig), verb, &path, env) {
+                    Ok(a) => a,
+                    Err(why) => {
+                        gap(
+                            &mut flow.diagnostics,
+                            &src.rel,
+                            line,
+                            format!("Access of {verb} {path} not read: {why}"),
+                        );
+                        AccessState::Protected(Condition::Unknown(why))
+                    }
+                };
                 if access == AccessState::Protected(Condition::Never)
                     && env.denied.borrow_mut().insert(src.rel.clone())
                 {
@@ -552,7 +596,7 @@ impl Project {
     fn decide(
         &self,
         class: &Decl,
-        method: (&str, &[Attr], &Sig, bool),
+        method: (&str, &[Attr], &Sig),
         verb: &str,
         path: &str,
         env: &Env,
@@ -614,7 +658,7 @@ impl Project {
     fn inherited(
         &self,
         class: &Decl,
-        method: (&str, &[Attr], &Sig, bool),
+        method: (&str, &[Attr], &Sig),
         types: &Types,
     ) -> Option<Decision> {
         if let Some(a) = self.annotation(method.1) {
@@ -627,20 +671,9 @@ impl Project {
             ));
         }
         for t in &supers {
-            let named: Vec<_> = t.methods.iter().filter(|m| m.0 == method.0).collect();
-            // A name declared once is the override target, whatever its types.
-            let single = named.len() == 1 && !method.3;
-            let same: Vec<_> = (named.into_iter())
-                .map(|m| {
-                    (
-                        m,
-                        if single {
-                            Fit::Yes
-                        } else {
-                            fits(&m.2, method.2)
-                        },
-                    )
-                })
+            let same: Vec<_> = (t.methods.iter())
+                .filter(|m| m.0 == method.0)
+                .map(|m| (m, fits(&m.2, method.2)))
                 .filter(|m| m.1 != Fit::No)
                 .collect();
             if same.len() > 1 || same.iter().any(|m| m.1 == Fit::Maybe) {
@@ -1472,10 +1505,84 @@ mod tests {
             f.endpoints
         );
         assert!(
-            f.diagnostics.iter().any(|d| d.severity == DiagnosticSeverity::Gap
-                && d.message.contains("overloads i")),
+            f.diagnostics
+                .iter()
+                .any(|d| d.severity == DiagnosticSeverity::Gap && d.message.contains("declares i")),
             "{:#?}",
             f.diagnostics
         );
+    }
+
+    const KT_HEAD: &str = "package a\nimport io.micronaut.http.annotation.*\nimport io.micronaut.security.annotation.Secured\n";
+
+    #[test]
+    fn vararg_override_in_kotlin_matches_the_java_varargs_method() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/l\") @Secured(\"isAnonymous()\") String list(String... ids);",
+        );
+        let ctl = format!(
+            "{KT_HEAD}@Controller(\"/c\") class C : Api {{\n  fun list(): String = \"\"\n  @Secured(\"ROLE_X\") override fun list(vararg ids: String): String = \"\"\n}}\n"
+        );
+        let f = run(SEC, &[("src/Api.java", &api), ("src/C.kt", &ctl)]);
+        assert_eq!(ep(&f, "GET", "/c/l").access, prot(role("ROLE_X")));
+    }
+
+    #[test]
+    fn unmatched_overload_never_inherits_the_open_route() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/i\") @Secured(\"isAnonymous()\") String i(String a);",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Secured(\"ROLE_X\") public String i(int a) { return \"\"; }\n\
+             @Secured(\"ROLE_Y\") public String i(int) { return \"\"; }",
+        );
+        let f = run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]);
+        assert!(
+            f.endpoints.iter().all(|e| e.access != AccessState::Open),
+            "{:#?}",
+            f.endpoints
+        );
+        assert!(gaps(&f) > 0, "{:#?}", f.diagnostics);
+    }
+
+    #[test]
+    fn single_supertype_method_with_other_parameters_is_not_inherited() {
+        let base = java_type(
+            "class",
+            "Base",
+            "@Get(\"/g\") @Secured(\"ROLE_A\") String get(Long id) { return \"\"; }",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C extends Base",
+            "@Get(\"/h\") public String get(String s) { return \"\"; }",
+        );
+        let f = run(
+            SEC,
+            &[
+                ("src/Base.java", &base),
+                ("src/C.java", &ctl),
+                (YML, ANY_URL),
+            ],
+        );
+        assert_eq!(ep(&f, "GET", "/c/h").access, AccessState::Open);
+        assert_eq!(ep(&f, "GET", "/c/g").access, prot(role("ROLE_A")));
+    }
+
+    #[test]
+    fn kotlin_generic_function_counts_as_a_declaration() {
+        let api =
+            format!("{KT_HEAD}interface Api {{\n  @Get(\"/i\") fun i(a: String): String\n}}\n");
+        let ctl = format!(
+            "{KT_HEAD}@Controller(\"/c\") class C : Api {{\n  fun i(a: Int): String = \"\"\n  @Secured(\"ROLE_X\") override fun <T> i(a: String): String = \"\"\n}}\n"
+        );
+        let f = run(SEC, &[("src/Api.kt", &api), ("src/C.kt", &ctl)]);
+        assert_eq!(ep(&f, "GET", "/c/i").access, prot(role("ROLE_X")));
     }
 }
