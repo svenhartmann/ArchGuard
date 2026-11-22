@@ -67,6 +67,8 @@ impl Default for CycleLimits {
 
 pub struct State {
     pub idx: Index,
+    /// `Class.method` -> how its access check holds (`access_ui::how_kind`); from the UI flow.
+    pub layers: HashMap<String, i32>,
     pub cycles: CycleModel,
     pub labels: Labels,
     pub filter: Filter,
@@ -116,6 +118,7 @@ impl State {
         let mut s = Self {
             cycles: cycles::compute(&idx),
             idx,
+            layers: HashMap::new(),
             labels: Labels::default(),
             filter,
             mode: Mode::Connections,

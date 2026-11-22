@@ -53,11 +53,14 @@ fn kinds(items: &[SettingsItem]) -> Vec<i32> {
 fn a_group_lists_its_fields_with_provenance() {
     let (_dir, _, mut s) = project("[rules]\nmax_acd = 3.5\n");
     let items = in_group(&mut s, Group::Rules);
-    assert!(
-        items.iter().all(|i| i.kind == FIELD),
-        "no heading for [rules]"
-    );
-    let paths: Vec<_> = items.iter().map(|i| i.path.to_string()).collect();
+    // only the nested [views.access_layers] table has a heading
+    let headings: Vec<_> = (items.iter().filter(|i| i.kind != FIELD))
+        .map(|i| i.label.to_string())
+        .collect();
+    assert_eq!(headings, ["views.access_layers"]);
+    let paths: Vec<_> = (items.iter().filter(|i| i.kind == FIELD))
+        .map(|i| i.path.to_string())
+        .collect();
     assert_eq!(
         paths,
         [
@@ -70,7 +73,9 @@ fn a_group_lists_its_fields_with_provenance() {
             "licenses.deny",
             "licenses.unknown",
             "views.conventions",
-            "views.backends"
+            "views.backends",
+            "views.access_layers.chain",
+            "views.access_layers.show_unguarded"
         ]
     );
     let acd = item(&items, "rules.max_acd");

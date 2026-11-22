@@ -2,7 +2,7 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
-import { Button, SectionHeading } from "widgets.slint";
+import { Button, Badge, SectionHeading } from "widgets.slint";
 import { CallsData, CallsTreeRow, CallsModel } from "calls_data.slint";
 import { CallsColumn, Muted } from "calls_parts.slint";
 import { TreeKeys } from "tree_keys.slint";
@@ -82,6 +82,10 @@ component TreeLine inherits Rectangle {
             font-size: Theme.font-micro;
             vertical-alignment: center;
         }
+        if item.layer == 1: Badge { variant: "success"; text: @tr("enforced"); }
+        if item.layer == 2: Badge { variant: "warning"; text: @tr("path only"); }
+        if item.layer == 3: Badge { variant: "neutral"; text: @tr("hint"); }
+        if item.layer == 4: Badge { variant: "neutral"; text: @tr("data filter"); }
         if item.cycle: Text {
             text: "↻";
             color: Theme.cycle;

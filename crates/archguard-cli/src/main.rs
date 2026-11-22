@@ -35,6 +35,7 @@ use args::{BaselineAction, Cli, Command, Format, format_label};
 use cycle_view::{cycle_findings, cyclic_edges};
 use export_cmd::doc;
 use output::{EXIT_FOUND, EXIT_OK, EXIT_USAGE, analysis_error, emit, to_pretty_json, usage};
+mod access_layers_cmd;
 mod architecture_cmd;
 mod assessment_cmd;
 mod check_cmd;
@@ -108,15 +109,21 @@ fn analyze_with_zones(
 
 /// Parse-free core: everything after argument parsing, mapped to a Kap. 9
 /// exit code.
+/// `doctor` and `update` need no project.
+fn tool_command(cli: &Cli) -> Option<i32> {
+    match &cli.command {
+        Command::Doctor => Some(doctor_cmd::run(cli)),
+        Command::Update { check } => Some(update_cmd::run(cli, *check)),
+        _ => None,
+    }
+}
+
 fn run(cli: &Cli) -> i32 {
     if let Command::Mcp { root } = &cli.command {
         return mcp(root);
     }
-    if matches!(cli.command, Command::Doctor) {
-        return doctor_cmd::run(cli);
-    }
-    if let Command::Update { check } = &cli.command {
-        return update_cmd::run(cli, *check);
+    if let Some(code) = tool_command(cli) {
+        return code;
     }
     let root = match resolve_root(cli.command.path()) {
         Ok(root) => root,
@@ -374,6 +381,7 @@ fn run(cli: &Cli) -> i32 {
         | Command::Services { .. }
         | Command::Runtime { .. }
         | Command::UiFlow { .. }
+        | Command::AccessLayers { .. }
         | Command::Domain { .. }
         | Command::Workspace { .. }
         | Command::Contracts { .. }
@@ -426,6 +434,9 @@ fn standalone(cli: &Cli, root: &Path) -> Option<i32> {
     Some(match &cli.command {
         Command::Services { fail_on_found, .. } => service_cmd::run(cli, root, *fail_on_found),
         Command::Runtime { .. } => runtime_cmd::run(cli, root),
+        Command::AccessLayers { from, only, .. } => {
+            access_layers_cmd::run(cli, root, *from, only.is_some())
+        }
         Command::UiFlow {
             action: Some(action),
             ..

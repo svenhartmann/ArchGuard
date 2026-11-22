@@ -14,6 +14,7 @@ import { ServicesView, ServicesData } from "services_view.slint";
 import { RuntimeView, RuntimeData } from "runtime_view.slint";
 import { QualityView, QualityData } from "quality_view.slint";
 import { SecurityView, SecurityData } from "security_view.slint";
+import { AccessView, AccessData } from "access_view.slint";
 import { ScreensView, ScreensData, ScreensNote } from "screens_view.slint";
 import { DomainView, DomainData } from "domain_view.slint";
 import { SettingsView, SettingsData, SettingsEdit, SettingsModel } from "settings_view.slint";
@@ -33,7 +34,7 @@ export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowI
 export { GraphData, Crumb, Hit, CycleItem, Neighbor, MatrixData, FileData, NodeDep }
 // Per-tab data globals, set from src/<tab>_ui.rs.
 export { RichData }
-export { StartData, ArchitectureData, CallsData, ServicesData, RuntimeData, QualityData, SecurityData, ScreensData, ScreensNote, DomainData }
+export { StartData, ArchitectureData, CallsData, ServicesData, RuntimeData, QualityData, SecurityData, ScreensData, ScreensNote, DomainData, AccessData }
 export { SettingsData, SettingsEdit, SettingsModel }
 // Templates for text the Rust side composes (`tab_support::Texts`).
 export { Templates, Template, Fmt, KpiItem }
@@ -401,7 +402,7 @@ export component AppWindow inherits Window {
             }
             Menu {
                 title: @tr("Open in new tab");
-                for v in ["start", "architecture", "graph", "dsm", "calls", "services", "runtime", "screens", "domain", "quality", "security"]: MenuItem {
+                for v in ["start", "architecture", "graph", "dsm", "calls", "services", "runtime", "screens", "access", "domain", "quality", "security"]: MenuItem {
                     title: Views.label(v);
                     enabled: root.ready;
                     activated => { root.open-view-tab(v); }
@@ -547,7 +548,7 @@ export component AppWindow inherits Window {
                 m-count := Button { compact: true; icon: Icons.package; text: Fmt.int(root.sub-projects.length); }
                 m-labels := Text {
                     text: Views.label("start") + Views.label("architecture") + Views.label("graph") + Views.label("dsm") + Views.label("calls")
-                        + Views.label("services") + Views.label("runtime") + Views.label("screens") + Views.label("domain") + Views.label("quality") + Views.label("security");
+                        + Views.label("services") + Views.label("runtime") + Views.label("screens") + Views.label("access") + Views.label("domain") + Views.label("quality") + Views.label("security");
                     font-size: Theme.font-body;
                     font-weight: Theme.weight-strong;
                 }
@@ -609,6 +610,7 @@ export component AppWindow inherits Window {
                         ViewBarTab { pad: header.tab-pad; view: "services"; active: root.tab == "services"; empty-reason: root.empty-reason("services"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "runtime"; active: root.tab == "runtime"; empty-reason: root.empty-reason("runtime"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "screens"; active: root.tab == "screens"; empty-reason: root.empty-reason("screens"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
+                        ViewBarTab { pad: header.tab-pad; view: "access"; active: root.tab == "access"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "domain"; active: root.tab == "domain"; empty-reason: root.empty-reason("domain"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         Rectangle { width: 9px; Divider { } }
                         ViewBarTab { pad: header.tab-pad; view: "quality"; active: root.tab == "quality"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
@@ -826,6 +828,9 @@ export component AppWindow inherits Window {
                         vertical-stretch: 1;
                     }
                     if p.view == "screens": ScreensView {
+                        vertical-stretch: 1;
+                    }
+                    if p.view == "access": AccessView {
                         vertical-stretch: 1;
                     }
                     if p.view == "domain": DomainView {

@@ -1,0 +1,47 @@
+msgid "Access layers"
+msgstr "Zugriffsschichten"
+
+msgid "enforced"
+msgstr "erzwungen"
+
+msgid "path only"
+msgstr "nur auf einem Pfad"
+
+msgid "hint"
+msgstr "Hinweis"
+
+msgid "data filter"
+msgstr "Datenfilter"
+
+msgid "service only"
+msgstr "nur Service"
+
+msgid "Reading the access layers …"
+msgstr "Zugriffsschichten werden gelesen …"
+
+msgid "By endpoint"
+msgstr "Nach Endpunkt"
+
+msgid "By screen"
+msgstr "Nach Screen"
+
+msgid "Only service-guarded"
+msgstr "Nur Service-geschützt"
+
+msgid "No endpoints found"
+msgstr "Keine Endpunkte gefunden"
+
+msgid "The access chain needs backend endpoints; with “By screen” also a screen that calls one."
+msgstr "Die Zugriffskette braucht Backend-Endpunkte; bei „Nach Screen“ auch einen Screen, der einen aufruft."
+
+msgid "Screen"
+msgstr "Screen"
+
+msgid "Data"
+msgstr "Daten"
+
+msgid "Effective"
+msgstr "Wirksam"
+
+msgid "Effective: {}"
+msgstr "Wirksam: {}"

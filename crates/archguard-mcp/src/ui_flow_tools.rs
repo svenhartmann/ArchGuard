@@ -179,7 +179,7 @@ fn matrix_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData> {
                     _ => outcome(*c),
                 }))
                 .collect();
-            json!({"kind":"matrix","row":r.kind,"label":r.label,"file":r.file,"line":r.line,"requires":r.requires,"weak":r.weak,"cells":cells})
+            json!({"kind":"matrix","row":r.kind,"label":r.label,"file":r.file,"line":r.line,"requires":r.requires,"layer":r.layer,"weak":r.weak,"cells":cells})
         })
         .filter(|r| q.is_empty() || r.to_string().to_lowercase().contains(&q))
         .collect();

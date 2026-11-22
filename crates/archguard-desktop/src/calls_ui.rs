@@ -45,7 +45,12 @@ fn build_from(calls: &Calls) -> CallsState {
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
         let calls = Calls::of(data);
-        move || build_from(&calls)
+        let root = data.root.to_path_buf();
+        move || {
+            let mut s = build_from(&calls);
+            s.layers = crate::access_ui::method_layers(&root);
+            s
+        }
     });
 }
 
