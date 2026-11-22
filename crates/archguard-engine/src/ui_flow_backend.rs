@@ -119,6 +119,7 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
                 minimal::scan(src, sources, &index, &mut call_sites, &mut out);
             } else {
                 spring::scan(src, &index, &conf, &mut out);
+                webflux::scan(src, sources, &index, &conf, &mut out);
             }
         }
         spring::central_rules(sources, &index, &conf, &mut out, first);
@@ -3130,6 +3131,11 @@ mod aspnet {
     pub(super) use uses::{Use, argument, custom};
 }
 
+// Spring WebFlux functional routes; the text lives in its own file.
+mod webflux {
+    include!("ui_flow_webflux.rs");
+}
+
 /// Spring MVC controllers and Spring Security / JSR-250 annotations.
 mod spring {
     use super::lex::{literals, named, positional};
@@ -3518,7 +3524,11 @@ mod spring {
                     .is_some_and(|c| src.text[open + 1..c].trim().is_empty());
                 match (call, name) {
                     (true, "and") => return false,
-                    (true, "authorizeRequests" | "authorizeHttpRequests") if empty => return true,
+                    (true, "authorizeRequests" | "authorizeHttpRequests" | "authorizeExchange")
+                        if empty =>
+                    {
+                        return true;
+                    }
                     _ => {}
                 }
                 let before = skip_ws_back(b, start);
@@ -3629,10 +3639,20 @@ mod spring {
             None
         }
 
+        /// The servlet and the WebFlux security builder.
+        pub(super) const HTTP_TYPES: [&str; 2] = ["HttpSecurity", "ServerHttpSecurity"];
+
+        /// Whether `text` mentions a security builder type.
+        pub(super) fn mentions_http(text: &str) -> bool {
+            HTTP_TYPES
+                .iter()
+                .any(|t| lex::words(text, t).next().is_some())
+        }
+
         /// Names of the `HttpSecurity` parameters (`HttpSecurity http`, `http: HttpSecurity`).
         pub(super) fn http_vars(src: &Source) -> Vec<String> {
             let mut vars = Vec::new();
-            for p in lex::words(&src.text, "HttpSecurity") {
+            for p in HTTP_TYPES.iter().flat_map(|t| lex::words(&src.text, t)) {
                 let Some(open) = enclosing_open(src, p) else {
                     continue;
                 };
@@ -3640,7 +3660,7 @@ mod spring {
                     continue;
                 };
                 for part in lex::split_top(&src.text[open + 1..close]) {
-                    if lex::words(part, "HttpSecurity").next().is_none() {
+                    if !mentions_http(part) {
                         continue;
                     }
                     let name = match part.split_once(':') {
@@ -3657,7 +3677,7 @@ mod spring {
 
         /// Whole identifiers that scope a security chain when called outside the
         /// authorization block (`ignoringAntMatchers` and the like do not).
-        pub(super) const SCOPING: [&str; 10] = [
+        pub(super) const SCOPING: [&str; 11] = [
             "antMatcher",
             "antMatchers",
             "mvcMatcher",
@@ -3668,6 +3688,7 @@ mod spring {
             "requestMatchers",
             "securityMatcher",
             "securityMatchers",
+            "pathMatchers",
         ];
         /// Kotlin scope functions and Spring configurer calls: they take or
         /// provide the `HttpSecurity` as `this`/`it`/an argument.
@@ -3715,10 +3736,10 @@ mod spring {
         fn is_declaration(src: &Source, p: usize, end: usize) -> bool {
             let b = src.bytes();
             let typed = b.get(skip_ws(b, end)) == Some(&b':')
-                && src.text[skip_ws(b, end) + 1..]
-                    .trim_start()
-                    .starts_with("HttpSecurity");
-            typed || word_before(src, skip_ws_back(b, p)) == "HttpSecurity"
+                && HTTP_TYPES
+                    .iter()
+                    .any(|t| src.text[skip_ws(b, end) + 1..].trim_start().starts_with(t));
+            typed || HTTP_TYPES.contains(&word_before(src, skip_ws_back(b, p)))
         }
 
         /// The `{ … }` of `with(http) { … }` or `http.apply { … }` (any [`SCOPE_FUNS`]).
@@ -3840,7 +3861,7 @@ mod spring {
         ) -> Option<String> {
             let lambdas = |s: &Source| super::chain::auth_lambdas(s);
             let at = |s: &Source, p: usize| format!("{}:{}", s.rel, s.line(p));
-            let mentions = |s: &&Source| lex::words(&s.text, "HttpSecurity").next().is_some();
+            let mentions = |s: &&Source| mentions_http(&s.text);
             let scoped = (sources.iter())
                 .filter(|s| !s.rel.ends_with(".cs"))
                 .filter(mentions)
@@ -3908,7 +3929,7 @@ mod spring {
         use super::super::lex::{named, positional, skip_ws, skip_ws_back, split_top, words};
         use super::super::*;
         use super::chain::{
-            Hit, Rule, authorize_sites, bean, calls, conditional, is_adapter, matches,
+            CHAIN_TYPES, Hit, Rule, authorize_sites, bean, calls, conditional, is_adapter, matches,
         };
 
         /// One security configuration: a `SecurityFilterChain` bean method, a
@@ -3960,10 +3981,14 @@ mod spring {
                     rules: vec![],
                 })
                 .collect();
-            for p in words(&src.text, "SecurityFilterChain").filter(|p| bean(src, *p)) {
+            let beans = CHAIN_TYPES.iter().flat_map(|t| {
+                words(&src.text, t)
+                    .filter(|p| bean(src, *p, t.len()))
+                    .map(move |p| (p, t.len()))
+            });
+            for (p, len) in beans {
                 let b = src.bytes();
-                let name_end =
-                    super::chain_span::ident_end(src, skip_ws(b, p + "SecurityFilterChain".len()));
+                let name_end = super::chain_span::ident_end(src, skip_ws(b, p + len));
                 let open = skip_ws(b, name_end);
                 let close = src.pair(open).unwrap_or(open);
                 let body = src.text[close..].find(['{', ';']).map(|k| k + close);
@@ -3972,8 +3997,7 @@ mod spring {
                     _ => close,
                 };
                 let attrs = all.iter().find(|d| !d.class && d.open == open);
-                let name =
-                    src.text[skip_ws(b, p + "SecurityFilterChain".len())..name_end].to_string();
+                let name = src.text[skip_ws(b, p + len)..name_end].to_string();
                 units.push(Unit {
                     src,
                     name,
@@ -4115,7 +4139,8 @@ mod spring {
             let close = |a: &str| offset(src, a) + a.len() + 1;
             match name {
                 "securityMatcher" | "antMatcher" | "mvcMatcher" => {
-                    literal_matcher(src, index, at, close(args), args).map(|r| (r, close(args), 0))
+                    let inner = reactive_matcher(args).unwrap_or(args);
+                    literal_matcher(src, index, at, close(args), inner).map(|r| (r, close(args), 0))
                 }
                 "securityMatchers" => {
                     lambda_matchers(src, index, at, args).map(|r| (r, close(args), 0))
@@ -4124,6 +4149,17 @@ mod spring {
                     .map(|(r, last)| (r, close(chain[last].2), last)),
                 _ => None,
             }
+        }
+
+        /// The literal arguments of a WebFlux scope matcher,
+        /// `new PathPatternParserServerWebExchangeMatcher("/a")` or
+        /// `ServerWebExchangeMatchers.pathMatchers("/a")`; a slice of `args`.
+        fn reactive_matcher(args: &str) -> Option<&str> {
+            let t = args.trim();
+            let rest = t
+                .strip_prefix("new PathPatternParserServerWebExchangeMatcher")
+                .or_else(|| t.strip_prefix("ServerWebExchangeMatchers.pathMatchers"))?;
+            rest.strip_prefix('(')?.strip_suffix(')')
         }
 
         /// `securityMatchers(m -> m.requestMatchers("/a", "/b"))`.
@@ -4305,11 +4341,14 @@ mod spring {
         use super::sequence::{Unit, apply, scope, units, unordered, unreadable_classes};
         use super::spel;
 
-        const MATCHERS: [&str; 4] = [
+        const MATCHERS: [&str; 6] = [
             "requestMatchers",
             "mvcMatchers",
             "antMatchers",
             "anyRequest",
+            // WebFlux
+            "pathMatchers",
+            "anyExchange",
         ];
 
         pub(super) struct Rule {
@@ -4341,7 +4380,11 @@ mod spring {
         ) {
             let found: Vec<&Source> = (sources.iter())
                 .filter(|s| !s.rel.ends_with(".cs"))
-                .filter(|s| !adapters(s).is_empty() || s.text.contains("SecurityFilterChain"))
+                .filter(|s| {
+                    !adapters(s).is_empty()
+                        || s.text.contains("SecurityFilterChain")
+                        || s.text.contains("SecurityWebFilterChain")
+                })
                 .collect();
             let mut units: Vec<Unit> = found.iter().flat_map(|s| units(s)).collect();
             let Some(home) = units.first().map(|u| (u.src, u.span.0)) else {
@@ -4435,10 +4478,14 @@ mod spring {
                 .collect()
         }
 
-        /// A `SecurityFilterChain name(` method declaration at `p`.
-        pub(super) fn bean(src: &Source, p: usize) -> bool {
+        /// Types of a chain bean: servlet and WebFlux.
+        pub(super) const CHAIN_TYPES: [&str; 2] = ["SecurityFilterChain", "SecurityWebFilterChain"];
+
+        /// A `SecurityFilterChain name(` method declaration at `p`; `len` is the
+        /// length of the type name there.
+        pub(super) fn bean(src: &Source, p: usize, len: usize) -> bool {
             let b = src.bytes();
-            let s = skip_ws(b, p + "SecurityFilterChain".len());
+            let s = skip_ws(b, p + len);
             let e = s + b[s..].iter().take_while(|c| lex::is_ident(**c)).count();
             e > s && b.get(skip_ws(b, e)) == Some(&b'(')
         }
@@ -4446,14 +4493,18 @@ mod spring {
         /// The `(` of every `authorizeHttpRequests`/`authorizeRequests` call, in order.
         pub(super) fn authorize_sites(src: &Source) -> Vec<usize> {
             let b = src.bytes();
-            let mut sites: Vec<usize> = ["authorizeHttpRequests", "authorizeRequests"]
-                .iter()
-                .flat_map(|kw| words(&src.text, kw).map(move |p| (p, kw.len())))
-                .filter_map(|(p, len)| {
-                    let open = skip_ws(b, p + len);
-                    (b.get(open) == Some(&b'(')).then_some(open)
-                })
-                .collect();
+            let mut sites: Vec<usize> = [
+                "authorizeHttpRequests",
+                "authorizeRequests",
+                "authorizeExchange",
+            ]
+            .iter()
+            .flat_map(|kw| words(&src.text, kw).map(move |p| (p, kw.len())))
+            .filter_map(|(p, len)| {
+                let open = skip_ws(b, p + len);
+                (b.get(open) == Some(&b'(')).then_some(open)
+            })
+            .collect();
             sites.sort();
             sites
         }
@@ -4601,7 +4652,7 @@ mod spring {
             args: &str,
         ) -> (usize, Vec<String>, Option<Vec<String>>) {
             match name {
-                "anyRequest" => return (at, vec![], Some(vec!["/**".into()])),
+                "anyRequest" | "anyExchange" => return (at, vec![], Some(vec!["/**".into()])),
                 // Forwards and error dispatches, never a controller request.
                 "dispatcherTypeMatchers" => return (at, vec![], Some(vec![])),
                 _ => {}
@@ -4737,22 +4788,7 @@ mod spring {
             let arity = src
                 .pair(d.open)
                 .map_or(0, |c| split_top(&src.text[d.open + 1..c]).len());
-            let up = index.inherited(class, &d.name, arity);
-            let (on_method, ambiguous) = without_conflicts(conf, class, d, &up);
-            let mut levels: Vec<(&Source, &[Attr])> = vec![(src, &d.attrs)];
-            levels.extend(on_method.iter().map(|(s, a)| (*s, a.as_slice())));
-            levels.push((src, &class.attrs));
-            levels.extend(up.on_type.iter().map(|(s, a)| (*s, a.as_slice())));
-            out.1.hit = false;
-            let mut access = layer(conf, index, out, &levels).unwrap_or(AccessState::Undeclared);
-            let ignored = std::mem::take(&mut out.1.hit);
-            for g in &up.gaps {
-                out.at(src, d.open, g.clone());
-            }
-            for text in &ambiguous {
-                let unknown = out.unknown(src, d.open, text);
-                access = require(&access, unknown);
-            }
+            let (access, ignored) = declared_access(conf, index, out, (src, class, d), arity);
             let full: Vec<String> = bases
                 .iter()
                 .flat_map(|b| paths.iter().map(move |p| path(&[b, p])))
@@ -4771,6 +4807,35 @@ mod spring {
             first,
             handlers::of_method(src, &class.name, &d.name, d.open),
         );
+    }
+
+    /// The access the annotations of method `d` of `class` declare (own,
+    /// inherited and class level) and whether an annotation was not applied.
+    /// Shared with the WebFlux handler methods.
+    pub(super) fn declared_access(
+        conf: &Conf,
+        index: &Index,
+        out: &mut Out,
+        (src, class, d): (&Source, &Decl, &Decl),
+        arity: usize,
+    ) -> (AccessState, bool) {
+        let up = index.inherited(class, &d.name, arity);
+        let (on_method, ambiguous) = without_conflicts(conf, class, d, &up);
+        let mut levels: Vec<(&Source, &[Attr])> = vec![(src, &d.attrs)];
+        levels.extend(on_method.iter().map(|(s, a)| (*s, a.as_slice())));
+        levels.push((src, &class.attrs));
+        levels.extend(up.on_type.iter().map(|(s, a)| (*s, a.as_slice())));
+        out.1.hit = false;
+        let mut access = layer(conf, index, out, &levels).unwrap_or(AccessState::Undeclared);
+        let ignored = std::mem::take(&mut out.1.hit);
+        for g in &up.gaps {
+            out.at(src, d.open, g.clone());
+        }
+        for text in &ambiguous {
+            let unknown = out.unknown(src, d.open, text);
+            access = require(&access, unknown);
+        }
+        (access, ignored)
     }
 
     /// The supertypes' method annotation levels without the families that
