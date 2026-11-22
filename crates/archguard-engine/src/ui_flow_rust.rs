@@ -2131,17 +2131,22 @@ mod tauri {
             })?;
             Some((rel.clone(), files::read(root, rel, flow)?))
         };
-        let manifest = read("build.rs", flow)
-            .map(|(_, text)| app_manifest(&text))
-            .unwrap_or_default();
+        let build = read("build.rs", flow).map(|(_, text)| app_manifest(&text));
+        let build_file = app.tauri_files.iter().any(|r| r.ends_with("build.rs"));
+        // A build script or configuration that exists but is not read leaves the ACL incomplete.
+        let mut incomplete = build_file && build.is_none();
+        let manifest = build.unwrap_or_default();
         let conf = ["tauri.conf.json", "tauri.conf.json5", "Tauri.toml"]
             .iter()
             .find_map(|name| read(name, flow));
+        incomplete |= conf.is_none()
+            && (app.tauri_files.iter())
+                .any(|r| r.contains("tauri.conf.") || r.ends_with("Tauri.toml"));
         let conf = conf.map(|(rel, text)| {
             let value = parse(app, &rel, &text);
             (rel, text, value)
         });
-        let acl = Acl::read(root, app, &manifest, conf.as_ref(), flow);
+        let acl = Acl::read(root, app, (manifest, incomplete), conf.as_ref(), flow);
         commands(app, &acl, flow);
         if let Some(conf) = &conf {
             conf_windows(app, conf, flow, known);
@@ -2165,24 +2170,55 @@ mod tauri {
         serde_json::from_str(text).map_err(|e| e.to_string())
     }
 
-    /// Commands named in `AppManifest::new().commands(&[…])`.
-    fn app_manifest(text: &str) -> BTreeSet<String> {
+    /// What `build.rs` says about the app ACL.
+    #[derive(Default)]
+    struct Manifest {
+        /// Literal names of `AppManifest::new().commands(&[…])`.
+        commands: BTreeSet<String>,
+        /// The `commands` argument is not a list of string literals.
+        unread: bool,
+    }
+
+    fn app_manifest(text: &str) -> Manifest {
         let mask = crate::lang_rust::mask(text);
         let code = crate::lang_rust::code(text);
+        let mut m = Manifest::default();
         let Some(at) = words(&mask, "AppManifest").first().copied() else {
-            return BTreeSet::new();
+            return m;
         };
         let Some(c) = words(&mask[at..], "commands").first().map(|c| c + at) else {
-            return BTreeSet::new();
+            return m;
         };
-        let Some(open) = mask[c..].find('[').map(|o| o + c) else {
-            return BTreeSet::new();
+        let b = mask.as_bytes();
+        let args = next_nonws(b, c + 8).filter(|&k| b[k] == b'(');
+        let args = args.and_then(|o| Some((o, matching(b, o)?)));
+        let list = args.and_then(|(o, close)| {
+            let k = next_nonws(b, o + 1).filter(|&k| k < close)?;
+            let k = if b[k] == b'&' {
+                next_nonws(b, k + 1)?
+            } else {
+                k
+            };
+            if b[k] == b'[' {
+                Some((k, matching(b, k)?))
+            } else {
+                None
+            }
+        });
+        let Some((open, close)) = list else {
+            m.unread = true;
+            return m;
         };
-        let close = matching(mask.as_bytes(), open).unwrap_or(open);
-        (split_top(&mask[open + 1..close], ","))
-            .into_iter()
-            .filter_map(|p| literal_value(&code[offset(&mask, p)..offset(&mask, p) + p.len()]))
-            .collect()
+        for p in split_top(&mask[open + 1..close], ",") {
+            if p.trim().is_empty() {
+                continue;
+            }
+            match literal_value(&code[offset(&mask, p)..offset(&mask, p) + p.len()]) {
+                Some(name) => drop(m.commands.insert(name)),
+                None => m.unread = true,
+            }
+        }
+        m
     }
 
     /// A capability: identifier, windows, permissions.
@@ -2211,16 +2247,23 @@ mod tauri {
         defs: BTreeMap<String, Def>,
         /// A build manifest or a permission file exists: app commands are checked.
         active: bool,
+        /// An input of the ACL (build script, configuration, capability or
+        /// permission file) is not read completely: nothing is `never` for lack of a grant.
+        incomplete: bool,
     }
 
     /// The parsed configuration: (file, text, value or parse error).
     type Conf = (String, String, Result<Value, String>);
 
-    fn strings(v: Option<&Value>) -> Vec<String> {
+    /// The names of a list; a string, or an object with an `identifier`.
+    fn strings(v: Option<&Value>) -> Result<Vec<String>, String> {
         let list = v.and_then(Value::as_array).into_iter().flatten();
-        list.filter_map(|p| p.as_str().or_else(|| p.get("identifier")?.as_str()))
-            .map(str::to_string)
-            .collect()
+        let name = |p: &Value| {
+            let id = p.as_str().or_else(|| p.get("identifier")?.as_str());
+            id.map(str::to_string)
+                .ok_or(format!("entry `{p}` is no name"))
+        };
+        list.map(name).collect()
     }
 
     /// One capability, a list of them, or `{ "capabilities": [ … ] }`.
@@ -2240,8 +2283,8 @@ mod tauri {
         }
         Ok(Cap {
             id: id.to_string(),
-            windows: strings(v.get("windows")),
-            perms: strings(v.get("permissions")),
+            windows: strings(v.get("windows"))?,
+            perms: strings(v.get("permissions"))?,
         })
     }
 
@@ -2276,13 +2319,19 @@ mod tauri {
         fn read(
             root: &Path,
             app: &App,
-            manifest: &BTreeSet<String>,
+            (manifest, mut incomplete): (Manifest, bool),
             conf: Option<&Conf>,
             flow: &mut UiFlow,
         ) -> Acl {
-            let (files, defs, permission_files) = Acl::files(root, app, flow);
-            let caps = Acl::active(files, conf, flow);
+            let (files, defs, permission_files) = Acl::files(root, app, &mut incomplete, flow);
+            let caps = Acl::active(files, conf, &mut incomplete, flow);
+            incomplete |= manifest.unread;
+            if manifest.unread {
+                let message = "AppManifest::commands is not a list of string literals; the commands of the app ACL are unknown.";
+                nav::diag(flow, "build.rs", 0, message.into(), true);
+            }
             if let Some((rel, _, Err(e))) = conf {
+                incomplete = true;
                 let message = format!(
                     "Configuration not read ({e}); the active capability list is unknown, every capability file counts."
                 );
@@ -2290,13 +2339,14 @@ mod tauri {
             }
             Acl {
                 caps,
-                active: !manifest.is_empty() || permission_files,
+                active: !manifest.commands.is_empty() || manifest.unread || permission_files,
+                incomplete,
                 defs,
             }
         }
 
         /// Every capability file and permission file of the package.
-        fn files(root: &Path, app: &App, flow: &mut UiFlow) -> Files {
+        fn files(root: &Path, app: &App, incomplete: &mut bool, flow: &mut UiFlow) -> Files {
             let (mut files, mut defs, mut permission_files) = (vec![], BTreeMap::new(), false);
             for rel in &app.tauri_files {
                 let in_dir = |d: &str| rel.contains(&format!("{d}/"));
@@ -2304,6 +2354,7 @@ mod tauri {
                     continue;
                 }
                 let Some(text) = files::read(root, rel, flow) else {
+                    *incomplete = true;
                     continue;
                 };
                 let value = parse(app, rel, &text);
@@ -2317,8 +2368,9 @@ mod tauri {
                 } else {
                     permission_files = true;
                     match &value {
-                        Ok(v) => definitions(v, &mut defs),
+                        Ok(v) => *incomplete |= !definitions(v, &mut defs),
                         Err(e) => {
+                            *incomplete = true;
                             let message = format!(
                                 "Permission file not read ({e}); its permissions are unknown."
                             );
@@ -2342,6 +2394,7 @@ mod tauri {
         fn active(
             files: Vec<(String, Capability)>,
             conf: Option<&Conf>,
+            incomplete: &mut bool,
             flow: &mut UiFlow,
         ) -> Vec<(String, Capability)> {
             let listed = conf.and_then(|(rel, _, v)| {
@@ -2362,6 +2415,7 @@ mod tauri {
                 let named = |c: &Capability| c.as_ref().is_ok_and(|c| c.id == id);
                 active.extend(files.iter().filter(|(_, c)| named(c)).cloned());
                 if active.len() == before {
+                    *incomplete = true;
                     let message = format!(
                         "Capability `{id}` is listed in the configuration but not found in a capability file."
                     );
@@ -2374,7 +2428,15 @@ mod tauri {
     }
 
     /// `[[permission]]`, `[[set]]` and `[default]` of a permission file.
-    fn definitions(v: &Value, defs: &mut BTreeMap<String, Def>) {
+    /// Returns whether every list was readable.
+    fn definitions(v: &Value, defs: &mut BTreeMap<String, Def>) -> bool {
+        let mut ok = true;
+        let mut names = |v: Option<&Value>| {
+            strings(v).unwrap_or_else(|_| {
+                ok = false;
+                vec![]
+            })
+        };
         let list = |key: &str| {
             v.get(key)
                 .and_then(Value::as_array)
@@ -2384,20 +2446,21 @@ mod tauri {
         for p in list("permission") {
             if let Some(id) = p.get("identifier").and_then(Value::as_str) {
                 let def = defs.entry(id.to_string()).or_default();
-                def.allow.extend(strings(p.pointer("/commands/allow")));
-                def.deny.extend(strings(p.pointer("/commands/deny")));
+                def.allow.extend(names(p.pointer("/commands/allow")));
+                def.deny.extend(names(p.pointer("/commands/deny")));
             }
         }
         for s in list("set") {
             if let Some(id) = s.get("identifier").and_then(Value::as_str) {
                 let def = defs.entry(id.to_string()).or_default();
-                def.includes.extend(strings(s.get("permissions")));
+                def.includes.extend(names(s.get("permissions")));
             }
         }
         if let Some(d) = v.get("default") {
             let def = defs.entry("default".into()).or_default();
-            def.includes.extend(strings(d.get("permissions")));
+            def.includes.extend(names(d.get("permissions")));
         }
+        ok
     }
 
     fn commands(app: &App, acl: &Acl, flow: &mut UiFlow) {
@@ -2498,10 +2561,10 @@ mod tauri {
             .collect();
         match (granting.len(), unread.is_empty()) {
             (1, _) => AccessState::Protected(granting.remove(0)),
-            (0, true) => AccessState::Protected(Condition::Never),
-            (0, false) => {
+            (0, true) if !acl.incomplete => AccessState::Protected(Condition::Never),
+            (0, _) => {
                 let message = format!(
-                    "No capability grants `{allow}` directly; permission sets are not read: {}.",
+                    "No capability grants `{allow}` directly; permission sets or ACL inputs are not read: {}.",
                     unread.join(", ")
                 );
                 nav::diag(flow, file, line, message, true);
@@ -3645,6 +3708,62 @@ mod tests_tauri_acl {
         assert!(gap);
         let unknown = Condition::Unknown("capability for fs:allow-read-file".into());
         assert_eq!(state, AccessState::Protected(unknown));
+    }
+
+    fn not_never(state: &AccessState) -> bool {
+        *state != AccessState::Protected(Condition::Never)
+    }
+
+    #[test]
+    fn an_unreadable_acl_input_never_gives_never_to_an_unlisted_command() {
+        let c = cap("main", r#"["allow-greet"]"#);
+        let broken_conf = [
+            ("build.rs", BUILD),
+            ("capabilities/main.json", &c),
+            ("tauri.conf.json", "{ not json"),
+        ];
+        let broken_permission = [
+            ("build.rs", BUILD),
+            ("capabilities/main.json", &c),
+            ("permissions/bad.toml", "= ="),
+        ];
+        let broken_capability = [("build.rs", BUILD), ("capabilities/bad.json", "{ nope")];
+        for files in [
+            &broken_conf[..],
+            &broken_permission[..],
+            &broken_capability[..],
+        ] {
+            let (state, gap) = access("", files, "other");
+            assert!(gap && not_never(&state), "{files:?}: {state:?}");
+        }
+    }
+
+    #[test]
+    fn a_manifest_command_list_that_is_not_literal_is_a_gap() {
+        let build = "const COMMANDS: &[&str] = &[\"greet\"];\nfn main() { tauri_build::try_build(tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(COMMANDS))).unwrap(); let x = [\"a\"]; }";
+        let (state, gap) = access("", &[("build.rs", build)], "greet");
+        assert!(gap);
+        assert!(matches!(
+            state,
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn a_non_string_window_entry_makes_the_capability_unknown() {
+        let c = r#"{"identifier": "a", "windows": ["main", 5], "permissions": ["allow-greet"]}"#;
+        let d = cap("b", r#"["deny-greet"]"#);
+        let files = [
+            ("build.rs", BUILD),
+            ("capabilities/a.json", c),
+            ("capabilities/b.json", &d),
+        ];
+        let (state, gap) = access("", &files, "greet");
+        assert!(gap && not_never(&state));
+        assert!(matches!(
+            state,
+            AccessState::Protected(Condition::Unknown(_))
+        ));
     }
 
     #[test]
