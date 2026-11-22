@@ -466,26 +466,55 @@ mod attributes {
         out
     }
 
-    /// Simple names of project attribute classes deriving from `AuthorizeAttribute`
-    /// or implementing `IAuthorizeData` (base classes are checked one level deep only; follow-up: transitive bases).
+    /// Simple names of project classes that derive from `AuthorizeAttribute` or
+    /// implement `IAuthorizeData`, following project base classes transitively.
+    /// A chain that leaves the scanned files through an `...Attribute` base, or
+    /// exceeds the depth bound, is included too: unknown, never "not authorize".
     pub(super) fn derived_attributes(root: &Path, files: &Files) -> BTreeSet<String> {
-        let mut names = BTreeSet::new();
+        let mut bases: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for rel in files.cs.iter().chain(&files.code_behind) {
             let Ok(text) = read_text(root, rel, MAX_BYTES) else {
                 continue;
             };
             let src = backend::Source::new(rel.clone(), &text);
             for d in backend::decls(&src, false) {
-                if d.class
-                    && d.bases
-                        .iter()
-                        .any(|b| b == "AuthorizeAttribute" || b == "IAuthorizeData")
-                {
-                    names.insert(backend::simple(&d.name));
+                if d.class {
+                    let list = bases.entry(backend::simple(&d.name)).or_default();
+                    list.extend(d.bases.iter().cloned());
                 }
             }
         }
+        let mut names = BTreeSet::new();
+        for name in bases.keys() {
+            if derives(name, &bases, &mut Vec::new()) {
+                names.insert(name.clone());
+            }
+        }
         names
+    }
+
+    const MAX_DEPTH: usize = 16;
+
+    fn derives(name: &str, bases: &BTreeMap<String, Vec<String>>, path: &mut Vec<String>) -> bool {
+        if path.iter().any(|p| p == name) {
+            return false;
+        }
+        if path.len() >= MAX_DEPTH {
+            return true;
+        }
+        path.push(name.to_string());
+        let hit = bases.get(name).is_some_and(|list| {
+            list.iter().any(|b| match b.as_str() {
+                "AuthorizeAttribute" | "IAuthorizeData" => true,
+                "Attribute" => false,
+                _ => match bases.contains_key(&backend::simple(b)) {
+                    true => derives(&backend::simple(b), bases, path),
+                    false => b.ends_with("Attribute"),
+                },
+            })
+        });
+        path.pop();
+        hit
     }
 }
 
@@ -3887,6 +3916,36 @@ mod access_tests {
             Protected(Condition::Unknown("MyAuthorize(\"x\")".into()))
         );
         assert!(!flow.complete);
+    }
+
+    #[test]
+    fn transitive_derived_attributes_are_gaps() {
+        let page = "@page \"/p\"\n@attribute [My(\"x\")]\n";
+        let gap = Protected(Condition::Unknown("My(\"x\")".into()));
+        // Two levels, declared in any order.
+        let two = "public class My : BaseAuth { }\npublic class BaseAuth : AuthorizeAttribute { }";
+        let (a, flow) = state(&[("App/P.razor", page), ("App/My.cs", two)], "App:P.razor");
+        assert_eq!(a, gap);
+        assert!(!flow.complete);
+        // Interface through a base.
+        let iface = "public class My : Base { }\npublic class Base : Attribute, IAuthorizeData { }";
+        let (a, _) = state(
+            &[("App/P.razor", page), ("App/My.cs", iface)],
+            "App:P.razor",
+        );
+        assert_eq!(a, gap);
+        // Intermediate base outside the scanned files: unknown, not "not authorize".
+        let open = "public class My : VendorAuthorizeAttribute { }";
+        let (a, flow) = state(&[("App/P.razor", page), ("App/My.cs", open)], "App:P.razor");
+        assert_eq!(a, gap);
+        assert!(!flow.complete);
+        // A cycle terminates and is not an authorize attribute.
+        let cycle = "public class My : B { }\npublic class B : My { }";
+        let (a, _) = state(
+            &[("App/P.razor", page), ("App/My.cs", cycle)],
+            "App:P.razor",
+        );
+        assert_eq!(a, Undeclared);
     }
 
     #[test]
