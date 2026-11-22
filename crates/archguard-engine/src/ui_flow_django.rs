@@ -1169,8 +1169,10 @@ mod access {
         }
 
         /// (app label, lower-case model name) of the view's `queryset = Model.objects…`.
-        /// shortcut: the app label is the model file's package name; an `app_label`
-        /// or `AppConfig.label` override is not read, so such models stay unknown.
+        /// The app label is the model's `Meta.app_label`, else as in
+        /// `domain_python`: `AppConfig.label` of the app's `apps.py`, else the
+        /// last part of `AppConfig.name`, else the package name (a duplicate of
+        /// that logic: its index types are the domain extractor's own).
         fn queryset_model(&self, mro: &[Sym]) -> Option<(String, String)> {
             if self.method(mro, "get_queryset").is_some() {
                 return None;
@@ -1181,17 +1183,52 @@ mod access {
                 return None;
             };
             let p = &self.pys[mf];
-            let (a, b) = p.defs[md].body;
-            if p.defs[md].kind != DefKind::Class || p.src[a..b].contains("app_label") {
+            if p.defs[md].kind != DefKind::Class {
                 return None;
+            }
+            Some((self.app_label(mf, md)?, p.defs[md].name.to_lowercase()))
+        }
+
+        /// `None` when an `app_label` is written but not as a plain string
+        /// in the model's own `Meta`.
+        fn app_label(&self, mf: usize, md: usize) -> Option<String> {
+            let p = &self.pys[mf];
+            let (a, b) = p.defs[md].body;
+            if p.src[a..b].contains("app_label") {
+                let meta = (0..p.defs.len())
+                    .find(|&d| p.defs[d].name == "Meta" && p.defs[d].parent == Some(md))?;
+                return py::string_value(p.class_attr(meta, "app_label")?.0);
             }
             let mut dirs: Vec<&str> = p.rel.split('/').collect();
             dirs.pop();
             if dirs.last() == Some(&"models") {
                 dirs.pop();
             }
-            let app = dirs.last()?;
-            Some((app.to_string(), p.defs[md].name.to_lowercase()))
+            let package = (*dirs.last()?).to_string();
+            let apps = (0..dirs.len()).rev().find_map(|n| {
+                let rel = format!("{}/apps.py", dirs[..=n].join("/"));
+                self.by_rel.get(&rel).copied()
+            });
+            Some(apps.and_then(|f| self.config_label(f)).unwrap_or(package))
+        }
+
+        /// `label`, else the last part of `name`, of the first `AppConfig` of `apps.py`.
+        fn config_label(&self, f: usize) -> Option<String> {
+            let p = &self.pys[f];
+            let configs = (0..p.defs.len()).filter(|&d| {
+                let def = &p.defs[d];
+                let bases = def.head.map_or("", |(a, b)| &p.src[a..b]);
+                def.kind == DefKind::Class
+                    && bases
+                        .split(',')
+                        .any(|x| x.trim().rsplit('.').next() == Some("AppConfig"))
+            });
+            let attr = |d: usize, n: &str| py::string_value(p.class_attr(d, n)?.0);
+            configs.into_iter().find_map(|d| {
+                attr(d, "label").or_else(|| {
+                    attr(d, "name").map(|n| n.rsplit('.').next().unwrap_or(&n).to_string())
+                })
+            })
         }
     }
 
@@ -4052,6 +4089,63 @@ class VS(viewsets.ViewSet):
             DiagnosticSeverity::Gap,
             "DjangoModelPermissions"
         ));
+    }
+
+    /// POST on a `DjangoModelPermissions` view whose queryset is `Post` of the
+    /// given extra files: the condition it needs.
+    fn post_policy(extra: &[(&str, &str)]) -> Condition {
+        let views = "from rest_framework.views import APIView\nfrom rest_framework.permissions import DjangoModelPermissions\nfrom blog.models import Post\n\nclass Known(APIView):\n    permission_classes = [DjangoModelPermissions]\n    queryset = Post.objects.all()\n    def post(self, request):\n        pass\n";
+        let flow = mini_with(views, "    path('k/', views.Known.as_view()),", "", extra);
+        match endpoint(&flow, "POST", "/k/") {
+            AccessState::Protected(c) => c,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn needs(p: &str) -> Condition {
+        Condition::All(vec![Condition::Authenticated, Condition::Policy(p.into())])
+    }
+
+    #[test]
+    fn model_permission_app_label_follows_appconfig_and_meta() {
+        let model = "class Post:\n    pass\n";
+        let with_apps = |body: &str| {
+            let apps = format!("from django.apps import AppConfig\nclass C(AppConfig):\n{body}");
+            let extra = [
+                ("m/blog/__init__.py", ""),
+                ("m/blog/models.py", model),
+                ("m/blog/apps.py", apps.as_str()),
+            ];
+            post_policy(&extra)
+        };
+        assert_eq!(
+            with_apps("    label = 'journal'\n"),
+            needs("journal.add_post")
+        );
+        assert_eq!(
+            with_apps("    name = 'store.shop'\n"),
+            needs("shop.add_post")
+        );
+        assert_eq!(
+            with_apps("    name = 'store.shop'\n    label = 'journal'\n"),
+            needs("journal.add_post")
+        );
+        let meta = "class Post:\n    class Meta:\n        app_label = 'news'\n";
+        let apps =
+            "from django.apps import AppConfig\nclass C(AppConfig):\n    label = 'journal'\n";
+        let extra = [
+            ("m/blog/__init__.py", ""),
+            ("m/blog/models.py", meta),
+            ("m/blog/apps.py", apps),
+        ];
+        assert_eq!(post_policy(&extra), needs("news.add_post"));
+        let dynamic = "class Post:\n    class Meta:\n        app_label = LABEL\n";
+        let extra = [("m/blog/__init__.py", ""), ("m/blog/models.py", dynamic)];
+        let unknown = Condition::Unknown("DjangoModelPermissions".into());
+        assert_eq!(
+            post_policy(&extra),
+            Condition::All(vec![Condition::Authenticated, unknown])
+        );
     }
 
     #[test]
