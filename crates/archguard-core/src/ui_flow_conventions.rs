@@ -101,11 +101,19 @@ fn merge_group(group: &[RoleConvention], clashes: &mut Vec<Clash>) -> RoleConven
     out.role_prefix = pick("role_prefix", &|c| c.role_prefix.clone());
     out.scope_prefix = pick("scope_prefix", &|c| c.scope_prefix.clone());
     out.role_claim = pick("role_claim", &|c| c.role_claim.clone());
-    out.role_case = case(pick("role_case", &|c| non_exact(c.role_case)));
-    out.policy_case = case(pick("policy_case", &|c| non_exact(c.policy_case)));
+    out.role_case = case(pick("role_case", &|c| {
+        case_value(c, "role_case", c.role_case)
+    }));
+    out.policy_case = case(pick("policy_case", &|c| {
+        case_value(c, "policy_case", c.policy_case)
+    }));
+    let chosen = pick("permissions", &|c| match &c.permissions {
+        PermissionFormat::Exact => None,
+        p => Some(format!("{p:?}")),
+    });
     out.permissions = (group.iter())
         .map(|c| &c.permissions)
-        .find(|p| **p != PermissionFormat::Exact)
+        .find(|p| Some(format!("{p:?}")) == chosen)
         .cloned()
         .unwrap_or_default();
     for c in group {
@@ -119,12 +127,21 @@ fn merge_group(group: &[RoleConvention], clashes: &mut Vec<Clash>) -> RoleConven
     out
 }
 
-fn non_exact(c: NameCase) -> Option<String> {
-    (c != NameCase::Exact).then(|| "insensitive".to_string())
+/// The case value of `field`; an `exact` is a value only when something recorded it.
+fn case_value(c: &RoleConvention, field: &str, v: NameCase) -> Option<String> {
+    match v {
+        NameCase::Insensitive => Some("insensitive".to_string()),
+        NameCase::Exact => {
+            (c.origins.iter().any(|o| o.field == field)).then(|| "exact".to_string())
+        }
+    }
 }
 
 fn case(v: Option<String>) -> NameCase {
-    v.map_or(NameCase::Exact, |_| NameCase::Insensitive)
+    match v.as_deref() {
+        Some("insensitive") => NameCase::Insensitive,
+        _ => NameCase::Exact,
+    }
 }
 
 /// Whether every origin of `field` in `c` is a framework default.

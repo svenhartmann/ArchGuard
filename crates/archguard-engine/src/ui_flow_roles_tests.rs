@@ -427,3 +427,36 @@ fn role_hierarchy_text_may_include_a_permission() {
         notes(&flow)
     );
 }
+
+// W5 guard: a literal withRolePrefix names the roles and is the read prefix.
+#[test]
+fn with_role_prefix_literal_names_roles_and_sets_the_prefix() {
+    let java = "class Sec { Object a() { return RoleHierarchyImpl.withRolePrefix(\"X_\").role(\"ADMIN\").implies(\"STAFF\").build(); } }";
+    let dir = project(&[("api/pom.xml", "<project/>"), ("api/src/Sec.java", java)]);
+    let flow = extract(dir.path());
+    assert_eq!(roles(&flow), ["X_ADMIN role api/src/Sec.java:1 [\"X_STAFF\"]"], "{}", notes(&flow));
+    assert_eq!(flow.convention(Some("api")).role_prefix.as_deref(), Some("X_"));
+}
+
+// W5 guard: an unreadable builder argument is a gap, never a guessed prefix.
+#[test]
+fn unreadable_with_role_prefix_argument_is_a_gap() {
+    let java = "class Sec { Object a() { return RoleHierarchyImpl.withRolePrefix(prefix()).role(\"ADMIN\").implies(\"STAFF\").build(); } }";
+    let dir = project(&[("api/pom.xml", "<project/>"), ("api/src/Sec.java", java)]);
+    let flow = extract(dir.path());
+    assert!(roles(&flow).is_empty());
+    assert_eq!(flow.convention(Some("api")).role_prefix, None);
+    assert!(!flow.complete);
+    assert!(notes(&flow).contains("Role hierarchy prefix not readable"));
+}
+
+// W5 item 1: two different prefixes in one app are never resolved by picking one.
+#[test]
+fn two_different_role_prefixes_in_one_app_stay_unread_with_a_gap() {
+    let java = "class Sec {\n  Object a() { return RoleHierarchyImpl.withRolePrefix(\"X_\").role(\"A\").implies(\"B\").build(); }\n  Object b() { return RoleHierarchyImpl.withRolePrefix(\"Y_\").role(\"A\").implies(\"B\").build(); }\n}";
+    let dir = project(&[("api/pom.xml", "<project/>"), ("api/src/Sec.java", java)]);
+    let flow = archguard_core::merge_ui_flows(extract(dir.path()), UiFlow::default());
+    assert_eq!(flow.convention(Some("api")).role_prefix, None);
+    assert!(!flow.complete);
+    assert!(notes(&flow).contains("role_prefix"), "{}", notes(&flow));
+}

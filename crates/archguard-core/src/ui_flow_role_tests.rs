@@ -610,3 +610,46 @@ fn an_applications_convention_inherits_the_whole_flow_permissions_not_its_prefix
     assert_eq!(reach["api"], ScreenReach::Sure);
     assert_eq!(reach["node"], ScreenReach::Denied, "X is not ROLE_X there");
 }
+
+fn with_origin(mut c: RoleConvention, field: &str, source: &str) -> RoleConvention {
+    c.origins.push(ConventionOrigin {
+        field: field.into(),
+        file: "Sec.java".into(),
+        line: 3,
+        source: source.into(),
+    });
+    c
+}
+
+fn app(name: &str) -> RoleConvention {
+    RoleConvention {
+        application: Some(name.into()),
+        ..RoleConvention::default()
+    }
+}
+
+// W5 item 2: two different read permission formats are a gap, not first wins.
+#[test]
+fn two_different_read_permission_formats_are_a_gap() {
+    let dotted = |w: &str| {
+        let mut c = app("api");
+        c.permissions = PermissionFormat::Dotted { wildcard: w.into() };
+        with_origin(c, "permissions", "read")
+    };
+    let merged = merge_ui_flows(flow_of(vec![dotted("*")]), flow_of(vec![dotted("#")]));
+    assert_eq!(merged.convention(Some("api")).permissions, PermissionFormat::Exact);
+    assert!(!merged.complete);
+    assert!(merged.diagnostics.iter().any(|d| d.message.contains("permissions")));
+}
+
+// W5 item 3: a read exact case beats the insensitive framework default.
+#[test]
+fn a_read_exact_case_beats_the_insensitive_framework_default() {
+    let mut default = app("api");
+    default.policy_case = NameCase::Insensitive;
+    let default = with_origin(default, "policy_case", "framework default aspnetcore 8");
+    let read = with_origin(app("api"), "policy_case", "options.CaseSensitive = true");
+    let merged = merge_ui_flows(flow_of(vec![default]), flow_of(vec![read]));
+    assert_eq!(merged.convention(Some("api")).policy_case, NameCase::Exact);
+    assert!(merged.complete);
+}
