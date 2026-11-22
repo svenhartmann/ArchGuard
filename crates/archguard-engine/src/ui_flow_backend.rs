@@ -534,6 +534,49 @@ pub(crate) fn each_method(src: &Source, annotations: bool, mut f: impl FnMut(&De
     }
 }
 
+/// Which supertype names a source can mean (package and imports).
+mod supertypes {
+    use super::Source;
+
+    /// `package x.y;` of a source ("" for none).
+    fn package_of(text: &str) -> &str {
+        (text.lines())
+            .find_map(|l| l.trim().strip_prefix("package "))
+            .map_or("", |p| p.trim().trim_end_matches(';').trim())
+    }
+
+    /// Whether the class in source `imp` can name interface `name` of source
+    /// `api`: same package, or an import of it (single or `*`).
+    pub(crate) fn names_interface(imp: &str, api: &str, name: &str) -> bool {
+        let pkg = package_of(api);
+        pkg == package_of(imp)
+            || imp
+                .lines()
+                .filter_map(|l| l.trim().strip_prefix("import "))
+                .any(|i| {
+                    let i = i.trim().trim_end_matches(';').trim();
+                    i == format!("{pkg}.{name}") || i == format!("{pkg}.*")
+                })
+    }
+
+    /// Whether supertype `name`, as `src` names it, is a JDK or Kotlin type: it
+    /// declares no routes (an `Object`-like name, or imported from `java.`,
+    /// `javax.` or `kotlin.`).
+    pub(crate) fn jdk_type(src: &Source, name: &str) -> bool {
+        ["Object", "Any", "Record", "Enum"].contains(&name)
+            || (src.text.lines())
+                .filter_map(|l| l.trim().strip_prefix("import "))
+                .map(|i| i.trim().trim_end_matches(';').trim())
+                .any(|i| {
+                    ["java.", "javax.", "kotlin."]
+                        .iter()
+                        .any(|p| i.starts_with(p))
+                        && i.rsplit('.').next() == Some(name)
+                })
+    }
+}
+pub(crate) use supertypes::{jdk_type, names_interface};
+
 fn has(attrs: &[Attr], name: &str) -> bool {
     attrs.iter().any(|a| a.name == name)
 }
@@ -960,7 +1003,8 @@ mod index {
                         list.push((src, d.clone()));
                     }
                 }
-                for (key, init) in constants(src, &decls) {
+                let all = constants(src, &decls).into_iter();
+                for (key, init) in all.chain(interface_constants(src, &decls)) {
                     index.constants.entry(key).or_default().insert(init);
                 }
                 for d in decls.into_iter().filter(|d| d.class && !d.flag) {
@@ -1010,7 +1054,10 @@ mod index {
             let (member, class) = (segments.next()?, segments.next()?);
             let inits = self.constants.get(&format!("{class}.{member}"))?;
             match (member_path(p), inits.len()) {
-                (true, 1) => self.text_at(inits.first()?, depth + 1),
+                (true, 1) => {
+                    let init = self.qualify(inits.first()?, &[class.to_string()]);
+                    self.text_at(&init, depth + 1)
+                }
                 _ => None,
             }
         }
@@ -1338,12 +1385,144 @@ mod index {
                 };
                 found.push((
                     format!("{}.{name}", class.name),
-                    src.text[eq + 1..end].trim().to_string(),
+                    static_qualified(src, src.text[eq + 1..end].trim()),
                 ));
             }
         }
         found
     }
+
+    /// Supertype and constant resolution for the route readers.
+    mod resolve {
+        use super::*;
+
+        impl<'a> Index<'a> {
+            /// [`Self::text`] for `raw` written in type `owner` of `src`: a plain
+            /// name is a constant of `owner` or a static import of `src`.
+            pub(crate) fn text_in(&self, src: &Source, owner: &str, raw: &str) -> Option<String> {
+                let mut owners = vec![owner.to_string()];
+                let statics = (src.text.lines())
+                    .filter_map(|l| l.trim().strip_prefix("import static "))
+                    .map(|i| i.trim().trim_end_matches(';').trim());
+                owners.extend(statics.filter_map(|i| {
+                    let (class, _) = i.rsplit_once('.')?;
+                    Some(class.rsplit('.').next()?.to_string())
+                }));
+                self.text_at(&self.qualify(raw, &owners), 0)
+            }
+
+            /// `raw` with each plain name that is a constant of one of `owners`
+            /// written `Owner.NAME` (the first owner that has it).
+            pub(super) fn qualify(&self, raw: &str, owners: &[String]) -> String {
+                let part = |p: &str| {
+                    let known = |o: &String| self.constants.contains_key(&format!("{o}.{p}"));
+                    match owners.iter().find(|o| known(o)) {
+                        Some(o) if p.bytes().all(lex::is_ident) => format!("{o}.{p}"),
+                        _ => p.to_string(),
+                    }
+                };
+                split_by(raw, b'+')
+                    .iter()
+                    .map(|p| part(p))
+                    .collect::<Vec<_>>()
+                    .join("+")
+            }
+
+            /// The supertypes of `class` (transitively, nearest first) found exactly
+            /// once in the scan, and the names that are not (several declarations,
+            /// or none: outside the scan). JDK types and `Object`-like names carry
+            /// no routes and are left out.
+            pub(crate) fn supers(
+                &self,
+                src: &'a Source,
+                class: &Decl,
+            ) -> (Bases<'a, '_>, Vec<String>) {
+                let (mut found, mut unresolved) = (Vec::new(), Vec::new());
+                let mut seen = BTreeSet::from([class.name.clone()]);
+                let mut todo: Vec<(&Source, String)> =
+                    class.bases.iter().rev().map(|b| (src, b.clone())).collect();
+                while let Some((from, name)) = todo.pop() {
+                    if seen.len() > MAX_DEPTH * 4 || !seen.insert(name.clone()) {
+                        continue;
+                    }
+                    let all: Vec<_> = [&self.classes, &self.interfaces]
+                        .into_iter()
+                        .filter_map(|m| m.get(&name))
+                        .flatten()
+                        .collect();
+                    // a JDK type, unless the project declares one of that name
+                    if all.is_empty() && jdk_type(from, &name) {
+                        continue;
+                    }
+                    // several of that name: the one the subtype's source can name
+                    let named: Vec<_> = (all.iter())
+                        .filter(|(s, _)| names_interface(&from.text, &s.text, &name))
+                        .collect();
+                    let [(s, d)] = if all.len() > 1 {
+                        named
+                    } else {
+                        all.iter().collect()
+                    }
+                    .as_slice() else {
+                        unresolved.push(name);
+                        continue;
+                    };
+                    found.push((*s, d));
+                    todo.extend(d.bases.iter().rev().map(|b| (*s, b.clone())));
+                }
+                (found, unresolved)
+            }
+        }
+
+        /// `init` with each plain name that `src` imports statically
+        /// (`import static p.Class.NAME;`) written `Class.NAME`.
+        pub(super) fn static_qualified(src: &Source, init: &str) -> String {
+            let imports: Vec<&str> = (src.text.lines())
+                .filter_map(|l| l.trim().strip_prefix("import static "))
+                .map(|i| i.trim().trim_end_matches(';').trim())
+                .collect();
+            let part = |p: &str| {
+                let hit = imports.iter().find(|i| i.rsplit('.').next() == Some(p));
+                let class = hit.and_then(|i| i.rsplit('.').nth(1));
+                match class {
+                    Some(c) if p.bytes().all(lex::is_ident) => format!("{c}.{p}"),
+                    _ => p.to_string(),
+                }
+            };
+            split_by(init, b'+')
+                .iter()
+                .map(|p| part(p))
+                .collect::<Vec<_>>()
+                .join("+")
+        }
+
+        /// `(Interface.NAME, initializer)` of each `String NAME = …;` of an
+        /// interface: its fields are constants without `final`.
+        pub(super) fn interface_constants(src: &Source, decls: &[Decl]) -> Vec<(String, String)> {
+            let mut found = Vec::new();
+            for p in words(&src.text, "String") {
+                let from = p + "String".len();
+                let Some(eq) = src.text[from..].find('=').map(|e| from + e) else {
+                    continue;
+                };
+                let name = src.text[from..eq].trim();
+                let owner = (decls.iter())
+                    .filter(|d| d.class && d.open < p && p < d.end)
+                    .max_by_key(|d| d.open)
+                    .filter(|d| d.flag);
+                let Some(owner) =
+                    owner.filter(|_| !name.is_empty() && name.bytes().all(lex::is_ident))
+                else {
+                    continue;
+                };
+                let end = minimal::statement_end(src, eq + 1);
+                let init = static_qualified(src, src.text[eq + 1..end].trim());
+                found.push((format!("{}.{name}", owner.name), init));
+            }
+            found
+        }
+    }
+    use resolve::{interface_constants, static_qualified};
 }
 pub(crate) use index::Index;
 
@@ -3285,11 +3464,221 @@ pub(crate) mod spring {
     ];
 
     pub(super) fn scan(src: &Source, index: &Index, conf: &Conf, out: &mut Out) {
+        let controllers = inherit::controllers(src, index, out);
+        let mut own: HashMap<usize, Vec<Decl>> = HashMap::new();
         each_method(src, true, |class, d| {
-            if has(&class.attrs, "RestController") || has(&class.attrs, "Controller") {
+            own.entry(class.open).or_default().push(d.clone());
+            if controllers.contains(&class.open) {
                 method(src, index, conf, out, class, d);
             }
         });
+        for class in decls(src, true)
+            .iter()
+            .filter(|c| controllers.contains(&c.open))
+        {
+            let own = own.remove(&class.open).unwrap_or_default();
+            inherit::routes((src, index, conf), out, class, &own);
+        }
+    }
+
+    /// Routes a controller inherits from mapped methods of its supertypes
+    /// (Spring finds `@RequestMapping` and its variants through the type
+    /// hierarchy) that it does not map itself, and a gap for a supertype that
+    /// is not in the scan: it may hold more.
+    mod inherit {
+        use super::*;
+
+        /// The controller being read.
+        struct Cx<'a, 'i> {
+            src: &'a Source,
+            index: &'i Index<'a>,
+            class: &'a Decl,
+            own: &'a [Decl],
+            /// The class-level paths its routes start with.
+            bases: Vec<String>,
+            /// Where its routes without a method of their own are placed.
+            site: usize,
+        }
+
+        fn is_controller(d: &Decl) -> bool {
+            has(&d.attrs, "RestController") || has(&d.attrs, "Controller")
+        }
+
+        fn is_abstract(src: &Source, class: &Decl) -> bool {
+            class_header(src, class)
+                .split_whitespace()
+                .any(|w| w == "abstract")
+        }
+
+        /// The concrete classes (by header offset) that are controllers: they
+        /// or a supertype carry `@Controller`/`@RestController` (Spring looks
+        /// through the type hierarchy). An abstract controller nothing in the
+        /// scan extends is a gap: its routes are not emitted.
+        pub(super) fn controllers(src: &Source, index: &Index, out: &mut Out) -> BTreeSet<usize> {
+            let mut found = BTreeSet::new();
+            for c in decls(src, true).iter().filter(|c| c.class && !c.flag) {
+                let (supers, _) = index.supers(src, c);
+                if !is_controller(c) && !supers.iter().any(|(_, t)| is_controller(t)) {
+                    continue;
+                }
+                if !is_abstract(src, c) {
+                    found.insert(c.open);
+                } else if !index.all_classes().any(|(s, d)| {
+                    d.bases.contains(&c.name) && names_interface(&s.text, &src.text, &c.name)
+                }) {
+                    let message = format!(
+                        "Routes of abstract controller {} not emitted: no concrete subclass in the scan.",
+                        c.name
+                    );
+                    out.at(src, c.attrs.first().map_or(c.open, |a| a.at), message);
+                }
+            }
+            found
+        }
+
+        /// The base paths of `class` from a type-level mapping of a supertype.
+        pub(super) fn inherited_bases(
+            src: &Source,
+            index: &Index,
+            out: &mut Out,
+            class: &Decl,
+        ) -> Option<Vec<String>> {
+            let (supers, _) = index.supers(src, class);
+            base_paths(src, index, out, class, &supers)
+        }
+
+        fn arity(src: &Source, d: &Decl) -> usize {
+            (src.pair(d.open)).map_or(0, |c| split_top(&src.text[d.open + 1..c]).len())
+        }
+
+        fn mapped(d: &Decl) -> bool {
+            d.attrs.iter().any(|a| methods(a).is_some())
+        }
+
+        fn type_mapping(attrs: &[Attr]) -> Option<&Attr> {
+            attrs.iter().find(|a| a.name == "RequestMapping")
+        }
+
+        pub(super) fn routes(
+            (src, index, conf): (&Source, &Index, &Conf),
+            out: &mut Out,
+            class: &Decl,
+            own: &[Decl],
+        ) {
+            let (supers, unresolved) = index.supers(src, class);
+            let site = class.attrs.first().map_or(class.open, |a| a.at);
+            for name in unresolved {
+                let message = format!(
+                    "A route may be inherited from supertype {name}, which is not in the scan."
+                );
+                out.at(src, site, message);
+            }
+            let Some(bases) = base_paths(src, index, out, class, &supers) else {
+                return;
+            };
+            let cx = Cx {
+                src,
+                index,
+                class,
+                own,
+                bases,
+                site,
+            };
+            let mut seen: BTreeSet<(String, usize)> = (own.iter().filter(|d| mapped(d)))
+                .map(|d| (d.name.clone(), arity(src, d)))
+                .collect();
+            for (ssrc, t) in supers {
+                let methods = index.methods_in(ssrc, &t.name);
+                for d in methods.into_iter().filter(|d| mapped(d)) {
+                    if seen.insert((d.name.clone(), arity(ssrc, d))) {
+                        route(&cx, conf, out, (ssrc, t, d));
+                    }
+                }
+            }
+        }
+
+        /// The class's own `@RequestMapping` paths, else the nearest
+        /// supertype's; none when a path is unreadable (a gap is reported).
+        fn base_paths(
+            src: &Source,
+            index: &Index,
+            out: &mut Out,
+            class: &Decl,
+            supers: &[(&Source, &Decl)],
+        ) -> Option<Vec<String>> {
+            if let Some(a) = type_mapping(&class.attrs) {
+                return paths(src, index, out, &class.name, a);
+            }
+            let mut up = supers
+                .iter()
+                .filter_map(|(s, t)| type_mapping(&t.attrs).map(|a| (*s, *t, a)));
+            let Some((s, t, a)) = up.next() else {
+                return Some(vec![String::new()]);
+            };
+            // Spring's search order (interfaces before the superclass) is not
+            // modelled: differing type-level mappings are not guessed.
+            if up.any(|(_, _, b)| b.args != a.args) {
+                let message = format!(
+                    "Several supertypes of {} carry a type-level @RequestMapping; its routes are not read.",
+                    class.name
+                );
+                let at = class.attrs.first().map_or(class.open, |x| x.at);
+                out.at(src, at, message);
+                return None;
+            }
+            paths(s, index, out, &t.name, a)
+        }
+
+        /// The endpoints of supertype method `d` of `t` (in `ssrc`).
+        fn route(cx: &Cx, conf: &Conf, out: &mut Out, (ssrc, t, d): (&Source, &Decl, &Decl)) {
+            let count = arity(ssrc, d);
+            // the class's own method (location, annotations), if it has any
+            let mine = (cx.own.iter()).find(|m| m.name == d.name && arity(cx.src, m) == count);
+            let own_decl = mine.cloned().unwrap_or_else(|| Decl {
+                class: false,
+                name: d.name.clone(),
+                attrs: vec![],
+                open: cx.class.open,
+                end: 0,
+                bases: vec![],
+                flag: true,
+            });
+            let declared = (cx.src, cx.class, &own_decl);
+            let (access, ignored) = declared_access(conf, cx.index, out, declared, count);
+            let at = mine.map_or(cx.site, |m| m.open);
+            let first = out.0.endpoints.len();
+            for a in &d.attrs {
+                for (p, m) in mappings(cx, out, (ssrc, t), a) {
+                    out.endpoint(cx.src, at, &m, p, &access);
+                    if ignored {
+                        out.1
+                            .endpoints
+                            .insert((cx.src.rel.clone(), cx.src.line(at)));
+                    }
+                }
+            }
+            let open = mine.map_or(cx.class.open, |m| m.open);
+            let link = handlers::of_method(cx.src, &cx.class.name, &d.name, open);
+            out.link(first, link);
+        }
+
+        /// `(path, HTTP method)` of mapping annotation `a` below the class paths.
+        fn mappings(
+            cx: &Cx,
+            out: &mut Out,
+            (ssrc, t): (&Source, &Decl),
+            a: &Attr,
+        ) -> Vec<(String, String)> {
+            let Some(verbs) = methods(a) else {
+                return vec![];
+            };
+            let Some(found) = paths(ssrc, cx.index, out, &t.name, a) else {
+                return vec![];
+            };
+            let full = (cx.bases.iter()).flat_map(|b| found.iter().map(move |p| path(&[b, p])));
+            full.flat_map(|p| verbs.iter().map(move |m| (p.clone(), m.clone())))
+                .collect()
+        }
     }
 
     pub(super) use chain::central_rules;
@@ -4919,16 +5308,19 @@ pub(crate) mod spring {
 
     fn method(src: &Source, index: &Index, conf: &Conf, out: &mut Out, class: &Decl, d: &Decl) {
         let bases = match class.attrs.iter().find(|a| a.name == "RequestMapping") {
-            Some(a) => match paths(src, out, a) {
+            Some(a) => match paths(src, index, out, &class.name, a) {
                 Some(p) => p,
                 None => return,
             },
-            None => vec![String::new()],
+            None => match inherit::inherited_bases(src, index, out, class) {
+                Some(p) => p,
+                None => return,
+            },
         };
         let first = out.0.endpoints.len();
         for a in &d.attrs {
             let Some(methods) = methods(a) else { continue };
-            let Some(paths) = paths(src, out, a) else {
+            let Some(paths) = paths(src, index, out, &class.name, a) else {
                 continue;
             };
             let arity = src
@@ -5034,14 +5426,32 @@ pub(crate) mod spring {
         })
     }
 
-    fn paths(src: &Source, out: &mut Out, a: &Attr) -> Option<Vec<String>> {
+    /// The paths of mapping `a` written in type `owner` of `src`: literals, or
+    /// constants of the scan.
+    fn paths(
+        src: &Source,
+        index: &Index,
+        out: &mut Out,
+        owner: &str,
+        a: &Attr,
+    ) -> Option<Vec<String>> {
         let raw = named(&a.args, "value")
             .or_else(|| named(&a.args, "path"))
             .or_else(|| positional(&a.args));
         let Some(raw) = raw else {
             return Some(vec![String::new()]);
         };
-        match literals(raw) {
+        let items = |r: &str| {
+            let r = r.trim();
+            let inner = [("arrayOf(", ')'), ("{", '}'), ("[", ']')]
+                .iter()
+                .find_map(|(open, close)| r.strip_prefix(open)?.strip_suffix(*close));
+            let parts = inner.map_or_else(|| vec![r], split_top);
+            (parts.into_iter())
+                .map(|p| index.text_in(src, owner, p))
+                .collect::<Option<Vec<_>>>()
+        };
+        match literals(raw).or_else(|| items(raw)) {
             Some(p) if p.is_empty() => Some(vec![String::new()]),
             Some(p) => Some(p),
             None => {
@@ -8613,6 +9023,295 @@ class A extends Dup { @GetMapping("/dup") void a() {} }"#,
             AccessState::Protected(Condition::Unknown(_))
         ));
         assert!(!flow.complete);
+    }
+
+    // W5a: routes declared only on a supertype are the controller's routes.
+    #[test]
+    fn spring_interface_route_is_emitted_for_the_implementing_controller() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Api.java",
+                r#"interface Api {
+    String BASE = "/v1";
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping(BASE + "/items/{id}")
+    String get(@PathVariable("id") String id);
+    @DeleteMapping("/items/{id}")
+    void drop(String id);
+}"#,
+            ),
+            (
+                "src/main/java/Impl.java",
+                r#"@RestController
+class Impl implements Api {
+    @Override public String get(String id) { return id; }
+    @Override public void drop(String id) {}
+}"#,
+            ),
+        ]);
+        assert_eq!(
+            access(&flow, "GET", "/v1/items/{id}"),
+            &protected(role("ROLE_ADMIN"))
+        );
+        let e = (flow.endpoints.iter())
+            .find(|e| e.method == "DELETE")
+            .unwrap();
+        assert_eq!(
+            (e.file.as_str(), e.source.as_str()),
+            ("src/main/java/Impl.java", "spring")
+        );
+        assert_eq!(e.handler.as_deref(), Some("Impl.drop"));
+    }
+
+    #[test]
+    fn spring_interface_route_overridden_with_own_mapping_is_not_duplicated() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Api.java",
+                "interface Api {\n    @GetMapping(\"/a\") String a();\n    @GetMapping(\"/b\") String b();\n}\n",
+            ),
+            (
+                "src/main/java/Impl.java",
+                r#"@RestController
+class Impl implements Api {
+    @Override @GetMapping("/a2") public String a() { return ""; }
+    @Override public String b() { return ""; }
+}"#,
+            ),
+        ]);
+        assert_eq!(flow.endpoints.iter().filter(|e| e.path == "/a").count(), 0);
+        access(&flow, "GET", "/a2");
+        access(&flow, "GET", "/b");
+        assert_eq!(flow.endpoints.len(), 2, "{:#?}", flow.endpoints);
+    }
+
+    #[test]
+    fn spring_interface_type_mapping_is_the_base_path() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Api.java",
+                "@RequestMapping(\"/api\")\ninterface Api {\n    @GetMapping(\"/x\") String x();\n}\n",
+            ),
+            (
+                "src/main/java/Impl.java",
+                "@RestController\nclass Impl implements Api { public String x() { return \"\"; } }\n",
+            ),
+        ]);
+        access(&flow, "GET", "/api/x");
+    }
+
+    #[test]
+    fn spring_unreadable_supertype_of_a_controller_is_a_gap() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Impl.java",
+                "@RestController\nclass Impl extends Lib { @GetMapping(\"/own\") String own() { return \"\"; } }\n",
+            ),
+        ]);
+        assert_eq!(gaps(&flow, "inherited from supertype Lib"), 1);
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn spring_interface_constants_without_final_and_static_imports_resolve() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Consts.java",
+                "class Consts { public static final String V1 = \"/rest/v1\"; }\n",
+            ),
+            (
+                "src/main/java/Api.java",
+                "import static x.Consts.V1;\ninterface Api {\n    String ITEMS = V1 + \"/items\";\n    @GetMapping(value = ITEMS + \"/{id}\") String x(String id);\n}\n",
+            ),
+            (
+                "src/main/java/Impl.java",
+                "@RestController\nclass Impl implements Api { @Override public String x(String id) { return id; } }\n",
+            ),
+        ]);
+        access(&flow, "GET", "/rest/v1/items/{id}");
+    }
+
+    #[test]
+    fn spring_same_named_supertypes_resolve_by_import() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/a/Api.java",
+                "package a;\ninterface Api { @GetMapping(\"/a\") String x(); }\n",
+            ),
+            (
+                "src/main/java/b/Api.java",
+                "package b;\ninterface Api { @GetMapping(\"/b\") String x(); }\n",
+            ),
+            (
+                "src/main/java/Impl.java",
+                "package c;\nimport b.Api;\n@RestController\nclass Impl implements Api { public String x() { return \"\"; } }\n",
+            ),
+        ]);
+        access(&flow, "GET", "/b");
+        assert_eq!(flow.endpoints.len(), 1, "{:#?}", flow.endpoints);
+        assert_eq!(gaps(&flow, "inherited from supertype"), 0);
+    }
+
+    #[test]
+    fn spring_abstract_controller_base_is_emitted_once_by_its_subclass() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Base.java",
+                "@RestController\nabstract class Base { @GetMapping(\"/b\") String b() { return \"\"; } }\n",
+            ),
+            (
+                "src/main/java/Impl.java",
+                "@RestController\nclass Impl extends Base {}\n",
+            ),
+        ]);
+        let e = flow
+            .endpoints
+            .iter()
+            .filter(|e| e.path == "/b")
+            .collect::<Vec<_>>();
+        assert_eq!(e.len(), 1, "{e:#?}");
+        assert_eq!(e[0].file, "src/main/java/Impl.java");
+    }
+
+    #[test]
+    fn spring_type_mapping_on_several_supertypes_is_a_gap() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Api.java",
+                "@RequestMapping(\"/i\")\ninterface Api { @GetMapping(\"/x\") String x(); }\n",
+            ),
+            (
+                "src/main/java/Base.java",
+                "@RequestMapping(\"/s\")\nclass Base {}\n",
+            ),
+            (
+                "src/main/java/Impl.java",
+                "@RestController\nclass Impl extends Base implements Api { public String x() { return \"\"; } }\n",
+            ),
+        ]);
+        assert_eq!(gaps(&flow, "type-level @RequestMapping"), 1);
+        assert!(
+            flow.endpoints.iter().all(|e| e.path != "/s/x"),
+            "{:#?}",
+            flow.endpoints
+        );
+    }
+
+    #[test]
+    fn spring_project_type_named_like_a_jdk_root_is_a_supertype() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Record.java",
+                "interface Record { @GetMapping(\"/r\") String r(); }\n",
+            ),
+            (
+                "src/main/java/Impl.java",
+                "@RestController\nclass Impl implements Record { public String r() { return \"\"; } }\n",
+            ),
+        ]);
+        access(&flow, "GET", "/r");
+    }
+
+    // Spring finds @Controller through the whole type hierarchy.
+    #[test]
+    fn spring_class_below_an_abstract_controller_is_a_controller() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Base.java",
+                "@RestController\nabstract class Base { @GetMapping(\"/b\") String b() { return \"\"; } }\n",
+            ),
+            (
+                "src/main/java/Impl.java",
+                "@Service\nclass Impl extends Base {}\n",
+            ),
+        ]);
+        let e = (flow.endpoints.iter().filter(|e| e.path == "/b")).collect::<Vec<_>>();
+        assert_eq!(e.len(), 1, "{e:#?}");
+        assert_eq!(e[0].file, "src/main/java/Impl.java");
+    }
+
+    #[test]
+    fn spring_abstract_controller_without_subclass_is_a_gap() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Base.java",
+                "@RestController\nabstract class Base { @GetMapping(\"/b\") String b() { return \"\"; } }\n",
+            ),
+        ]);
+        assert_eq!(gaps(&flow, "no concrete subclass"), 1);
+    }
+
+    #[test]
+    fn spring_abstract_in_a_type_name_is_not_an_abstract_class() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/C.java",
+                "@RestController\nclass C implements x.abstractapi.Api { @GetMapping(\"/c\") String c() { return \"\"; } }\n",
+            ),
+        ]);
+        access(&flow, "GET", "/c");
+    }
+
+    #[test]
+    fn spring_type_mapping_of_a_supertype_is_the_base_of_own_routes() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Base.java",
+                "@RequestMapping(\"/base\")\nclass Base {}\n",
+            ),
+            (
+                "src/main/java/C.java",
+                "@RestController\nclass C extends Base { @GetMapping(\"/c\") String c() { return \"\"; } }\n",
+            ),
+        ]);
+        access(&flow, "GET", "/base/c");
+    }
+
+    #[test]
+    fn spring_abstract_controller_subclass_in_another_package_does_not_hide_the_gap() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/a/Base.java",
+                "package a;\n@RestController\nabstract class Base { @GetMapping(\"/b\") String b() { return \"\"; } }\n",
+            ),
+            ("src/main/java/b/Base.java", "package b;\nclass Base {}\n"),
+            (
+                "src/main/java/b/X.java",
+                "package b;\nclass X extends Base {}\n",
+            ),
+        ]);
+        assert_eq!(gaps(&flow, "no concrete subclass"), 1);
+    }
+
+    // Guard: a class that is no controller serves nothing.
+    #[test]
+    fn spring_interface_route_without_controller_is_no_endpoint() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Api.java",
+                "interface Api { @GetMapping(\"/x\") String x(); }\n",
+            ),
+            (
+                "src/main/java/Impl.java",
+                "class Impl implements Api { public String x() { return \"\"; } }\n",
+            ),
+        ]);
+        assert!(flow.endpoints.is_empty(), "{:#?}", flow.endpoints);
     }
 
     // ---- wave 2a: Spring conventions, method-security switches, chain scoping ----
