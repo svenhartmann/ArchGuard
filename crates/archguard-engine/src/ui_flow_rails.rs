@@ -81,17 +81,17 @@ fn read_files(ctx: &ExtractContext, flow: &mut UiFlow) -> Option<(Vec<(String, S
 /// [`extract`] for one run.
 pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     let mut flow = UiFlow::default();
-    if let Some((files, lock)) = read_files(ctx, &mut flow) {
-        if files.iter().any(|(r, _)| r.ends_with("config/routes.rb")) {
-            if let Some(e) = &ctx.config_error {
-                let message = format!("Configuration not read; [views.access] not applied: {e}");
-                note(&mut flow.diagnostics, ".", 0, message);
-            }
-            let mut p = proj::Proj::new(&ctx.config.views.access, &files, &lock);
-            p.run(ctx.root, &files);
-            flow.diagnostics.append(&mut p.diags);
-            flow.endpoints.append(&mut p.endpoints);
+    if let Some((files, lock)) = read_files(ctx, &mut flow)
+        && files.iter().any(|(r, _)| r.ends_with("config/routes.rb"))
+    {
+        if let Some(e) = &ctx.config_error {
+            let message = format!("Configuration not read; [views.access] not applied: {e}");
+            note(&mut flow.diagnostics, ".", 0, message);
         }
+        let mut p = proj::Proj::new(&ctx.config.views.access, &files, &lock);
+        p.run(ctx.root, &files);
+        flow.diagnostics.append(&mut p.diags);
+        flow.endpoints.append(&mut p.endpoints);
     }
     finish(&mut flow);
     flow
@@ -1278,10 +1278,10 @@ mod proj {
             }
             out.push(cls);
             for ev in c.events.iter().rev() {
-                if let Kind::Include(n) = &ev.kind {
-                    if let Some(m) = self.resolve(n, &c.lexical) {
-                        self.ancestors(m, out);
-                    }
+                if let Kind::Include(n) = &ev.kind
+                    && let Some(m) = self.resolve(n, &c.lexical)
+                {
+                    self.ancestors(m, out);
                 }
             }
             let sup = c
