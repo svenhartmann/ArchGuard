@@ -152,6 +152,7 @@ pub mod ui_flow_express;
 pub mod ui_flow_fastapi;
 pub mod ui_flow_laravel;
 pub mod ui_flow_nestjs;
+pub mod ui_flow_quarkus;
 pub mod ui_flow_react;
 pub mod ui_flow_replay;
 pub mod ui_flow_roles;

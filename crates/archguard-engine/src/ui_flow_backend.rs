@@ -308,8 +308,8 @@ impl Out {
 
 /// A source file with comments blanked (offsets and lines unchanged).
 pub(crate) struct Source {
-    rel: String,
-    text: String,
+    pub(crate) rel: String,
+    pub(crate) text: String,
     pairs: HashMap<usize, usize>,
     lines: Vec<usize>,
 }
@@ -332,13 +332,13 @@ impl Source {
             lines,
         }
     }
-    fn line(&self, at: usize) -> u32 {
+    pub(crate) fn line(&self, at: usize) -> u32 {
         self.lines.partition_point(|&s| s <= at) as u32
     }
     fn pair(&self, at: usize) -> Option<usize> {
         self.pairs.get(&at).copied()
     }
-    fn bytes(&self) -> &[u8] {
+    pub(crate) fn bytes(&self) -> &[u8] {
         self.text.as_bytes()
     }
 }
@@ -398,18 +398,18 @@ pub(crate) struct Decl {
     pub(crate) name: String,
     pub(crate) attrs: Vec<Attr>,
     /// Offset of a method's parameter list; a class's header start.
-    open: usize,
+    pub(crate) open: usize,
     /// A class's body end (`}`, or `;` without a body); 0 for a method.
-    end: usize,
+    pub(crate) end: usize,
     /// A class's base list as simple names (`: Base<T>, IFoo`, `extends`,
     /// `implements`); empty for a method.
     pub(crate) bases: Vec<String>,
     /// `interface` for a class; `public` and not `static` for a method.
-    flag: bool,
+    pub(crate) flag: bool,
 }
 
 /// Calls `f(class, method)` for each method with the innermost class around it.
-fn each_method(src: &Source, annotations: bool, mut f: impl FnMut(&Decl, &Decl)) {
+pub(crate) fn each_method(src: &Source, annotations: bool, mut f: impl FnMut(&Decl, &Decl)) {
     let mut open: Vec<Decl> = Vec::new();
     for d in decls(src, annotations) {
         while open.last().is_some_and(|c| c.end < d.open) {
@@ -641,21 +641,21 @@ fn base_names(header: &str) -> Vec<String> {
 }
 
 /// Literals, brackets, identifiers and argument lists on raw text.
-mod lex {
-    pub(super) use crate::lang_csharp::{code as strip_comments, literal, literal_end};
+pub(crate) mod lex {
+    pub(crate) use crate::lang_csharp::{code as strip_comments, literal, literal_end};
 
-    pub(super) fn is_ident(c: u8) -> bool {
+    pub(crate) fn is_ident(c: u8) -> bool {
         c.is_ascii_alphanumeric() || c == b'_'
     }
 
-    pub(super) fn skip_ws(b: &[u8], i: usize) -> usize {
+    pub(crate) fn skip_ws(b: &[u8], i: usize) -> usize {
         i + b[i.min(b.len())..]
             .iter()
             .take_while(|c| c.is_ascii_whitespace())
             .count()
     }
 
-    pub(super) fn skip_ws_back(b: &[u8], mut i: usize) -> usize {
+    pub(crate) fn skip_ws_back(b: &[u8], mut i: usize) -> usize {
         while i > 0 && b[i - 1].is_ascii_whitespace() {
             i -= 1;
         }
@@ -663,7 +663,7 @@ mod lex {
     }
 
     /// The identifier right before `end` (exclusive), skipping blanks and one `<…>`.
-    pub(super) fn ident_before(b: &[u8], end: usize) -> (usize, usize) {
+    pub(crate) fn ident_before(b: &[u8], end: usize) -> (usize, usize) {
         let mut k = skip_ws_back(b, end);
         if k > 0 && b[k - 1] == b'>' {
             let mut depth = 0;
@@ -685,7 +685,7 @@ mod lex {
     }
 
     /// Whole-word occurrences of `word`.
-    pub(super) fn words<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
+    pub(crate) fn words<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
         let b = text.as_bytes();
         text.match_indices(word).map(|(i, _)| i).filter(move |&i| {
             (i == 0 || !is_ident(b[i - 1])) && b.get(i + word.len()).is_none_or(|c| !is_ident(*c))
@@ -693,12 +693,12 @@ mod lex {
     }
 
     /// Splits on commas outside brackets and literals.
-    pub(super) fn split_top(s: &str) -> Vec<&str> {
+    pub(crate) fn split_top(s: &str) -> Vec<&str> {
         split_by(s, b',')
     }
 
     /// Splits on `sep` outside brackets and literals; empty parts are dropped.
-    pub(super) fn split_by(s: &str, sep: u8) -> Vec<&str> {
+    pub(crate) fn split_by(s: &str, sep: u8) -> Vec<&str> {
         let b = s.as_bytes();
         let (mut parts, mut depth, mut start, mut i) = (Vec::new(), 0i32, 0, 0);
         while i < b.len() {
@@ -723,7 +723,7 @@ mod lex {
     }
 
     /// `name = value` (Java/Kotlin/C# attribute) or `name: value` (C# argument).
-    pub(super) fn named_part(part: &str) -> Option<(&str, &str)> {
+    pub(crate) fn named_part(part: &str) -> Option<(&str, &str)> {
         let b = part.as_bytes();
         let end = b.iter().take_while(|c| is_ident(**c)).count();
         let k = skip_ws(b, end);
@@ -733,20 +733,20 @@ mod lex {
         (end > 0 && named).then(|| (&part[..end], part[k + 1..].trim()))
     }
 
-    pub(super) fn named<'a>(args: &'a str, key: &str) -> Option<&'a str> {
+    pub(crate) fn named<'a>(args: &'a str, key: &str) -> Option<&'a str> {
         split_top(args)
             .into_iter()
             .find_map(|p| named_part(p).filter(|(k, _)| *k == key).map(|(_, v)| v))
     }
 
-    pub(super) fn positional(args: &str) -> Option<&str> {
+    pub(crate) fn positional(args: &str) -> Option<&str> {
         split_top(args)
             .into_iter()
             .find(|p| named_part(p).is_none())
     }
 
     /// A literal or an array (`{…}`, `[…]`, `arrayOf(…)`) of literals.
-    pub(super) fn literals(s: &str) -> Option<Vec<String>> {
+    pub(crate) fn literals(s: &str) -> Option<Vec<String>> {
         let s = s.trim();
         if let Some(one) = literal(s) {
             return Some(vec![one]);
