@@ -413,3 +413,17 @@ fn spring_role_hierarchy_builder_and_authority_target() {
     assert_eq!(c.role_prefix.as_deref(), Some("ROLE_"));
     assert_eq!(c.origins[0].line, 2);
 }
+
+// F44: a right-hand side without the role prefix is a permission, never a role def.
+#[test]
+fn role_hierarchy_text_may_include_a_permission() {
+    let java = "class H { RoleHierarchy a() { return RoleHierarchyImpl.fromHierarchy(\"ROLE_ADMIN > permission:read\"); } }\n";
+    let dir = project(&[("src/main/java/H.java", java)]);
+    let flow = extract(dir.path());
+    assert_eq!(
+        roles(&flow),
+        ["ROLE_ADMIN role src/main/java/H.java:1 [\"permission:read\"]"],
+        "{}",
+        notes(&flow)
+    );
+}

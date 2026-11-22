@@ -26,11 +26,22 @@
 //!   `hasRole`, `hasAnyRole`, `hasAuthority`, `hasAnyAuthority`,
 //!   `isAuthenticated()`, `isFullyAuthenticated()`, `and`/`or`/`!`/`not`/`&&`/`||`
 //!   and parentheses, `permitAll()` alone = `open`; `@Secured`, `@RolesAllowed`,
-//!   `@PermitAll`, `@DenyAll` (`never`). Authorities become `role` atoms too, stored as the runtime
-//!   authority: `hasRole('A')` adds Spring's `ROLE_` (unless present), so
+//!   `@PermitAll`, `@DenyAll` (`never`). Names are stored as the runtime
+//!   authority: `hasRole('A')` adds the role prefix (unless present), so
 //!   `hasRole('A')`, `hasAuthority('ROLE_A')` and `@Secured("ROLE_A")` all
-//!   read `role(ROLE_A)`; the convention (`role_prefix = ROLE_`) is emitted
-//!   per application and shortens labels only.
+//!   read `role(ROLE_A)`; `@RolesAllowed("A")` always adds it. Any other
+//!   authority (`hasAuthority('read')`, `@Secured("x")`, OAuth2 `hasScope`) is
+//!   an exact `policy`. The prefix is `GrantedAuthorityDefaults`' literal
+//!   (else `ROLE_`; Quarkus Spring compatibility: none); an unreadable one
+//!   makes role names `unknown` with a gap. The convention per application
+//!   (`role_prefix`, `scope_prefix`, `role_claim` from a
+//!   `JwtGrantedAuthoritiesConverter`) is emitted with its origins.
+//!   Method-security annotations count only for an enabled family
+//!   (`@EnableMethodSecurity`: pre-post; `securedEnabled`, `jsr250Enabled`;
+//!   legacy `@EnableGlobalMethodSecurity`: all off by default, the first
+//!   family with annotations decides); a disabled family is ignored with a
+//!   gap and never lifted to `open` by a chain `permitAll`. Several chains
+//!   apply by `@Order` and their literal `securityMatcher` scope.
 //!
 //! Each endpoint also gets its handler method and the request types it sends
 //! (`handlers`, ADR 0022 decision 4).
@@ -56,8 +67,6 @@ use archguard_core::{
     ANY_METHOD, AccessMeaning, AccessState, Condition, ConventionOrigin, DiagnosticSeverity,
     EndpointAccess, HandlerSite, RoleConvention, UiFlow, UiFlowDiagnostic,
 };
-/// Spring `GrantedAuthorityDefaults` default role prefix (framework default).
-const ROLE_PREFIX: &str = "ROLE_";
 use lex::{ident_before, literal_end, split_top};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
@@ -77,27 +86,28 @@ pub fn extract(root: &Path) -> UiFlow {
 
 /// [`extract`] with the run's `[views.access]`.
 pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
-    let mut out = Out(UiFlow::default());
+    let mut out = Out(UiFlow::default(), Ignored::default());
     if let Some(e) = &ctx.config_error {
         let message = format!("Configuration not read; [views.access] not applied: {e}");
         out.note(".", 0, message);
     }
     let projects = read_projects(ctx.root, &mut out);
     let access = ctx.config.views.access.clone();
-    let index = Index::new(projects.values().flat_map(|(_, s)| s), access);
-    for (application, sources) in projects.values() {
+    let index = Index::new(projects.values().flat_map(|(_, s, _)| s), access);
+    for (application, sources, quarkus) in projects.values() {
         let first = out.0.endpoints.len();
         let mut call_sites = HashMap::new();
         let routes = conventional::routes(sources, &index, &mut out);
+        let conf = spring::Conf::read(sources, &index, *quarkus, &mut out);
         for src in sources {
             if src.rel.ends_with(".cs") {
                 controllers::scan(src, &index, &routes, &mut out);
                 minimal::scan(src, sources, &index, &mut call_sites, &mut out);
             } else {
-                spring::scan(src, &index, &mut out);
+                spring::scan(src, &index, &conf, &mut out);
             }
         }
-        spring::central_rules(sources, &index, &mut out, first);
+        spring::central_rules(sources, &index, &conf, &mut out, first);
         for e in &mut out.0.endpoints[first..] {
             e.application = application.clone();
         }
@@ -106,20 +116,14 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
         if spring && application.is_none() {
             // A whole-flow prefix would leak into every other application.
             let file = sources.first().map_or("", |s| s.rel.as_str());
-            let message = "Role prefix not attributed: Spring sources lie outside every build-file project".into();
+            let message =
+                "Role prefix not attributed: Spring sources lie outside every build-file project"
+                    .into();
             out.diag(file, 0, message);
         } else if spring {
-            out.0.role_conventions.push(RoleConvention {
-                application: application.clone(),
-                role_prefix: Some(ROLE_PREFIX.into()),
-                origins: vec![ConventionOrigin {
-                    field: "role_prefix".into(),
-                    file: String::new(),
-                    line: 0,
-                    source: "framework default spring GrantedAuthorityDefaults".into(),
-                }],
-                ..RoleConvention::default()
-            });
+            out.0
+                .role_conventions
+                .push(conf.convention(application.clone()));
         }
     }
     index.apply_request_access(&mut out);
@@ -146,7 +150,13 @@ mod projects {
             match read_text(root, &rel, MAX_BYTES) {
                 Ok(text) => by_project
                     .entry(project_of(&rel, &projects))
-                    .or_insert_with_key(|dir| (application(root, dir, &projects), vec![]))
+                    .or_insert_with_key(|dir| {
+                        (
+                            application(root, dir, &projects),
+                            vec![],
+                            quarkus(root, dir),
+                        )
+                    })
                     .1
                     .push(Source::new(rel, &text)),
                 Err(e) => out.diag(&rel, 0, format!("Source file not read (limit 1 MiB): {e}")),
@@ -155,8 +165,21 @@ mod projects {
         by_project
     }
 
-    /// The owning application of a project directory, and its sources.
-    pub(super) type Project = (Option<String>, Vec<Source>);
+    /// The owning application of a project directory, its sources, and whether
+    /// its build file depends on the Quarkus Spring compatibility extensions.
+    pub(super) type Project = (Option<String>, Vec<Source>, bool);
+
+    /// Whether a build file of project directory `dir` names a Quarkus Spring
+    /// compatibility extension (`quarkus-spring-web`, `quarkus-spring-security`).
+    fn quarkus(root: &Path, dir: &str) -> bool {
+        let build = |b: &str| match dir {
+            "" => b.to_string(),
+            _ => format!("{dir}/{b}"),
+        };
+        (BUILD_FILES.iter()).any(|b| {
+            read_text(root, &build(b), MAX_BYTES).is_ok_and(|t| t.contains("quarkus-spring-"))
+        })
+    }
 
     /// The project directory's name (the root's for a build file at the root);
     /// none for files outside every project.
@@ -201,7 +224,16 @@ mod projects {
 }
 use projects::read_projects;
 
-struct Out(UiFlow);
+/// Endpoints whose method-security annotations were not applied (their family is
+/// not enabled); a filter chain `permitAll` never turns them `Open`.
+#[derive(Default)]
+struct Ignored {
+    /// Set by the annotation reader while it works on one endpoint.
+    hit: bool,
+    endpoints: BTreeSet<(String, u32)>,
+}
+
+struct Out(UiFlow, Ignored);
 impl Out {
     /// A diagnostic for something not read literally: the flow is incomplete.
     fn diag(&mut self, file: &str, line: u32, message: String) {
@@ -2088,15 +2120,329 @@ mod spring {
         ("PatchMapping", "PATCH"),
     ];
 
-    pub(super) fn scan(src: &Source, index: &Index, out: &mut Out) {
+    pub(super) fn scan(src: &Source, index: &Index, conf: &Conf, out: &mut Out) {
         each_method(src, true, |class, d| {
             if has(&class.attrs, "RestController") || has(&class.attrs, "Controller") {
-                method(src, index, out, class, d);
+                method(src, index, conf, out, class, d);
             }
         });
     }
 
     pub(super) use chain::central_rules;
+    pub(super) use conf::Conf;
+    use conf::{Atom, Flag};
+
+    /// The conventions and method-security switches of ONE application as its
+    /// sources state them (ADR 0021): a default is a framework default and says
+    /// so in the convention's origins; code that cannot be read is a gap.
+    mod conf {
+        use super::super::lex::{named, skip_ws, words};
+        use super::super::*;
+
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub(in super::super) enum Flag {
+            On,
+            Off,
+            Unreadable,
+        }
+        impl Flag {
+            fn join(self, other: Flag) -> Flag {
+                match (self, other) {
+                    (Flag::On, _) | (_, Flag::On) => Flag::On,
+                    (Flag::Unreadable, _) | (_, Flag::Unreadable) => Flag::Unreadable,
+                    _ => Flag::Off,
+                }
+            }
+        }
+
+        /// How a name written in a security expression becomes a condition.
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub(in super::super) enum Atom {
+            /// `hasRole('A')`: the role prefix is added unless it is there.
+            Role,
+            /// `@RolesAllowed("A")`: the role prefix is always added.
+            Jsr250,
+            /// `hasAuthority('A')`, `@Secured("A")`: exact; a role when it carries
+            /// the role prefix, otherwise a permission.
+            Authority,
+            /// OAuth2 `hasScope('s')`.
+            Scope,
+        }
+
+        struct Methods {
+            legacy: bool,
+            pre_post: Flag,
+            secured: Flag,
+            jsr250: Flag,
+        }
+
+        pub(in super::super) struct Conf {
+            quarkus: bool,
+            /// `None`: set by code that is not readable.
+            role_prefix: Option<String>,
+            scope_prefix: Option<String>,
+            role_claim: Option<String>,
+            origins: Vec<ConventionOrigin>,
+            /// `None`: no enabling annotation read.
+            methods: Option<Methods>,
+            /// `AnnotationTemplateExpressionDefaults` is in the sources.
+            pub(in super::super) templates: bool,
+        }
+
+        /// `(source, offset, arguments)` of every call of `name` in the sources.
+        fn call_args<'s>(
+            sources: &'s [Source],
+            name: &'static str,
+        ) -> Vec<(&'s Source, usize, &'s str)> {
+            (sources.iter())
+                .filter(|s| !s.rel.ends_with(".cs"))
+                .flat_map(|s| {
+                    words(&s.text, name).filter_map(move |p| {
+                        let open = skip_ws(s.bytes(), p + name.len());
+                        let close = (s.bytes().get(open) == Some(&b'('))
+                            .then(|| s.pair(open))
+                            .flatten()?;
+                        Some((s, p, &s.text[open + 1..close]))
+                    })
+                })
+                .collect()
+        }
+
+        /// What `calls` give for one setting.
+        enum Setting<'s> {
+            Unset,
+            One(String, &'s Source, usize),
+            /// A call whose argument is not a literal, or calls that disagree.
+            Bad(&'s Source, usize, String),
+        }
+
+        fn setting<'s>(index: &Index, calls: &[(&'s Source, usize, &str)]) -> Setting<'s> {
+            let mut found: Option<(String, &Source, usize)> = None;
+            for &(s, at, args) in calls {
+                let Some(v) = index.text(args.trim()) else {
+                    return Setting::Bad(s, at, format!("`{}` is not a literal", args.trim()));
+                };
+                match &found {
+                    Some((f, ..)) if *f != v => {
+                        return Setting::Bad(s, at, format!("it is set to `{f}` and to `{v}`"));
+                    }
+                    Some(_) => {}
+                    None => found = Some((v, s, at)),
+                }
+            }
+            match found {
+                Some((v, s, at)) => Setting::One(v, s, at),
+                None => Setting::Unset,
+            }
+        }
+
+        impl Conf {
+            pub(in super::super) fn read(
+                sources: &[Source],
+                index: &Index,
+                quarkus: bool,
+                out: &mut Out,
+            ) -> Conf {
+                let templates = (sources.iter())
+                    .any(|s| s.text.contains("AnnotationTemplateExpressionDefaults"));
+                let mut conf = Conf {
+                    quarkus,
+                    role_prefix: None,
+                    scope_prefix: None,
+                    role_claim: None,
+                    origins: vec![],
+                    methods: None,
+                    templates,
+                };
+                conf.prefixes(sources, index, out);
+                conf.method_security(sources, out);
+                conf
+            }
+
+            fn origin(&mut self, field: &str, at: Option<(&Source, usize)>, source: &str) {
+                self.origins.push(ConventionOrigin {
+                    field: field.into(),
+                    file: at.map(|(s, _)| s.rel.clone()).unwrap_or_default(),
+                    line: at.map_or(0, |(s, p)| s.line(p)),
+                    source: source.into(),
+                });
+            }
+
+            /// `GrantedAuthorityDefaults(..)`, `setAuthorityPrefix(..)` and
+            /// `setAuthoritiesClaimName(..)` with literal arguments.
+            fn prefixes(&mut self, sources: &[Source], index: &Index, out: &mut Out) {
+                if self.quarkus {
+                    self.role_prefix = Some(String::new());
+                    let note = "quarkus spring-security compatibility: role names are exact (not verified)";
+                    return self.origin("role_prefix", None, note);
+                }
+                let default = "framework default spring-security";
+                // `None`: not set; `Some(None)`: set but not readable
+                let mut one =
+                    |this: &mut Conf, field: &str, call: &'static str, what: &str| match setting(
+                        index,
+                        &call_args(sources, call),
+                    ) {
+                        Setting::Unset => None,
+                        Setting::One(v, s, at) => {
+                            this.origin(field, Some((s, at)), call);
+                            Some(Some(v))
+                        }
+                        Setting::Bad(s, at, why) => {
+                            out.at(s, at, format!("`{call}` not read ({why}): {what}."));
+                            Some(None)
+                        }
+                    };
+                let role = one(
+                    self,
+                    "role_prefix",
+                    "GrantedAuthorityDefaults",
+                    "role names are unknown here",
+                );
+                let scope = one(
+                    self,
+                    "scope_prefix",
+                    "setAuthorityPrefix",
+                    "the scope prefix is unknown",
+                );
+                let claim = one(
+                    self,
+                    "role_claim",
+                    "setAuthoritiesClaimName",
+                    "the role claim is unknown",
+                );
+                match role {
+                    None => {
+                        self.role_prefix = Some("ROLE_".into());
+                        let source = format!("{default} GrantedAuthorityDefaults");
+                        self.origin("role_prefix", None, &source);
+                    }
+                    Some(v) => self.role_prefix = v,
+                }
+                match scope {
+                    None => {
+                        self.scope_prefix = Some("SCOPE_".into());
+                        let source = format!("{default} JwtGrantedAuthoritiesConverter");
+                        self.origin("scope_prefix", None, &source);
+                    }
+                    Some(v) => self.scope_prefix = v,
+                }
+                self.role_claim = claim.flatten();
+            }
+
+            /// The switches of `@EnableMethodSecurity` (pre-post on by default) and
+            /// the legacy `@EnableGlobalMethodSecurity` (all off by default).
+            fn method_security(&mut self, sources: &[Source], out: &mut Out) {
+                for src in sources.iter().filter(|s| !s.rel.ends_with(".cs")) {
+                    for a in (decls(src, true).iter())
+                        .filter(|d| d.class)
+                        .flat_map(|d| &d.attrs)
+                    {
+                        let (legacy, on) = match a.name.as_str() {
+                            "EnableMethodSecurity" | "EnableReactiveMethodSecurity" => {
+                                (false, Flag::On)
+                            }
+                            "EnableGlobalMethodSecurity" => (true, Flag::Off),
+                            _ => continue,
+                        };
+                        let mut flag = |key: &str, default: Flag| match named(&a.args, key) {
+                            None => default,
+                            Some("true") => Flag::On,
+                            Some("false") => Flag::Off,
+                            Some(_) => {
+                                let message = format!(
+                                    "`@{}` attribute `{key}` is not a literal boolean; annotations of that family are unknown.",
+                                    a.name
+                                );
+                                out.at(src, a.at, message);
+                                Flag::Unreadable
+                            }
+                        };
+                        let one = Methods {
+                            legacy,
+                            pre_post: flag("prePostEnabled", on),
+                            secured: flag("securedEnabled", Flag::Off),
+                            jsr250: flag("jsr250Enabled", Flag::Off),
+                        };
+                        self.methods = Some(match self.methods.take() {
+                            None => one,
+                            Some(m) => Methods {
+                                legacy: m.legacy && one.legacy,
+                                pre_post: m.pre_post.join(one.pre_post),
+                                secured: m.secured.join(one.secured),
+                                jsr250: m.jsr250.join(one.jsr250),
+                            },
+                        });
+                    }
+                }
+            }
+
+            pub(in super::super) fn convention(
+                &self,
+                application: Option<String>,
+            ) -> RoleConvention {
+                RoleConvention {
+                    application,
+                    role_prefix: self.role_prefix.clone(),
+                    scope_prefix: self.scope_prefix.clone(),
+                    role_claim: self.role_claim.clone(),
+                    origins: self.origins.clone(),
+                    ..RoleConvention::default()
+                }
+            }
+
+            /// The condition of a name written in a security expression.
+            pub(in super::super) fn atom(&self, kind: Atom, name: &str) -> Condition {
+                if kind == Atom::Scope {
+                    return Condition::Policy(name.into());
+                }
+                let Some(p) = self.role_prefix.as_deref() else {
+                    return Condition::Unknown(format!("{name}: the role prefix is not readable"));
+                };
+                match kind {
+                    Atom::Role if name.starts_with(p) => Condition::Role(name.into()),
+                    // legacy JSR-250 adds the prefix only when it is missing
+                    Atom::Jsr250 if self.legacy() && name.starts_with(p) => {
+                        Condition::Role(name.into())
+                    }
+                    Atom::Role | Atom::Jsr250 => Condition::Role(format!("{p}{name}")),
+                    Atom::Authority if name.starts_with(p) => Condition::Role(name.into()),
+                    _ => Condition::Policy(name.into()),
+                }
+            }
+
+            /// Whether the annotations of `family` are enforced.
+            pub(in super::super) fn flag(&self, family: &str) -> Flag {
+                let Some(m) = &self.methods else {
+                    return if self.quarkus { Flag::On } else { Flag::Off };
+                };
+                match family {
+                    "PreAuthorize" | "PostAuthorize" => m.pre_post,
+                    "Secured" => m.secured,
+                    "jsr250" => m.jsr250,
+                    _ => Flag::On,
+                }
+            }
+
+            /// Legacy method security applies the first family with annotations.
+            pub(in super::super) fn legacy(&self) -> bool {
+                self.methods.as_ref().is_some_and(|m| m.legacy)
+            }
+
+            /// Why the annotations of `family` are not enforced, for a gap.
+            pub(in super::super) fn off(&self, family: &str) -> String {
+                let switch = match family {
+                    "PreAuthorize" | "PostAuthorize" => "prePostEnabled",
+                    "Secured" => "securedEnabled",
+                    _ => "jsr250Enabled",
+                };
+                match self.methods {
+                    None => "method security not enabled: no `@EnableMethodSecurity` or `@EnableGlobalMethodSecurity` is read in this project (it may be XML or in a library)".into(),
+                    Some(_) => format!("method security not enabled: `{switch}` is not read as true"),
+                }
+            }
+        }
+    }
 
     /// Which scoping-name calls are rules of the authorization block.
     mod rule_calls {
@@ -2319,11 +2665,13 @@ mod spring {
         pub(super) fn scoping_call(
             src: &Source,
             lambdas: &super::rule_calls::Lambdas,
+            read: &[(usize, usize)],
         ) -> Option<usize> {
             let b = src.bytes();
             (0..b.len()).find(|&s| {
                 let e = ident_end(src, s);
-                (s == 0 || !lex::is_ident(b[s - 1]))
+                !in_ranges(read, s)
+                    && (s == 0 || !lex::is_ident(b[s - 1]))
                     && SCOPING.contains(&&src.text[s..e])
                     && is_call(src, s, e)
                     && !super::rule_calls::is_rule_call(src, s, lambdas)
@@ -2458,25 +2806,28 @@ mod spring {
                 .or_else(|| block_hand_off(src, inside, &blocks))
         }
 
-        /// Why the project's chain cannot be read as global, if so: several
-        /// configurations; a scoping call in any file that mentions `HttpSecurity`
-        /// (configurers, extensions, helpers); or the `HttpSecurity` handed out of
-        /// the configure method / bean of `files`.
+        /// Why the project's chain cannot be read, if so: a scoping call in any
+        /// file that mentions `HttpSecurity` (configurers, extensions, helpers)
+        /// that is not one of the `read` scopes `(file, from, to)`; or the
+        /// `HttpSecurity` handed out of the configure method / bean of `files`.
         pub(super) fn why_not_evaluated(
             sources: &[Source],
             files: &[&Source],
-            chains: usize,
+            read: &[(String, usize, usize)],
         ) -> Option<String> {
-            if chains > 1 {
-                return Some("Several security configurations".into());
-            }
             let lambdas = |s: &Source| super::chain::auth_lambdas(s);
             let at = |s: &Source, p: usize| format!("{}:{}", s.rel, s.line(p));
             let mentions = |s: &&Source| lex::words(&s.text, "HttpSecurity").next().is_some();
             let scoped = (sources.iter())
                 .filter(|s| !s.rel.ends_with(".cs"))
                 .filter(mentions)
-                .find_map(|s| scoping_call(s, &lambdas(s)).map(|p| at(s, p)));
+                .find_map(|s| {
+                    let mine: Vec<(usize, usize)> = (read.iter())
+                        .filter(|r| r.0 == s.rel)
+                        .map(|r| (r.1, r.2))
+                        .collect();
+                    scoping_call(s, &lambdas(s), &mine).map(|p| at(s, p))
+                });
             if let Some(site) = scoped {
                 return Some(format!("A scoping matcher at {site}"));
             }
@@ -2528,6 +2879,338 @@ mod spring {
         }
     }
 
+    /// Several security configurations as a sequence: each one's `@Order` and
+    /// literal scope, and which of them decides an endpoint.
+    mod sequence {
+        use super::super::lex::{named, positional, skip_ws, skip_ws_back, split_top, words};
+        use super::super::*;
+        use super::chain::{
+            Hit, Rule, authorize_sites, bean, calls, conditional, is_adapter, matches,
+        };
+
+        /// One security configuration: a `SecurityFilterChain` bean method, a
+        /// legacy adapter class, or, when a file has neither but reads
+        /// authorization rules (Kotlin beans), the whole file.
+        pub(super) struct Unit<'s> {
+            pub(super) src: &'s Source,
+            pub(super) name: String,
+            /// Text range holding the unit.
+            pub(super) span: (usize, usize),
+            pub(super) adapter: bool,
+            /// `None`: the `@Order` is not readable.
+            pub(super) order: Option<i64>,
+            /// `None`: the chain takes every request.
+            pub(super) scope: Option<Rule>,
+            pub(super) rules: Vec<Rule>,
+        }
+
+        const ADAPTER_ORDER: i64 = 100;
+        const LOWEST: i64 = i32::MAX as i64;
+
+        /// Why several configurations cannot be put in sequence: Spring takes the
+        /// first by `@Order`; equal, missing-with-other-kind or unreadable orders
+        /// leave it open.
+        pub(super) fn unordered(units: &[Unit]) -> Option<String> {
+            if units.len() < 2 {
+                return None;
+            }
+            let orders: BTreeSet<Option<i64>> = units.iter().map(|u| u.order).collect();
+            let mixed = units.iter().any(|u| u.adapter) && units.iter().any(|u| !u.adapter);
+            (orders.contains(&None) || orders.len() < units.len() || mixed).then(|| {
+                "Several security configurations without a readable, distinct `@Order`".into()
+            })
+        }
+
+        /// The units of `src`: its adapters, its `SecurityFilterChain` bean methods.
+        pub(super) fn units(src: &Source) -> Vec<Unit<'_>> {
+            let all = decls(src, true);
+            let mut units: Vec<Unit> = all
+                .iter()
+                .filter(|d| d.class && is_adapter(d))
+                .map(|d| Unit {
+                    src,
+                    name: d.name.clone(),
+                    span: (d.open, d.end.max(d.open) + 1),
+                    adapter: true,
+                    order: order(&d.attrs, ADAPTER_ORDER),
+                    scope: None,
+                    rules: vec![],
+                })
+                .collect();
+            for p in words(&src.text, "SecurityFilterChain").filter(|p| bean(src, *p)) {
+                let b = src.bytes();
+                let name_end =
+                    super::chain_span::ident_end(src, skip_ws(b, p + "SecurityFilterChain".len()));
+                let open = skip_ws(b, name_end);
+                let close = src.pair(open).unwrap_or(open);
+                let body = src.text[close..].find(['{', ';']).map(|k| k + close);
+                let end = match body {
+                    Some(k) if b[k] == b'{' => src.pair(k).unwrap_or(k),
+                    _ => close,
+                };
+                let attrs = all.iter().find(|d| !d.class && d.open == open);
+                let name =
+                    src.text[skip_ws(b, p + "SecurityFilterChain".len())..name_end].to_string();
+                units.push(Unit {
+                    src,
+                    name,
+                    span: (p, end + 1),
+                    adapter: false,
+                    order: order(attrs.map_or(&[][..], |d| &d.attrs[..]), LOWEST),
+                    scope: None,
+                    rules: vec![],
+                });
+            }
+            if units.is_empty() && !authorize_sites(src).is_empty() {
+                units.push(Unit {
+                    src,
+                    name: src.rel.clone(),
+                    span: (0, src.text.len()),
+                    adapter: false,
+                    order: None,
+                    scope: None,
+                    rules: vec![],
+                });
+            }
+            units
+        }
+
+        /// `@Order(n)`, `Ordered.HIGHEST_PRECEDENCE` / `LOWEST_PRECEDENCE`; `default`
+        /// without the annotation; `None` for anything else.
+        fn order(attrs: &[Attr], default: i64) -> Option<i64> {
+            let Some(a) = attrs.iter().find(|a| a.name == "Order") else {
+                return Some(default);
+            };
+            match named(&a.args, "value")
+                .or_else(|| positional(&a.args))
+                .map(str::trim)
+            {
+                None => Some(LOWEST),
+                Some("Ordered.HIGHEST_PRECEDENCE") => Some(i32::MIN as i64),
+                Some("Ordered.LOWEST_PRECEDENCE") => Some(LOWEST),
+                Some(t) => t.parse().ok(),
+            }
+        }
+
+        /// Byte offset of `part`, a slice of `src.text`.
+        fn offset(src: &Source, part: &str) -> usize {
+            part.as_ptr() as usize - src.text.as_ptr() as usize
+        }
+
+        /// A scope or rule matcher with literal paths, as a [`Rule`] without grant.
+        fn literal_matcher(
+            src: &Source,
+            index: &Index,
+            from: usize,
+            to: usize,
+            args: &str,
+        ) -> Option<Rule> {
+            let (mut methods, mut patterns) = (Vec::new(), Vec::new());
+            for part in split_top(args) {
+                match part.trim().strip_prefix("HttpMethod.") {
+                    Some(m) => methods.push(m.to_string()),
+                    None => patterns.push(index.text(part)?),
+                }
+            }
+            (!patterns.is_empty()).then(|| Rule {
+                line: src.line(from),
+                file: src.rel.clone(),
+                text: src.text[from..to].split_whitespace().collect(),
+                methods,
+                patterns: Some(patterns),
+                grant: None,
+                conditional: false,
+            })
+        }
+
+        /// The scope of the unit's chain, and the text range of the call that
+        /// gives it. Read: `securityMatcher(..)`, `antMatcher(..)`, `mvcMatcher(..)`,
+        /// `securityMatchers(m -> m.requestMatchers(..))` and the pre-6
+        /// `requestMatchers().antMatchers(..).and()`, all on the `HttpSecurity`
+        /// variable, with literal paths and outside `if`/`else`. Several scope
+        /// calls or any other form are left to the not-evaluated check.
+        pub(super) fn scope(
+            src: &Source,
+            index: &Index,
+            span: (usize, usize),
+        ) -> (Option<Rule>, Vec<(usize, usize)>) {
+            let mut found = Vec::new();
+            for var in super::chain_span::http_vars(src) {
+                for p in statement_heads(src, &var, span) {
+                    found.extend(chain_scopes(src, index, p));
+                }
+            }
+            match found.pop() {
+                Some((rule, call)) if found.is_empty() => (Some(rule), vec![call]),
+                _ => (None, vec![]),
+            }
+        }
+
+        /// Offsets in `span` where `var` starts a statement (`http.x();`,
+        /// `return http.x();`); Kotlin has no `;`, there a line break ends one.
+        fn statement_heads(src: &Source, var: &str, span: (usize, usize)) -> Vec<usize> {
+            let b = src.bytes();
+            let head = |p: usize| {
+                let before = skip_ws_back(b, p);
+                let kotlin_break = src.rel.ends_with(".kt") && src.text[before..p].contains('\n');
+                before == 0
+                    || kotlin_break
+                    || matches!(b[before - 1], b';' | b'{' | b'}')
+                    || super::chain_span::word_before(src, before) == "return"
+            };
+            (words(&src.text[span.0..span.1], var))
+                .map(|p| p + span.0)
+                .filter(|&p| b.get(skip_ws(b, p + var.len())) == Some(&b'.') && head(p))
+                .collect()
+        }
+
+        /// The scope calls of the statement chain that starts at `p`, with their text range.
+        fn chain_scopes(src: &Source, index: &Index, p: usize) -> Vec<(Rule, (usize, usize))> {
+            let chain = calls(src, p, super::chain_span::chain_end(src, p));
+            let (mut found, mut i) = (Vec::new(), 0);
+            while i < chain.len() {
+                let at = chain[i].0;
+                match scope_call(src, index, &chain[i..]) {
+                    Some((rule, to, used)) if !conditional(src, at) => {
+                        found.push((rule, (at, to)));
+                        i += used;
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            found
+        }
+
+        /// The scope call at the head of `chain`: `(rule, end offset, further calls used)`.
+        fn scope_call(
+            src: &Source,
+            index: &Index,
+            chain: &[(usize, &str, &str)],
+        ) -> Option<(Rule, usize, usize)> {
+            let (at, name, args) = chain[0];
+            let close = |a: &str| offset(src, a) + a.len() + 1;
+            match name {
+                "securityMatcher" | "antMatcher" | "mvcMatcher" => {
+                    literal_matcher(src, index, at, close(args), args).map(|r| (r, close(args), 0))
+                }
+                "securityMatchers" => {
+                    lambda_matchers(src, index, at, args).map(|r| (r, close(args), 0))
+                }
+                "requestMatchers" if args.trim().is_empty() => legacy_matchers(src, index, chain)
+                    .map(|(r, last)| (r, close(chain[last].2), last)),
+                _ => None,
+            }
+        }
+
+        /// `securityMatchers(m -> m.requestMatchers("/a", "/b"))`.
+        fn lambda_matchers(src: &Source, index: &Index, at: usize, args: &str) -> Option<Rule> {
+            let base = offset(src, args);
+            let inner = calls(src, base + args.find("->")? + 2, base + args.len());
+            let [(_, name, a)] = inner[..] else {
+                return None;
+            };
+            if !matches!(name, "requestMatchers" | "antMatchers" | "mvcMatchers") {
+                return None;
+            }
+            literal_matcher(src, index, at, base + args.len() + 1, a)
+        }
+
+        /// `requestMatchers().antMatchers("/api/**")` of pre-6 chains: the matchers
+        /// after the empty `requestMatchers()` up to `.and()`; `(rule, index of the
+        /// last matcher call)`.
+        fn legacy_matchers(
+            src: &Source,
+            index: &Index,
+            chain: &[(usize, &str, &str)],
+        ) -> Option<(Rule, usize)> {
+            let last = chain[1..]
+                .iter()
+                .take_while(|c| matches!(c.1, "antMatchers" | "mvcMatchers"))
+                .count();
+            let [(_, _, a)] = chain[1..=last] else {
+                return None;
+            };
+            let (start, to) = (chain[0].0, offset(src, a) + a.len() + 1);
+            literal_matcher(src, index, start, to, a).map(|r| (r, last))
+        }
+
+        /// A gap per adapter class without any readable rule.
+        pub(super) fn unreadable_classes(units: &[Unit], out: &mut Out) {
+            for u in units.iter().filter(|u| u.adapter && u.rules.is_empty()) {
+                let message = format!(
+                    "Security configuration `{}` has no readable `authorizeRequests()` rules; endpoints it protects stay undeclared.",
+                    u.name
+                );
+                out.at(u.src, u.span.0, message);
+            }
+        }
+
+        #[derive(Default)]
+        pub(super) struct Applied {
+            pub(super) changed: usize,
+            /// Requests matched only partly, by `(unit, rule)`.
+            pub(super) partial: BTreeMap<(usize, usize), usize>,
+            /// Endpoints a unit's scope matches only partly, by unit.
+            pub(super) scope_partial: BTreeMap<usize, usize>,
+        }
+
+        /// Applies, per endpoint, the first chain (units in order) whose scope can
+        /// match it; a scope that matches only some of its requests decides
+        /// nothing. In that chain the first matching rule decides.
+        pub(super) fn apply(
+            units: &[Unit],
+            endpoints: &mut [EndpointAccess],
+            ignored: &BTreeSet<(String, u32)>,
+        ) -> Applied {
+            let mut done = Applied::default();
+            for e in endpoints {
+                for (u, unit) in units.iter().enumerate() {
+                    match unit.scope.as_ref().map_or(Hit::Full, |s| matches(s, e)) {
+                        Hit::No => continue,
+                        Hit::Part => *done.scope_partial.entry(u).or_default() += 1,
+                        Hit::Full => decide(u, &unit.rules, e, ignored, &mut done),
+                    }
+                    break;
+                }
+            }
+            done
+        }
+
+        fn decide(
+            u: usize,
+            rules: &[Rule],
+            e: &mut EndpointAccess,
+            ignored: &BTreeSet<(String, u32)>,
+            done: &mut Applied,
+        ) {
+            let Some((i, hit)) = (rules.iter().enumerate())
+                .map(|(i, r)| (i, matches(r, e)))
+                .find(|(_, h)| *h != Hit::No)
+            else {
+                return;
+            };
+            let rule = &rules[i];
+            match (&rule.grant, hit, rule.conditional, &rule.patterns) {
+                (Some(grant), Hit::Full, false, Some(_)) => {
+                    let before = e.access.clone();
+                    e.access = match grant {
+                        AccessState::Protected(c) => require(&e.access, c.clone()),
+                        // annotations that were not applied may protect it after all
+                        _ if ignored.contains(&(e.file.clone(), e.line)) => e.access.clone(),
+                        _ if e.access == AccessState::Undeclared => AccessState::Open,
+                        _ => e.access.clone(),
+                    };
+                    done.changed += usize::from(e.access != before);
+                }
+                (Some(_), Hit::Part, false, Some(_)) => {
+                    *done.partial.entry((u, i)).or_default() += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Central rules of a `SecurityFilterChain` (`authorizeHttpRequests` /
     /// `authorizeRequests`), applied to the project's endpoints from index
     /// `first` on.
@@ -2551,13 +3234,24 @@ mod spring {
     /// `WebSecurityConfigurerAdapter` / `ResourceServerConfigurerAdapter` is read
     /// the same way (a class without readable rules is a gap).
     ///
+    /// Several chains/adapters are a sequence by `@Order` (adapters default 100,
+    /// beans lowest precedence); the first whose scope can match an endpoint
+    /// decides it (a scope that matches only some of its requests decides
+    /// nothing). The scope is the literal `securityMatcher(..)`,
+    /// `antMatcher(..)`, `mvcMatcher(..)`, `securityMatchers(m -> m.requestMatchers(..))`
+    /// or pre-6 `requestMatchers().antMatchers(..)` that starts a statement on
+    /// the `HttpSecurity` variable outside `if`/`else`; no scope takes every
+    /// request.
+    ///
     /// Not evaluated (one note, endpoints keep their annotation access):
-    /// - several chains or adapters;
+    /// - several chains without a readable, distinct `@Order` (or adapters mixed
+    ///   with beans);
     /// - a call or method reference of `antMatcher(s)`, `mvcMatcher(s)`,
     ///   `regexMatcher(s)`, `requestMatcher(s)` or `securityMatcher(s)` outside
     ///   the authorization block (and outside `configure(WebSecurity)`) in ANY
-    ///   file that mentions `HttpSecurity` (configurers, extensions, helpers);
-    ///   declarations and `new` are no calls;
+    ///   file that mentions `HttpSecurity` (configurers, extensions, helpers)
+    ///   that is not one of the scopes above; declarations and `new` are no
+    ///   calls;
     /// - the `HttpSecurity` handed out of the configure method / bean: its
     ///   variable used other than as a receiver (`http.x`), declaration or
     ///   `with(http) { }`; `this`/`it` in `with(http)`, `http.apply/let/also/run
@@ -2584,7 +3278,9 @@ mod spring {
     mod chain {
         use super::super::lex::{skip_ws, skip_ws_back, split_top, words};
         use super::super::*;
-        use super::{prefixed_role, role, spel};
+        use super::conf::{Atom, Conf};
+        use super::sequence::{Unit, apply, scope, units, unordered, unreadable_classes};
+        use super::spel;
 
         const MATCHERS: [&str; 4] = [
             "requestMatchers",
@@ -2593,21 +3289,21 @@ mod spring {
             "anyRequest",
         ];
 
-        struct Rule {
-            line: u32,
-            file: String,
-            text: String,
+        pub(super) struct Rule {
+            pub(super) line: u32,
+            pub(super) file: String,
+            pub(super) text: String,
             /// Empty: any method.
-            methods: Vec<String>,
+            pub(super) methods: Vec<String>,
             /// `None`: not readable, may match anything.
-            patterns: Option<Vec<String>>,
+            pub(super) patterns: Option<Vec<String>>,
             /// `None`: not readable.
-            grant: Option<AccessState>,
-            conditional: bool,
+            pub(super) grant: Option<AccessState>,
+            pub(super) conditional: bool,
         }
 
         #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-        enum Hit {
+        pub(super) enum Hit {
             No,
             Part,
             Full,
@@ -2616,148 +3312,108 @@ mod spring {
         pub(in super::super) fn central_rules(
             sources: &[Source],
             index: &Index,
+            conf: &Conf,
             out: &mut Out,
             first: usize,
         ) {
-            let found: Vec<(&Source, Vec<(String, usize)>)> = (sources.iter())
+            let found: Vec<&Source> = (sources.iter())
                 .filter(|s| !s.rel.ends_with(".cs"))
-                .map(|s| (s, adapters(s)))
-                .filter(|(s, a)| !a.is_empty() || s.text.contains("SecurityFilterChain"))
+                .filter(|s| !adapters(s).is_empty() || s.text.contains("SecurityFilterChain"))
                 .collect();
-            let files: Vec<&Source> = found.iter().map(|(s, _)| *s).collect();
-            let Some((home, home_adapters)) = found.first() else {
+            let mut units: Vec<Unit> = found.iter().flat_map(|s| units(s)).collect();
+            let Some(home) = units.first().map(|u| (u.src, u.span.0)) else {
                 return;
             };
-            let at = (home_adapters.first().map(|a| a.1))
-                .or_else(|| home.text.find("SecurityFilterChain"))
-                .unwrap_or(0);
-            let chains: usize = (found.iter())
-                .map(|(s, a)| {
-                    let beans = words(&s.text, "SecurityFilterChain").filter(|p| bean(s, *p));
-                    beans.count() + a.len()
-                })
-                .sum();
-            let why = super::chain_span::why_not_evaluated(sources, &files, chains);
+            let mut recognised = Vec::new();
+            for u in &mut units {
+                let (scope, spans) = scope(u.src, index, u.span);
+                u.scope = scope;
+                recognised.extend(spans.into_iter().map(|(f, t)| (u.src.rel.clone(), f, t)));
+            }
+            let why = super::chain_span::why_not_evaluated(sources, &found, &recognised)
+                .or_else(|| unordered(&units));
             if let Some(why) = why {
                 let message = format!(
                     "{why}: central rules are not evaluated; endpoints marked undeclared may be protected there."
                 );
-                return out.note(&home.rel, home.line(at), message);
+                return out.note(&home.0.rel, home.0.line(home.1), message);
             }
-            let rules: Vec<Rule> = (files.iter()).flat_map(|s| read(s, index)).collect();
-            unreadable_classes(&found, index, out);
-            rule_notes(&rules, out);
-            let (changed, partial) = apply(&rules, &mut out.0.endpoints[first..]);
-            for (i, n) in partial {
-                let r = &rules[i];
+            for u in &mut units {
+                u.rules = read(u.src, index, conf, u.span);
+            }
+            unreadable_classes(&units, out);
+            let rules: usize = units.iter().map(|u| u.rules.len()).sum();
+            for r in units.iter().flat_map(|u| &u.rules) {
+                rule_note(r, out);
+            }
+            units.sort_by_key(|u| u.order);
+            let done = apply(&units, &mut out.0.endpoints[first..], &out.1.endpoints);
+            for ((u, i), n) in done.partial {
+                let r = &units[u].rules[i];
                 let message = format!(
                     "Filter chain rule `{}` matches only some requests of {n} endpoint(s) (a path parameter or ANY method); they keep their declared access.",
                     r.text
                 );
                 out.note(&r.file, r.line, message);
             }
-            if rules.is_empty() {
+            for (u, n) in done.scope_partial {
+                let Some(s) = &units[u].scope else { continue };
+                let message = format!(
+                    "Filter chain scope `{}` matches only some requests of {n} endpoint(s) (a path parameter or ANY method); they keep their declared access.",
+                    s.text
+                );
+                out.note(&s.file, s.line, message);
+            }
+            if rules == 0 {
                 return;
             }
-            let source = if found.iter().all(|(_, a)| a.is_empty()) {
+            let source = if units.iter().all(|u| !u.adapter) {
                 "Central SecurityFilterChain"
             } else {
                 "Security configuration"
             };
             let message = format!(
-                "{source} rules evaluated: {} rule(s), access of {changed} endpoint(s) changed.",
-                rules.len()
+                "{source} rules evaluated: {rules} rule(s), access of {} endpoint(s) changed.",
+                done.changed
             );
-            out.note(&home.rel, home.line(at), message);
+            out.note(&home.0.rel, home.0.line(home.1), message);
         }
 
-        /// A gap per adapter class in a file without any readable rule.
-        fn unreadable_classes(
-            found: &[(&Source, Vec<(String, usize)>)],
-            index: &Index,
-            out: &mut Out,
-        ) {
-            for (s, classes) in found {
-                if classes.is_empty() || !read(s, index).is_empty() {
-                    continue;
-                }
-                for (name, at) in classes {
-                    let message = format!(
-                        "Security configuration `{name}` has no readable `authorizeRequests()` rules; endpoints it protects stay undeclared."
-                    );
-                    out.at(s, *at, message);
-                }
-            }
+        pub(super) fn is_adapter(d: &Decl) -> bool {
+            (d.bases.iter()).any(|b| {
+                matches!(
+                    b.as_str(),
+                    "WebSecurityConfigurerAdapter" | "ResourceServerConfigurerAdapter"
+                )
+            })
         }
 
-        /// A note per rule that is not read completely.
-        fn rule_notes(rules: &[Rule], out: &mut Out) {
-            for r in rules {
-                let why = match (&r.patterns, &r.grant) {
-                    (None, _) => "its matcher is not a literal",
-                    (_, None) => "its grant is not read",
-                    _ if r.conditional => "it is conditional (inside if/else)",
-                    _ => continue,
-                };
-                let message = format!(
-                    "Filter chain rule `{}`: {why}; endpoints it may match keep their declared access.",
-                    r.text
-                );
-                out.note(&r.file, r.line, message);
-            }
-        }
-
-        /// Applies the first matching rule to each endpoint; returns how many
-        /// changed and, per rule index, how many it matched only partly.
-        fn apply(
-            rules: &[Rule],
-            endpoints: &mut [EndpointAccess],
-        ) -> (usize, BTreeMap<usize, usize>) {
-            let (mut changed, mut partial) = (0, BTreeMap::new());
-            for e in endpoints {
-                let Some((i, hit)) = (rules.iter().enumerate())
-                    .map(|(i, r)| (i, matches(r, e)))
-                    .find(|(_, h)| *h != Hit::No)
-                else {
-                    continue;
-                };
-                let rule = &rules[i];
-                match (&rule.grant, hit, rule.conditional, &rule.patterns) {
-                    (Some(grant), Hit::Full, false, Some(_)) => {
-                        let before = e.access.clone();
-                        e.access = match grant {
-                            AccessState::Protected(c) => require(&e.access, c.clone()),
-                            _ if e.access == AccessState::Undeclared => AccessState::Open,
-                            _ => e.access.clone(),
-                        };
-                        changed += usize::from(e.access != before);
-                    }
-                    (Some(_), Hit::Part, false, Some(_)) => *partial.entry(i).or_default() += 1,
-                    _ => {}
-                }
-            }
-            (changed, partial)
+        /// A note for a rule that is not read completely.
+        fn rule_note(r: &Rule, out: &mut Out) {
+            let why = match (&r.patterns, &r.grant) {
+                (None, _) => "its matcher is not a literal",
+                (_, None) => "its grant is not read",
+                _ if r.conditional => "it is conditional (inside if/else)",
+                _ => return,
+            };
+            let message = format!(
+                "Filter chain rule `{}`: {why}; endpoints it may match keep their declared access.",
+                r.text
+            );
+            out.note(&r.file, r.line, message);
         }
 
         /// Classes extending the legacy Spring Security configurer adapters, as
         /// `(name, offset)`.
         fn adapters(src: &Source) -> Vec<(String, usize)> {
             (decls(src, true).into_iter())
-                .filter(|d| d.class)
-                .filter(|d| {
-                    (d.bases.iter()).any(|b| {
-                        matches!(
-                            b.as_str(),
-                            "WebSecurityConfigurerAdapter" | "ResourceServerConfigurerAdapter"
-                        )
-                    })
-                })
+                .filter(|d| d.class && is_adapter(d))
                 .map(|d| (d.name, d.open))
                 .collect()
         }
 
         /// A `SecurityFilterChain name(` method declaration at `p`.
-        fn bean(src: &Source, p: usize) -> bool {
+        pub(super) fn bean(src: &Source, p: usize) -> bool {
             let b = src.bytes();
             let s = skip_ws(b, p + "SecurityFilterChain".len());
             let e = s + b[s..].iter().take_while(|c| lex::is_ident(**c)).count();
@@ -2765,7 +3421,7 @@ mod spring {
         }
 
         /// The `(` of every `authorizeHttpRequests`/`authorizeRequests` call, in order.
-        fn authorize_sites(src: &Source) -> Vec<usize> {
+        pub(super) fn authorize_sites(src: &Source) -> Vec<usize> {
             let b = src.bytes();
             let mut sites: Vec<usize> = ["authorizeHttpRequests", "authorizeRequests"]
                 .iter()
@@ -2819,17 +3475,20 @@ mod spring {
                 .collect()
         }
 
-        /// The rules of every `authorizeHttpRequests`/`authorizeRequests` call in `src`.
-        fn read(src: &Source, index: &Index) -> Vec<Rule> {
+        /// The rules of every `authorizeHttpRequests`/`authorizeRequests` call of
+        /// `src` that opens inside `span`.
+        fn read(src: &Source, index: &Index, conf: &Conf, span: (usize, usize)) -> Vec<Rule> {
             let mut rules = Vec::new();
             for open in authorize_sites(src) {
-                site(src, index, open, &mut rules);
+                if span.0 <= open && open < span.1 {
+                    site(src, index, conf, open, &mut rules);
+                }
             }
             rules
         }
 
         /// The rules of the `authorize…(` call whose parenthesis opens at `open`.
-        fn site(src: &Source, index: &Index, open: usize, rules: &mut Vec<Rule>) {
+        fn site(src: &Source, index: &Index, conf: &Conf, open: usize, rules: &mut Vec<Rule>) {
             let Some((from, to, lambda)) = block(src, open) else {
                 return;
             };
@@ -2854,7 +3513,7 @@ mod spring {
                     text,
                     methods,
                     patterns,
-                    grant: grant(index, name, args),
+                    grant: grant(index, conf, name, args),
                     conditional,
                 });
             }
@@ -2862,7 +3521,7 @@ mod spring {
 
         /// `(position, name, arguments)` of each `.name(args)` call in `from..to`,
         /// skipping nested brackets.
-        fn calls(src: &Source, from: usize, to: usize) -> Vec<(usize, &str, &str)> {
+        pub(super) fn calls(src: &Source, from: usize, to: usize) -> Vec<(usize, &str, &str)> {
             let b = src.bytes();
             let (mut found, mut j) = (Vec::new(), from);
             while j < to {
@@ -2894,7 +3553,7 @@ mod spring {
         }
 
         /// Whether the call at `at` sits in a block opened by `if (…)` or `else`.
-        fn conditional(src: &Source, at: usize) -> bool {
+        pub(super) fn conditional(src: &Source, at: usize) -> bool {
             let b = src.bytes();
             let Some(open) = (0..at)
                 .rev()
@@ -2944,11 +3603,11 @@ mod spring {
             (at, methods, patterns)
         }
 
-        fn grant(index: &Index, name: &str, args: &str) -> Option<AccessState> {
-            let roles = |make: fn(&str) -> Condition| -> Option<Condition> {
+        fn grant(index: &Index, conf: &Conf, name: &str, args: &str) -> Option<AccessState> {
+            let roles = |kind: Atom| -> Option<Condition> {
                 let names: Option<Vec<Condition>> = split_top(args)
                     .into_iter()
-                    .map(|a| index.text(a).map(|n| make(&n)))
+                    .map(|a| index.text(a).map(|n| conf.atom(kind, &n)))
                     .collect();
                 combine(names?, Condition::Any)
             };
@@ -2958,20 +3617,22 @@ mod spring {
                 "denyAll" => protected(Condition::Never),
                 "authenticated" | "fullyAuthenticated" => protected(Condition::Authenticated),
                 "anonymous" => protected(Condition::Not(Box::new(Condition::Authenticated))),
-                "hasRole" | "hasAnyRole" => roles(prefixed_role).map(AccessState::Protected),
-                "hasAuthority" | "hasAnyAuthority" => roles(role).map(AccessState::Protected),
+                "hasRole" | "hasAnyRole" => roles(Atom::Role).map(AccessState::Protected),
+                "hasAuthority" | "hasAnyAuthority" => {
+                    roles(Atom::Authority).map(AccessState::Protected)
+                }
                 "access" => {
                     let expr = index.text(args)?;
                     match expr.trim() {
                         "permitAll" | "permitAll()" => Some(AccessState::Open),
-                        _ => spel(&expr).map(AccessState::Protected),
+                        _ => spel(conf, &expr).map(AccessState::Protected),
                     }
                 }
                 _ => None,
             }
         }
 
-        fn matches(rule: &Rule, e: &EndpointAccess) -> Hit {
+        pub(super) fn matches(rule: &Rule, e: &EndpointAccess) -> Hit {
             let method = match (rule.methods.is_empty(), e.method.as_str()) {
                 (true, _) => Hit::Full,
                 (false, ANY_METHOD) => Hit::Part,
@@ -3036,7 +3697,7 @@ mod spring {
         }
     }
 
-    fn method(src: &Source, index: &Index, out: &mut Out, class: &Decl, d: &Decl) {
+    fn method(src: &Source, index: &Index, conf: &Conf, out: &mut Out, class: &Decl, d: &Decl) {
         let bases = match class.attrs.iter().find(|a| a.name == "RequestMapping") {
             Some(a) => match paths(src, out, a) {
                 Some(p) => p,
@@ -3054,15 +3715,18 @@ mod spring {
                 .pair(d.open)
                 .map_or(0, |c| split_top(&src.text[d.open + 1..c]).len());
             let up = index.inherited(class, &d.name, arity);
+            let (on_method, ambiguous) = without_conflicts(conf, class, d, &up);
             let mut levels: Vec<(&Source, &[Attr])> = vec![(src, &d.attrs)];
-            levels.extend(up.on_method.iter().map(|(s, a)| (*s, a.as_slice())));
+            levels.extend(on_method.iter().map(|(s, a)| (*s, a.as_slice())));
             levels.push((src, &class.attrs));
             levels.extend(up.on_type.iter().map(|(s, a)| (*s, a.as_slice())));
-            let mut access = layer(index, out, &levels).unwrap_or(AccessState::Undeclared);
+            out.1.hit = false;
+            let mut access = layer(conf, index, out, &levels).unwrap_or(AccessState::Undeclared);
+            let ignored = std::mem::take(&mut out.1.hit);
             for g in &up.gaps {
                 out.at(src, d.open, g.clone());
             }
-            for text in &up.ambiguous {
+            for text in &ambiguous {
                 let unknown = out.unknown(src, d.open, text);
                 access = require(&access, unknown);
             }
@@ -3075,12 +3739,44 @@ mod spring {
                 .flat_map(|p| methods.iter().map(move |m| (p, m)))
             {
                 out.endpoint(src, a.at, m, p.clone(), &access);
+                if ignored {
+                    out.1.endpoints.insert((src.rel.clone(), src.line(a.at)));
+                }
             }
         }
         out.link(
             first,
             handlers::of_method(src, &class.name, &d.name, d.open),
         );
+    }
+
+    /// The supertypes' method annotation levels without the families that
+    /// several of them declare while the method itself declares none (Spring
+    /// rejects that), and the ambiguous supertypes plus one text per such family.
+    fn without_conflicts<'a>(
+        conf: &Conf,
+        class: &Decl,
+        d: &Decl,
+        up: &super::index::Inherited<'a>,
+    ) -> (Vec<(&'a Source, Vec<Attr>)>, Vec<String>) {
+        let own: Vec<&str> = d.attrs.iter().filter_map(|a| family(&a.name)).collect();
+        let (mut levels, mut ambiguous) = (up.on_method.clone(), up.ambiguous.clone());
+        for f in ["PreAuthorize", "PostAuthorize", "Secured", "jsr250"] {
+            let has = |attrs: &Vec<Attr>| attrs.iter().any(|a| family(&a.name) == Some(f));
+            let several = levels.iter().filter(|(_, a)| has(a)).count() > 1;
+            if own.contains(&f) || conf.flag(f) != Flag::On || !several {
+                continue;
+            }
+            for (_, attrs) in &mut levels {
+                attrs.retain(|a| family(&a.name) != Some(f));
+            }
+            let text = format!(
+                "{f} is declared on the method of several supertypes of {}",
+                class.name
+            );
+            ambiguous.push(text);
+        }
+        (levels, ambiguous)
     }
 
     /// HTTP methods of a mapping annotation; `None` for other annotations.
@@ -3121,20 +3817,6 @@ mod spring {
         }
     }
 
-    /// The authority as written (`hasAuthority`, `@Secured`).
-    fn role(name: &str) -> Condition {
-        Condition::Role(name.into())
-    }
-
-    /// `hasRole('A')`: Spring adds the default role prefix unless present.
-    fn prefixed_role(name: &str) -> Condition {
-        role(&if name.starts_with(crate::ui_flow_backend::ROLE_PREFIX) {
-            name.to_string()
-        } else {
-            format!("{}{name}", crate::ui_flow_backend::ROLE_PREFIX)
-        })
-    }
-
     /// The security annotation family of `name`: Spring overrides per family
     /// (a method's annotation replaces the class's of the same family) and
     /// checks every family in turn.
@@ -3153,13 +3835,41 @@ mod spring {
     /// Access declared by the annotation `levels`, most specific first (method,
     /// the method in supertypes, class, supertypes): per family the first level
     /// with one wins, the families are ANDed. `None` when there is none.
-    fn layer(index: &Index, out: &mut Out, levels: &[(&Source, &[Attr])]) -> Option<AccessState> {
+    fn layer(
+        conf: &Conf,
+        index: &Index,
+        out: &mut Out,
+        levels: &[(&Source, &[Attr])],
+    ) -> Option<AccessState> {
         let mut families = Families::new();
         for (src, attrs) in levels {
             let mut here = Families::new();
-            collect(src, index, out, attrs, 0, &mut here);
+            collect(
+                conf,
+                index,
+                out,
+                (src, attrs),
+                Nest {
+                    depth: 0,
+                    site: None,
+                },
+                &mut here,
+            );
             for (f, items) in here {
                 families.entry(f).or_insert(items);
+            }
+        }
+        if conf.legacy() {
+            // legacy method security: the first source with annotations (pre-post,
+            // secured, jsr250) decides alone
+            let group = |f: &str| match f {
+                "PreAuthorize" | "PostAuthorize" => 0,
+                "Secured" => 1,
+                "jsr250" => 2,
+                _ => 3,
+            };
+            if let Some(first) = families.keys().map(|f| group(f)).filter(|g| *g < 3).min() {
+                families.retain(|f, _| group(f) == first || group(f) == 3);
             }
         }
         if families.is_empty() {
@@ -3172,32 +3882,44 @@ mod spring {
         })
     }
 
-    /// Items of `attrs` by family; an unknown annotation is followed into its
-    /// declaration (meta-annotation).
+    /// Where an annotation is read: its depth below the annotated element and,
+    /// inside a meta-annotation, the use site that fills its template.
+    #[derive(Clone, Copy)]
+    struct Nest<'a> {
+        depth: usize,
+        site: Option<&'a Attr>,
+    }
+
+    /// Items of `level` (a source and its annotations) by family; an unknown
+    /// annotation is followed into its declaration (meta-annotation).
     fn collect(
-        src: &Source,
+        conf: &Conf,
         index: &Index,
         out: &mut Out,
-        attrs: &[Attr],
-        depth: usize,
+        (src, attrs): (&Source, &[Attr]),
+        nest: Nest,
         into: &mut Families,
     ) {
         for a in attrs {
             let fam = family(&a.name);
-            // `{value}` of an annotation template is filled by the use site: not read.
-            let found = if depth > 0 && fam.is_some() && a.args.contains('{') {
-                Some(Some(out.unknown(src, a.at, &a.args)))
-            } else {
-                item(src, index, out, a)
+            if fam.is_some_and(|f| !enforced(conf, out, src, a, f, into)) {
+                continue;
+            }
+            let Some(a) = filled(conf, out, src, a, nest, into) else {
+                continue;
             };
-            match found {
+            match item(conf, src, index, out, &a) {
                 Some(item) => into
                     .entry(fam.unwrap_or(&a.name).to_string())
                     .or_default()
                     .push(item),
-                None if depth < 4 => {
+                None if nest.depth < 4 => {
                     if let Some((s, d)) = index.meta(&a.name) {
-                        collect(s, index, out, &d.attrs, depth + 1, into);
+                        let inner = Nest {
+                            depth: nest.depth + 1,
+                            site: Some(&*a),
+                        };
+                        collect(conf, index, out, (s, &d.attrs), inner, into);
                     }
                 }
                 None => {}
@@ -3205,21 +3927,112 @@ mod spring {
         }
     }
 
+    /// Whether annotation `a` of `family` is enforced; a family that is off adds
+    /// nothing (a gap), one whose switch is not readable adds Unknown.
+    fn enforced(
+        conf: &Conf,
+        out: &mut Out,
+        src: &Source,
+        a: &Attr,
+        family: &str,
+        into: &mut Families,
+    ) -> bool {
+        match conf.flag(family) {
+            Flag::On => return true,
+            Flag::Off => {
+                let message = format!("`@{}` is not applied: {}.", a.name, conf.off(family));
+                out.at(src, a.at, message);
+                out.1.hit = true;
+            }
+            Flag::Unreadable => {
+                let text = format!("@{} (its method-security switch is not readable)", a.name);
+                let unknown = out.unknown(src, a.at, &text);
+                into.entry(family.to_string())
+                    .or_default()
+                    .push(Some(unknown));
+            }
+        }
+        false
+    }
+
+    /// `a`, with the `{value}` placeholders of an annotation template filled by
+    /// the use site; `None` (and an Unknown item) when they cannot be.
+    fn filled<'a>(
+        conf: &Conf,
+        out: &mut Out,
+        src: &Source,
+        a: &'a Attr,
+        nest: Nest,
+        into: &mut Families,
+    ) -> Option<std::borrow::Cow<'a, Attr>> {
+        let fam = family(&a.name);
+        if nest.depth == 0 || fam.is_none() || !a.args.contains('{') {
+            return Some(std::borrow::Cow::Borrowed(a));
+        }
+        let Some(args) = fill(conf, a, nest.site) else {
+            let unknown = out.unknown(src, a.at, &a.args);
+            into.entry(fam.unwrap_or(&a.name).to_string())
+                .or_default()
+                .push(Some(unknown));
+            return None;
+        };
+        Some(std::borrow::Cow::Owned(Attr { args, ..a.clone() }))
+    }
+
+    /// The arguments of the template annotation `a` with each `{name}` replaced by
+    /// the literal the use site gives; only with an
+    /// `AnnotationTemplateExpressionDefaults` bean, and never for a placeholder
+    /// the use site does not fill with a literal.
+    fn fill(conf: &Conf, a: &Attr, use_site: Option<&Attr>) -> Option<String> {
+        let site = use_site.filter(|_| conf.templates)?;
+        let mut text = a.args.clone();
+        for _ in 0..8 {
+            let Some(open) = text.find('{') else {
+                return Some(text);
+            };
+            let close = open + text[open..].find('}')?;
+            let key = &text[open + 1..close];
+            if key.is_empty() || !key.bytes().all(lex::is_ident) {
+                return None;
+            }
+            let raw = named(&site.args, key)
+                .or_else(|| (key == "value").then(|| positional(&site.args)).flatten())?;
+            let value = lex::literal(raw)?;
+            text.replace_range(open..=close, &value);
+        }
+        None
+    }
+
     /// One security annotation: `Some(None)` declares open access.
-    fn item(src: &Source, index: &Index, out: &mut Out, a: &Attr) -> Option<Option<Condition>> {
+    fn item(
+        conf: &Conf,
+        src: &Source,
+        index: &Index,
+        out: &mut Out,
+        a: &Attr,
+    ) -> Option<Option<Condition>> {
         let raw = named(&a.args, "value")
             .or_else(|| positional(&a.args))
             .unwrap_or("");
         match a.name.as_str() {
-            "PreAuthorize" => Some(pre_authorize(src, index, out, a, raw)),
+            "PreAuthorize" => Some(pre_authorize(conf, src, index, out, a, raw)),
             "PostAuthorize" => {
                 let message = "`@PostAuthorize` is checked after the call: its side effects have already happened.";
                 out.note(&src.rel, src.line(a.at), message.into());
-                Some(pre_authorize(src, index, out, a, raw))
+                Some(pre_authorize(conf, src, index, out, a, raw))
             }
             "Secured" | "RolesAllowed" => {
-                let roles = literals(raw)
-                    .and_then(|r| combine(r.iter().map(|x| role(x)).collect(), Condition::Any));
+                let kind = if a.name == "Secured" {
+                    Atom::Authority
+                } else {
+                    Atom::Jsr250
+                };
+                let roles = literals(raw).and_then(|r| {
+                    combine(
+                        r.iter().map(|x| conf.atom(kind, x)).collect(),
+                        Condition::Any,
+                    )
+                });
                 Some(Some(roles.unwrap_or_else(|| out.unknown(src, a.at, raw))))
             }
             "PermitAll" => Some(None),
@@ -3230,6 +4043,7 @@ mod spring {
 
     /// `None` for `permitAll()`.
     fn pre_authorize(
+        conf: &Conf,
         src: &Source,
         index: &Index,
         out: &mut Out,
@@ -3242,7 +4056,7 @@ mod spring {
         if matches!(expr.trim(), "permitAll" | "permitAll()") {
             return None;
         }
-        Some(spel(&expr).unwrap_or_else(|| out.unknown(src, a.at, &expr)))
+        Some(spel(conf, &expr).unwrap_or_else(|| out.unknown(src, a.at, &expr)))
     }
 
     #[derive(Clone, PartialEq)]
@@ -3258,8 +4072,9 @@ mod spring {
     }
 
     /// The supported subset of Spring Security SpEL; `None` for anything else.
-    fn spel(expr: &str) -> Option<Condition> {
+    fn spel(conf: &Conf, expr: &str) -> Option<Condition> {
         let mut parser = Spel {
+            conf,
             toks: tokens(expr)?,
             at: 0,
         };
@@ -3312,11 +4127,12 @@ mod spring {
         }
     }
 
-    struct Spel {
+    struct Spel<'c> {
+        conf: &'c Conf,
         toks: Vec<Tok>,
         at: usize,
     }
-    impl Spel {
+    impl Spel<'_> {
         fn eat(&mut self, tok: &Tok) -> bool {
             let hit = self.toks.get(self.at) == Some(tok);
             self.at += usize::from(hit);
@@ -3351,13 +4167,13 @@ mod spring {
                 return None;
             };
             self.at += 1;
-            let make = if matches!(name.as_str(), "hasRole" | "hasAnyRole") {
-                prefixed_role
-            } else {
-                role
+            let kind = match name.as_str() {
+                "hasRole" | "hasAnyRole" => Atom::Role,
+                "hasScope" | "hasAnyScope" => Atom::Scope,
+                _ => Atom::Authority,
             };
             let mut args = if self.eat(&Tok::Open) {
-                self.args(make)?
+                self.args(kind)?
             } else {
                 vec![]
             };
@@ -3371,7 +4187,7 @@ mod spring {
             }
         }
         /// Quoted arguments up to the closing parenthesis, as roles.
-        fn args(&mut self, make: fn(&str) -> Condition) -> Option<Vec<Condition>> {
+        fn args(&mut self, kind: Atom) -> Option<Vec<Condition>> {
             let mut args = Vec::new();
             if self.eat(&Tok::Close) {
                 return Some(args);
@@ -3380,7 +4196,7 @@ mod spring {
                 let Some(Tok::Str(s)) = self.toks.get(self.at) else {
                     return None;
                 };
-                args.push(make(s));
+                args.push(self.conf.atom(kind, s));
                 self.at += 1;
                 if self.eat(&Tok::Close) {
                     return Some(args);
@@ -4270,6 +5086,7 @@ class KController(private val repo: Repo) {
             ("owners/pom.xml", "<project/>"),
             ("owners/src/main/java/shop/OwnerController.java", SPRING),
             ("owners/src/main/java/shop/SecurityConfig.java", SECURITY),
+            ("owners/src/main/java/shop/Enable.java", ENABLE_ALL),
             ("owners/src/main/kotlin/shop/KController.kt", KOTLIN),
             (
                 "owners/src/test/java/shop/T.java",
@@ -4285,7 +5102,7 @@ class KController(private val repo: Repo) {
             &protected(Condition::Authenticated)
         );
         let admin_read = protected(Condition::All(vec![
-            Condition::Any(vec![role("SCOPE_x"), role("owner:read")]),
+            Condition::Any(vec![policy("SCOPE_x"), policy("owner:read")]),
             Condition::Authenticated,
             role("ROLE_ADMIN"),
         ]));
@@ -4297,7 +5114,7 @@ class KController(private val repo: Repo) {
                 Condition::Any(vec![
                     Condition::Not(Box::new(Condition::All(vec![
                         Condition::Authenticated,
-                        role("BLOCKED"),
+                        policy("BLOCKED"),
                     ]))),
                     role("ROLE_ADMIN"),
                 ]),
@@ -4326,7 +5143,7 @@ class KController(private val repo: Repo) {
         );
         assert_eq!(
             access(&flow, "PATCH", "/api/owners/{id}/audit"),
-            &signed_in(role("AUDITOR"))
+            &signed_in(role("ROLE_AUDITOR"))
         );
         assert_eq!(access(&flow, "GET", "/plain"), &AccessState::Undeclared);
         assert_eq!(access(&flow, "GET", "/k/a"), &protected(role("ROLE_USER")));
@@ -4885,6 +5702,7 @@ public class ManagementResource {
             ("src/main/java/app/AuthoritiesConstants.java", AUTHORITIES),
             ("src/main/java/app/SecurityConfiguration.java", FILTER_CHAIN),
             ("src/main/java/app/AccountResource.java", RESOURCES),
+            ("src/main/java/app/Enable.java", ENABLE_ALL),
         ]);
         let flow = extract(dir.path());
         assert_eq!(access(&flow, "POST", "/api/register"), &AccessState::Open);
@@ -4951,6 +5769,7 @@ public class TicketController {
         );
         let dir = project(&[
             ("pom.xml", "<project/>"),
+            ("src/main/java/Enable.java", ENABLE_ALL),
             ("src/main/java/app/SecurityConfig.java", &config),
             ("src/main/java/app/TicketController.java", LEGACY_RESOURCES),
         ]);
@@ -5027,20 +5846,20 @@ public class TicketController {
         );
         assert_eq!(
             access(&flow, "GET", "/api/v1/admin/tickets"),
-            &protected(Condition::All(vec![role("ROLE_ADMIN"), role("server")]))
+            &protected(Condition::All(vec![role("ROLE_ADMIN"), policy("server")]))
         );
         assert_eq!(
             access(&flow, "GET", "/api/v1/internal"),
             &protected(Condition::All(vec![
                 Condition::Authenticated,
-                role("server")
+                policy("server")
             ]))
         );
         assert_eq!(
             access(&flow, "GET", "/api/v1/either"),
             &protected(Condition::All(vec![
                 Condition::Any(vec![
-                    Condition::Any(vec![role("a"), role("b")]),
+                    Condition::Any(vec![policy("a"), policy("b")]),
                     role("ROLE_ROOT")
                 ]),
                 Condition::Authenticated
@@ -5051,6 +5870,7 @@ public class TicketController {
     fn configured(files: &[(&str, &str)]) -> UiFlow {
         let mut all = vec![
             ("pom.xml", "<project/>"),
+            ("src/main/java/Enable.java", ENABLE_ALL),
             ("src/main/java/app/TicketController.java", LEGACY_RESOURCES),
         ];
         all.extend_from_slice(files);
@@ -5068,7 +5888,9 @@ public class TicketController {
     fn assert_not_evaluated(flow: &UiFlow) {
         assert_eq!(
             access(flow, "GET", "/api/v1/other"),
-            &AccessState::Undeclared
+            &AccessState::Undeclared,
+            "{:#?}",
+            flow.diagnostics
         );
         assert_eq!(notes(flow, "not evaluated"), 1, "{:#?}", flow.diagnostics);
     }
@@ -5077,19 +5899,12 @@ public class TicketController {
     fn security_matchers_scope_a_filter_chain() {
         let chain = "public class C { @Bean SecurityFilterChain api(HttpSecurity http) { http.securityMatchers(m -> m.requestMatchers(\"/api/**\")).authorizeHttpRequests(a -> a.anyRequest().authenticated()); return http.build(); } }";
         let flow = configured(&[("src/main/java/app/C.java", chain)]);
-        assert_not_evaluated(&flow);
-    }
-
-    #[test]
-    fn legacy_scoping_forms_are_not_evaluated() {
-        for scope in [
-            "http.requestMatchers().antMatchers(\"/api/**\").and().authorizeRequests().anyRequest().authenticated();",
-            "http.antMatcher(\"/api/**\").authorizeRequests().anyRequest().authenticated();",
-        ] {
-            let config = adapter(scope);
-            let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
-            assert_not_evaluated(&flow);
-        }
+        // a literal scope is read (F30); the rules apply inside it
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &protected(Condition::Authenticated)
+        );
     }
 
     fn kotlin(body: &str) -> UiFlow {
@@ -5106,12 +5921,15 @@ public class TicketController {
             "        http.authorizeRequests().antMatchers(\"/api/**\").authenticated().anyRequest().permitAll()\n        http.antMatcher(\"/api/**\")",
             "        http.authorizeRequests()\n            .antMatchers(\"/api/**\").authenticated()\n            // comment between rules\n            .anyRequest().permitAll()\n\n        http.requestMatchers().antMatchers(\"/api/**\")",
         ] {
+            // the later call scopes the chain (it is no rule); the rules end before it
             let flow = kotlin(body);
-            assert_not_evaluated(&flow);
-            assert_eq!(
-                access(&flow, "GET", "/api/v1/open/ping"),
-                &AccessState::Undeclared
-            );
+            assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+            for path in ["/api/v1/open/ping", "/api/v1/other"] {
+                assert_eq!(
+                    access(&flow, "GET", path),
+                    &protected(Condition::Authenticated)
+                );
+            }
         }
         let flow = kotlin(
             "        http.csrf().disable()\n        http.authorizeRequests()\n            .antMatchers(\"/api/v1/open/**\").permitAll()\n            .anyRequest().authenticated()\n            .and().httpBasic()",
@@ -5450,8 +6268,17 @@ public class TicketController {
                 "public class C {{ @Bean SecurityFilterChain api(HttpSecurity http) throws Exception {{ http.authorizeHttpRequests(a -> {{ {open}; ApiScope.scope(http); }}); return http.build(); }} }}"
             ),
         ];
-        for text in &java {
+        for (i, text) in java.iter().enumerate() {
             let flow = configured(&[("src/main/java/app/C.java", text)]);
+            if i < 3 {
+                // a customizer next to the chain: the scope is read, the rules apply in it
+                assert_eq!(notes(&flow, "not evaluated"), 0, "{text}");
+                assert_eq!(
+                    access(&flow, "GET", "/api/v1/open/ping"),
+                    &AccessState::Open
+                );
+                continue;
+            }
             assert_not_evaluated(&flow);
             assert_eq!(
                 access(&flow, "GET", "/api/v1/open/ping"),
@@ -5460,7 +6287,13 @@ public class TicketController {
             );
         }
         let kt = "class C : WebSecurityConfigurerAdapter(), WebSecurityCustomizer {\n    override fun configure(http: HttpSecurity) {\n        http.antMatcher(\"/api/**\")\n        http.authorizeRequests().anyRequest().authenticated()\n    }\n}\n";
-        assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", kt)]));
+        // a literal scope on the same statement chain is read (F32): rules apply inside it
+        let flow = configured(&[("src/main/java/app/C.kt", kt)]);
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &protected(Condition::Authenticated)
+        );
         // F-C: Kotlin templates that may use the variable.
         for template in [
             "\"${describe(http)}\"",
@@ -5535,18 +6368,37 @@ public class TicketController {
         assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", kt)]));
         // The lambda form of authorizeHttpRequests returns the HttpSecurity, not the rules.
         let text = "public class C { @Bean SecurityFilterChain api(HttpSecurity http) throws Exception { http.authorizeHttpRequests(a -> a.anyRequest().permitAll()).antMatcher(\"/public/**\"); return http.build(); } }";
-        assert_not_evaluated(&configured(&[("src/main/java/app/C.java", text)]));
+        // the lambda form returns the HttpSecurity: `.antMatcher(..)` scopes the chain
+        let flow = configured(&[("src/main/java/app/C.java", text)]);
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &AccessState::Undeclared
+        );
         let kt = "class C : WebSecurityConfigurerAdapter() {\n    override fun configure(http: HttpSecurity) {\n        http.authorizeRequests { a -> a.anyRequest().permitAll() }.antMatcher(\"/public/**\")\n    }\n}\n";
-        assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", kt)]));
-        // Kotlin statements separated by newlines only.
-        for x in [
-            "http.antMatcher(\"/admin/**\")",
-            "http.antMatcher(\"/api/**\")",
+        // Kotlin braces are no readable rule call: a gap, nothing applied
+        let flow = configured(&[("src/main/java/app/C.kt", kt)]);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &AccessState::Undeclared
+        );
+        assert!(!flow.complete, "{:#?}", flow.diagnostics);
+        // Kotlin statements separated by newlines only: the call scopes the chain (F32)
+        for (x, ping) in [
+            ("http.antMatcher(\"/admin/**\")", AccessState::Undeclared),
+            ("http.antMatcher(\"/api/**\")", AccessState::Open),
         ] {
             let kt = format!(
                 "class C : WebSecurityConfigurerAdapter() {{\n    override fun configure(http: HttpSecurity) {{\n        http.authorizeRequests({{ a ->\n            a.antMatchers(\"/api/v1/open/**\").permitAll()\n            a.anyRequest().authenticated()\n            {x}\n        }})\n    }}\n}}\n"
             );
-            assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", &kt)]));
+            let flow = configured(&[("src/main/java/app/C.kt", &kt)]);
+            assert_eq!(
+                notes(&flow, "not evaluated"),
+                0,
+                "{x}: {:#?}",
+                flow.diagnostics
+            );
+            assert_eq!(access(&flow, "GET", "/api/v1/open/ping"), &ping, "{x}");
         }
         // A multi-line rule chain on the lambda parameter stays evaluated.
         let text = "public class C { @Bean SecurityFilterChain api(HttpSecurity http) throws Exception { http.authorizeHttpRequests(a -> a\n  .requestMatchers(\"/api/v1/open/**\").permitAll()\n  .anyRequest().authenticated()); return http.build(); } }";
@@ -5635,9 +6487,7 @@ public class TicketController {
     fn any_matcher_call_outside_the_authorization_block_scopes_the_chain() {
         for scope in [
             "http.requestMatchers(m -> m.antMatchers(\"/api/**\")).authorizeRequests(a -> a.anyRequest().authenticated());",
-            "http.mvcMatcher(\"/api/**\").authorizeRequests().anyRequest().authenticated();",
             "http.regexMatcher(\"/api/.*\").authorizeRequests().anyRequest().authenticated();",
-            "http.requestMatchers().antMatchers(\"/api/**\").and().authorizeRequests().anyRequest().authenticated();",
         ] {
             let config = adapter(scope);
             let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
@@ -5756,6 +6606,7 @@ public class TicketController {
             ("src/main/java/app/AuthoritiesConstants.java", AUTHORITIES),
             ("src/main/java/app/SecurityConfiguration.java", &chain),
             ("src/main/java/app/AccountResource.java", RESOURCES),
+            ("src/main/java/app/Enable.java", ENABLE_ALL),
         ]);
         let flow = extract(dir.path());
         let authenticated = protected(Condition::Authenticated);
@@ -5891,10 +6742,19 @@ public class SecurityConfig {
 }
 "#;
 
-    fn spring_flow(files: &[(&str, &str)]) -> UiFlow {
+    /// A Spring project without any method-security switch.
+    fn spring_bare(files: &[(&str, &str)]) -> UiFlow {
         let mut all = vec![("pom.xml", "<project/>")];
         all.extend(files.iter().map(|(n, t)| (*n, *t)));
         extract(project(&all).path())
+    }
+
+    /// A Spring project with all method-security families enabled (a file of
+    /// the same name replaces the switches).
+    fn spring_flow(files: &[(&str, &str)]) -> UiFlow {
+        let mut all = vec![("src/main/java/Enable.java", ENABLE_ALL)];
+        all.extend_from_slice(files);
+        spring_bare(&all)
     }
 
     fn controller(body: &str) -> String {
@@ -6128,7 +6988,7 @@ g.RequireAuthorization("P");
 class A implements Api { @GetMapping("/ov") public void a() {} }"#,
             ),
         ]);
-        assert_eq!(access(&flow, "GET", "/ov"), &protected(role("ADMIN")));
+        assert_eq!(access(&flow, "GET", "/ov"), &protected(role("ROLE_ADMIN")));
         assert!(!flow.complete);
     }
 
@@ -6153,5 +7013,479 @@ class A extends Dup { @GetMapping("/dup") void a() {} }"#,
             AccessState::Protected(Condition::Unknown(_))
         ));
         assert!(!flow.complete);
+    }
+
+    // ---- wave 2a: Spring conventions, method-security switches, chain scoping ----
+
+    const ENABLE_ALL: &str = "import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;\n@EnableMethodSecurity(securedEnabled = true, jsr250Enabled = true)\nclass Enable {}\n";
+    const AUTH_CHAIN: &str = "@Configuration\npublic class SecurityConfig {\n    @Bean SecurityFilterChain chain(HttpSecurity http) throws Exception {\n        http.authorizeHttpRequests(a -> a.anyRequest().authenticated());\n        return http.build();\n    }\n}\n";
+
+    fn gaps(flow: &UiFlow, part: &str) -> usize {
+        (flow.diagnostics.iter())
+            .filter(|d| d.severity == DiagnosticSeverity::Gap && d.message.contains(part))
+            .count()
+    }
+
+    fn convention(flow: &UiFlow) -> &RoleConvention {
+        assert_eq!(
+            flow.role_conventions.len(),
+            1,
+            "{:#?}",
+            flow.role_conventions
+        );
+        &flow.role_conventions[0]
+    }
+
+    // F09: an annotation template is filled from the use site only with its bean.
+    #[test]
+    fn f09_annotation_template_needs_its_bean() {
+        let template = "@PreAuthorize(\"hasRole('{value}')\")\npublic @interface HasRole { String value(); }\n";
+        let user = controller("class A { @HasRole(\"ADMIN\") @GetMapping(\"/f09\") void a() {} }");
+        let bean = "class B { @Bean static AnnotationTemplateExpressionDefaults d() { return new AnnotationTemplateExpressionDefaults(); } }\n";
+        let with = spring_flow(&[
+            ("src/main/java/HasRole.java", template),
+            ("src/main/java/B.java", bean),
+            ("src/main/java/A.java", &user),
+        ]);
+        assert_eq!(access(&with, "GET", "/f09"), &protected(role("ROLE_ADMIN")));
+        assert!(with.complete, "{:#?}", with.diagnostics);
+        let without = spring_flow(&[
+            ("src/main/java/HasRole.java", template),
+            ("src/main/java/A.java", &user),
+        ]);
+        assert!(matches!(
+            access(&without, "GET", "/f09"),
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+        assert!(!without.complete);
+    }
+
+    // F10: two interfaces declaring the same method annotation are ambiguous.
+    #[test]
+    fn f10_two_interfaces_with_the_annotation_are_unknown() {
+        let flow = spring_flow(&[
+            (
+                "src/main/java/I1.java",
+                "interface I1 {\n    @PreAuthorize(\"hasRole('A')\")\n    void a();\n}\n",
+            ),
+            (
+                "src/main/java/I2.java",
+                "interface I2 {\n    @PreAuthorize(\"hasRole('B')\")\n    void a();\n}\n",
+            ),
+            (
+                "src/main/java/A.java",
+                &controller(
+                    "class A implements I1, I2 { @GetMapping(\"/f10\") public void a() {} }",
+                ),
+            ),
+        ]);
+        assert!(matches!(
+            access(&flow, "GET", "/f10"),
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+        assert!(!flow.complete);
+    }
+
+    // F11-F13: an annotation family that is not enabled adds nothing, with a gap.
+    #[test]
+    fn f11_no_enabling_annotation_ignores_method_security_with_a_gap() {
+        let method = controller(
+            "class A { @PreAuthorize(\"hasRole('ADMIN')\") @GetMapping(\"/f11\") void a() {} }",
+        );
+        let flow = spring_bare(&[
+            ("src/main/java/Sec.java", AUTH_CHAIN),
+            ("src/main/java/A.java", &method),
+        ]);
+        assert_eq!(
+            access(&flow, "GET", "/f11"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(gaps(&flow, "method security"), 1, "{:#?}", flow.diagnostics);
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn f12_f13_a_family_that_is_off_is_ignored_with_a_gap() {
+        let secured =
+            controller("class A { @Secured(\"ROLE_A\") @GetMapping(\"/f12\") void a() {} }");
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", AUTH_CHAIN),
+            (
+                "src/main/java/Enable.java",
+                "@EnableMethodSecurity\nclass Enable {}\n",
+            ),
+            ("src/main/java/A.java", &secured),
+        ]);
+        assert_eq!(
+            access(&flow, "GET", "/f12"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(gaps(&flow, "securedEnabled"), 1, "{:#?}", flow.diagnostics);
+        let pre = controller(
+            "class A { @PreAuthorize(\"hasRole('A')\") @GetMapping(\"/f13\") void a() {} }",
+        );
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", AUTH_CHAIN),
+            (
+                "src/main/java/Enable.java",
+                "@EnableGlobalMethodSecurity(securedEnabled = true)\nclass Enable {}\n",
+            ),
+            ("src/main/java/A.java", &pre),
+        ]);
+        assert_eq!(
+            access(&flow, "GET", "/f13"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(gaps(&flow, "prePostEnabled"), 1, "{:#?}", flow.diagnostics);
+    }
+
+    // An ignored annotation never lets a chain `permitAll` turn the endpoint Open.
+    #[test]
+    fn an_ignored_annotation_is_never_lifted_to_open() {
+        let method = controller(
+            "class A { @PreAuthorize(\"hasRole('ADMIN')\") @GetMapping(\"/x\") void a() {} }",
+        );
+        let flow = spring_bare(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            ("src/main/java/A.java", &method),
+        ]);
+        assert_eq!(access(&flow, "GET", "/x"), &AccessState::Undeclared);
+        assert!(!flow.complete);
+    }
+
+    // A switch that is not a literal boolean is unreadable: Unknown, not off and not on.
+    #[test]
+    fn an_unreadable_switch_makes_the_family_unknown() {
+        let method = controller("class A { @Secured(\"ROLE_A\") @GetMapping(\"/x\") void a() {} }");
+        let flow = spring_flow(&[
+            (
+                "src/main/java/Enable.java",
+                "@EnableMethodSecurity(securedEnabled = FLAGS.SECURED)\nclass Enable {}\n",
+            ),
+            ("src/main/java/A.java", &method),
+        ]);
+        assert!(matches!(
+            access(&flow, "GET", "/x"),
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+        assert!(!flow.complete);
+    }
+
+    // F14: the legacy annotation applies the first family with a hit.
+    #[test]
+    fn f14_legacy_method_security_uses_the_first_family() {
+        let method = controller(
+            "@PreAuthorize(\"hasRole('A')\")\nclass A { @Secured(\"ROLE_B\") @GetMapping(\"/f14\") void a() {} }",
+        );
+        let flow = spring_flow(&[
+            (
+                "src/main/java/Enable.java",
+                "@EnableGlobalMethodSecurity(prePostEnabled = true, securedEnabled = true)\nclass Enable {}\n",
+            ),
+            ("src/main/java/A.java", &method),
+        ]);
+        assert_eq!(access(&flow, "GET", "/f14"), &protected(role("ROLE_A")));
+        assert!(flow.complete, "{:#?}", flow.diagnostics);
+    }
+
+    // F15, F18: an authority is an exact name; a role gets the prefix.
+    #[test]
+    fn f15_f18_authorities_are_not_roles() {
+        let flow = spring_flow(&[(
+            "src/main/java/A.java",
+            &controller(
+                r#"class A {
+    @PreAuthorize("hasAuthority('ADMIN')") @GetMapping("/auth") void a() {}
+    @PreAuthorize("hasRole('ADMIN')") @GetMapping("/role") void b() {}
+    @PreAuthorize("hasAuthority('ROLE_ADMIN')") @GetMapping("/stored") void c() {}
+    @Secured("ADMIN") @GetMapping("/f18") void d() {}
+}"#,
+            ),
+        )]);
+        assert_eq!(access(&flow, "GET", "/auth"), &protected(policy("ADMIN")));
+        assert_eq!(
+            access(&flow, "GET", "/role"),
+            &protected(role("ROLE_ADMIN"))
+        );
+        assert_eq!(
+            access(&flow, "GET", "/stored"),
+            &protected(role("ROLE_ADMIN"))
+        );
+        assert_eq!(access(&flow, "GET", "/f18"), &protected(policy("ADMIN")));
+    }
+
+    // F16: the prefix of a `GrantedAuthorityDefaults` bean is read.
+    #[test]
+    fn f16_granted_authority_defaults_set_the_role_prefix() {
+        let beans = "class B { @Bean GrantedAuthorityDefaults d() { return new GrantedAuthorityDefaults(\"\"); } }\n";
+        let flow = spring_flow(&[
+            ("src/main/java/B.java", beans),
+            (
+                "src/main/java/A.java",
+                &controller(
+                    r#"class A {
+    @PreAuthorize("hasRole('ADMIN')") @GetMapping("/r") void a() {}
+    @PreAuthorize("hasAuthority('ADMIN')") @GetMapping("/a") void b() {}
+}"#,
+                ),
+            ),
+        ]);
+        assert_eq!(access(&flow, "GET", "/r"), &protected(role("ADMIN")));
+        assert_eq!(access(&flow, "GET", "/a"), access(&flow, "GET", "/r"));
+        let c = convention(&flow);
+        assert_eq!(c.role_prefix.as_deref(), Some(""));
+        assert!(
+            c.origins
+                .iter()
+                .any(|o| o.field == "role_prefix" && o.file.ends_with("B.java") && o.line == 1)
+        );
+    }
+
+    // A prefix that is not a literal is not guessed: role conditions are Unknown.
+    #[test]
+    fn an_unreadable_role_prefix_makes_role_names_unknown() {
+        let beans = "class B { @Bean GrantedAuthorityDefaults d() { return new GrantedAuthorityDefaults(PREFIX); } }\n";
+        let flow = spring_flow(&[
+            ("src/main/java/B.java", beans),
+            (
+                "src/main/java/A.java",
+                &controller(
+                    "class A { @PreAuthorize(\"hasRole('ADMIN')\") @GetMapping(\"/r\") void a() {} }",
+                ),
+            ),
+        ]);
+        assert!(matches!(
+            access(&flow, "GET", "/r"),
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+        assert!(!flow.complete);
+        assert_eq!(convention(&flow).role_prefix, None);
+    }
+
+    // F17: JSR-250 adds the prefix, it does not strip it.
+    #[test]
+    fn f17_roles_allowed_adds_the_prefix() {
+        let flow = spring_flow(&[(
+            "src/main/java/A.java",
+            &controller(
+                r#"class A {
+    @RolesAllowed("ROLE_ADMIN") @GetMapping("/f17") void a() {}
+    @RolesAllowed("ADMIN") @GetMapping("/plain") void b() {}
+}"#,
+            ),
+        )]);
+        assert_eq!(
+            access(&flow, "GET", "/f17"),
+            &protected(role("ROLE_ROLE_ADMIN"))
+        );
+        assert_eq!(
+            access(&flow, "GET", "/plain"),
+            &protected(role("ROLE_ADMIN"))
+        );
+    }
+
+    // F41: scopes keep their name; the scope prefix is the framework default.
+    #[test]
+    fn f41_scope_authorities_and_the_default_scope_prefix() {
+        let flow = spring_flow(&[(
+            "src/main/java/A.java",
+            &controller(
+                "class A { @PreAuthorize(\"hasAuthority('SCOPE_read')\") @GetMapping(\"/f41\") void a() {} }",
+            ),
+        )]);
+        assert_eq!(
+            access(&flow, "GET", "/f41"),
+            &protected(policy("SCOPE_read"))
+        );
+        let c = convention(&flow);
+        assert_eq!(c.scope_prefix.as_deref(), Some("SCOPE_"));
+        assert!(
+            c.origins
+                .iter()
+                .any(|o| o.field == "scope_prefix" && o.source.contains("framework default"))
+        );
+    }
+
+    // F42: a JwtGrantedAuthoritiesConverter gives the scope prefix and the claim.
+    #[test]
+    fn f42_jwt_converter_gives_scope_prefix_and_claim() {
+        let conv = "class J { JwtGrantedAuthoritiesConverter c() { var c = new JwtGrantedAuthoritiesConverter(); c.setAuthorityPrefix(\"ROLE_\"); c.setAuthoritiesClaimName(\"roles\"); return c; } }\n";
+        let flow = spring_flow(&[
+            ("src/main/java/J.java", conv),
+            (
+                "src/main/java/A.java",
+                &controller(
+                    "class A { @PreAuthorize(\"hasRole('admin')\") @GetMapping(\"/f42\") void a() {} }",
+                ),
+            ),
+        ]);
+        assert_eq!(access(&flow, "GET", "/f42"), &protected(role("ROLE_admin")));
+        let c = convention(&flow);
+        assert_eq!(c.role_claim.as_deref(), Some("roles"));
+        assert_eq!(c.scope_prefix.as_deref(), Some("ROLE_"));
+    }
+
+    // Quarkus Spring compatibility: role names are exact, nothing is stripped or added.
+    #[test]
+    fn quarkus_spring_controllers_keep_role_names_exact() {
+        let flow = extract(
+            project(&[
+                (
+                    "pom.xml",
+                    "<project><dependencies><dependency><artifactId>quarkus-spring-security</artifactId></dependency></dependencies></project>",
+                ),
+                (
+                    "src/main/java/A.java",
+                    r#"import org.springframework.web.bind.annotation.GetMapping;
+@RestController
+class A {
+    @Secured("admin") @GetMapping("/s") void a() {}
+    @PreAuthorize("hasRole('admin')") @GetMapping("/p") void b() {}
+}"#,
+                ),
+            ])
+            .path(),
+        );
+        assert_eq!(access(&flow, "GET", "/s"), &protected(role("admin")));
+        assert_eq!(access(&flow, "GET", "/p"), &protected(role("admin")));
+        assert_eq!(convention(&flow).role_prefix.as_deref(), Some(""));
+        assert!(flow.complete, "{:#?}", flow.diagnostics);
+    }
+
+    const SCOPED_ENDPOINTS: &str = "@RestController class E {\n    @GetMapping(\"/api/x\") void a() {}\n    @GetMapping(\"/web\") void b() {}\n}\n";
+
+    // F30: ordered chains; the first chain whose scope matches decides.
+    #[test]
+    fn f30_two_chains_apply_by_order_and_scope() {
+        let chains = r#"@Configuration
+class Sec {
+    @Bean @Order(1)
+    SecurityFilterChain api(HttpSecurity http) throws Exception {
+        http.securityMatcher("/api/**").authorizeHttpRequests(a -> a.anyRequest().hasRole("ADMIN"));
+        return http.build();
+    }
+    @Bean
+    SecurityFilterChain web(HttpSecurity http) throws Exception {
+        http.authorizeHttpRequests(a -> a.anyRequest().authenticated());
+        return http.build();
+    }
+}
+"#;
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", chains),
+            ("src/main/java/E.java", SCOPED_ENDPOINTS),
+        ]);
+        assert_eq!(
+            access(&flow, "GET", "/api/x"),
+            &protected(role("ROLE_ADMIN"))
+        );
+        assert_eq!(
+            access(&flow, "GET", "/web"),
+            &protected(Condition::Authenticated)
+        );
+        assert!(flow.complete, "{:#?}", flow.diagnostics);
+    }
+
+    // Chains whose order is equal or unreadable cannot be put in sequence.
+    #[test]
+    fn chains_without_a_readable_distinct_order_are_not_evaluated() {
+        let chains = |first: &str| {
+            format!(
+                "@Configuration\nclass Sec {{\n    @Bean {first}\n    SecurityFilterChain api(HttpSecurity http) throws Exception {{\n        http.securityMatcher(\"/api/**\").authorizeHttpRequests(a -> a.anyRequest().hasRole(\"ADMIN\"));\n        return http.build();\n    }}\n    @Bean\n    SecurityFilterChain web(HttpSecurity http) throws Exception {{\n        http.authorizeHttpRequests(a -> a.anyRequest().authenticated());\n        return http.build();\n    }}\n}}\n"
+            )
+        };
+        for first in ["", "@Order(ORDER)"] {
+            let flow = spring_flow(&[
+                ("src/main/java/Sec.java", &chains(first)),
+                ("src/main/java/E.java", SCOPED_ENDPOINTS),
+            ]);
+            assert_eq!(access(&flow, "GET", "/api/x"), &AccessState::Undeclared);
+            assert_eq!(
+                notes(&flow, "not evaluated"),
+                1,
+                "{first}: {:#?}",
+                flow.diagnostics
+            );
+        }
+    }
+
+    // F31: one scoped chain leaves what is outside its scope undeclared.
+    #[test]
+    fn f31_a_scoped_chain_does_not_protect_outside_its_scope() {
+        let chain = "@Configuration\nclass Sec {\n    @Bean SecurityFilterChain api(HttpSecurity http) throws Exception {\n        http.securityMatcher(\"/api/**\").authorizeHttpRequests(a -> a.anyRequest().authenticated());\n        return http.build();\n    }\n}\n";
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", chain),
+            ("src/main/java/E.java", SCOPED_ENDPOINTS),
+        ]);
+        assert_eq!(access(&flow, "GET", "/web"), &AccessState::Undeclared);
+        assert_eq!(
+            access(&flow, "GET", "/api/x"),
+            &protected(Condition::Authenticated)
+        );
+    }
+
+    // F32: the pre-6 `requestMatchers().antMatchers(..)` scope of an adapter.
+    #[test]
+    fn f32_legacy_request_matchers_scope_an_adapter() {
+        let config = adapter(
+            "http.requestMatchers().antMatchers(\"/api/**\").and().authorizeRequests().anyRequest().authenticated();",
+        );
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", &config),
+            ("src/main/java/E.java", SCOPED_ENDPOINTS),
+        ]);
+        assert_eq!(access(&flow, "GET", "/web"), &AccessState::Undeclared);
+        assert_eq!(
+            access(&flow, "GET", "/api/x"),
+            &protected(Condition::Authenticated)
+        );
+        let antm = adapter(
+            "http.antMatcher(\"/api/**\").authorizeRequests().anyRequest().authenticated();",
+        );
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", &antm),
+            ("src/main/java/E.java", SCOPED_ENDPOINTS),
+        ]);
+        assert_eq!(access(&flow, "GET", "/web"), &AccessState::Undeclared);
+        assert_eq!(
+            access(&flow, "GET", "/api/x"),
+            &protected(Condition::Authenticated)
+        );
+    }
+
+    // A scope that matches only some requests of an endpoint decides nothing.
+    #[test]
+    fn a_partial_scope_match_keeps_the_declared_access() {
+        let chain = "@Configuration\nclass Sec {\n    @Bean SecurityFilterChain api(HttpSecurity http) throws Exception {\n        http.securityMatcher(\"/api/{id:\\\\d+}\").authorizeHttpRequests(a -> a.anyRequest().permitAll());\n        return http.build();\n    }\n}\n";
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", chain),
+            (
+                "src/main/java/E.java",
+                "@RestController class E { @GetMapping(\"/api/me\") void a() {} }\n",
+            ),
+        ]);
+        assert_eq!(access(&flow, "GET", "/api/me"), &AccessState::Undeclared);
+    }
+
+    // Legacy `@EnableGlobalMethodSecurity(jsr250Enabled)` adds the role prefix only when missing.
+    #[test]
+    fn legacy_jsr250_adds_the_role_prefix_only_when_missing() {
+        let flow = spring_flow(&[
+            (
+                "src/main/java/Enable.java",
+                "@EnableGlobalMethodSecurity(jsr250Enabled = true)\nclass Enable {}\n",
+            ),
+            (
+                "src/main/java/A.java",
+                &controller(
+                    r#"class A {
+    @RolesAllowed("ROLE_ADMIN") @GetMapping("/a") void a() {}
+    @RolesAllowed("ADMIN") @GetMapping("/b") void b() {}
+}"#,
+                ),
+            ),
+        ]);
+        assert_eq!(access(&flow, "GET", "/a"), &protected(role("ROLE_ADMIN")));
+        assert_eq!(access(&flow, "GET", "/b"), &protected(role("ROLE_ADMIN")));
     }
 }
