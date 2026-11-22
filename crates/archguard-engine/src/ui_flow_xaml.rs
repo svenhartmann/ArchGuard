@@ -67,7 +67,8 @@
 //! `is false`, `!= true` negate. An unlisted boolean member or call is
 //! `unknown` and a gap, so is a condition with an unreadable operand next to a
 //! member, and any `||` with an unknown operand (as a whole). A condition
-//! made only of other expressions (`items.Count > 0`) is no guard. `else` and
+//! on other expressions with a name (`token == null`) is `unknown` as a whole
+//! and a gap; only literals are no guard. `else` and
 //! `else if` branches get the negated conditions; `if (c) return;` (or
 //! `throw`) guards the rest of its block with `not c`. `open` never gives
 //! `Open`. Not read: `OnNavigating`/`Navigating` guards, `IsVisible`
@@ -1479,10 +1480,15 @@ mod access {
     fn condition(cond: &str, access: &Access, unread: &mut Vec<String>) -> Option<Condition> {
         let mut tally = Tally::default();
         let c = eval(&parse(cond), access, &mut tally);
-        if !tally.members {
+        // Only literals and operators: no guard. Any name makes it unread, not dropped.
+        let named = (cond.split(|c: char| !ident(c))).any(|w| {
+            w.starts_with(|c: char| c.is_alphabetic() || c == '_')
+                && !["true", "false", "null"].contains(&w)
+        });
+        if !tally.members && !named {
             return None;
         }
-        if tally.opaque || (tally.or && !tally.unknown.is_empty()) {
+        if !tally.members || tally.opaque || (tally.or && !tally.unknown.is_empty()) {
             unread.push(gap(cond.trim()));
             return Some(Condition::Unknown(cond.trim().into()));
         }
@@ -2649,12 +2655,30 @@ public class MauiNavigationService : INavigationService
         let whole = Condition::Unknown("_s.IsAuthenticated && items.Count > 0".into());
         assert_eq!(states(&flow, MAIN), [protected(whole)]);
         assert_eq!(gaps(&flow), 1);
-        // Ordinary program logic without any guard member stays unremarkable.
-        let flow = guarded(AUTH, &format!("if (items.Count > 0) {GO_MAIN}"));
-        assert_eq!(
-            states(&flow, MAIN),
-            [archguard_core::AccessState::Undeclared]
-        );
+        // A condition on a member chain that is no boolean member is unread, not dropped.
+        for cond in [
+            "token == null",
+            "_s.User.Roles.Count == 0",
+            "_s.CurrentUser is null",
+            "items.Count > 0",
+        ] {
+            for body in [
+                format!("if ({cond}) {GO_MAIN}"),
+                format!("if ({cond}) return;\n{GO_MAIN}"),
+            ] {
+                let flow = guarded(AUTH, &body);
+                let unknown = Condition::Unknown(cond.into());
+                let want = if body.contains("return") {
+                    not(unknown)
+                } else {
+                    unknown
+                };
+                assert_eq!(states(&flow, MAIN), [protected(want)], "{body}");
+                assert_eq!(gaps(&flow), 1, "{body}");
+            }
+        }
+        // Literals only: no guard.
+        let flow = guarded(AUTH, &format!("if (1 > 2 || true) {GO_MAIN}"));
         assert_eq!(gaps(&flow), 0);
     }
 
