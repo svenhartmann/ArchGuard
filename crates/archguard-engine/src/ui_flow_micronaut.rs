@@ -1,0 +1,937 @@
+//! Micronaut Security extractor for ui-flow/v1 (ADR 0021): controller routes
+//! and who may call them, read as text from Java/Kotlin sources and the
+//! `application*` configuration; no compiler and no run.
+//!
+//! - Routes: a class with `@Controller("/p")` (import `io.micronaut.http.annotation`)
+//!   and methods with `@Get/@Post/@Put/@Delete/@Patch/@Head/@Options/@Trace`
+//!   (`value`, `uri` or `uris`, default `/`); a non-literal path is a gap.
+//! - Rules, first decision wins (no AND between them): the annotation of the
+//!   method, else of the class (`@Secured`: `IS_ANONYMOUS`/`isAnonymous()` =
+//!   open, `IS_AUTHENTICATED`, `DENY_ALL`, role names = any of; `#{…}` = unknown;
+//!   JSR-250 `@PermitAll/@DenyAll/@RolesAllowed` only with
+//!   `micronaut-security-processor`/`-annotations` in the build file; both on
+//!   one element = unknown) -> `micronaut.security.intercept-url-map` (YAML or
+//!   properties; a method-matching entry before method-less ones, first match;
+//!   a pattern that may match a parameter route is unknown) -> a class
+//!   implementing `SecurityRule` = unknown -> default deny (`never` + note).
+//! - Without `micronaut-security` in the project's build file, or with
+//!   `micronaut.security.enabled: false`, endpoints are `undeclared`. Keys of
+//!   `application-<env>` files are conditional: not applied, a gap, and no
+//!   default deny is claimed.
+//!
+//! Not read: annotations inherited from parent classes or interfaces,
+//! `ip-patterns` (a gap), `SensitiveEndpointRule`, `RolesFinder`.
+use crate::extract_ctx::with_root_config;
+use crate::extract_ctx::{ExtractContext, ancestors, dir_name, finish, gap, read_text, walk};
+use crate::lang_csharp::literal;
+use crate::services::support::test_path;
+use crate::ui_flow_backend::{Attr, Decl, Source, decls, each_method};
+use archguard_core::{
+    AccessState, Condition, DiagnosticSeverity, EndpointAccess, UiFlow, UiFlowDiagnostic,
+};
+use serde::Deserialize;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+
+const SOURCE: &str = "micronaut";
+const MAX_BYTES: u64 = 1024 * 1024;
+const BUILD_FILES: [&str; 3] = ["pom.xml", "build.gradle", "build.gradle.kts"];
+const VERBS: [(&str, &str); 8] = [
+    ("Get", "GET"),
+    ("Post", "POST"),
+    ("Put", "PUT"),
+    ("Delete", "DELETE"),
+    ("Patch", "PATCH"),
+    ("Head", "HEAD"),
+    ("Options", "OPTIONS"),
+    ("Trace", "TRACE"),
+];
+const MAP: &str = "micronaut.security.intercept-url-map";
+
+pub fn extract(root: &Path) -> UiFlow {
+    with_root_config(root, extract_with)
+}
+
+pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
+    let mut flow = UiFlow::default();
+    let Ok(walk) = walk(ctx.root) else {
+        return flow;
+    };
+    let (projects, sources, configs) = classify(&walk.files);
+    let project_of = |rel: &str| {
+        let dir = ancestors(rel).find(|d| d.is_empty() || projects.contains(*d));
+        dir.unwrap_or_default().to_string()
+    };
+    let mut by_project: BTreeMap<String, Project> = BTreeMap::new();
+    for rel in sources {
+        match read_text(ctx.root, rel, MAX_BYTES) {
+            Ok(text) if text.contains("io.micronaut") => by_project
+                .entry(project_of(rel))
+                .or_default()
+                .sources
+                .push(Source::new(rel.clone(), &text)),
+            Ok(_) => {}
+            Err(e) => gap(
+                &mut flow.diagnostics,
+                rel,
+                0,
+                format!("Source file not read: {e}"),
+            ),
+        }
+    }
+    for (dir, project) in &mut by_project {
+        project.read_build(ctx.root, dir);
+    }
+    for rel in configs {
+        let Some(project) = by_project.get_mut(&project_of(rel)) else {
+            continue;
+        };
+        let text = read_text(ctx.root, rel, MAX_BYTES);
+        project.config.read(rel, text, &mut flow.diagnostics);
+    }
+    for (dir, project) in &by_project {
+        let app = projects.contains(dir).then(|| dir_name(ctx.root, dir));
+        project.run(app, &mut flow);
+    }
+    finish(&mut flow);
+    flow
+}
+
+type Classified<'a> = (BTreeSet<String>, Vec<&'a String>, Vec<&'a String>);
+
+/// Build-file directories, source files and configuration files.
+fn classify(files: &[String]) -> Classified<'_> {
+    let mut projects = BTreeSet::new();
+    let (mut sources, mut configs) = (Vec::new(), Vec::new());
+    for rel in files {
+        let name = rel.rsplit('/').next().unwrap_or(rel);
+        if BUILD_FILES.contains(&name) {
+            projects.insert(rel.rsplit_once('/').map_or("", |(d, _)| d).to_string());
+        } else if test_path(rel) {
+        } else if name.ends_with(".java") || name.ends_with(".kt") {
+            sources.push(rel);
+        } else if is_config(name) {
+            configs.push(rel);
+        }
+    }
+    (projects, sources, configs)
+}
+
+fn is_config(name: &str) -> bool {
+    let stem = name.strip_prefix("application");
+    let ext = [".yml", ".yaml", ".properties"]
+        .iter()
+        .find_map(|e| stem?.strip_suffix(e));
+    ext.is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+}
+
+struct Site<'a> {
+    src: &'a Source,
+    class: &'a Decl,
+    method: &'a Decl,
+}
+
+#[derive(Default)]
+struct Project {
+    sources: Vec<Source>,
+    dependency: bool,
+    processor: bool,
+    config: Config,
+}
+
+type Decision = Result<AccessState, String>;
+
+impl Project {
+    fn read_build(&mut self, root: &Path, dir: &str) {
+        let build: String = (BUILD_FILES.iter())
+            .map(|name| {
+                let rel = if dir.is_empty() {
+                    (*name).into()
+                } else {
+                    format!("{dir}/{name}")
+                };
+                read_text(root, &rel, MAX_BYTES).unwrap_or_default()
+            })
+            .collect();
+        self.dependency = build.contains("micronaut-security");
+        self.processor = build.contains("micronaut-security-processor")
+            || build.contains("micronaut-security-annotations");
+    }
+
+    fn run(&self, app: Option<String>, flow: &mut UiFlow) {
+        let rule = self.sources.iter().find_map(|s| {
+            let class = decls(s, true)
+                .into_iter()
+                .find(|d| d.class && d.bases.iter().any(|b| b.starts_with("SecurityRule")))?;
+            Some(class.name)
+        });
+        let mut denied = BTreeSet::new();
+        for src in &self.sources {
+            if !src.text.contains("io.micronaut.http.annotation") {
+                continue;
+            }
+            each_method(src, true, |class, method| {
+                let at = Site { src, class, method };
+                self.routes(&at, &app, rule.as_deref(), &mut denied, flow);
+            });
+        }
+    }
+
+    /// The endpoints of one controller method.
+    fn routes(
+        &self,
+        at: &Site,
+        app: &Option<String>,
+        rule: Option<&str>,
+        denied: &mut BTreeSet<String>,
+        flow: &mut UiFlow,
+    ) {
+        let Site { src, class, method } = at;
+        let Some(ctl) = class.attrs.iter().find(|a| a.name == "Controller") else {
+            return;
+        };
+        let base = args(&ctl.args).first().map(|(_, v)| v.clone());
+        let Some(base) = base.map_or(Some(vec!["/".into()]), |v| strings(&v)) else {
+            let line = src.line(ctl.at);
+            gap(
+                &mut flow.diagnostics,
+                &src.rel,
+                line,
+                "@Controller path is not a literal; its routes are not read.",
+            );
+            return;
+        };
+        for a in &method.attrs {
+            let Some((_, verb)) = VERBS.iter().find(|v| v.0 == a.name) else {
+                continue;
+            };
+            let line = src.line(a.at);
+            let Some(paths) = route_paths(a) else {
+                gap(
+                    &mut flow.diagnostics,
+                    &src.rel,
+                    line,
+                    "Route path is not a literal; the route is not read.",
+                );
+                continue;
+            };
+            for path in base
+                .iter()
+                .flat_map(|b| paths.iter().map(move |p| join(b, p)))
+            {
+                let access = match self.decide(class, method, verb, &path, rule) {
+                    Ok(a) => a,
+                    Err(why) => {
+                        gap(
+                            &mut flow.diagnostics,
+                            &src.rel,
+                            line,
+                            format!("Access of {verb} {path} not read: {why}"),
+                        );
+                        AccessState::Protected(Condition::Unknown(why))
+                    }
+                };
+                if access == AccessState::Protected(Condition::Never)
+                    && denied.insert(src.rel.clone())
+                {
+                    flow.diagnostics.push(UiFlowDiagnostic {
+                        file: src.rel.clone(),
+                        line,
+                        message: "Micronaut default deny: no annotation or intercept-url-map entry matches, so the request is rejected.".into(),
+                        severity: DiagnosticSeverity::Note,
+                    });
+                }
+                flow.endpoints.push(EndpointAccess {
+                    method: (*verb).into(),
+                    path,
+                    access,
+                    application: app.clone(),
+                    file: src.rel.clone(),
+                    line,
+                    source: SOURCE.into(),
+                    handler: Some(format!("{}.{}", class.name, method.name)),
+                    sends: vec![],
+                });
+            }
+        }
+    }
+
+    /// `Ok` is the access; `Err` the reason it cannot be read (unknown + gap).
+    fn decide(
+        &self,
+        class: &Decl,
+        method: &Decl,
+        verb: &str,
+        path: &str,
+        rule: Option<&str>,
+    ) -> Decision {
+        if !self.dependency || self.config.enabled == Some(false) {
+            return Ok(AccessState::Undeclared);
+        }
+        if let Some(why) = &self.config.unreadable {
+            return Err(why.clone());
+        }
+        if let Some(a) = self
+            .annotation(&method.attrs)
+            .or_else(|| self.annotation(&class.attrs))
+        {
+            return a;
+        }
+        let ordered = self
+            .config
+            .entries
+            .iter()
+            .filter(|e| e.method.as_deref() == Some(verb))
+            .chain(self.config.entries.iter().filter(|e| e.method.is_none()));
+        for e in ordered {
+            let Some(pattern) = &e.pattern else {
+                return Err(format!("an {MAP} entry has no readable pattern"));
+            };
+            match ant(&segments(pattern), &segments(path)) {
+                Tri::No => {}
+                Tri::Maybe => {
+                    return Err(format!(
+                        "pattern {pattern} may match the parameter route {path}"
+                    ));
+                }
+                Tri::Yes => {
+                    return e
+                        .access
+                        .as_ref()
+                        .map_err(Clone::clone)
+                        .and_then(|p| combine(p));
+                }
+            }
+        }
+        if let Some(rule) = rule {
+            return Err(format!("custom SecurityRule {rule} may decide"));
+        }
+        Ok(if self.config.conditional {
+            AccessState::Undeclared
+        } else {
+            AccessState::Protected(Condition::Never)
+        })
+    }
+
+    /// The annotation decision of one element: none, or its access / why unreadable.
+    fn annotation(&self, attrs: &[Attr]) -> Option<Decision> {
+        let secured: Vec<&Attr> = attrs.iter().filter(|a| a.name == "Secured").collect();
+        let jsr: Vec<&Attr> = (attrs.iter())
+            .filter(|a| ["PermitAll", "DenyAll", "RolesAllowed"].contains(&a.name.as_str()))
+            .collect();
+        match (secured.as_slice(), jsr.as_slice()) {
+            ([], []) => None,
+            ([s], []) => Some(perms(&s.args).and_then(|p| combine(&p))),
+            ([], [j]) if !self.processor => Some(Err(format!(
+                "@{} is not enforced without micronaut-security-processor",
+                j.name
+            ))),
+            ([], [j]) => Some(match j.name.as_str() {
+                "PermitAll" => Ok(AccessState::Open),
+                "DenyAll" => Ok(AccessState::Protected(Condition::Never)),
+                _ => perms(&j.args).and_then(|p| combine(&p)),
+            }),
+            _ => Some(Err("several security annotations on one element".into())),
+        }
+    }
+}
+
+/// One access token of an annotation or intercept-url-map entry.
+enum Perm {
+    Anonymous,
+    Authenticated,
+    Deny,
+    Role(String),
+    Unreadable(String),
+}
+
+fn token(text: &str) -> Perm {
+    match text.trim() {
+        "isAnonymous()" | "IS_ANONYMOUS" => Perm::Anonymous,
+        "isAuthenticated()" | "IS_AUTHENTICATED" => Perm::Authenticated,
+        "denyAll()" | "DENY_ALL" => Perm::Deny,
+        t if t.is_empty() || t.starts_with("#{") => Perm::Unreadable(t.into()),
+        t => Perm::Role(t.into()),
+    }
+}
+
+/// The tokens of a `@Secured`/`@RolesAllowed` argument: literals, the
+/// `SecurityRule` constants; anything else is unreadable.
+fn perms(args_text: &str) -> Result<Vec<Perm>, String> {
+    let value = args(args_text)
+        .into_iter()
+        .find(|(k, _)| k.as_deref().is_none_or(|k| k == "value"));
+    let Some((_, value)) = value else {
+        return Err("annotation without a value".into());
+    };
+    Ok(list(&value)
+        .iter()
+        .map(|p| match literal(p) {
+            Some(s) => token(&s),
+            None => match p.trim().rsplit('.').next() {
+                Some(c @ ("IS_ANONYMOUS" | "IS_AUTHENTICATED" | "DENY_ALL"))
+                    if p.trim()
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '.') =>
+                {
+                    token(c)
+                }
+                _ => Perm::Unreadable(p.trim().into()),
+            },
+        })
+        .collect())
+}
+
+/// Any-of over the tokens. Anything unreadable makes all of it unknown, also
+/// next to an open marker.
+fn combine(perms: &[Perm]) -> Decision {
+    let mut items = Vec::new();
+    let mut open = false;
+    for p in perms {
+        match p {
+            Perm::Unreadable(t) => return Err(format!("'{t}' is not a role, constant or marker")),
+            Perm::Anonymous => open = true,
+            Perm::Authenticated => items.push(Condition::Authenticated),
+            Perm::Deny => items.push(Condition::Never),
+            Perm::Role(r) => items.push(Condition::Role(r.clone())),
+        }
+    }
+    match (open, items.len()) {
+        (true, _) => Ok(AccessState::Open),
+        (_, 0) => Err("no access value".into()),
+        (_, 1) => Ok(AccessState::Protected(items.remove(0))),
+        _ => Ok(AccessState::Protected(Condition::Any(items))),
+    }
+}
+
+/// Top-level `key = value` / positional parts of an annotation argument text.
+fn args(text: &str) -> Vec<(Option<String>, String)> {
+    split_top(text)
+        .into_iter()
+        .map(|part| {
+            let named = part.split_once('=').filter(|(k, v)| {
+                !v.starts_with('=')
+                    && !k.is_empty()
+                    && k.trim().chars().all(|c| c.is_alphanumeric() || c == '_')
+            });
+            match named {
+                Some((k, v)) => (Some(k.trim().to_string()), v.trim().to_string()),
+                None => (None, part.trim().to_string()),
+            }
+        })
+        .collect()
+}
+
+/// The parts of `{a, b}`, `[a, b]`, `arrayOf(a, b)` or the one value.
+fn list(value: &str) -> Vec<String> {
+    let v = value.trim();
+    let inner = [("{", "}"), ("[", "]"), ("arrayOf(", ")")]
+        .iter()
+        .find_map(|(o, c)| v.strip_prefix(o)?.strip_suffix(c));
+    split_top(inner.unwrap_or(v))
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .collect()
+}
+
+fn strings(value: &str) -> Option<Vec<String>> {
+    list(value).iter().map(|p| literal(p)).collect()
+}
+
+fn split_top(text: &str) -> Vec<&str> {
+    let (mut out, mut depth, mut quote, mut start) = (Vec::new(), 0i32, false, 0);
+    let mut prev = ' ';
+    for (i, c) in text.char_indices() {
+        match c {
+            '"' if prev != '\\' => quote = !quote,
+            '(' | '{' | '[' if !quote => depth += 1,
+            ')' | '}' | ']' if !quote => depth -= 1,
+            ',' if !quote && depth == 0 => {
+                out.push(&text[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+        prev = c;
+    }
+    if !text[start..].trim().is_empty() {
+        out.push(&text[start..]);
+    }
+    out
+}
+
+/// The literal paths of a verb annotation; none when one is not a literal.
+fn route_paths(a: &Attr) -> Option<Vec<String>> {
+    let given = args(&a.args)
+        .into_iter()
+        .find(|(k, _)| matches!(k.as_deref(), None | Some("value" | "uri" | "uris")));
+    given.map_or(Some(vec!["/".into()]), |(_, v)| strings(&v))
+}
+
+fn join(base: &str, path: &str) -> String {
+    let joined = format!("/{base}/{path}");
+    let parts: Vec<&str> = joined.split('/').filter(|s| !s.is_empty()).collect();
+    format!("/{}", parts.join("/"))
+}
+
+fn segments(path: &str) -> Vec<&str> {
+    path.split('/').filter(|s| !s.is_empty()).collect()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Tri {
+    No,
+    Maybe,
+    Yes,
+}
+
+/// Ant pattern against a route path; a `{param}` segment may be anything, so a
+/// literal pattern segment there is `Maybe`.
+fn ant(pat: &[&str], path: &[&str]) -> Tri {
+    match (pat.first(), path.first()) {
+        (None, None) => Tri::Yes,
+        (None, Some(_)) => Tri::No,
+        (Some(&"**"), _) => (0..=path.len())
+            .map(|k| ant(&pat[1..], &path[k..]))
+            .max()
+            .unwrap_or(Tri::No),
+        (Some(_), None) => Tri::No,
+        (Some(p), Some(s)) => {
+            let seg = if s.starts_with('{') {
+                if *p == "*" { Tri::Yes } else { Tri::Maybe }
+            } else if glob(p.as_bytes(), s.as_bytes()) {
+                Tri::Yes
+            } else {
+                Tri::No
+            };
+            seg.min(ant(&pat[1..], &path[1..]))
+        }
+    }
+}
+
+fn glob(p: &[u8], s: &[u8]) -> bool {
+    match (p.first(), s.first()) {
+        (None, None) => true,
+        (Some(b'*'), _) => glob(&p[1..], s) || (!s.is_empty() && glob(p, &s[1..])),
+        (Some(b'?'), Some(_)) => glob(&p[1..], &s[1..]),
+        (Some(a), Some(b)) if a == b => glob(&p[1..], &s[1..]),
+        _ => false,
+    }
+}
+
+#[derive(Default)]
+struct Config {
+    enabled: Option<bool>,
+    entries: Vec<Entry>,
+    /// A key of an environment file, or a file not read: later rules unproven.
+    conditional: bool,
+    /// Why the base configuration cannot be used at all.
+    unreadable: Option<String>,
+}
+
+struct Entry {
+    pattern: Option<String>,
+    method: Option<String>,
+    access: Result<Vec<Perm>, String>,
+}
+
+impl Config {
+    fn read(&mut self, rel: &str, text: std::io::Result<String>, out: &mut Vec<UiFlowDiagnostic>) {
+        let name = rel.rsplit('/').next().unwrap_or(rel);
+        let env = !name.starts_with("application.");
+        let flat = text
+            .map_err(|e| e.to_string())
+            .and_then(|t| flatten(name, &t));
+        let flat = match flat {
+            Ok(flat) => flat,
+            Err(e) => {
+                gap(
+                    out,
+                    rel,
+                    0,
+                    format!("Configuration not read ({e}); the security rules cannot be applied."),
+                );
+                self.conditional = true;
+                self.unreadable = Some(format!("{rel} not readable"));
+                return;
+            }
+        };
+        let sec = |k: &&String| k.starts_with("micronaut.security.");
+        let relevant = flat.keys().filter(sec).any(|k| {
+            k.starts_with(MAP)
+                || k == "micronaut.security.enabled"
+                || k.starts_with("micronaut.security.ip-patterns")
+        });
+        if env && relevant {
+            gap(
+                out,
+                rel,
+                0,
+                "Security keys in an environment file are conditional; they are not applied.",
+            );
+            self.conditional = true;
+        }
+        if env {
+            return;
+        }
+        if flat
+            .keys()
+            .any(|k| k.starts_with("micronaut.security.ip-patterns"))
+        {
+            gap(
+                out,
+                rel,
+                0,
+                "micronaut.security.ip-patterns restrict callers; not evaluated.",
+            );
+            self.conditional = true;
+        }
+        match flat.get("micronaut.security.enabled").map(|v| v.trim()) {
+            None | Some("true") => {}
+            Some("false") => self.enabled = Some(false),
+            Some(v) => self.unreadable = Some(format!("micronaut.security.enabled is '{v}'")),
+        }
+        self.read_entries(rel, &flat, out);
+    }
+
+    fn read_entries(
+        &mut self,
+        rel: &str,
+        flat: &BTreeMap<String, String>,
+        out: &mut Vec<UiFlowDiagnostic>,
+    ) {
+        for i in 0.. {
+            let base = format!("{MAP}[{i}]");
+            if !flat.keys().any(|k| k.starts_with(&base)) {
+                break;
+            }
+            let access = access_of(flat, &format!("{base}.access"));
+            if access.is_err() || !flat.contains_key(&format!("{base}.pattern")) {
+                gap(
+                    out,
+                    rel,
+                    0,
+                    format!("{base} has no readable pattern or access."),
+                );
+            }
+            self.entries.push(Entry {
+                pattern: flat.get(&format!("{base}.pattern")).cloned(),
+                method: (flat.get(&format!("{base}.http-method"))).map(|m| m.trim().to_uppercase()),
+                access,
+            });
+        }
+    }
+}
+
+fn access_of(flat: &BTreeMap<String, String>, key: &str) -> Result<Vec<Perm>, String> {
+    let mut values: Vec<&str> = (0..)
+        .map_while(|j| flat.get(&format!("{key}[{j}]")))
+        .map(String::as_str)
+        .collect();
+    if let Some(v) = flat.get(key) {
+        values.extend(v.split(','));
+    }
+    if values.is_empty() {
+        return Err("no access".into());
+    }
+    Ok(values.into_iter().map(token).collect())
+}
+
+/// `a.b[0].c` keys with scalar values, from YAML or `.properties` text.
+fn flatten(name: &str, text: &str) -> Result<BTreeMap<String, String>, String> {
+    let mut out = BTreeMap::new();
+    if name.ends_with(".properties") {
+        for l in text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with(['#', '!']))
+        {
+            if let Some((k, v)) = l.split_once(['=', ':']) {
+                out.insert(k.trim().to_string(), v.trim().to_string());
+            }
+        }
+        return Ok(out);
+    }
+    fn walk(prefix: &str, v: &serde_yaml_ng::Value, out: &mut BTreeMap<String, String>) {
+        use serde_yaml_ng::Value as V;
+        match v {
+            V::Mapping(m) => {
+                for (k, v) in m {
+                    let k = k
+                        .as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("{k:?}"));
+                    walk(
+                        &if prefix.is_empty() {
+                            k
+                        } else {
+                            format!("{prefix}.{k}")
+                        },
+                        v,
+                        out,
+                    );
+                }
+            }
+            V::Sequence(s) => s
+                .iter()
+                .enumerate()
+                .for_each(|(i, v)| walk(&format!("{prefix}[{i}]"), v, out)),
+            V::String(s) => drop(out.insert(prefix.into(), s.clone())),
+            V::Bool(b) => drop(out.insert(prefix.into(), b.to_string())),
+            V::Number(n) => drop(out.insert(prefix.into(), n.to_string())),
+            _ => drop(out.insert(prefix.into(), String::new())),
+        }
+    }
+    for doc in serde_yaml_ng::Deserializer::from_str(text) {
+        let v = serde_yaml_ng::Value::deserialize(doc).map_err(|e| e.to_string())?;
+        walk("", &v, &mut out);
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use archguard_core::{AccessState, Condition, DiagnosticSeverity, EndpointAccess};
+
+    const SEC: &str = "<dependency>micronaut-security</dependency>";
+    const PROC: &str = "<dependency>micronaut-security</dependency>micronaut-security-processor";
+
+    fn run(build: &str, files: &[(&str, &str)]) -> UiFlow {
+        let dir = tempfile::tempdir().unwrap();
+        let build = ("pom.xml", build);
+        for (rel, text) in files.iter().copied().chain([build]) {
+            let path = dir.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        extract(dir.path())
+    }
+
+    fn ep<'a>(flow: &'a UiFlow, method: &str, path: &str) -> &'a EndpointAccess {
+        (flow.endpoints.iter())
+            .find(|e| e.method == method && e.path == path)
+            .unwrap_or_else(|| panic!("no {method} {path} in {:#?}", flow.endpoints))
+    }
+
+    fn gaps(flow: &UiFlow) -> usize {
+        (flow.diagnostics.iter())
+            .filter(|d| d.severity == DiagnosticSeverity::Gap)
+            .count()
+    }
+
+    fn role(n: &str) -> Condition {
+        Condition::Role(n.into())
+    }
+
+    fn prot(c: Condition) -> AccessState {
+        AccessState::Protected(c)
+    }
+
+    fn is_unknown(flow: &UiFlow, method: &str, path: &str) -> bool {
+        matches!(
+            ep(flow, method, path).access,
+            AccessState::Protected(Condition::Unknown(_))
+        )
+    }
+
+    fn java(class_ann: &str, body: &str) -> String {
+        format!(
+            "package a;\nimport io.micronaut.http.annotation.*;\n\
+             import io.micronaut.security.annotation.Secured;\n\
+             import io.micronaut.security.rules.SecurityRule;\n\
+             import jakarta.annotation.security.*;\n\
+             {class_ann}\nclass B {{\n{body}\n}}\n"
+        )
+    }
+
+    const YML: &str = "src/main/resources/application.yml";
+
+    #[test]
+    fn n01_secured_class_and_method() {
+        let src = java(
+            "@Controller(\"/b\") @Secured(SecurityRule.IS_AUTHENTICATED)",
+            "@Get(\"/\") String m() {}\n\
+             @Get(\"/pub\") @Secured(SecurityRule.IS_ANONYMOUS) String p() {}\n\
+             @Get(\"/adm\") @Secured({\"ROLE_ADMIN\",\"ROLE_X\"}) String a() {}",
+        );
+        let f = run(SEC, &[("src/B.java", &src)]);
+        assert_eq!(ep(&f, "GET", "/b").access, prot(Condition::Authenticated));
+        assert_eq!(ep(&f, "GET", "/b/pub").access, AccessState::Open);
+        assert_eq!(
+            ep(&f, "GET", "/b/adm").access,
+            prot(Condition::Any(vec![role("ROLE_ADMIN"), role("ROLE_X")]))
+        );
+        assert_eq!(ep(&f, "GET", "/b/adm").handler.as_deref(), Some("B.a"));
+        assert!(f.complete, "{:#?}", f.diagnostics);
+    }
+
+    #[test]
+    fn n01b_jsr250_and_deny_all() {
+        let src = java(
+            "@Controller(\"/j\")",
+            "@Get(\"/p\") @PermitAll String p() {}\n@Post(\"/d\") @DenyAll String d() {}\n\
+             @Put(\"/r\") @RolesAllowed(\"ROLE_A\") String r() {}\n\
+             @Get(\"/s\") @Secured(SecurityRule.DENY_ALL) String s() {}",
+        );
+        let f = run(PROC, &[("src/B.java", &src)]);
+        assert_eq!(ep(&f, "GET", "/j/p").access, AccessState::Open);
+        assert_eq!(ep(&f, "POST", "/j/d").access, prot(Condition::Never));
+        assert_eq!(ep(&f, "PUT", "/j/r").access, prot(role("ROLE_A")));
+        assert_eq!(ep(&f, "GET", "/j/s").access, prot(Condition::Never));
+    }
+
+    #[test]
+    fn n01c_jsr250_without_processor_is_not_trusted() {
+        let src = java(
+            "@Controller(\"/j\")",
+            "@Get(\"/p\") @PermitAll String p() {}",
+        );
+        let f = run(SEC, &[("src/B.java", &src)]);
+        assert!(is_unknown(&f, "GET", "/j/p"));
+        assert!(gaps(&f) > 0);
+    }
+
+    #[test]
+    fn n02_unannotated_is_default_deny_with_note() {
+        let src = java("@Controller(\"/c\")", "@Get(\"/x\") String x() {}");
+        let f = run(SEC, &[("src/B.java", &src)]);
+        assert_eq!(ep(&f, "GET", "/c/x").access, prot(Condition::Never));
+        assert!(
+            f.diagnostics
+                .iter()
+                .any(|d| d.message.contains("default deny"))
+        );
+        assert!(f.complete, "{:#?}", f.diagnostics);
+    }
+
+    #[test]
+    fn n03_without_the_security_dependency_is_undeclared() {
+        let src = java("@Controller(\"/c\")", "@Get(\"/x\") String x() {}");
+        let f = run("<project/>", &[("src/B.java", &src)]);
+        assert_eq!(ep(&f, "GET", "/c/x").access, AccessState::Undeclared);
+    }
+
+    #[test]
+    fn n04_annotation_beats_the_url_map() {
+        let src = java(
+            "@Controller(\"/books\")",
+            "@Get(\"/x\") @Secured(SecurityRule.IS_ANONYMOUS) String x() {}\n\
+             @Get(\"/y\") String y() {}",
+        );
+        let yml = "micronaut:\n  security:\n    intercept-url-map:\n      - pattern: /books/**\n        access: [ROLE_ADMIN]\n";
+        let f = run(SEC, &[("src/B.java", &src), (YML, yml)]);
+        assert_eq!(ep(&f, "GET", "/books/x").access, AccessState::Open);
+        assert_eq!(ep(&f, "GET", "/books/y").access, prot(role("ROLE_ADMIN")));
+    }
+
+    #[test]
+    fn n05_url_map_prefers_the_matching_http_method() {
+        let src = java(
+            "@Controller(\"/x\")",
+            "@Get String g() {}\n@Post String p() {}",
+        );
+        let yml = "micronaut:\n  security:\n    intercept-url-map:\n      - pattern: /x\n        access:\n          - isAuthenticated()\n      - pattern: /x\n        http-method: POST\n        access:\n          - ROLE_A\n";
+        let f = run(SEC, &[("src/B.java", &src), (YML, yml)]);
+        assert_eq!(ep(&f, "POST", "/x").access, prot(role("ROLE_A")));
+        assert_eq!(ep(&f, "GET", "/x").access, prot(Condition::Authenticated));
+    }
+
+    #[test]
+    fn n06_first_method_less_entry_wins() {
+        let src = java("@Controller(\"/y\")", "@Get String g() {}");
+        let yml = "micronaut:\n  security:\n    intercept-url-map:\n      - pattern: /y\n        access: [isAnonymous()]\n      - pattern: /y\n        access: [ROLE_A]\n";
+        let f = run(SEC, &[("src/B.java", &src), (YML, yml)]);
+        assert_eq!(ep(&f, "GET", "/y").access, AccessState::Open);
+    }
+
+    #[test]
+    fn n06b_properties_form_and_ambiguous_earlier_entry() {
+        let src = java("@Controller(\"/z\")", "@Get(\"/{id}\") String g() {}");
+        let props = "micronaut.security.intercept-url-map[0].pattern=/z/1\n\
+                     micronaut.security.intercept-url-map[0].access[0]=ROLE_A\n\
+                     micronaut.security.intercept-url-map[1].pattern=/z/**\n\
+                     micronaut.security.intercept-url-map[1].access[0]=isAnonymous()\n";
+        let p = "src/main/resources/application.properties";
+        let f = run(SEC, &[("src/B.java", &src), (p, props)]);
+        // /z/1 may match /z/{id}: the earlier protected entry must not be skipped to Open.
+        assert!(is_unknown(&f, "GET", "/z/{id}"));
+        assert!(gaps(&f) > 0);
+    }
+
+    #[test]
+    fn n07_expression_is_unknown() {
+        let src = java(
+            "@Controller(\"/e\")",
+            "@Get @Secured(\"#{ user?.attributes?.get('email') == 'a@b' }\") String g() {}",
+        );
+        let f = run(SEC, &[("src/B.java", &src)]);
+        assert!(is_unknown(&f, "GET", "/e"));
+        assert!(gaps(&f) > 0);
+    }
+
+    #[test]
+    fn n07b_anonymous_next_to_an_expression_is_not_open() {
+        let src = java(
+            "@Controller(\"/e\")",
+            "@Get @Secured({SecurityRule.IS_ANONYMOUS, \"#{ x }\"}) String g() {}",
+        );
+        let f = run(SEC, &[("src/B.java", &src)]);
+        assert!(is_unknown(&f, "GET", "/e"));
+    }
+
+    #[test]
+    fn n08_secured_and_roles_allowed_together_is_unknown() {
+        let src = java(
+            "@Controller(\"/m\")",
+            "@Get @Secured(\"ROLE_A\") @RolesAllowed(\"ROLE_B\") String g() {}",
+        );
+        let f = run(PROC, &[("src/B.java", &src)]);
+        assert!(is_unknown(&f, "GET", "/m"));
+        assert!(gaps(&f) > 0);
+    }
+
+    #[test]
+    fn n09_custom_security_rule_makes_undecided_endpoints_unknown() {
+        let src = java(
+            "@Controller(\"/r\")",
+            "@Get(\"/a\") String a() {}\n@Get(\"/b\") @Secured(\"ROLE_A\") String b() {}",
+        );
+        let rule = "package a;\nimport io.micronaut.security.rules.SecurityRule;\n\
+                    class MyRule implements SecurityRule<Object> {}\n";
+        let f = run(SEC, &[("src/B.java", &src), ("src/MyRule.java", rule)]);
+        assert!(is_unknown(&f, "GET", "/r/a"));
+        assert_eq!(ep(&f, "GET", "/r/b").access, prot(role("ROLE_A")));
+        assert!(gaps(&f) > 0);
+    }
+
+    #[test]
+    fn n10_url_map_only_in_an_environment_file_is_not_applied() {
+        let src = java("@Controller(\"/p\")", "@Get String g() {}");
+        let yml = "micronaut:\n  security:\n    intercept-url-map:\n      - pattern: /p\n        access: [isAnonymous()]\n";
+        let prod = "src/main/resources/application-prod.yml";
+        let f = run(SEC, &[("src/B.java", &src), (prod, yml)]);
+        assert_eq!(ep(&f, "GET", "/p").access, AccessState::Undeclared);
+        assert!(gaps(&f) > 0);
+    }
+
+    #[test]
+    fn security_disabled_or_unreadable_config_is_not_open() {
+        let src = java("@Controller(\"/p\")", "@Get String g() {}");
+        let off = "micronaut:\n  security:\n    enabled: false\n";
+        let f = run(SEC, &[("src/B.java", &src), (YML, off)]);
+        assert_eq!(ep(&f, "GET", "/p").access, AccessState::Undeclared);
+        let bad = "micronaut: [unclosed\n";
+        let f = run(SEC, &[("src/B.java", &src), (YML, bad)]);
+        assert_ne!(ep(&f, "GET", "/p").access, AccessState::Open);
+        assert!(gaps(&f) > 0);
+    }
+
+    #[test]
+    fn spring_controller_is_ignored() {
+        let src = "package a;\nimport org.springframework.stereotype.Controller;\n\
+                   @Controller(\"/s\")\nclass S { @Get(\"/x\") String x() {} }\n";
+        let f = run(SEC, &[("src/S.java", src)]);
+        assert!(f.endpoints.is_empty());
+    }
+}

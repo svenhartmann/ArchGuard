@@ -267,6 +267,7 @@ fn extract_all(ctx: &ExtractContext) -> UiFlow {
         crate::ui_flow_rust::extract_with,
         crate::ui_flow_go::extract_with,
         crate::ui_flow_quarkus::extract_with,
+        crate::ui_flow_micronaut::extract_with,
         crate::ui_flow_roles::extract_with,
     ];
     (extractors.into_iter()).fold(UiFlow::default(), |flow, extract| {
