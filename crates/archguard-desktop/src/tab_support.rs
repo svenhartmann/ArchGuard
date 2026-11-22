@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
-use archguard_engine::core::{CallAnalysis, Config, ServiceTopology};
+use archguard_engine::core::{CallAnalysis, Config, ServiceTopology, UiFlow};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::context::Loaded;
@@ -389,6 +389,48 @@ impl Calls {
     }
 }
 
+/// A document's UI-flow analysis (runs the javac helper). Access layers and Calls both need it; it
+/// runs once per analysis of the document, in the first worker that asks.
+#[derive(Clone)]
+pub struct Flow {
+    root: PathBuf,
+    slot: Shared<Arc<Result<UiFlow, String>>>,
+}
+
+impl Flow {
+    /// The active document's flow (UI thread).
+    pub fn of(data: &Loaded) -> Self {
+        Flow {
+            root: data.root.to_path_buf(),
+            slot: Shared::active(),
+        }
+    }
+
+    /// A flow of `root` shared with nothing (tests).
+    #[cfg(test)]
+    pub fn unshared(root: &Path) -> Self {
+        Flow {
+            root: root.to_path_buf(),
+            slot: Shared::new(),
+        }
+    }
+
+    /// Blocking: runs the analysis, or waits for the worker running it.
+    pub fn get(&self) -> Arc<Result<UiFlow, String>> {
+        self.get_with(|r| archguard_engine::ui_flow::analyze(r).map_err(|e| e.to_string()))
+    }
+
+    /// [`Flow::get`] with the analysis injected (tests count its runs).
+    pub fn get_with(
+        &self,
+        analyze: impl FnOnce(&Path) -> Result<UiFlow, String>,
+    ) -> Arc<Result<UiFlow, String>> {
+        self.slot
+            .get_or_init(|| Arc::new(analyze(&self.root)))
+            .clone()
+    }
+}
+
 /// Translated templates for text Rust composes from data, read from the
 /// `Templates` global (`ui/texts.slint`, translated with `@tr` like all
 /// UI text). Keys are the English texts; an unknown key reads as itself.
@@ -519,6 +561,22 @@ mod texts_check;
 mod tests {
     use super::*;
     use std::path::Path;
+
+    /// Calls and Access layers hold clones of one document's `Flow`: opening either again
+    /// (or both) runs the UI-flow analysis once.
+    #[test]
+    fn the_ui_flow_runs_once_per_document() {
+        let runs = std::cell::Cell::new(0);
+        let flow = Flow::unshared(Path::new("."));
+        let count = |_: &Path| {
+            runs.set(runs.get() + 1);
+            Ok(UiFlow::default())
+        };
+        for f in [flow.clone(), flow.clone(), flow] {
+            f.get_with(count);
+        }
+        assert_eq!(runs.get(), 1);
+    }
 
     /// An action waits only for the document it was started in: switching
     /// to or closing that document drops it.

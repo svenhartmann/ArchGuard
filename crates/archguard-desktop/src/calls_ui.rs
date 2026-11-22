@@ -25,7 +25,7 @@ use slint::{ComponentHandle, SharedString};
 use crate::context::Loaded;
 use crate::deferred::{Coalesce, TYPING};
 use crate::status::Status;
-use crate::tab_support::{self, Actions, Calls, TabState, Texts, index};
+use crate::tab_support::{self, Actions, Calls, Flow, TabState, Texts, index};
 use crate::ui::{AppWindow, CallsData, CallsModel};
 use model::{ElementKind, Labels, Resolution};
 use rankings::Sort;
@@ -45,10 +45,10 @@ fn build_from(calls: &Calls) -> CallsState {
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
         let calls = Calls::of(data);
-        let root = data.root.to_path_buf();
+        let flow = Flow::of(data);
         move || {
             let mut s = build_from(&calls);
-            s.layers = crate::access_ui::method_layers(&root);
+            s.layers = crate::access_ui::method_layers(&flow.get());
             s
         }
     });
