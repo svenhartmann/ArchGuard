@@ -60,9 +60,19 @@
 //! element's `AutomationId`, else its literal `Text` or `Content`. One
 //! transition per labelled element; none without one.
 //!
-//! Access: no standard attribute exists. An `if (...)` around a navigation or
-//! call whose condition uses a configured guard (`IsAuthenticated`,
-//! `HasRole(...)`) becomes `Custom` (negated with `!`); else none.
+//! Access: no standard attribute exists. The condition of an `if` around a
+//! navigation or call is read only from members `[views.access]` lists (the
+//! last name of a member chain, e.g. `_auth.HasRole("A")` -> `HasRole`; the
+//! declaring type is not resolved); `&&` is `all`, `||` `any`, `!`, `== false`,
+//! `is false`, `!= true` negate. An unlisted boolean member or call is
+//! `unknown` and a gap, so is a condition with an unreadable operand next to a
+//! member, and any `||` with an unknown operand (as a whole). A condition
+//! on other expressions with a name (`token == null`) is `unknown` as a whole
+//! and a gap; only literals are no guard. `else` and
+//! `else if` branches get the negated conditions; `if (c) return;` (or
+//! `throw`) guards the rest of its block with `not c`. `open` never gives
+//! `Open`. Not read: `OnNavigating`/`Navigating` guards, `IsVisible`
+//! bindings, `CanExecute`, ternaries.
 //!
 //! Actions: in view models and code-behinds, calls `Get|Post|Put|Delete|
 //! Patch...Async` on a receiver declared `HttpClient` or named `*http*`, with
@@ -81,12 +91,13 @@
 //! the project folder.
 //!
 //! Not recognized: commented-out code, routes or targets from variables,
-//! `else` branches of guards, C#-only pages without XAML, `ContentControl`
+//! C#-only pages without XAML, `ContentControl`
 //! switching by view model (`CurrentView = new XViewModel()`), the older MAUI
 //! `MainPage = …` assignment, services reached over more than one hop.
 use crate::extract_ctx::{ExtractContext, ancestors, dir_name, read_text, walk, with_root_config};
 use crate::lang_markup as xml;
 use crate::services::support::test_path;
+use access::{Access, guard};
 use archguard_core::{
     Action, Call, Condition, DiagnosticSeverity, Origin, Screen, ScreenKind, Target, Transition,
     UiFlow, UiFlowDiagnostic,
@@ -101,8 +112,6 @@ const SOURCE: &str = "xaml";
 const MAX_BYTES: u64 = 1 << 20;
 const MAX_FILES: usize = 5_000;
 const VERBS: [&str; 5] = ["Get", "Post", "Put", "Delete", "Patch"];
-/// Configured guard methods (ADR 0021 decision 6).
-const GUARDS: [&str; 2] = ["IsAuthenticated", "HasRole"];
 const EVENTS: [&str; 4] = ["Clicked", "Click", "Tapped", "Pressed"];
 /// Application overrides that create the first window or page (WPF, WinUI,
 /// Avalonia, MAUI without a Shell).
@@ -146,6 +155,8 @@ struct Doc {
 /// What the rules know about one application.
 struct Index<'a> {
     app: &'a App,
+    /// `[views.access]`: the meaning of the guards the project names.
+    access: &'a Access,
     docs: Vec<Doc>,
     /// Absolute Shell routes (`//a/b`) and registered routes, each with its doc.
     shell: Vec<(String, usize)>,
@@ -179,7 +190,7 @@ pub fn extract(root: &Path) -> UiFlow {
 pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     let mut flow = UiFlow::default();
     for app in discover(ctx.root, &mut flow) {
-        analyze(&app, &mut flow);
+        analyze(&app, &ctx.config.views.access, &mut flow);
     }
     flow.diagnostics.sort();
     flow.diagnostics.dedup();
@@ -314,8 +325,8 @@ fn diagnostic(
 /// Per doc: (opened modally or as dialog, opened otherwise).
 type Opened = Vec<(bool, bool)>;
 
-fn analyze(app: &App, flow: &mut UiFlow) {
-    let ix = index::build(app, flow);
+fn analyze(app: &App, access: &Access, flow: &mut UiFlow) {
+    let ix = index::build(app, access, flow);
     let mut transitions = Vec::new();
     let mut opened = vec![(false, false); ix.docs.len()];
     for (ci, (_, text)) in app.cs.iter().enumerate() {
@@ -354,6 +365,7 @@ fn file_transitions(
             }
         };
         let context = origin(ix, ci, at, flow);
+        let condition = guarded(ix, ci, methods, at, flow);
         for trigger in triggers(ix, ci, methods, at, &context) {
             transitions.push(Transition {
                 weak: false,
@@ -362,7 +374,7 @@ fn file_transitions(
                 trigger,
                 file: file.clone(),
                 line,
-                condition: archguard_core::AccessState::from_parts(guard(text, methods, at), false),
+                condition: archguard_core::AccessState::from_parts(condition.clone(), false),
                 source: SOURCE.into(),
             });
         }
@@ -770,41 +782,21 @@ fn commands(text: &str, method: &text::Scope) -> Vec<String> {
     found
 }
 
-/// Guard condition of the `if` blocks around `at`.
-fn guard(text: &str, scopes: &[text::Scope], at: usize) -> Option<Condition> {
-    let mut found = Vec::new();
-    for scope in scopes
-        .iter()
-        .filter(|s| s.name == "if" && s.body.0 < at && at < s.body.1)
-    {
-        let cond = &text[scope.cond.0..scope.cond.1];
-        for name in GUARDS {
-            for (i, _) in cond
-                .match_indices(name)
-                .filter(|&(i, _)| text::word_at(cond, i, name))
-            {
-                let rest = &cond[i + name.len()..];
-                let call = match rest.trim_start().strip_prefix('(') {
-                    Some(args) => format!("{name}({})", balanced(args, ')').trim()),
-                    None => name.to_string(),
-                };
-                let custom = Condition::Custom(call);
-                // `!IsAuthenticated`, `!_session.IsAuthenticated`.
-                let chain = cond[..i]
-                    .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_' || c == '.');
-                found.push(if chain.trim_end().ends_with('!') {
-                    Condition::Not(Box::new(custom))
-                } else {
-                    custom
-                });
-            }
-        }
+/// The guard condition around offset `at` of cs file `ci`; what cannot be
+/// read is a gap at that line.
+fn guarded(
+    ix: &Index,
+    ci: usize,
+    methods: &[text::Scope],
+    at: usize,
+    flow: &mut UiFlow,
+) -> Option<Condition> {
+    let (file, text) = &ix.app.cs[ci];
+    let (condition, unread) = guard(text, methods, at, ix.access);
+    for message in unread {
+        report(flow, file, line(text, at), message);
     }
-    match found.len() {
-        0 => None,
-        1 => found.pop(),
-        _ => Some(Condition::All(found)),
-    }
+    condition
 }
 
 /// Screens, routes, bindings, wrappers and services of one application.
@@ -887,7 +879,7 @@ mod index {
         (docs, shells)
     }
 
-    pub(super) fn build<'a>(app: &'a App, flow: &mut UiFlow) -> Index<'a> {
+    pub(super) fn build<'a>(app: &'a App, access: &'a Access, flow: &mut UiFlow) -> Index<'a> {
         let (bases, view_models) = hierarchy(app);
         let shown = if app.maui {
             BTreeMap::new()
@@ -897,6 +889,7 @@ mod index {
         let (docs, shells) = documents(app, &bases, &shown);
         let mut ix = Index {
             app,
+            access,
             docs,
             shell: vec![],
             registered: vec![],
@@ -1246,7 +1239,6 @@ mod actions {
     }
 
     pub(super) fn collect(ix: &Index, ci: usize, methods: &[text::Scope], flow: &mut UiFlow) {
-        let text = &ix.app.cs[ci].1;
         for (at, si, call_at, call) in found(ix, ci) {
             let (call_file, call_text) = &ix.app.cs[si];
             let line = line(call_text, call_at);
@@ -1256,7 +1248,7 @@ mod actions {
                 report(flow, call_file, line, message);
             }
             let context = origin(ix, ci, at, flow);
-            let condition = guard(text, methods, at);
+            let condition = guarded(ix, ci, methods, at, flow);
             for trigger in triggers(ix, ci, methods, at, &context) {
                 let action = Action {
                     weak: false,
@@ -1366,6 +1358,297 @@ mod actions {
 }
 
 /// C# token scanning without knowledge of the model.
+mod access {
+    use super::text::{Scope, balanced, ident, literal, split_args};
+    use crate::lang_csharp::literal_end;
+    use archguard_core::{AccessMeaning, Condition};
+    use std::collections::BTreeMap;
+
+    pub(super) type Access = BTreeMap<String, AccessMeaning>;
+
+    /// The condition guarding offset `at` (all `if` blocks, `else` branches and
+    /// early returns around it, outermost first) and the gaps it leaves.
+    pub(super) fn guard(
+        text: &str,
+        scopes: &[Scope],
+        at: usize,
+        access: &Access,
+    ) -> (Option<Condition>, Vec<String>) {
+        let mut found = Vec::new();
+        let mut unread = Vec::new();
+        for s in scopes.iter().filter(|s| s.name == "if") {
+            let other = else_span(text, scopes, s);
+            let negated = if s.body.0 < at && at < s.body.1 {
+                false
+            } else if other.is_some_and(|(from, to)| from <= at && at < to)
+                || (other.is_none()
+                    && s.body.1 < at
+                    && terminates(text, s)
+                    && same_block(text, s.body.1 + 1, at))
+            {
+                true
+            } else {
+                continue;
+            };
+            let cond = &text[s.cond.0..s.cond.1];
+            if let Some(c) = condition(cond, access, &mut unread) {
+                found.push(if negated { not(c) } else { c });
+            }
+        }
+        let condition = match found.len() {
+            0 => None,
+            1 => found.pop(),
+            _ => Some(Condition::All(found)),
+        };
+        (condition, unread)
+    }
+
+    fn not(c: Condition) -> Condition {
+        match c {
+            Condition::Not(inner) => *inner,
+            c => Condition::Not(Box::new(c)),
+        }
+    }
+
+    /// Span of the statement after the `else` of `s`, if it has one.
+    fn else_span(text: &str, scopes: &[Scope], s: &Scope) -> Option<(usize, usize)> {
+        let rest = text.get(s.body.1 + 1..)?;
+        let from = s.body.1 + 1 + (rest.len() - rest.trim_start().len());
+        let branch = text[from..].strip_prefix("else")?;
+        if branch.starts_with(ident) {
+            return None;
+        }
+        let start = from + 4 + (branch.len() - branch.trim_start().len());
+        let branch = &text[start..];
+        let end = if let Some(inner) = branch.strip_prefix('{') {
+            start + 1 + balanced(inner, '}').len() + 1
+        } else if let Some(next) = scopes.iter().find(|n| n.name == "if" && n.at == start) {
+            else_span(text, scopes, next).map_or(next.body.1 + 1, |(_, end)| end)
+        } else {
+            start + balanced(branch, ';').len() + 1
+        };
+        Some((start, end))
+    }
+
+    /// The body of `s` ends in `return` or `throw`.
+    fn terminates(text: &str, s: &Scope) -> bool {
+        let body = text[s.body.0..s.body.1].trim();
+        let body = (body.strip_prefix('{').unwrap_or(body))
+            .trim()
+            .trim_end_matches(';');
+        let last = body.rsplit(';').next().unwrap_or("").trim();
+        ["return", "throw"]
+            .iter()
+            .any(|w| last.strip_prefix(w).is_some_and(|r| !r.starts_with(ident)))
+    }
+
+    /// No block closes between `from` and `at`: both lie in the same block.
+    fn same_block(text: &str, from: usize, at: usize) -> bool {
+        let mut depth = 0i32;
+        for c in text.get(from..at).unwrap_or("}").chars() {
+            depth += match c {
+                '{' => 1,
+                '}' => -1,
+                _ => 0,
+            };
+            if depth < 0 {
+                return false;
+            }
+        }
+        true
+    }
+
+    enum Node {
+        Or(Vec<Node>),
+        And(Vec<Node>),
+        Not(Box<Node>),
+        /// A boolean member or call: its text, last name and argument text.
+        Member(String, String, Option<String>),
+        /// Any other expression.
+        Opaque,
+    }
+
+    #[derive(Default)]
+    struct Tally {
+        members: bool,
+        opaque: bool,
+        or: bool,
+        unknown: Vec<String>,
+    }
+
+    /// The condition of one `if` text; unreadable parts add to `unread`.
+    fn condition(cond: &str, access: &Access, unread: &mut Vec<String>) -> Option<Condition> {
+        let mut tally = Tally::default();
+        let c = eval(&parse(cond), access, &mut tally);
+        // Only literals and operators: no guard. Any name makes it unread, not dropped.
+        let named = (cond.split(|c: char| !ident(c))).any(|w| {
+            w.starts_with(|c: char| c.is_alphabetic() || c == '_')
+                && !["true", "false", "null"].contains(&w)
+        });
+        if !tally.members && !named {
+            return None;
+        }
+        if !tally.members || tally.opaque || (tally.or && !tally.unknown.is_empty()) {
+            unread.push(gap(cond.trim()));
+            return Some(Condition::Unknown(cond.trim().into()));
+        }
+        unread.extend(tally.unknown.iter().map(|t| gap(t)));
+        c
+    }
+
+    fn gap(text: &str) -> String {
+        format!(
+            "Guard `{text}` is not read: no [views.access] entry for it, a non-literal argument or an unreadable operand; the condition is unknown."
+        )
+    }
+
+    fn eval(node: &Node, access: &Access, t: &mut Tally) -> Option<Condition> {
+        fn join(mut v: Vec<Condition>, make: fn(Vec<Condition>) -> Condition) -> Option<Condition> {
+            match v.len() {
+                0 => None,
+                1 => v.pop(),
+                _ => Some(make(v)),
+            }
+        }
+        match node {
+            Node::Or(items) => {
+                t.or = true;
+                let v = items.iter().filter_map(|n| eval(n, access, t)).collect();
+                join(v, Condition::Any)
+            }
+            Node::And(items) => {
+                let v = items.iter().filter_map(|n| eval(n, access, t)).collect();
+                join(v, Condition::All)
+            }
+            Node::Not(inner) => eval(inner, access, t).map(not),
+            Node::Opaque => {
+                t.opaque = true;
+                None
+            }
+            Node::Member(text, name, args) => {
+                t.members = true;
+                let read = access.get(name).and_then(|m| meaning(m, args.as_deref()));
+                if read.is_none() {
+                    t.unknown.push(text.clone());
+                }
+                Some(read.unwrap_or_else(|| Condition::Unknown(text.clone())))
+            }
+        }
+    }
+
+    /// The condition of a listed member; `None` for `open` (no condition) or
+    /// a `$arg` form without literal arguments.
+    fn meaning(m: &AccessMeaning, args: Option<&str>) -> Option<Condition> {
+        let args = args.map(split_args).unwrap_or_default();
+        let make: fn(String) -> Condition = match m.at_use_site(!args.is_empty()) {
+            AccessMeaning::Authenticated => return Some(Condition::Authenticated),
+            AccessMeaning::Never => return Some(Condition::Never),
+            AccessMeaning::Role(n) => return Some(Condition::Role(n.clone())),
+            AccessMeaning::Policy(n) => return Some(Condition::Policy(n.clone())),
+            AccessMeaning::RoleFromArguments => Condition::Role,
+            AccessMeaning::PolicyFromArguments => Condition::Policy,
+            AccessMeaning::Open | AccessMeaning::FromArgumentsOr(..) => return None,
+        };
+        let mut names: Vec<Condition> = (args.iter())
+            .map(|a| literal(a).map(make))
+            .collect::<Option<_>>()?;
+        match names.len() {
+            0 => None,
+            1 => names.pop(),
+            _ => Some(Condition::Any(names)),
+        }
+    }
+
+    /// `s` split at `sep` outside literals and brackets.
+    fn split<'a>(s: &'a str, sep: &str) -> Vec<&'a str> {
+        let b = s.as_bytes();
+        let (mut out, mut depth, mut start, mut i) = (vec![], 0i32, 0, 0);
+        while i < b.len() {
+            if let Some(end) = literal_end(b, i) {
+                i = end;
+                continue;
+            }
+            match b[i] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                _ if depth == 0 && b[i..].starts_with(sep.as_bytes()) => {
+                    out.push(&s[start..i]);
+                    i += sep.len();
+                    start = i;
+                    continue;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        out.push(&s[start..]);
+        out
+    }
+
+    fn parse(s: &str) -> Node {
+        for (sep, make) in [("||", Node::Or as fn(Vec<Node>) -> Node), ("&&", Node::And)] {
+            let parts = split(s, sep);
+            if parts.len() > 1 {
+                return make(parts.into_iter().map(parse).collect());
+            }
+        }
+        let s = s.trim();
+        if let Some(rest) = s.strip_prefix('!').filter(|r| !r.starts_with('=')) {
+            return Node::Not(Box::new(parse(rest)));
+        }
+        if let Some(inner) = s.strip_prefix('(')
+            && balanced(inner, ')').len() + 2 == s.len()
+        {
+            return parse(&s[1..s.len() - 1]);
+        }
+        for op in ["==", "!=", " is "] {
+            let Some(i) = s.rfind(op) else { continue };
+            let positive = match s[i + op.len()..].trim() {
+                "true" => op != "!=",
+                "false" => op == "!=",
+                _ => continue,
+            };
+            return match member(&s[..i]) {
+                m @ Node::Member(..) if !positive => Node::Not(Box::new(m)),
+                other => other,
+            };
+        }
+        member(s)
+    }
+
+    /// `a.b?.C(args)`: a chain of names, each with optional call parentheses.
+    fn member(s: &str) -> Node {
+        let text = s.trim();
+        let mut rest = text.strip_prefix("await ").unwrap_or(text).trim();
+        let (mut name, mut args);
+        loop {
+            let end = rest.find(|c: char| !ident(c)).unwrap_or(rest.len());
+            name = &rest[..end];
+            if name.is_empty()
+                || name.starts_with(|c: char| c.is_ascii_digit())
+                || ["true", "false", "null", "new"].contains(&name)
+            {
+                return Node::Opaque;
+            }
+            rest = &rest[end..];
+            args = None;
+            if let Some(r) = rest.strip_prefix('(') {
+                let inner = balanced(r, ')');
+                args = Some(inner.trim().to_string());
+                rest = r.get(inner.len() + 1..).unwrap_or("");
+            }
+            if rest.is_empty() {
+                break;
+            }
+            match rest.strip_prefix("?.").or_else(|| rest.strip_prefix('.')) {
+                Some(r) => rest = r,
+                None => return Node::Opaque,
+            }
+        }
+        Node::Member(text.into(), name.into(), args)
+    }
+}
+
 mod text {
     pub(super) use crate::lang_csharp::{
         balanced, ident_start, is_ident as ident, literal, split_args,
@@ -1856,7 +2139,7 @@ public class MauiNavigationService : INavigationService
             .unwrap();
         assert_eq!(
             guarded.condition,
-            archguard_core::AccessState::Protected(Condition::Custom("IsAuthenticated".into()))
+            archguard_core::AccessState::Protected(Condition::Unknown("IsAuthenticated".into()))
         );
         assert_eq!(back.condition, archguard_core::AccessState::Undeclared);
     }
@@ -1878,7 +2161,7 @@ public class MauiNavigationService : INavigationService
                 (
                     &to("Shop:Views/EditPage.xaml"),
                     Some("ADMIN"),
-                    Some(&Condition::Custom("HasRole(\"Admin\")".into()))
+                    Some(&Condition::Unknown("HasRole(\"Admin\")".into()))
                 ),
             ]
         );
@@ -2211,5 +2494,255 @@ public class MauiNavigationService : INavigationService
             ),
         ]);
         assert_eq!(extract(dir.path()), UiFlow::default());
+    }
+
+    const MAIN: &str = "Shop:Views/CatalogPage.xaml";
+    const LOGIN: &str = "Shop:Views/LoginPage.xaml";
+
+    /// One code-behind method `M` with `body`; the config is `[views.access]`.
+    fn guarded(access: &str, body: &str) -> UiFlow {
+        let cs = format!(
+            "public partial class CatalogPage\n{{\n    async Task M(bool isDemo, string role)\n    {{\n{body}\n    }}\n}}\n"
+        );
+        let config = format!("[views.access]\n{access}\n");
+        let dir = write(&[
+            (".archguard/archguard.toml", &config),
+            ("Shop/Shop.csproj", MAUI_PROJ),
+            ("Shop/AppShell.xaml", SHELL),
+            ("Shop/Views/LoginPage.xaml", &page("LoginPage", "")),
+            ("Shop/Views/CatalogPage.xaml", &page("CatalogPage", "")),
+            ("Shop/Views/CatalogPage.xaml.cs", &cs),
+        ]);
+        extract(dir.path())
+    }
+
+    /// Access states of the transitions into `id`, in text order.
+    fn states(flow: &UiFlow, id: &str) -> Vec<archguard_core::AccessState> {
+        let mut found: Vec<_> = (flow.transitions.iter())
+            .filter(|t| t.target == to(id))
+            .collect();
+        found.sort_by_key(|t| t.line);
+        found.iter().map(|t| t.condition.clone()).collect()
+    }
+
+    fn protected(c: Condition) -> archguard_core::AccessState {
+        archguard_core::AccessState::Protected(c)
+    }
+
+    fn not(c: Condition) -> Condition {
+        Condition::Not(Box::new(c))
+    }
+
+    fn gaps(flow: &UiFlow) -> usize {
+        (flow.diagnostics.iter())
+            .filter(|d| d.severity == DiagnosticSeverity::Gap)
+            .count()
+    }
+
+    const GO_MAIN: &str = r#"await Shell.Current.GoToAsync("//Main/Shop/Catalog");"#;
+    const GO_LOGIN: &str = r#"await Shell.Current.GoToAsync("//Login");"#;
+    const AUTH: &str = "IsAuthenticated = \"authenticated\"";
+
+    #[test]
+    fn unmapped_guard_is_unknown_with_a_gap_not_a_guessed_name() {
+        let flow = guarded("", &format!("if (_session.IsAuthenticated) {GO_MAIN}"));
+        let unknown = Condition::Unknown("_session.IsAuthenticated".into());
+        assert_eq!(states(&flow, MAIN), [protected(unknown)]);
+        assert_eq!(gaps(&flow), 1);
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn mapped_guard_and_its_else_branch() {
+        let body = format!("if (_session.IsAuthenticated) {GO_MAIN} else {GO_LOGIN}");
+        let flow = guarded(AUTH, &body);
+        assert_eq!(states(&flow, MAIN), [protected(Condition::Authenticated)]);
+        assert_eq!(
+            states(&flow, LOGIN),
+            [protected(not(Condition::Authenticated))]
+        );
+        assert_eq!(gaps(&flow), 0);
+    }
+
+    #[test]
+    fn else_if_chain_negates_every_earlier_condition() {
+        let access = format!("{AUTH}\nIsAdmin = \"role:Admin\"");
+        let body = format!(
+            "if (IsAdmin) {{ {GO_MAIN} }} else if (IsAuthenticated) {{ {GO_MAIN} }} else {{ {GO_LOGIN} }}"
+        );
+        let flow = guarded(&access, &body);
+        let admin = Condition::Role("Admin".into());
+        assert_eq!(
+            states(&flow, MAIN),
+            [
+                protected(admin.clone()),
+                protected(Condition::All(vec![
+                    not(admin.clone()),
+                    Condition::Authenticated
+                ]))
+            ]
+        );
+        assert_eq!(
+            states(&flow, LOGIN),
+            [protected(Condition::All(vec![
+                not(admin),
+                not(Condition::Authenticated)
+            ]))]
+        );
+    }
+
+    #[test]
+    fn role_argument_is_read_from_a_literal_only() {
+        let access = "HasRole = \"role:$arg\"";
+        let flow = guarded(access, &format!("if (_auth.HasRole(\"Admin\")) {GO_MAIN}"));
+        assert_eq!(
+            states(&flow, MAIN),
+            [protected(Condition::Role("Admin".into()))]
+        );
+        assert_eq!(gaps(&flow), 0);
+        let flow = guarded(access, &format!("if (_auth.HasRole(role)) {GO_MAIN}"));
+        let unknown = Condition::Unknown("_auth.HasRole(role)".into());
+        assert_eq!(states(&flow, MAIN), [protected(unknown)]);
+        assert_eq!(gaps(&flow), 1);
+    }
+
+    #[test]
+    fn every_negation_form_is_not() {
+        for cond in [
+            "!_s.IsAuthenticated",
+            "_s.IsAuthenticated == false",
+            "_s.IsAuthenticated is false",
+            "_s.IsAuthenticated != true",
+            "!(_s.IsAuthenticated)",
+        ] {
+            let flow = guarded(AUTH, &format!("if ({cond}) {GO_MAIN}"));
+            let want = [protected(not(Condition::Authenticated))];
+            assert_eq!(states(&flow, MAIN), want, "{cond}");
+        }
+        let flow = guarded(AUTH, &format!("if (_s.IsAuthenticated == true) {GO_MAIN}"));
+        assert_eq!(states(&flow, MAIN), [protected(Condition::Authenticated)]);
+    }
+
+    #[test]
+    fn boolean_structure_or_with_an_unreadable_operand_is_unknown_as_a_whole() {
+        let flow = guarded(
+            AUTH,
+            &format!("if (_s.IsAuthenticated || isDemo) {GO_MAIN}"),
+        );
+        let whole = Condition::Unknown("_s.IsAuthenticated || isDemo".into());
+        assert_eq!(states(&flow, MAIN), [protected(whole)]);
+        assert_eq!(gaps(&flow), 1);
+        let access = format!("{AUTH}\nHasRole = \"role:$arg\"");
+        let body = format!("if (_s.IsAuthenticated && _auth.HasRole(\"A\")) {GO_MAIN}");
+        let flow = guarded(&access, &body);
+        let all = Condition::All(vec![Condition::Authenticated, Condition::Role("A".into())]);
+        assert_eq!(states(&flow, MAIN), [protected(all)]);
+        let body = format!("if (!(_s.IsAuthenticated && _auth.HasRole(\"A\"))) {GO_LOGIN}");
+        let flow = guarded(&access, &body);
+        let all = Condition::All(vec![Condition::Authenticated, Condition::Role("A".into())]);
+        assert_eq!(states(&flow, LOGIN), [protected(not(all))]);
+        let body = format!("if (_s.IsAuthenticated || _auth.HasRole(\"A\")) {GO_MAIN}");
+        let any = Condition::Any(vec![Condition::Authenticated, Condition::Role("A".into())]);
+        assert_eq!(states(&guarded(&access, &body), MAIN), [protected(any)]);
+    }
+
+    #[test]
+    fn opaque_operand_next_to_a_guard_is_never_dropped() {
+        let flow = guarded(
+            AUTH,
+            &format!("if (_s.IsAuthenticated && items.Count > 0) {GO_MAIN}"),
+        );
+        let whole = Condition::Unknown("_s.IsAuthenticated && items.Count > 0".into());
+        assert_eq!(states(&flow, MAIN), [protected(whole)]);
+        assert_eq!(gaps(&flow), 1);
+        // A condition on a member chain that is no boolean member is unread, not dropped.
+        for cond in [
+            "token == null",
+            "_s.User.Roles.Count == 0",
+            "_s.CurrentUser is null",
+            "items.Count > 0",
+        ] {
+            for body in [
+                format!("if ({cond}) {GO_MAIN}"),
+                format!("if ({cond}) return;\n{GO_MAIN}"),
+            ] {
+                let flow = guarded(AUTH, &body);
+                let unknown = Condition::Unknown(cond.into());
+                let want = if body.contains("return") {
+                    not(unknown)
+                } else {
+                    unknown
+                };
+                assert_eq!(states(&flow, MAIN), [protected(want)], "{body}");
+                assert_eq!(gaps(&flow), 1, "{body}");
+            }
+        }
+        // Literals only: no guard.
+        let flow = guarded(AUTH, &format!("if (1 > 2 || true) {GO_MAIN}"));
+        assert_eq!(gaps(&flow), 0);
+    }
+
+    #[test]
+    fn guard_mapped_to_open_is_unknown_never_open() {
+        let flow = guarded("IsPublic = \"open\"", &format!("if (IsPublic) {GO_MAIN}"));
+        let unknown = Condition::Unknown("IsPublic".into());
+        assert_eq!(states(&flow, MAIN), [protected(unknown)]);
+        assert_eq!(gaps(&flow), 1);
+    }
+
+    #[test]
+    fn early_return_guards_the_navigation_after_it() {
+        for guard in [
+            "if (!_s.IsAuthenticated) return;",
+            "if (!_s.IsAuthenticated) { return; }",
+            "if (!_s.IsAuthenticated) { await Shell.Current.GoToAsync(\"//Login\"); return; }",
+        ] {
+            let flow = guarded(AUTH, &format!("{guard}\n{GO_MAIN}"));
+            assert_eq!(
+                states(&flow, MAIN),
+                [protected(Condition::Authenticated)],
+                "{guard}"
+            );
+        }
+        let body = format!("if (!_s.IsAuthenticated) {{ {GO_LOGIN} return; }}\n{GO_MAIN}");
+        let flow = guarded(AUTH, &body);
+        assert_eq!(
+            states(&flow, LOGIN),
+            [protected(not(Condition::Authenticated))]
+        );
+        // The early return of another block does not guard this one.
+        let body = format!("{{ if (!_s.IsAuthenticated) return; }}\n{GO_MAIN}");
+        let flow = guarded(AUTH, &body);
+        assert_eq!(
+            states(&flow, MAIN),
+            [archguard_core::AccessState::Undeclared]
+        );
+        // An `if` that does not end in `return` guards nothing after it.
+        let body = format!("if (!_s.IsAuthenticated) {{ isDemo = true; }}\n{GO_MAIN}");
+        let flow = guarded(AUTH, &body);
+        assert_eq!(
+            states(&flow, MAIN),
+            [archguard_core::AccessState::Undeclared]
+        );
+    }
+
+    #[test]
+    fn app_without_any_guard_is_never_open() {
+        let flow = guarded("", &format!("{GO_MAIN}\n{GO_LOGIN}"));
+        assert_eq!(
+            states(&flow, MAIN),
+            [archguard_core::AccessState::Undeclared]
+        );
+        assert!(
+            flow.screens
+                .iter()
+                .all(|s| !matches!(s.access, archguard_core::AccessState::Open))
+        );
+        assert!(
+            flow.transitions
+                .iter()
+                .all(|t| !matches!(t.condition, archguard_core::AccessState::Open))
+        );
+        assert_eq!(gaps(&flow), 0);
     }
 }
