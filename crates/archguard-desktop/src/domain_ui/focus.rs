@@ -335,4 +335,12 @@ mod tests {
         assert_eq!(ext.text, "\u{2192} django.contrib.auth.User (external)");
         assert_eq!(ext.note, "owner");
     }
+
+    #[test]
+    fn opening_the_external_stub_keeps_the_module_view() {
+        let mut s = state();
+        s.module = Some("m".into());
+        s.open_module(usize::MAX);
+        assert_eq!(s.module.as_deref(), Some("m"));
+    }
 }

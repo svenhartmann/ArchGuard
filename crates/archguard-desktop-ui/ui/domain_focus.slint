@@ -78,13 +78,15 @@ component LinkRow inherits Rectangle {
     in property <DomLink> link;
     height: col.preferred-height;
     border-radius: 4px;
-    background: t.has-hover ? Theme.panel-2 : transparent;
+    background: t.has-hover && link.index >= 0 ? Theme.panel-2 : transparent;
+    accessible-role: text;
+    accessible-label: link.text;
     col := VerticalLayout {
         padding: 3px;
         Text { text: link.text; color: Theme.accent; font-size: Theme.font-small; wrap: word-wrap; }
         if link.note != "": Text { text: link.note; color: Theme.muted; font-size: Theme.font-caption; wrap: word-wrap; }
     }
-    t := TouchArea { mouse-cursor: pointer; clicked => { DomainData.select(link.kind, link.index); } }
+    t := TouchArea { enabled: link.index >= 0; mouse-cursor: link.index >= 0 ? MouseCursor.pointer : MouseCursor.default; clicked => { DomainData.select(link.kind, link.index); } }
 }
 
 // Title, kind · service, file with its jumps.
