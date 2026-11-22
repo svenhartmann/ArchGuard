@@ -156,6 +156,7 @@ pub mod ui_flow_laravel;
 pub mod ui_flow_nestjs;
 pub mod ui_flow_phoenix;
 pub mod ui_flow_rails;
+pub mod ui_flow_quarkus;
 pub mod ui_flow_react;
 pub mod ui_flow_replay;
 pub mod ui_flow_roles;

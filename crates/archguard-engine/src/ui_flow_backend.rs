@@ -706,7 +706,7 @@ fn base_names(header: &str) -> Vec<String> {
 
 /// Literals, brackets, identifiers and argument lists on raw text.
 pub(crate) mod lex {
-    pub(super) use crate::lang_csharp::{code as strip_comments, literal, literal_end};
+    pub(crate) use crate::lang_csharp::{code as strip_comments, literal, literal_end};
 
     pub(crate) fn is_ident(c: u8) -> bool {
         c.is_ascii_alphanumeric() || c == b'_'
@@ -762,7 +762,7 @@ pub(crate) mod lex {
     }
 
     /// Splits on `sep` outside brackets and literals; empty parts are dropped.
-    pub(super) fn split_by(s: &str, sep: u8) -> Vec<&str> {
+    pub(crate) fn split_by(s: &str, sep: u8) -> Vec<&str> {
         let b = s.as_bytes();
         let (mut parts, mut depth, mut start, mut i) = (Vec::new(), 0i32, 0, 0);
         while i < b.len() {
@@ -787,7 +787,7 @@ pub(crate) mod lex {
     }
 
     /// `name = value` (Java/Kotlin/C# attribute) or `name: value` (C# argument).
-    pub(super) fn named_part(part: &str) -> Option<(&str, &str)> {
+    pub(crate) fn named_part(part: &str) -> Option<(&str, &str)> {
         let b = part.as_bytes();
         let end = b.iter().take_while(|c| is_ident(**c)).count();
         let k = skip_ws(b, end);
@@ -797,20 +797,20 @@ pub(crate) mod lex {
         (end > 0 && named).then(|| (&part[..end], part[k + 1..].trim()))
     }
 
-    pub(super) fn named<'a>(args: &'a str, key: &str) -> Option<&'a str> {
+    pub(crate) fn named<'a>(args: &'a str, key: &str) -> Option<&'a str> {
         split_top(args)
             .into_iter()
             .find_map(|p| named_part(p).filter(|(k, _)| *k == key).map(|(_, v)| v))
     }
 
-    pub(super) fn positional(args: &str) -> Option<&str> {
+    pub(crate) fn positional(args: &str) -> Option<&str> {
         split_top(args)
             .into_iter()
             .find(|p| named_part(p).is_none())
     }
 
     /// A literal or an array (`{…}`, `[…]`, `arrayOf(…)`) of literals.
-    pub(super) fn literals(s: &str) -> Option<Vec<String>> {
+    pub(crate) fn literals(s: &str) -> Option<Vec<String>> {
         let s = s.trim();
         if let Some(one) = literal(s) {
             return Some(vec![one]);
