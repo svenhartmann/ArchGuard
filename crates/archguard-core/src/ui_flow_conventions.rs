@@ -17,6 +17,10 @@ pub struct RoleConvention {
     /// used to canonicalize user input and shorten labels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role_prefix: Option<String>,
+    /// Two different role prefixes were read for this application: role
+    /// checks that depend on the prefix are Unknown.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub role_prefix_conflict: bool,
     /// Prefix for token scopes and authorities (Spring `SCOPE_`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope_prefix: Option<String>,
@@ -99,6 +103,11 @@ fn merge_group(group: &[RoleConvention], clashes: &mut Vec<Clash>) -> RoleConven
         pick(group, field, get, clashes)
     };
     out.role_prefix = pick("role_prefix", &|c| c.role_prefix.clone());
+    let read: std::collections::BTreeSet<_> = (group.iter())
+        .filter(|c| !is_default(c, "role_prefix"))
+        .filter_map(|c| c.role_prefix.as_ref())
+        .collect();
+    out.role_prefix_conflict = read.len() > 1 || group.iter().any(|c| c.role_prefix_conflict);
     out.scope_prefix = pick("scope_prefix", &|c| c.scope_prefix.clone());
     out.role_claim = pick("role_claim", &|c| c.role_claim.clone());
     out.role_case = case(pick("role_case", &|c| {

@@ -637,9 +637,17 @@ fn two_different_read_permission_formats_are_a_gap() {
         with_origin(c, "permissions", "read")
     };
     let merged = merge_ui_flows(flow_of(vec![dotted("*")]), flow_of(vec![dotted("#")]));
-    assert_eq!(merged.convention(Some("api")).permissions, PermissionFormat::Exact);
+    assert_eq!(
+        merged.convention(Some("api")).permissions,
+        PermissionFormat::Exact
+    );
     assert!(!merged.complete);
-    assert!(merged.diagnostics.iter().any(|d| d.message.contains("permissions")));
+    assert!(
+        merged
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("permissions"))
+    );
 }
 
 // W5 item 3: a read exact case beats the insensitive framework default.
@@ -652,4 +660,25 @@ fn a_read_exact_case_beats_the_insensitive_framework_default() {
     let merged = merge_ui_flows(flow_of(vec![default]), flow_of(vec![read]));
     assert_eq!(merged.convention(Some("api")).policy_case, NameCase::Exact);
     assert!(merged.complete);
+}
+
+// W5: with two read role prefixes the check depends on the unread one: Unknown, unless the name is held literally.
+#[test]
+fn a_role_prefix_clash_makes_a_role_check_unknown_for_that_app() {
+    let merged = merge_ui_flows(
+        flow_of(vec![prefixed("api", "X_", "a", 1)]),
+        flow_of(vec![prefixed("api", "Y_", "b", 2)]),
+    );
+    let check = |held: &str| {
+        let a = Assignment {
+            roles: [held.to_string()].into(),
+            held: [held.to_string()].into(),
+            ..Assignment::default()
+        };
+        let a = resolve_assignment_for(&merged, Some("api"), &a);
+        evaluate_condition(&Condition::Role("X_A".into()), &a)
+    };
+    assert_eq!(check("X_A"), Outcome::Allowed);
+    assert_eq!(check("A"), Outcome::Unknown);
+    assert_eq!(check("Y_A"), Outcome::Unknown);
 }

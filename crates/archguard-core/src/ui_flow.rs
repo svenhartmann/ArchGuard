@@ -582,12 +582,19 @@ pub fn evaluate_condition(condition: &Condition, assignment: &Assignment) -> Out
         Condition::Not(inner) => negate(evaluate_condition(inner, assignment)),
         Condition::Authenticated => known(Some(&assignment.authenticated)),
         Condition::Never => Outcome::Denied,
-        Condition::Role(name) => known(Some(&holds(
-            &assignment.convention,
-            AtomKind::Role,
-            &assignment.roles,
-            name,
-        ))),
+        Condition::Role(name) => {
+            let held = holds(
+                &assignment.convention,
+                AtomKind::Role,
+                &assignment.roles,
+                name,
+            );
+            // two read prefixes: only a literally held name is certain
+            match assignment.convention.role_prefix_conflict && !held {
+                true => Outcome::Unknown,
+                false => known(Some(&held)),
+            }
+        }
         Condition::Policy(name) => known(assignment.policy_switch(name)),
         Condition::Custom(name) => known(assignment.custom.get(name)),
         Condition::Unknown(_) => Outcome::Unknown,
