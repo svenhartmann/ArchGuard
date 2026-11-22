@@ -114,8 +114,9 @@ fn layers_by_target(flow: &UiFlow) -> MethodLayers {
     out
 }
 
-/// The badge of a method declared in `file` (class id `class_id`): none when no layer names
-/// that file and `Class.method`, or when `same_name_in_file` > 1 (overloads cannot be told apart).
+/// The badge of a method declared in `file` (class id `class_id`): none unless exactly one layer
+/// names that file (up to a leading path prefix) and `Class.method`, or when `same_name_in_file`
+/// > 1 (overloads cannot be told apart).
 pub fn badge(
     layers: &MethodLayers,
     file: &str,
@@ -127,10 +128,16 @@ pub fn badge(
     if same_name_in_file > 1 {
         return 0;
     }
-    layers
-        .get(&(file.to_string(), format!("{class}.{name}")))
-        .copied()
-        .unwrap_or(0)
+    // `analyze_calls` paths drop the project-relative prefix (`src/`): match on a path
+    // boundary, and only when exactly one layer file fits.
+    let target = format!("{class}.{name}");
+    let mut hits = layers
+        .iter()
+        .filter(|((f, t), _)| *t == target && (f == file || f.ends_with(&format!("/{file}"))));
+    match (hits.next(), hits.next()) {
+        (Some((_, kind)), None) => *kind,
+        _ => 0,
+    }
 }
 
 fn state_kind(s: &AccessState) -> i32 {
@@ -382,5 +389,56 @@ mod tests {
         flow.service_layers[0].state = AccessState::Undeclared;
         assert_eq!(how_kind([&flow.service_layers[0]]), 2);
         assert_eq!(how_kind([&flow.service_layers[1]]), 3, "path only");
+    }
+
+    /// Both paths come from the real producers (`ui_flow::analyze` and `analyze_calls`) on a
+    /// Spring project (needs a JDK, skipped without one).
+    #[test]
+    fn real_layer_and_call_paths_meet() {
+        let jdk = |t: &str| {
+            std::process::Command::new(t)
+                .arg("--version")
+                .output()
+                .is_ok_and(|o| o.status.success())
+        };
+        if !(jdk("java") && jdk("javac")) {
+            eprintln!("skipped: no JDK");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let svc = |pkg: &str, ann: &str| {
+            format!(
+                "package {pkg};\nimport org.springframework.stereotype.Service;\nimport org.springframework.security.access.prepost.*;\n@Service\nclass Svc {{\n{ann} String run() {{ return \"x\"; }}\n}}\n"
+            )
+        };
+        for (path, text) in [
+            ("pom.xml", "<project/>".to_string()),
+            ("src/main/java/app/Conf.java", "package app;\nimport org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;\n@EnableMethodSecurity\nclass Conf {}\n".into()),
+            ("src/main/java/app/Ctl.java", "package app;\nimport org.springframework.web.bind.annotation.*;\n@RestController\nclass Ctl {\n  private Svc svc;\n  @GetMapping(\"/a\")\n  String a() { return svc.run(); }\n}\n".into()),
+            ("src/main/java/app/Svc.java", svc("app", "@PreAuthorize(\"hasRole('B')\")")),
+            ("src/main/java/other/Svc.java", svc("other", "")),
+        ] {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let layers = method_layers(dir.path());
+        let config = archguard_engine::load_config(None, dir.path())
+            .unwrap()
+            .config;
+        let analysis = archguard_engine::analyze_calls(dir.path(), &config);
+        let badge_of = |class: &str| {
+            let m = analysis
+                .methods
+                .iter()
+                .find(|m| m.name == "run" && m.class_id.ends_with(class))
+                .unwrap_or_else(|| panic!("no {class}.run in {:?}", analysis.methods));
+            let same = (analysis.methods.iter())
+                .filter(|o| o.file == m.file && o.name == m.name && o.class_id == m.class_id)
+                .count();
+            badge(&layers, &m.file, &m.class_id, &m.name, same)
+        };
+        assert_eq!(badge_of("app.Svc"), 1, "layers: {layers:?}");
+        assert_eq!(badge_of("other.Svc"), 0);
     }
 }
