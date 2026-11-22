@@ -150,6 +150,7 @@ pub mod ui_flow_blazor;
 pub mod ui_flow_django;
 pub mod ui_flow_express;
 pub mod ui_flow_fastapi;
+pub mod ui_flow_flask;
 pub mod ui_flow_laravel;
 pub mod ui_flow_nestjs;
 pub mod ui_flow_react;
