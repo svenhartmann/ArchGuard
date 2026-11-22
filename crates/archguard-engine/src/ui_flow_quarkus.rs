@@ -1428,6 +1428,14 @@ impl World<'_> {
             );
             out.note(file, line, message);
         }
+        if self.used_as_client(&class.name) {
+            let message = format!(
+                "`{}` is used as a REST client (RestClientBuilder or @RestClient), not served",
+                class.name
+            );
+            out.note(file, line, message);
+            return vec![];
+        }
         let api = &self.srcs[m.si].src.text;
         let impls: Vec<&(usize, Decl)> = (self.classes.iter())
             .filter(|(isi, c)| {
@@ -1441,11 +1449,11 @@ impl World<'_> {
             .collect();
         if impls.is_empty() {
             let message = format!(
-                "No implementation of `{}` in the scan; its endpoints carry no annotation",
+                "No serving implementation of `{}` in the scan; it is not listed as an endpoint",
                 class.name
             );
             out.note(file, line, message);
-            return vec![(m.si, class.clone(), vec![], None)];
+            return vec![]; // nothing serves it: a client-side declaration
         }
         (impls.into_iter())
             .map(|(isi, ic)| {
@@ -1453,6 +1461,18 @@ impl World<'_> {
                 (*isi, ic.clone(), attrs, Some((*isi, ic.open)))
             })
             .collect()
+    }
+
+    /// Whether some source builds interface `name` with `RestClientBuilder…
+    /// .build(Name.class)` or injects it with `@RestClient`.
+    fn used_as_client(&self, name: &str) -> bool {
+        let built = format!("build({name}.class)");
+        (self.srcs.iter()).any(|s| {
+            let t = &s.src.text;
+            t.contains(&built)
+                || (t.match_indices("@RestClient"))
+                    .any(|(i, _)| t[i + 11..].split_whitespace().take(4).any(|w| w == name))
+        })
     }
 
     /// The annotations of method `name` in `class`, if it has any.
@@ -1829,9 +1849,9 @@ mod tests {
             ("server/pom.xml", POM),
             ("server/src/main/java/s/Impl.java", imp),
         ]);
-        assert_eq!(f.endpoints.len(), 2, "{:?}", f.endpoints);
+        // /b has no serving implementation: not an endpoint
+        assert_eq!(f.endpoints.len(), 1, "{:?}", f.endpoints);
         assert_eq!(at(&f, "GET", "/a"), Protected(role("u")));
-        assert_eq!(at(&f, "GET", "/b"), Undeclared);
     }
 
     #[test]
@@ -1847,9 +1867,21 @@ mod tests {
             ),
             ("client/src/main/java/c/ClientImpl.java", client),
         ]);
+        assert!(f.endpoints.is_empty(), "{:?}", f.endpoints);
+    }
+
+    #[test]
+    fn interface_built_as_rest_client_is_not_an_endpoint() {
+        let api = "package a;\nimport jakarta.ws.rs.*;\n@Path(\"/hello\") public interface Hello { @GET String g(); }\n";
+        let user = "package a;\nimport jakarta.ws.rs.*;\n@Path(\"/u\") public class U { @GET public String g() { return RestClientBuilder.newBuilder().build(Hello.class).g(); } }\n";
+        let imp = "package a;\npublic class HelloImpl implements Hello { public String g() { return \"\"; } }\n";
+        let f = run(&[
+            ("src/main/java/a/Hello.java", api),
+            ("src/main/java/a/U.java", user),
+            ("src/main/java/a/HelloImpl.java", imp),
+        ]);
         assert_eq!(f.endpoints.len(), 1, "{:?}", f.endpoints);
-        assert_eq!(f.endpoints[0].handler.as_deref(), Some("Api.g"));
-        assert_eq!(f.endpoints[0].access, Undeclared);
+        assert_eq!(f.endpoints[0].path, "/u");
     }
 
     #[test]
