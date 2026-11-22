@@ -370,9 +370,11 @@ fn all(mut conditions: Vec<Condition>) -> Option<Condition> {
 fn calls(binding: &str) -> bool {
     let init = binding.split_once('=').map_or("", |(_, r)| r).trim();
     // `new Foo` and tag`x` are calls without parentheses; a bare template is a value.
-    // shortcut: backticks alternate open/close, so a template nested in `${…}` is not told apart.
-    let tagged = (init.match_indices('`').step_by(2))
-        .any(|(i, _)| init[..i].ends_with(|c: char| c.is_alphanumeric() || "_$)]".contains(c)));
+    // A template nested in `${…}` (more than one pair) is not told apart: a call.
+    let nested = init.contains("${") && init.matches('`').count() > 2;
+    let tagged = nested
+        || (init.match_indices('`').step_by(2))
+            .any(|(i, _)| init[..i].ends_with(|c: char| c.is_alphanumeric() || "_$)]".contains(c)));
     init != "useUserSession()"
         && (init.contains('(')
             || tagged
@@ -3379,7 +3381,7 @@ export default router",
 
     #[test]
     fn binding_with_new_or_a_tagged_template_is_a_call() {
-        for init in ["new Checker", "check`x`", "await check"] {
+        for init in ["new Checker", "check`x`", "await check", "`${check`-`}`"] {
             let middleware = format!(
                 "export default defineNuxtRouteMiddleware(async (to) => {{\n  const u = {init}\n  if (!loggedIn.value && to.path !== '/login') return navigateTo('/login')\n}})\n"
             );

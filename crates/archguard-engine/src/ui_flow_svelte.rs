@@ -1511,6 +1511,7 @@ mod hooks {
             out,
             rules: Vec::new(),
             group: 0,
+            reading: Vec::new(),
         };
         for name in [
             "hooks.server.ts",
@@ -1542,6 +1543,8 @@ mod hooks {
         out: &'a mut Vec<UiFlowDiagnostic>,
         rules: Vec<Rule>,
         group: usize,
+        /// `(file, handle)` being read: a revisit is a reference cycle.
+        reading: Vec<(String, String)>,
     }
 
     impl Reader<'_> {
@@ -1566,11 +1569,19 @@ mod hooks {
         fn named(&mut self, file: &str, text: &str, name: &str, follow: bool) -> bool {
             if let Some(range) = guard::decl_range(text, name, false) {
                 let source = &text[range.0..range.1];
+                let key = (file.to_string(), name.to_string());
+                if self.reading.contains(&key) {
+                    let why = format!("handle `{name}` refers to itself");
+                    self.unknown(file, line_of(text, range.0), &why);
+                    return true;
+                }
+                self.reading.push(key);
                 if let Some(open) = sequence_open(source) {
                     self.sequence(file, text, range.0 + open, follow);
                 } else {
                     self.function(file, text, range);
                 }
+                self.reading.pop();
                 return true;
             }
             let reexport = words(text, "export").into_iter().find_map(|p| {
@@ -3364,6 +3375,22 @@ export const handle = sequence(authn, authz);
         let state = state(&flow, "web:/");
         assert!(matches!(state, Protected(Condition::Unknown(_))));
         assert!(!flow.complete);
+    }
+
+    #[test]
+    fn self_and_mutually_referencing_handles_are_unknown_not_a_stack_overflow() {
+        let head = "import { sequence } from '@sveltejs/kit/hooks';\n";
+        for body in [
+            "export const handle = sequence(handle, other);\nconst other = async ({ event, resolve }) => resolve(event);\n",
+            "const a = sequence(b, c);\nconst b = sequence(a, c);\nconst c = async ({ event, resolve }) => resolve(event);\nexport const handle = a;\n",
+        ] {
+            let flow = hooks_project(&format!("{head}{body}"), &[]);
+            assert!(
+                matches!(state(&flow, "web:/"), Protected(Condition::Unknown(_))),
+                "{body}"
+            );
+            assert!(!flow.complete, "{body}");
+        }
     }
 
     #[test]
