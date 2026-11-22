@@ -44,14 +44,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const MAX_FILES: usize = 20_000;
 const SOURCE: &str = "phoenix";
-/// What a plug body reads to be an access check (`logged_in?` is a helper
-/// name: shortcut, a helper that checks something else is not told apart).
-const IDENTITY: [&str; 4] = [
-    "current_scope",
-    "current_user",
-    "logged_in?",
-    "authorization",
-];
+/// What a plug body reads to be an access check; `logged_in?` joins them only
+/// when the project defines it as a plain identity check.
+const IDENTITY: [&str; 3] = ["current_scope", "current_user", "authorization"];
 /// Libraries whose plugs only load, log, parse or limit; none is an access check.
 const NON_ACCESS_LIBS: [&str; 9] = [
     "Guardian.Plug.",
@@ -198,6 +193,8 @@ struct Project<'a> {
     /// Every function by name.
     fns: HashMap<String, Vec<(usize, FnDef)>>,
     access: &'a BTreeMap<String, AccessMeaning>,
+    /// The names a body reads to ask for an identity.
+    ids: Vec<String>,
     diags: std::cell::RefCell<Vec<UiFlowDiagnostic>>,
 }
 
@@ -330,10 +327,16 @@ impl<'a> Project<'a> {
                 fns.entry(d.name.clone()).or_default().push((i, d));
             }
         }
+        let mut ids: Vec<String> = IDENTITY.iter().map(|t| t.to_string()).collect();
+        let defs = fns.get("logged_in?").map(Vec::as_slice).unwrap_or(&[]);
+        if !defs.is_empty() && defs.iter().all(|(_, d)| plain_login_body(&d.body)) {
+            ids.push("logged_in?".into());
+        }
         Self {
             files,
             mods,
             fns,
+            ids,
             access,
             diags: Default::default(),
         }
@@ -625,7 +628,7 @@ impl<'a> Project<'a> {
                 Eff::Cond(Condition::Not(Box::new(Condition::Authenticated)))
             }
             "Plug.BasicAuth" => Eff::Cond(Condition::Custom("Plug.BasicAuth".into())),
-            "Bodyguard.Plug.Authorize" => self.bodyguard_plug(full, at),
+            "Bodyguard.Plug.Authorize" => Controllers(self).bodyguard_plug(full, at),
             "Guardian.Permissions" | "Guardian.Permissions.Bitwise" => {
                 self.unknown(short, at, "Guardian permissions are not mapped")
             }
@@ -652,12 +655,21 @@ impl<'a> Project<'a> {
             };
         }
         let effs: BTreeSet<String> = (chosen.iter())
-            .map(|d| format!("{:?}", gate(&d.body, "halt", short)))
+            .map(|d| format!("{:?}", gate(&d.body, "halt", short, &self.ids)))
             .collect();
         match effs.len() {
-            1 => gate(&chosen[0].body, "halt", short),
+            1 => self.read(&chosen[0].body, "halt", short, at),
             _ => self.unknown(short, at, "several functions of that name read differently"),
         }
+    }
+
+    /// [`gate`] of a body; a halt that reads no identity is a gap, never "not access".
+    fn read(&self, body: &str, halt: &str, name: &str, at: (usize, u32)) -> Eff {
+        let eff = gate(body, halt, name, &self.ids);
+        if matches!(&eff, Eff::Cond(Condition::Unknown(_))) {
+            return self.unknown(name, at, "it halts without reading an identity");
+        }
+        eff
     }
 
     /// A module plug: its `call`, or the plugs of a `use Plug.Builder` module.
@@ -667,12 +679,9 @@ impl<'a> Project<'a> {
         };
         let text = &self.files[m].text;
         if let Some(c) = fn_defs(text).into_iter().find(|d| d.name == "call") {
-            return gate(&c.body, "halt", short);
+            return self.read(&c.body, "halt", short, at);
         }
-        if ["use PlugAttack", "use Plug."]
-            .iter()
-            .any(|u| text.contains(u))
-        {
+        if text.contains("use PlugAttack") {
             return Eff::Pass;
         }
         let inner: Vec<Eff> = (stmts(text).into_iter())
@@ -687,22 +696,6 @@ impl<'a> Project<'a> {
             (false, AccessState::Protected(c)) => Eff::Cond(c),
             (false, _) => Eff::Pass,
             (true, _) => self.unknown(short, at, "plug module has no call/2"),
-        }
-    }
-
-    fn bodyguard_plug(&self, full: &str, at: (usize, u32)) -> Eff {
-        let a = split_args(full);
-        let action = opt(&a, "action").filter(|x| x.starts_with(':'));
-        match (opt(&a, "policy"), action) {
-            (Some(p), Some(act)) => Eff::Cond(Condition::Policy(format!(
-                "{p}.{}",
-                act.trim_start_matches(':')
-            ))),
-            _ => self.unknown(
-                "Bodyguard.Plug.Authorize",
-                at,
-                "policy or action is not a literal",
-            ),
         }
     }
 }
@@ -803,7 +796,7 @@ impl Views<'_, '_> {
             return p.unknown(&label, at, "no matching on_mount clause");
         }
         (clauses.iter())
-            .map(|d| gate(&d.body, "{:halt", &label))
+            .map(|d| p.read(&d.body, "{:halt", &label, at))
             .find(|e| *e != Eff::Pass)
             .unwrap_or(Eff::Pass)
     }
@@ -832,6 +825,22 @@ fn web_live_view(files: &[File]) -> Option<(usize, String)> {
 struct Controllers<'p, 'a>(&'p Project<'a>);
 
 impl Controllers<'_, '_> {
+    fn bodyguard_plug(&self, full: &str, at: (usize, u32)) -> Eff {
+        let a = split_args(full);
+        let action = opt(&a, "action").filter(|x| x.starts_with(':'));
+        match (opt(&a, "policy"), action) {
+            (Some(p), Some(act)) => Eff::Cond(Condition::Policy(format!(
+                "{p}.{}",
+                act.trim_start_matches(':')
+            ))),
+            _ => self.0.unknown(
+                "Bodyguard.Plug.Authorize",
+                at,
+                "policy or action is not a literal",
+            ),
+        }
+    }
+
     /// Controller `plug … when action in [..]` and a Bodyguard permit first in the action.
     fn layers(&self, file: usize, action: &str) -> Vec<Eff> {
         let mut out = self.plugs(file, action);
@@ -939,9 +948,12 @@ fn route(
 }
 
 /// What a plug/hook body does to access: see the module docs.
-fn gate(body: &str, halt: &str, name: &str) -> Eff {
-    if !body.contains(halt) || !IDENTITY.iter().any(|t| body.contains(t)) {
+fn gate(body: &str, halt: &str, name: &str, ids: &[String]) -> Eff {
+    if !body.contains(halt) {
         return Eff::Pass;
+    }
+    if !ids.iter().any(|t| body.contains(t.as_str())) {
+        return Eff::Cond(Condition::Unknown(name.into()));
     }
     let custom = || Eff::Cond(Condition::Custom(name.into()));
     let lines: Vec<&str> = body.lines().collect();
@@ -956,7 +968,7 @@ fn gate(body: &str, halt: &str, name: &str) -> Eff {
     let cond = head.trim_start_matches("unless ").trim_start_matches("if ");
     let cond = cond.trim_end_matches(" do").trim();
     let negated = cond.starts_with("not ") || cond.starts_with('!');
-    if !plain_identity(cond) {
+    if !plain_identity(cond, ids) {
         return custom();
     }
     let rest = &lines[at + 1..];
@@ -973,17 +985,33 @@ fn gate(body: &str, halt: &str, name: &str) -> Eff {
 
 /// A condition that only asks whether an identity is there: every `&&`/`||`
 /// part is `current_scope`, `current_scope.user`, `current_user` or `logged_in?(..)`.
-fn plain_identity(cond: &str) -> bool {
+fn plain_identity(cond: &str, ids: &[String]) -> bool {
     let cond = cond.trim_start_matches("not ").trim_start_matches('!');
     cond.split("&&").flat_map(|p| p.split("||")).all(|p| {
         let p = p.trim().trim_start_matches("not ").trim_start_matches('!');
-        let p = p.replace("conn.assigns", "").replace("socket.assigns", "");
+        let p = p
+            .replace("conn.assigns", "")
+            .replace("socket.assigns", "")
+            .replace("assigns", "");
         let p = p.trim_start_matches('.').replace("[:", "").replace(']', "");
         matches!(
             p.as_str(),
             "current_scope" | "current_scope.user" | "current_user"
-        ) || p.starts_with("logged_in?(")
+        ) || (p.starts_with("logged_in?(") && ids.iter().any(|i| i == "logged_in?"))
     })
+}
+
+/// The body of a project `logged_in?`: only `!!x`, `not is_nil(x)` or `x != nil`
+/// of a plain identity read.
+fn plain_login_body(body: &str) -> bool {
+    let b = body.trim();
+    let inner = (b.strip_prefix("!!"))
+        .or_else(|| {
+            b.strip_prefix("not is_nil(")
+                .and_then(|x| x.strip_suffix(')'))
+        })
+        .or_else(|| b.strip_suffix(" != nil"));
+    inner.is_some_and(|i| plain_identity(i, &[]))
 }
 
 fn atom(s: Option<&String>) -> Option<String> {
@@ -1485,11 +1513,87 @@ end
     }
 
     #[test]
-    fn a_halting_plug_without_identity_is_not_access() {
+    fn a_halting_plug_without_identity_is_unknown_and_a_gap() {
         let limit = "defmodule RateLimit do\n  def call(conn, _), do: halt(conn)\nend\n";
         let r = "defmodule W.Router do\n  use W, :router\n  pipeline :p do\n    plug RateLimit\n  end\n  scope \"/\" do\n    pipe_through :p\n    get \"/\", C, :a\n  end\nend\n";
         let f = run(&[("mix.exs", ""), ("lib/r.ex", r), ("lib/l.ex", limit)], "");
-        assert_eq!(acc(&f, "/"), AccessState::Undeclared);
+        let unknown = Condition::Unknown("RateLimit".into());
+        assert_eq!(acc(&f, "/"), AccessState::Protected(unknown));
+        assert!(!f.complete);
+    }
+
+    #[test]
+    fn a_halting_function_plug_and_hook_without_identity_are_unknown() {
+        let auth = "defmodule W.Gate do
+  def only_admin(conn, _opts) do
+    if conn.assigns.admin? do
+      conn
+    else
+      halt(conn)
+    end
+  end
+
+  def on_mount(:admin, _p, _s, socket) do
+    if socket.assigns.admin? do
+      {:cont, socket}
+    else
+      {:halt, socket}
+    end
+  end
+end
+";
+        let r = "defmodule W.Router do
+  use W, :router
+  scope \"/\" do
+    pipe_through :only_admin
+    get \"/a\", C, :a
+    live_session :s, on_mount: [{W.Gate, :admin}] do
+      live \"/l\", L
+    end
+  end
+end
+";
+        let f = run(&[("mix.exs", ""), ("lib/r.ex", r), ("lib/g.ex", auth)], "");
+        let plug = Condition::Unknown("only_admin".into());
+        assert_eq!(acc(&f, "/a"), AccessState::Protected(plug.clone()));
+        let both = Condition::All(vec![Condition::Unknown("W.Gate:admin".into()), plug]);
+        assert_eq!(f.screens[0].access, AccessState::Protected(both));
+        assert!(!f.complete);
+    }
+
+    #[test]
+    fn a_plug_builder_module_reads_its_inner_plugs() {
+        let guarded =
+            "defmodule W.Guarded do\n  use Plug.Builder\n  plug :require_authenticated_user\nend\n";
+        let body = "  pipeline :g do\n    plug W.Guarded\n  end\n  scope \"/\" do\n    pipe_through :g\n    get \"/\", C, :a\n  end\n";
+        let f = go(body, &[("lib/w_web/guarded.ex", guarded)]);
+        assert_eq!(acc(&f, "/"), authed());
+    }
+
+    fn login_helper(def: &str) -> UiFlow {
+        let helper = format!(
+            "defmodule W.Helpers do\n{def}\n  def must_login(conn, _) do\n    if logged_in?(conn) do\n      conn\n    else\n      halt(conn)\n    end\n  end\nend\n"
+        );
+        let r = "defmodule W.Router do\n  use W, :router\n  scope \"/\" do\n    pipe_through :must_login\n    get \"/\", C, :a\n  end\nend\n";
+        run(
+            &[("mix.exs", ""), ("lib/r.ex", r), ("lib/h.ex", &helper)],
+            "",
+        )
+    }
+
+    #[test]
+    fn logged_in_is_read_from_its_project_definition_only() {
+        let plain =
+            login_helper("  def logged_in?(conn) do\n    !!conn.assigns[:current_user]\n  end\n");
+        assert_eq!(acc(&plain, "/"), authed());
+        let unknown = AccessState::Protected(Condition::Unknown("must_login".into()));
+        let other =
+            login_helper("  def logged_in?(conn) do\n    conn.assigns.role == :staff\n  end\n");
+        assert_eq!(acc(&other, "/"), unknown);
+        assert!(!other.complete);
+        let missing = login_helper("");
+        assert_eq!(acc(&missing, "/"), unknown);
+        assert!(!missing.complete);
     }
 
     #[test]
