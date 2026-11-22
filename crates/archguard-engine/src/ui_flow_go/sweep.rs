@@ -30,7 +30,9 @@ fn kind_of(s: &Src) -> Option<Kind> {
 }
 
 /// `(name offset, name, first argument)` of each route-style call `x.NAME(..)`.
-fn call_sites(s: &Src) -> Vec<(usize, String, Option<(usize, usize)>)> {
+type Site = (usize, String, Option<(usize, usize)>);
+
+fn call_sites(s: &Src) -> Vec<Site> {
     let code = &s.code;
     let mut out = vec![];
     for (i, _) in code.match_indices('.') {
