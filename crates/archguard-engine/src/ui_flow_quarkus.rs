@@ -1499,8 +1499,11 @@ impl World<'_> {
             .collect();
         let mut todo: Vec<usize> = found.iter().copied().collect();
         while let Some(i) = todo.pop() {
-            for k in below(&self.classes[i].1.name) {
-                if found.insert(k) {
+            let (pi, parent) = &self.classes[i];
+            let parent_text = &self.srcs[*pi].src.text;
+            for k in below(&parent.name) {
+                let text = &self.srcs[self.classes[k].0].src.text;
+                if names_interface(text, parent_text, &parent.name) && found.insert(k) {
                     todo.push(k);
                 }
             }
@@ -1520,7 +1523,8 @@ impl World<'_> {
         let mut todo: Vec<(usize, &str)> =
             t.class.bases.iter().map(|b| (t.si, b.as_str())).collect();
         while let Some((from, name)) = todo.pop() {
-            if !seen.insert(name) || jdk_type(&self.srcs[from].src, name) {
+            let known = self.by_name.contains_key(name);
+            if !seen.insert(name) || (!known && jdk_type(&self.srcs[from].src, name)) {
                 continue;
             }
             let mut found: Vec<&(usize, Decl)> = (self.by_name.get(name).into_iter().flatten())
@@ -2012,6 +2016,39 @@ mod tests {
             "{:?}",
             f.endpoints
         );
+    }
+
+    // Below the first level a subtype must name its parent by package or
+    // import too: `b.Foo` extends `b.AbstractSvc`, not the one of package a.
+    #[test]
+    fn same_named_abstract_base_in_another_package_is_no_implementation() {
+        let api = "package a;\nimport jakarta.ws.rs.*;\n@Path(\"/p\") public interface P { @GET String g(); }\n";
+        let base = "package a;\npublic abstract class AbstractSvc implements P {}\n";
+        let imp = "package a;\npublic class Impl extends AbstractSvc { public String g() { return \"\"; } }\n";
+        let other = "package b;\npublic abstract class AbstractSvc {}\n";
+        let foo = "package b;\nimport jakarta.annotation.security.*;\npublic class Foo extends AbstractSvc { @PermitAll public String g() { return \"\"; } }\n";
+        let f = run(&[
+            ("src/main/java/a/P.java", api),
+            ("src/main/java/a/AbstractSvc.java", base),
+            ("src/main/java/a/Impl.java", imp),
+            ("src/main/java/b/AbstractSvc.java", other),
+            ("src/main/java/b/Foo.java", foo),
+        ]);
+        assert_eq!(at(&f, "GET", "/p"), Undeclared);
+        assert_eq!(f.endpoints[0].handler.as_deref(), Some("Impl.g"));
+    }
+
+    // A project type named like a JDK root type is still a supertype.
+    #[test]
+    fn project_type_named_record_is_not_skipped() {
+        let src = res("", "@GET public String g() { return \"\"; }")
+            .replace("class R {", "class R extends Record {");
+        let f = run(&[
+            ("src/main/java/R.java", &src),
+            ("src/main/java/Record.java", "public class Record {}\n"),
+        ]);
+        assert_eq!(at(&f, "GET", "/a"), Undeclared);
+        assert!(f.complete, "{:?}", f.diagnostics);
     }
 
     #[test]

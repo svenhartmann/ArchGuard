@@ -1442,10 +1442,7 @@ mod index {
                 let mut todo: Vec<(&Source, String)> =
                     class.bases.iter().rev().map(|b| (src, b.clone())).collect();
                 while let Some((from, name)) = todo.pop() {
-                    if seen.len() > MAX_DEPTH * 4
-                        || !seen.insert(name.clone())
-                        || jdk_type(from, &name)
-                    {
+                    if seen.len() > MAX_DEPTH * 4 || !seen.insert(name.clone()) {
                         continue;
                     }
                     let all: Vec<_> = [&self.classes, &self.interfaces]
@@ -1453,6 +1450,10 @@ mod index {
                         .filter_map(|m| m.get(&name))
                         .flatten()
                         .collect();
+                    // a JDK type, unless the project declares one of that name
+                    if all.is_empty() && jdk_type(from, &name) {
+                        continue;
+                    }
                     // several of that name: the one the subtype's source can name
                     let named: Vec<_> = (all.iter())
                         .filter(|(s, _)| names_interface(&from.text, &s.text, &name))
@@ -3467,7 +3468,8 @@ pub(crate) mod spring {
         let mut own: HashMap<usize, Vec<Decl>> = HashMap::new();
         each_method(src, true, |class, d| {
             own.entry(class.open).or_default().push(d.clone());
-            if controller(class) {
+            let abstract_ = class_header(src, class).contains("abstract");
+            if controller(class) && !abstract_ {
                 method(src, index, conf, out, class, d);
             }
         });
@@ -3560,13 +3562,24 @@ pub(crate) mod spring {
             if let Some(a) = type_mapping(&class.attrs) {
                 return paths(src, index, out, &class.name, a);
             }
-            let up = supers
+            let mut up = supers
                 .iter()
-                .find_map(|(s, t)| type_mapping(&t.attrs).map(|a| (*s, *t, a)));
-            match up {
-                Some((s, t, a)) => paths(s, index, out, &t.name, a),
-                None => Some(vec![String::new()]),
+                .filter_map(|(s, t)| type_mapping(&t.attrs).map(|a| (*s, *t, a)));
+            let Some((s, t, a)) = up.next() else {
+                return Some(vec![String::new()]);
+            };
+            // Spring's search order (interfaces before the superclass) is not
+            // modelled: differing type-level mappings are not guessed.
+            if up.any(|(_, _, b)| b.args != a.args) {
+                let message = format!(
+                    "Several supertypes of {} carry a type-level @RequestMapping; its routes are not read.",
+                    class.name
+                );
+                let at = class.attrs.first().map_or(class.open, |x| x.at);
+                out.at(src, at, message);
+                return None;
             }
+            paths(s, index, out, &t.name, a)
         }
 
         /// The endpoints of supertype method `d` of `t` (in `ssrc`).
@@ -9093,6 +9106,69 @@ class Impl implements Api {
         access(&flow, "GET", "/b");
         assert_eq!(flow.endpoints.len(), 1, "{:#?}", flow.endpoints);
         assert_eq!(gaps(&flow, "inherited from supertype"), 0);
+    }
+
+    #[test]
+    fn spring_abstract_controller_base_is_emitted_once_by_its_subclass() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Base.java",
+                "@RestController\nabstract class Base { @GetMapping(\"/b\") String b() { return \"\"; } }\n",
+            ),
+            (
+                "src/main/java/Impl.java",
+                "@RestController\nclass Impl extends Base {}\n",
+            ),
+        ]);
+        let e = flow
+            .endpoints
+            .iter()
+            .filter(|e| e.path == "/b")
+            .collect::<Vec<_>>();
+        assert_eq!(e.len(), 1, "{e:#?}");
+        assert_eq!(e[0].file, "src/main/java/Impl.java");
+    }
+
+    #[test]
+    fn spring_type_mapping_on_several_supertypes_is_a_gap() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Api.java",
+                "@RequestMapping(\"/i\")\ninterface Api { @GetMapping(\"/x\") String x(); }\n",
+            ),
+            (
+                "src/main/java/Base.java",
+                "@RequestMapping(\"/s\")\nclass Base {}\n",
+            ),
+            (
+                "src/main/java/Impl.java",
+                "@RestController\nclass Impl extends Base implements Api { public String x() { return \"\"; } }\n",
+            ),
+        ]);
+        assert_eq!(gaps(&flow, "type-level @RequestMapping"), 1);
+        assert!(
+            flow.endpoints.iter().all(|e| e.path != "/s/x"),
+            "{:#?}",
+            flow.endpoints
+        );
+    }
+
+    #[test]
+    fn spring_project_type_named_like_a_jdk_root_is_a_supertype() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Record.java",
+                "interface Record { @GetMapping(\"/r\") String r(); }\n",
+            ),
+            (
+                "src/main/java/Impl.java",
+                "@RestController\nclass Impl implements Record { public String r() { return \"\"; } }\n",
+            ),
+        ]);
+        access(&flow, "GET", "/r");
     }
 
     // Guard: a class that is no controller serves nothing.
