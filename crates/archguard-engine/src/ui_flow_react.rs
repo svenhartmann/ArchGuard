@@ -1147,6 +1147,8 @@ mod proxy {
                 route: Some(route),
                 allowed: false,
                 catch_param: None,
+                declared: Vec::new(),
+                seen: String::new(),
             };
             walker.walk(s, e, &mut Vec::new())?;
             let found = std::mem::take(&mut walker.found);
@@ -1261,10 +1263,19 @@ mod guard {
                 route: None,
                 allowed: false,
                 catch_param: None,
+                declared: Vec::new(),
+                seen: String::new(),
             };
             walker.walk(s, e, &mut Vec::new())?;
             if !walker.allowed {
                 return Err("it never renders its children".into());
+            }
+            if let Some(n) = walker
+                .declared
+                .iter()
+                .find(|n| words(&walker.seen, n).is_empty())
+            {
+                return Err(format!("{n} comes from a call and is used in no check"));
             }
             return Ok(all(walker.found).into_iter().collect());
         }
@@ -1314,6 +1325,8 @@ mod guard {
                     route: None,
                     allowed: false,
                     catch_param: None,
+                    declared: Vec::new(),
+                    seen: String::new(),
                 };
                 walker.walk(s, e, &mut Vec::new())?;
                 Ok(all(walker.found).into_iter().collect())
@@ -3214,6 +3227,46 @@ mod paths {
         }
         Ok(())
     }
+    /// The names a `const`/`let`/`var` statement binds when its initialiser is a
+    /// call that is no plain React hook (`const user = useAuth()`).
+    pub(super) fn declared_by_call(stmt: &str) -> Vec<String> {
+        let kw = ident_at(stmt, 0);
+        if !matches!(kw, "const" | "let" | "var") {
+            return Vec::new();
+        }
+        let rest = &stmt[kw.len()..];
+        let Some(eq) = rest
+            .find('=')
+            .filter(|&i| !rest[i + 1..].starts_with(['>', '=']))
+        else {
+            return Vec::new();
+        };
+        let init = rest[eq + 1..].trim();
+        let init = init.strip_prefix("await ").unwrap_or(init).trim_start();
+        let callee = init.trim_start_matches(|c: char| is_ident_char(c) || c == '.');
+        let name_len = init.len() - callee.len();
+        let last = init[..name_len].rsplit('.').next().unwrap_or("");
+        if name_len == 0 || !callee.starts_with('(') || PLAIN_HOOKS.contains(&last) {
+            return Vec::new();
+        }
+        let raw = rest[..eq].trim();
+        let parts: Vec<&str> = match raw.as_bytes().first() {
+            Some(&o @ (b'{' | b'[')) => {
+                let close = block_end(raw, 0, o, if o == b'{' { b'}' } else { b']' });
+                raw[1..close.saturating_sub(1).max(1)]
+                    .split(',')
+                    .map(|p| p.rsplit(':').next().unwrap_or(p))
+                    .collect()
+            }
+            _ => vec![raw.split(':').next().unwrap_or(raw)],
+        };
+        parts
+            .into_iter()
+            .map(|p| p.trim().trim_start_matches("...").trim())
+            .filter(|p| is_ident(p))
+            .map(String::from)
+            .collect()
+    }
 }
 
 /// TanStack Router file routes (`createFileRoute('/a/$id')`) and `beforeLoad` guards.
@@ -3472,6 +3525,10 @@ mod tanstack {
         pub(super) allowed: bool,
         /// Handler mode: the parameter of the `catch` being read; `throw` of it re-throws.
         pub(super) catch_param: Option<String>,
+        /// Wrapper mode: names bound by a call that is no plain hook.
+        pub(super) declared: Vec<String>,
+        /// Wrapper mode: the texts of the checks and exits read so far.
+        pub(super) seen: String,
     }
 
     /// How control leaves a statement list.
@@ -3544,6 +3601,8 @@ mod tanstack {
         /// The condition `text` as a path element; `None` is always true.
         fn cond(&mut self, text: &str, at: usize) -> Option<Condition> {
             if self.mode != Mode::Redirect {
+                self.seen.push_str(text);
+                self.seen.push(' ');
                 return self.cond_ext(text, at);
             }
             self.atom(text, at)
@@ -3752,8 +3811,11 @@ mod tanstack {
             path: &[Option<Condition>],
         ) -> Result<Ended, String> {
             if !matches!(first, "return" | "throw") {
+                self.declared.extend(declared_by_call(stmt));
                 return wrapper_side_effect(stmt).map(|()| Ended::No);
             }
+            self.seen.push_str(stmt);
+            self.seen.push(' ');
             let renders = !words(stmt, "children").is_empty() || !words(stmt, "Outlet").is_empty();
             if !renders {
                 self.reached(path);
@@ -3896,6 +3958,8 @@ mod tanstack {
             route: None,
             allowed: false,
             catch_param: None,
+            declared: Vec::new(),
+            seen: String::new(),
         };
         let read = match body {
             Some((s, e)) => walker.walk(s, e, &mut Vec::new()).map(|_| ()),
@@ -6766,5 +6830,37 @@ export const GET = withA(withB(async () => Response.json({})));
             flow.endpoints[0].access
         );
         assert!(!flow.complete);
+    }
+
+    #[test]
+    fn a_wrapper_declaration_from_an_unused_call_is_unknown() {
+        for gate in [
+            "export function Gate({ children }) { const _ = useRequireAuth(); return children; }\n",
+            "export function Gate({ children }) { const user = useAuth(); return children; }\n",
+            "export const Gate = ({ children }) => { const { user } = useSession(); return children; };\n",
+        ] {
+            let flow = gated(GATE_APP, gate);
+            assert!(
+                unknown_state(&state(&flow, "c:/a")),
+                "{gate}: {:?}",
+                flow.diagnostics
+            );
+            assert!(!flow.complete, "{gate}");
+        }
+        // Used in the check, or a plain hook: still read.
+        let gate = "export function Gate({ children }) {
+  const [n] = useState(0);
+  const { user } = useAuth();
+  if (!user) return <Navigate to=\"/login\" />;
+  return children;
+}
+";
+        let flow = gated(GATE_APP, gate);
+        assert_eq!(
+            state(&flow, "c:/a"),
+            protected("user"),
+            "{:?}",
+            flow.diagnostics
+        );
     }
 }
