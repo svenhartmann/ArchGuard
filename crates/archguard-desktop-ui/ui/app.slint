@@ -624,7 +624,9 @@ export component AppWindow inherits Window {
                 }
                 Rectangle { horizontal-stretch: 1; }
                 SearchField {
-                    width: header.level == 0 ? 200px : header.level == 1 ? 160px : 100px;
+                    // Preferred, not fixed: the field gives way before a button at the right is cut.
+                    preferred-width: header.level == 0 ? 200px : header.level == 1 ? 160px : 100px;
+                    min-width: 100px;
                     y: (parent.height - self.height) / 2;
                     placeholder: @tr("Search modules");
                     edited(t) => { root.search(t); root.show-explorer = true; }

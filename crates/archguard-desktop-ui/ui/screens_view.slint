@@ -409,12 +409,15 @@ component TreePanel inherits Rectangle {
         // A ListView creates only the rows in view.
         ListView {
             vertical-stretch: 1;
+            min-height: 120px;
             for r in m.tree: TreeLine { item: r; }
         }
         Rectangle { height: 1px; background: Theme.border; }
         Disclosure { text: @tr("Details: conditions, legend, lists"); open <=> root.details; }
         if root.details: ScrollView {
-            height: 300px;
+            vertical-stretch: 1;
+            preferred-height: 300px;
+            min-height: 120px;
             VerticalLayout {
                 spacing: 6px;
                 alignment: start;
