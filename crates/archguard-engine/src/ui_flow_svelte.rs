@@ -1528,6 +1528,14 @@ mod hooks {
         reader.rules
     }
 
+    /// Offset of the `(` when `source` is a `sequence(…)` call.
+    fn sequence_open(source: &str) -> Option<usize> {
+        let rest = source.strip_prefix("sequence")?;
+        rest.trim_start()
+            .starts_with('(')
+            .then(|| source.find('(').unwrap_or(0))
+    }
+
     struct Reader<'a> {
         app: &'a App,
         checks: &'a Checks<'a>,
@@ -1558,13 +1566,8 @@ mod hooks {
         fn named(&mut self, file: &str, text: &str, name: &str, follow: bool) -> bool {
             if let Some(range) = guard::decl_range(text, name, false) {
                 let source = &text[range.0..range.1];
-                if let Some(rest) = source.strip_prefix("sequence")
-                    && rest.trim_start().starts_with('(')
-                {
-                    let open = range.0 + source.find('(').unwrap_or(0);
-                    for arg in (Parser { s: text, i: open }).array(0) {
-                        self.operand(file, text, &arg, follow);
-                    }
+                if let Some(open) = sequence_open(source) {
+                    self.sequence(file, text, range.0 + open, follow);
                 } else {
                     self.function(file, text, range);
                 }
@@ -1602,11 +1605,20 @@ mod hooks {
             }
         }
 
-        /// One argument of `sequence(…)`.
+        /// The arguments of the `sequence(` whose `(` is at `open`.
+        fn sequence(&mut self, file: &str, text: &str, open: usize, follow: bool) {
+            for arg in (Parser { s: text, i: open }).array(0) {
+                self.operand(file, text, &arg, follow);
+            }
+        }
+
+        /// One argument of `sequence(…)`; a nested `sequence(…)` is followed.
         fn operand(&mut self, file: &str, text: &str, arg: &Item, follow: bool) {
             let source = arg.source(text);
             let line = line_of(text, arg.at);
-            if is_name(&source) {
+            if let Some(open) = sequence_open(&source) {
+                self.sequence(file, text, arg.at + open, follow);
+            } else if is_name(&source) {
                 if guard::decl_range(text, &source, false).is_some() {
                     self.named(file, text, &source, follow);
                 } else if let Some(i) = imports(text).into_iter().find(|i| i.local == source) {
@@ -3351,6 +3363,33 @@ export const handle = sequence(authn, authz);
         let flow = hooks_project(hooks, &[]);
         let state = state(&flow, "web:/");
         assert!(matches!(state, Protected(Condition::Unknown(_))));
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn nested_sequence_is_followed_recursively() {
+        let hooks = "import { sequence } from '@sveltejs/kit/hooks';
+const authn = async ({ event, resolve }) => { event.locals.user = u(); return resolve(event); };
+const authz = async ({ event, resolve }) => {
+  if (event.url.pathname.startsWith('/admin') && !event.locals.user) redirect(303, '/login');
+  return resolve(event);
+};
+const log = async ({ event, resolve }) => resolve(event);
+export const handle = sequence(sequence(authn, authz), log);
+";
+        let flow = hooks_project(hooks, &[]);
+        assert_eq!(
+            state(&flow, "web:/admin"),
+            Protected(custom("event.locals.user"))
+        );
+        assert_eq!(state(&flow, "web:/"), Undeclared);
+        assert!(flow.complete);
+        let hooks = hooks.replace("sequence(authn, authz)", "sequence(authn, missing)");
+        let flow = hooks_project(&hooks, &[]);
+        assert!(matches!(
+            state(&flow, "web:/"),
+            Protected(Condition::Unknown(_))
+        ));
         assert!(!flow.complete);
     }
 
