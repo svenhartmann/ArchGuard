@@ -38,7 +38,9 @@ use crate::extract_ctx::{
 };
 use crate::services::support::test_path;
 use crate::ui_flow_backend::lex::{literal, literals, named, positional, split_top};
-use crate::ui_flow_backend::{Attr, Decl, Source, decls, each_method, quarkus_build};
+use crate::ui_flow_backend::{
+    Attr, Decl, Source, class_header, decls, each_method, jdk_type, names_interface, quarkus_build,
+};
 use archguard_core::{
     AccessState, Condition, DiagnosticSeverity, EndpointAccess, PolicyDef, UiFlow, UiFlowDiagnostic,
 };
@@ -1213,8 +1215,19 @@ impl Pctx {
     }
 }
 
-/// Source index, carrying class, its method annotations, and the class key.
-type Target = (usize, Decl, Vec<Attr>, Option<(usize, usize)>);
+/// Who carries the security annotations of a route: the source index, the
+/// class, its method annotations, and the class key.
+struct Target {
+    si: usize,
+    class: Decl,
+    attrs: Vec<Attr>,
+    key: Option<(usize, usize)>,
+    /// An implementation of an interface route.
+    implementation: bool,
+    /// An implementation in a project without a REST server: whether and how
+    /// it is registered is configuration this scan does not read.
+    unregistered: bool,
+}
 
 type Proto = (Option<String>, bool, bool, Props);
 
@@ -1232,6 +1245,13 @@ struct Route<'a> {
     method: &'a Decl,
     file: String,
     line: u32,
+}
+
+/// Whether `attrs` carry a JAX-RS HTTP method or `@Path`.
+fn has_jaxrs(attrs: &[Attr]) -> bool {
+    attrs
+        .iter()
+        .any(|a| VERBS.contains(&a.name.as_str()) || a.name == "Path")
 }
 
 fn find<'a>(attrs: &'a [Attr], name: &str) -> Option<&'a Attr> {
@@ -1272,7 +1292,19 @@ fn emit(srcs: Vec<Src>, protos: Vec<Proto>, out: &mut Out) {
         classes,
         members,
         seen,
+        checked: Default::default(),
+        by_name: Default::default(),
+        by_base: Default::default(),
+        implementors: Default::default(),
     };
+    let mut world = world;
+    for (i, (_, c)) in world.classes.iter().enumerate() {
+        world.by_name.entry(c.name.clone()).or_default().push(i);
+        for b in &c.bases {
+            world.by_base.entry(b.clone()).or_default().push(i);
+        }
+    }
+    let world = world;
     let mut announced = BTreeSet::new();
     let first = out.0.endpoints.len();
     for m in &world.members {
@@ -1293,27 +1325,6 @@ fn emit(srcs: Vec<Src>, protos: Vec<Proto>, out: &mut Out) {
     });
 }
 
-/// `package x.y;` of a source ("" for none).
-fn package_of(text: &str) -> &str {
-    (text.lines())
-        .find_map(|l| l.trim().strip_prefix("package "))
-        .map_or("", |p| p.trim().trim_end_matches(';').trim())
-}
-
-/// Whether the class in source `imp` can name interface `name` of source
-/// `api`: same package, or an import of it (single or `*`).
-fn names_interface(imp: &str, api: &str, name: &str) -> bool {
-    let pkg = package_of(api);
-    pkg == package_of(imp)
-        || imp
-            .lines()
-            .filter_map(|l| l.trim().strip_prefix("import "))
-            .any(|i| {
-                let i = i.trim().trim_end_matches(';').trim();
-                i == format!("{pkg}.{name}") || i == format!("{pkg}.*")
-            })
-}
-
 /// Everything the scan found, to place each resource method.
 struct World<'a> {
     srcs: &'a [Src],
@@ -1324,6 +1335,14 @@ struct World<'a> {
     seen: HashMap<(usize, usize), Vec<usize>>,
     consts: HashMap<String, Option<String>>,
     jaxrs: Vec<bool>,
+    /// Classes whose supertypes were checked: (source, class key).
+    checked: std::cell::RefCell<BTreeSet<(usize, usize)>>,
+    /// Indices into `classes` by simple name.
+    by_name: HashMap<String, Vec<usize>>,
+    /// Indices into `classes` by the simple names in their base list.
+    by_base: HashMap<String, Vec<usize>>,
+    /// The implementing classes of an interface (source, class key), by `classes` index.
+    implementors: std::cell::RefCell<HashMap<(usize, usize), Vec<usize>>>,
 }
 
 /// The class and method path parts; a gap when one is not a literal.
@@ -1402,12 +1421,14 @@ impl World<'_> {
     fn targets(&self, m: &Member, route: &Route, out: &mut Out) -> Vec<Target> {
         let (class, method) = (&m.class, &m.method);
         if !class.flag {
-            return vec![(
-                m.si,
-                class.clone(),
-                method.attrs.clone(),
-                Some((m.si, class.open)),
-            )];
+            return vec![Target {
+                si: m.si,
+                class: class.clone(),
+                attrs: method.attrs.clone(),
+                key: Some((m.si, class.open)),
+                implementation: false,
+                unregistered: false,
+            }];
         }
         let (file, line) = (route.file.as_str(), route.line);
         if has_security(&class.attrs) || has_security(&method.attrs) {
@@ -1426,16 +1447,28 @@ impl World<'_> {
             return vec![];
         }
         let api = &self.srcs[m.si].src.text;
-        let impls: Vec<&(usize, Decl)> = (self.classes.iter())
-            .filter(|(isi, c)| {
-                let imp = &self.srcs[*isi].src.text;
-                !c.flag
-                    && c.bases.contains(&class.name)
-                    && names_interface(imp, api, &class.name)
-                    && self.ctxs[self.srcs[*isi].proj].serves
-                    && !imp.contains("WebTarget") // a client-side implementation
-            })
-            .collect();
+        let key = (m.si, class.open);
+        let cached = self.implementors.borrow().get(&key).cloned();
+        let found = cached.unwrap_or_else(|| {
+            let found: Vec<usize> = (self.subtypes(&class.name, api).into_iter())
+                .filter(|i| {
+                    let (isi, c) = &self.classes[*i];
+                    let src = &self.srcs[*isi].src;
+                    !c.flag
+                        && !class_header(src, c)
+                            .split_whitespace()
+                            .any(|w| w == "abstract")
+                        && !src.text.contains("WebTarget") // a client-side implementation
+                })
+                .collect();
+            self.implementors.borrow_mut().insert(key, found.clone());
+            found
+        });
+        let candidates: Vec<&(usize, Decl)> = found.iter().map(|i| &self.classes[*i]).collect();
+        let serving = |c: &&(usize, Decl)| self.ctxs[self.srcs[c.0].proj].serves;
+        let (served, rest): (Vec<_>, Vec<_>) = candidates.into_iter().partition(serving);
+        let unregistered = served.is_empty();
+        let impls = if unregistered { rest } else { served };
         if impls.is_empty() {
             let message = format!(
                 "No serving implementation of `{}` in the scan; it is not listed as an endpoint",
@@ -1445,11 +1478,69 @@ impl World<'_> {
             return vec![]; // nothing serves it: a client-side declaration
         }
         (impls.into_iter())
-            .map(|(isi, ic)| {
-                let attrs = self.own_attrs(*isi, ic, &method.name);
-                (*isi, ic.clone(), attrs, Some((*isi, ic.open)))
+            .map(|(isi, ic)| Target {
+                si: *isi,
+                class: ic.clone(),
+                attrs: self.own_attrs(*isi, ic, &method.name),
+                key: Some((*isi, ic.open)),
+                implementation: true,
+                unregistered,
             })
             .collect()
+    }
+
+    /// The classes and interfaces (indices into `classes`) below interface
+    /// `name` of the source with text `api`: direct implementors that can name
+    /// it, then everything below those.
+    fn subtypes(&self, name: &str, api: &str) -> BTreeSet<usize> {
+        let below = |n: &str| self.by_base.get(n).into_iter().flatten().copied();
+        let mut found: BTreeSet<usize> = below(name)
+            .filter(|i| names_interface(&self.srcs[self.classes[*i].0].src.text, api, name))
+            .collect();
+        let mut todo: Vec<usize> = found.iter().copied().collect();
+        while let Some(i) = todo.pop() {
+            for k in below(&self.classes[i].1.name) {
+                if found.insert(k) {
+                    todo.push(k);
+                }
+            }
+        }
+        found
+    }
+
+    /// A gap for each supertype of a serving class that is not in the scan
+    /// exactly once: it may hold more routes.
+    fn supertype_gaps(&self, t: &Target, out: &mut Out) {
+        if !self.checked.borrow_mut().insert((t.si, t.class.open)) {
+            return;
+        }
+        let src = &self.srcs[t.si].src;
+        let line = src.line(t.class.attrs.first().map_or(t.class.open, |a| a.at));
+        let mut seen = BTreeSet::new();
+        let mut todo: Vec<(usize, &str)> =
+            t.class.bases.iter().map(|b| (t.si, b.as_str())).collect();
+        while let Some((from, name)) = todo.pop() {
+            if !seen.insert(name) || jdk_type(&self.srcs[from].src, name) {
+                continue;
+            }
+            let mut found: Vec<&(usize, Decl)> = (self.by_name.get(name).into_iter().flatten())
+                .map(|i| &self.classes[*i])
+                .collect();
+            if found.len() > 1 {
+                // several of that name: the one the subtype's source can name
+                let from_text = &self.srcs[from].src.text;
+                found.retain(|(si, _)| names_interface(from_text, &self.srcs[*si].src.text, name));
+            }
+            match found.as_slice() {
+                [(si, d)] => todo.extend(d.bases.iter().map(|b| (*si, b.as_str()))),
+                _ => {
+                    let message = format!(
+                        "A route may be inherited from supertype {name}, which is not in the scan."
+                    );
+                    out.gap(&src.rel, line, message);
+                }
+            }
+        }
     }
 
     /// Whether some source builds interface `name` with `RestClientBuilder…
@@ -1479,13 +1570,66 @@ impl World<'_> {
             .any(|x| x.method.name != name && has_security(&x.method.attrs))
     }
 
+    /// The route an implementation method declares itself: JAX-RS 3.6 (the
+    /// annotations of an implementation method with any JAX-RS annotation of
+    /// its own replace those of the interface method).
+    fn own_route<'r>(&self, route: &Route<'r>, t: &Target, out: &mut Out) -> Option<Route<'r>> {
+        let src = &self.srcs[t.si].src;
+        let at = (t.attrs.iter()).map(|a| a.at).min().unwrap_or(t.class.open);
+        let (file, line) = (src.rel.clone(), src.line(at));
+        let verbs: Vec<&'static str> = (VERBS.iter())
+            .copied()
+            .filter(|v| find(&t.attrs, v).is_some())
+            .collect();
+        if verbs.is_empty() {
+            let message = format!(
+                "Sub-resource locator `{}.{}` is not followed; the endpoints behind it are not listed",
+                t.class.name, route.method.name
+            );
+            out.gap(&file, line, message);
+            return None;
+        }
+        let method_path = match find(&t.attrs, "Path") {
+            None => String::new(),
+            Some(a) => path_of(a).or_else(|| {
+                let message = format!(
+                    "@Path of `{}.{}` is not a literal; the endpoint is not listed",
+                    t.class.name, route.method.name
+                );
+                out.gap(&file, line, message);
+                None
+            })?,
+        };
+        Some(Route {
+            class_path: route.class_path.clone(),
+            method_path,
+            verbs,
+            method: route.method,
+            file,
+            line,
+        })
+    }
+
     fn emit_target(
         &self,
         route: &Route,
-        (tsi, tclass, tattrs, key): Target,
+        t: Target,
         announced: &mut BTreeSet<usize>,
         out: &mut Out,
     ) {
+        let (tsi, key) = (t.si, t.key);
+        let own;
+        let route = if t.implementation && has_jaxrs(&t.attrs) {
+            let Some(r) = self.own_route(route, &t, out) else {
+                return;
+            };
+            own = r;
+            &own
+        } else {
+            route
+        };
+        self.supertype_gaps(&t, out);
+        let (tclass, tattrs) = (t.class, t.attrs);
         let ctx = &self.ctxs[self.srcs[tsi].proj];
         if announced.insert(self.srcs[tsi].proj) {
             ctx.announce(&route.file, route.line, out);
@@ -1497,17 +1641,38 @@ impl World<'_> {
         };
         let others = self.others(key, &route.method.name);
         let layer = reader.layer(ctx.quarkus, (&tattrs, &tclass), others, out);
+        let (file, line) = if t.unregistered {
+            let src = &self.srcs[tsi].src;
+            let at = (tattrs.iter()).map(|a| a.at).min().unwrap_or(tclass.open);
+            (src.rel.clone(), src.line(at))
+        } else {
+            (route.file.clone(), route.line)
+        };
+        let layer = if t.unregistered {
+            let why = format!(
+                "`{}` is not registered where a REST server is configured; its registration is not read",
+                tclass.name
+            );
+            out.gap(
+                &file,
+                line,
+                format!("{why}: access of {} not read", route.method.name),
+            );
+            AccessState::Protected(Condition::Unknown(why))
+        } else {
+            layer
+        };
         let path = join(&[&ctx.prefix, &route.class_path, &route.method_path]);
         let handler = format!("{}.{}", tclass.name, route.method.name);
         for verb in &route.verbs {
-            let http = ctx.http(verb, &path, (&route.file, route.line), out);
+            let http = ctx.http(verb, &path, (&file, line), out);
             out.0.endpoints.push(EndpointAccess {
                 method: (*verb).into(),
                 path: path.clone(),
                 access: http.and(layer.clone()),
                 application: ctx.application.clone(),
-                file: route.file.clone(),
-                line: route.line,
+                file: file.clone(),
+                line,
                 source: if ctx.quarkus { "quarkus" } else { "jaxrs" }.into(),
                 handler: Some(handler.clone()),
                 sends: vec![],
@@ -1798,6 +1963,68 @@ mod tests {
             e.access,
             Protected(Condition::All(vec![Condition::Authenticated, role("u")]))
         );
+    }
+
+    // W5a: an implementation outside any REST server project (CXF registers it
+    // by configuration) is listed with unknown access and a gap, not dropped.
+    #[test]
+    fn interface_implemented_outside_a_server_project_is_unknown_with_a_gap() {
+        let api = "import jakarta.ws.rs.*;\n@Path(\"/api/x\") public interface XApi { @GET String g(); }\n";
+        let imp = "public class XImpl implements XApi { public String g() { return \"\"; } }\n";
+        let f = run(&[
+            ("api/pom.xml", "<project/>"),
+            ("api/src/main/java/XApi.java", api),
+            ("core/pom.xml", "<project/>"),
+            ("core/src/main/java/XImpl.java", imp),
+        ]);
+        let e = (f.endpoints.iter())
+            .find(|e| e.path == "/api/x")
+            .unwrap_or_else(|| panic!("no endpoint in {:?}", f.endpoints));
+        assert!(matches!(e.access, Protected(Condition::Unknown(_))));
+        assert_eq!(e.file, "core/src/main/java/XImpl.java");
+        assert_eq!(e.handler.as_deref(), Some("XImpl.g"));
+        assert!((f.diagnostics.iter()).any(|d| {
+            d.severity == DiagnosticSeverity::Gap && d.message.contains("registration")
+        }));
+        assert!(!f.complete);
+    }
+
+    // An interface that extends the REST interface, and a class below an
+    // abstract implementation, still serve its methods.
+    #[test]
+    fn interface_routes_reach_implementations_through_the_hierarchy() {
+        let api = "import jakarta.ws.rs.*;\n@Path(\"/p\") public interface P { @GET String g(); }\npublic interface C extends P {}\n";
+        let imp = "public abstract class Base implements C { public String g() { return \"\"; } }\npublic class Impl extends Base {}\n";
+        let f = go(&format!("{api}{imp}"), "");
+        assert_eq!(at(&f, "GET", "/p"), Undeclared);
+    }
+
+    // JAX-RS 3.6: an implementation method with JAX-RS annotations of its own
+    // replaces those of the interface method.
+    #[test]
+    fn implementation_method_with_own_annotations_hides_the_interface_ones() {
+        let api = "import jakarta.ws.rs.*;\n@Path(\"/p\") public interface P { @GET String g(); @GET @Path(\"h\") String h(); }\n";
+        let imp = "import jakarta.ws.rs.*;\npublic class Impl implements P { @GET @Path(\"other\") public String g() { return \"\"; } public String h() { return \"\"; } }\n";
+        let f = go(&format!("{api}{imp}"), "");
+        assert_eq!(at(&f, "GET", "/p/h"), Undeclared);
+        assert!(
+            !f.endpoints.iter().any(|e| e.path == "/p"),
+            "{:?}",
+            f.endpoints
+        );
+    }
+
+    #[test]
+    fn unreadable_supertype_of_a_resource_is_a_gap() {
+        let src = res("", "@GET public String g() { return \"\"; }")
+            .replace("class R {", "class R extends Lib {");
+        let f = go(&src, "");
+        assert_eq!(at(&f, "GET", "/a"), Undeclared);
+        assert!((f.diagnostics.iter()).any(|d| {
+            d.severity == DiagnosticSeverity::Gap
+                && d.message.contains("inherited from supertype Lib")
+        }));
+        assert!(!f.complete);
     }
 
     #[test]
