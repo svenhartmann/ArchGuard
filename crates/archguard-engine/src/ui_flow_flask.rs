@@ -1615,7 +1615,7 @@ mod jinja {
                 (None, c @ (b'\'' | b'"')) => quote = Some(c),
                 (None, b'(' | b'[') => depth += 1,
                 (None, b')' | b']') => depth -= 1,
-                (None, _) if depth == 0 && text[i..].starts_with(word) => {
+                (None, _) if depth == 0 && b[i..].starts_with(word.as_bytes()) => {
                     out.push(&text[last..i]);
                     i += word.len();
                     last = i;
@@ -1666,7 +1666,7 @@ mod jinja {
                 return Some(make(v));
             }
         }
-        const USER: [&str; 7] = [
+        const USER: [&str; 10] = [
             "current_user",
             ".can(",
             "is_authenticated",
@@ -1674,8 +1674,11 @@ mod jinja {
             "has_role",
             "has_permission",
             "is_admin",
+            "g.user",
+            "session[",
+            "session.get(",
         ];
-        USER.iter().any(|k| e.contains(k)).then(|| {
+        (e == "user" || USER.iter().any(|k| e.contains(k))).then(|| {
             unread.push(collapse(e));
             Condition::Unknown(collapse(e))
         })
@@ -1814,7 +1817,7 @@ mod jinja {
             | "endautoescape" | "endtrans" => {
                 stack.pop();
             }
-            "extends" | "include" => match quoted(rest) {
+            "extends" | "include" | "import" | "from" => match quoted(rest) {
                 Some(n) if kw == "extends" => t.extends.push((n, ln)),
                 Some(n) => t.includes.push((n, now(stack), ln)),
                 None => {
@@ -1915,7 +1918,16 @@ mod jinja {
             stack: &mut Vec<String>,
         ) {
             let (origin, cond) = from;
-            if stack.iter().any(|s| s == name) || stack.len() > 16 || !self.load(name, site) {
+            if stack.iter().any(|s| s == name) {
+                return;
+            }
+            if stack.len() > 16 {
+                let message = format!(
+                    "Template `{name}` is nested deeper than 16 templates; its links are unknown."
+                );
+                return gap(&mut self.diags, site.0, site.1, message);
+            }
+            if !self.load(name, site) {
                 return;
             }
             let fresh = (self.map.entry(name.to_string()).or_default())
@@ -2500,12 +2512,20 @@ mod tests {
 
     /// (target route, condition, trigger line) of every transition.
     fn jinja(view: &str) -> (UiFlow, Vec<(String, Option<AccessState>)>) {
-        let files = [
+        jinja_with(view, &[])
+    }
+
+    fn jinja_with(
+        view: &str,
+        extra: &[(&str, &str)],
+    ) -> (UiFlow, Vec<(String, Option<AccessState>)>) {
+        let mut files = vec![
             ("app.py", JINJA_APP),
             ("templates/index.html", view),
             ("templates/user.html", "<p>u</p>"),
             ("templates/login.html", "<p>l</p>"),
         ];
+        files.extend_from_slice(extra);
         let flow = run(&files, "");
         let route = |id: &str| {
             let s = flow.screens.iter().find(|s| s.id == id);
@@ -2558,6 +2578,119 @@ mod tests {
         assert!(
             gaps.len() == 1 && gaps[0].file.ends_with("index.html") && gaps[0].line == 1,
             "{gaps:?}"
+        );
+    }
+    fn cond_of(rows: &[(String, Option<AccessState>)], to: &str) -> Option<AccessState> {
+        rows.iter().find(|r| r.0 == to).and_then(|r| r.1.clone())
+    }
+
+    fn gaps(flow: &UiFlow) -> Vec<String> {
+        (flow.diagnostics.iter())
+            .filter(|d| d.severity == DiagnosticSeverity::Gap)
+            .map(|d| format!("{}:{} {}", d.file, d.line, d.message))
+            .collect()
+    }
+
+    const HOME: &str = "<a href=\"{{ url_for('main.index') }}\">h</a>";
+
+    #[test]
+    fn jinja_non_ascii_condition_does_not_panic() {
+        let view = format!("{{% if größe or current_user.is_authenticated %}}{HOME}{{% endif %}}");
+        let (_, rows) = jinja(&view);
+        let want = any_of(vec![unknown("größe"), Condition::Authenticated]);
+        assert_eq!(cond_of(&rows, "/"), Some(prot(want)));
+    }
+
+    #[test]
+    fn jinja_flask_user_idioms_are_unknown_and_a_gap() {
+        for atom in ["g.user", "session['user_id']", "user"] {
+            let (flow, rows) = jinja(&format!("{{% if {atom} %}}{HOME}{{% endif %}}"));
+            assert_eq!(cond_of(&rows, "/"), Some(prot(unknown(atom))), "{atom}");
+            let found = gaps(&flow);
+            assert!(
+                found.iter().any(|g| g.contains("index.html:1 ")),
+                "{atom} {found:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn jinja_import_and_from_follow_the_macro_file() {
+        let macros = "{% macro l() %}<a href=\"{{ url_for('auth.login') }}\">l</a>{% endmacro %}";
+        let view = "{% import 'm.html' as m %}{% from 'm.html' import l %}";
+        let (flow, rows) = jinja_with(view, &[("templates/m.html", macros)]);
+        assert_eq!(
+            cond_of(&rows, "/auth/login"),
+            Some(AccessState::Undeclared),
+            "{rows:?}"
+        );
+        let (flow2, _) = jinja("{% import 'zz.html' as z %}{% from v import x %}");
+        assert!(no_gap(&flow), "{:?}", flow.diagnostics);
+        let found = gaps(&flow2).join("\n");
+        assert!(
+            found.contains("`zz.html` not found") && found.contains("not a literal"),
+            "{found}"
+        );
+    }
+
+    #[test]
+    fn jinja_include_chain_deeper_than_16_is_a_gap() {
+        let owned: Vec<(String, String)> = (0..19)
+            .map(|i| {
+                (
+                    format!("templates/t{i}.html"),
+                    format!("{{% include 't{}.html' %}}", i + 1),
+                )
+            })
+            .collect();
+        let extra: Vec<(&str, &str)> = owned
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        let (flow, _) = jinja_with("{% include 't0.html' %}", &extra);
+        let found = gaps(&flow).join("\n");
+        assert!(found.contains("deeper than 16"), "{found}");
+    }
+
+    #[test]
+    fn jinja_guard_nested_if_mixed_and_or_include_and_extends() {
+        // guards: behaviour that held already
+        let nested = format!(
+            "{{% if current_user.is_authenticated %}}{{% if current_user.has_role('admin') %}}{HOME}\
+             {{% endif %}}<a href=\"{{{{ url_for('auth.login') }}}}\">l</a>{{% endif %}}"
+        );
+        let (_, rows) = jinja(&nested);
+        let admin = all(vec![Condition::Authenticated, role("admin")]);
+        assert_eq!(cond_of(&rows, "/"), Some(prot(admin)));
+        assert_eq!(
+            cond_of(&rows, "/auth/login"),
+            Some(prot(Condition::Authenticated))
+        );
+
+        let mixed = format!(
+            "{{% if current_user.is_authenticated and current_user.has_role('a') or \
+             current_user.has_permission('p') %}}{HOME}{{% endif %}}"
+        );
+        let (_, rows) = jinja(&mixed);
+        let want = any_of(vec![
+            all(vec![Condition::Authenticated, role("a")]),
+            policy("p"),
+        ]);
+        assert_eq!(cond_of(&rows, "/"), Some(prot(want)));
+
+        let layout = "{% if current_user.is_anonymous %}<a href=\"{{ url_for('auth.login') }}\">l</a>{% endif %}";
+        let part = "<a href=\"{{ url_for('main.user', username='x') }}\">u</a>";
+        let view = "{% extends 'layout.html' %}{% if current_user.is_authenticated %}{% include 'part.html' %}{% endif %}";
+        let extra = [
+            ("templates/layout.html", layout),
+            ("templates/part.html", part),
+        ];
+        let (_, rows) = jinja_with(view, &extra);
+        let anon = Condition::Not(Box::new(Condition::Authenticated));
+        assert_eq!(cond_of(&rows, "/auth/login"), Some(prot(anon)));
+        assert_eq!(
+            cond_of(&rows, "/user/:username"),
+            Some(prot(Condition::Authenticated))
         );
     }
 }
