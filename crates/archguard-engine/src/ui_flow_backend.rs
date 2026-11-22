@@ -109,7 +109,7 @@ pub(crate) fn extract_with(ctx: &ExtractContext, hook: Option<RouteHook>) -> UiF
         let message = format!("Configuration not read; [views.access] not applied: {e}");
         out.note(".", 0, message);
     }
-    let projects = read_projects(ctx.root, &mut out);
+    let (projects, pages) = read_all(ctx.root, &mut out);
     let access = ctx.config.views.access.clone();
     let index = Index::new(projects.values().flat_map(|(_, s, _)| s), access);
     for (dir, (application, sources, quarkus)) in &projects {
@@ -129,6 +129,12 @@ pub(crate) fn extract_with(ctx: &ExtractContext, hook: Option<RouteHook>) -> UiF
                 }
             }
         }
+        razor::scan(
+            pages.get(dir).map_or(&[], Vec::as_slice),
+            sources,
+            &index,
+            &mut out,
+        );
         spring::central_rules(sources, &index, &conf, &mut out, first);
         for e in &mut out.0.endpoints[first..] {
             e.application = application.clone();
@@ -166,7 +172,24 @@ mod projects {
     /// Application name and source files by project directory; unreadable files
     /// become diagnostics.
     pub(crate) fn read_projects(root: &Path, out: &mut Out) -> BTreeMap<String, Project> {
-        let (projects, files) = discover(root, out);
+        read_all(root, out).0
+    }
+
+    /// [`read_projects`] plus the Razor `.cshtml` files by project directory.
+    pub(super) fn read_all(
+        root: &Path,
+        out: &mut Out,
+    ) -> (BTreeMap<String, Project>, BTreeMap<String, Vec<Source>>) {
+        let (projects, files, cshtml) = discover(root, out);
+        let mut pages: BTreeMap<String, Vec<Source>> = BTreeMap::new();
+        for rel in cshtml {
+            if let Ok(text) = read_text(root, &rel, MAX_BYTES) {
+                pages
+                    .entry(project_of(&rel, &projects))
+                    .or_default()
+                    .push(Source::new(rel, &text));
+            }
+        }
         let mut by_project: BTreeMap<String, Project> = BTreeMap::new();
         for rel in files {
             match read_text(root, &rel, MAX_BYTES) {
@@ -184,7 +207,7 @@ mod projects {
                 Err(e) => out.diag(&rel, 0, format!("Source file not read (limit 1 MiB): {e}")),
             }
         }
-        by_project
+        (by_project, pages)
     }
 
     pub(crate) fn quarkus_build(root: &Path, dir: &str) -> bool {
@@ -226,13 +249,13 @@ mod projects {
     }
 
     /// Directories holding a build file, and the source files to scan.
-    fn discover(root: &Path, out: &mut Out) -> (BTreeSet<String>, Vec<String>) {
-        let (mut projects, mut files) = (BTreeSet::new(), Vec::new());
+    fn discover(root: &Path, out: &mut Out) -> (BTreeSet<String>, Vec<String>, Vec<String>) {
+        let (mut projects, mut files, mut cshtml) = (BTreeSet::new(), Vec::new(), Vec::new());
         let walk = match walk(root) {
             Ok(walk) => walk,
             Err(e) => {
                 out.diag(".", 0, format!("Discovery settings not read: {e}"));
-                return (projects, files);
+                return (projects, files, cshtml);
             }
         };
         for e in walk.errors {
@@ -244,6 +267,8 @@ mod projects {
                 projects.insert(dir.to_string());
             } else if SOURCES.iter().any(|e| name.ends_with(e)) && !test_path(&rel) {
                 files.push(rel);
+            } else if name.ends_with(".cshtml") && !test_path(&rel) {
+                cshtml.push(rel);
             }
         }
         files.sort();
@@ -252,9 +277,11 @@ mod projects {
             out.diag(".", 0, message);
             files.truncate(MAX_FILES);
         }
-        (projects, files)
+        cshtml.sort();
+        (projects, files, cshtml)
     }
 }
+use projects::read_all;
 pub(crate) use projects::{Project, quarkus_build, read_projects};
 
 /// The lowest major version of the project's `<TargetFramework(s)>` (`net10.0`
@@ -1340,9 +1367,9 @@ mod controllers {
     ];
 
     /// Attributes with the file they are written in.
-    type Attrs<'a> = Vec<(&'a Source, &'a Attr)>;
+    pub(super) type Attrs<'a> = Vec<(&'a Source, &'a Attr)>;
 
-    fn own<'a>(decl: &'a Decl, src: &'a Source) -> Attrs<'a> {
+    pub(super) fn own<'a>(decl: &'a Decl, src: &'a Source) -> Attrs<'a> {
         decl.attrs.iter().map(|a| (src, a)).collect()
     }
 
@@ -1601,7 +1628,7 @@ mod controllers {
     /// authorization attribute and `MapControllers().RequireAuthorization()` must
     /// hold, the fallback policy only when none of these exists, and every global
     /// `AuthorizeFilter` in addition.
-    fn access(index: &Index, out: &mut Out, levels: &Attrs) -> AccessState {
+    pub(super) fn access(index: &Index, out: &mut Out, levels: &Attrs) -> AccessState {
         let open = |a: &Attr| a.name == "AllowAnonymous" || index.is_open(a);
         if levels.iter().any(|(_, a)| open(a))
             || out.2.convention.contains(&minimal::Mod::Anonymous)
@@ -1638,7 +1665,7 @@ mod controllers {
         combine(conditions, Condition::All).map_or(AccessState::Undeclared, AccessState::Protected)
     }
 
-    fn authorize(index: &Index, src: &Source, out: &mut Out, a: &Attr) -> Condition {
+    pub(super) fn authorize(index: &Index, src: &Source, out: &mut Out, a: &Attr) -> Condition {
         let mut parts = Vec::new();
         if let Some(raw) = named(&a.args, "Roles") {
             let roles = index.text(raw).map(|r| {
@@ -1656,6 +1683,43 @@ mod controllers {
             parts.push(policy.unwrap_or_else(|| out.unknown(src, a.at, raw)));
         }
         combine(parts, Condition::All).unwrap_or_else(|| out.2.default_condition())
+    }
+
+    /// `[Authorize]` / `[AllowAnonymous]` before a lambda handler read like
+    /// `.RequireAuthorization()` / `.AllowAnonymous()` (dotnet.md C-04).
+    pub(super) fn lambda_mods(
+        index: &Index,
+        src: &Source,
+        out: &mut Out,
+        delegate: &str,
+    ) -> Vec<minimal::Mod> {
+        let base = delegate.as_ptr() as usize - src.text.as_ptr() as usize;
+        let mut mods = Vec::new();
+        for mut a in directive_attrs(delegate) {
+            a.at += base;
+            if a.name == "AllowAnonymous" || index.is_open(&a) {
+                mods.push(minimal::Mod::Anonymous);
+            } else if a.name == "Authorize" {
+                mods.push(minimal::Mod::Auth(authorize(index, src, out, &a)));
+            } else if let Some(c) = index.listed(out, src, &a) {
+                mods.extend(c.map(minimal::Mod::Auth));
+            } else {
+                let text = |s: &str| index.text(s);
+                let u = aspnet::Use {
+                    src,
+                    at: a.at,
+                    name: &a.name,
+                    args: &a.args,
+                    mvc: false,
+                };
+                mods.extend(
+                    aspnet::custom(out, &u, &text)
+                        .flatten()
+                        .map(minimal::Mod::Auth),
+                );
+            }
+        }
+        mods
     }
 }
 
@@ -1894,6 +1958,9 @@ mod minimal {
             None => None,
         };
         let mut mods = chain.mods;
+        mods.extend(
+            delegate.map_or_else(Vec::new, |d| controllers::lambda_mods(index, src, out, d)),
+        );
         mods.extend(trailing(src, out, close, usize::MAX));
         if let Some(m) = returning_method(src, p, &chain.vars) {
             let found = cache
@@ -2333,6 +2400,8 @@ mod aspnet {
         pub(super) fallback: Option<Condition>,
         pub(super) filters: Vec<Condition>,
         pub(super) convention: Vec<Mod>,
+        /// Modifiers chained on `MapRazorPages()`.
+        pub(super) pages: Vec<Mod>,
         /// Lowest target framework major version; none when unreadable.
         net: Option<u32>,
         classes: BTreeMap<String, AuthClass>,
@@ -2646,15 +2715,26 @@ mod aspnet {
 
     /// Modifiers chained on `MapControllers()` and the other controller routes.
     fn conventions(cs: &[&Source], out: &mut Out) {
-        let mut found: Vec<Vec<Mod>> = Vec::new();
-        let mut first = None;
-        for src in cs {
-            for name in [
+        out.2.convention = convention_of(
+            cs,
+            out,
+            &[
                 "MapControllers",
                 "MapDefaultControllerRoute",
                 "MapControllerRoute",
                 "MapAreaControllerRoute",
-            ] {
+            ],
+        );
+        // B-03: the same on `MapRazorPages()`.
+        out.2.pages = convention_of(cs, out, &["MapRazorPages"]);
+    }
+
+    /// The modifiers chained on the `names` calls; `Unknown` when they differ.
+    fn convention_of(cs: &[&Source], out: &mut Out, names: &[&str]) -> Vec<Mod> {
+        let mut found: Vec<Vec<Mod>> = Vec::new();
+        let mut first = None;
+        for src in cs {
+            for name in names.iter().copied() {
                 for p in words(&src.text, name) {
                     let Some(close) = call_close(src, p, name) else {
                         continue;
@@ -2669,12 +2749,12 @@ mod aspnet {
         }
         let same = found.windows(2).all(|w| w[0] == w[1]);
         match (found.first(), first) {
-            (Some(mods), _) if same => out.2.convention = mods.clone(),
+            (Some(mods), _) if same => mods.clone(),
             (Some(_), Some((src, at))) => {
-                let c = out.unknown(src, at, "MapControllers conventions differ");
-                out.2.convention = vec![Mod::Auth(c)];
+                let c = out.unknown(src, at, &format!("{} conventions differ", names[0]));
+                vec![Mod::Auth(c)]
             }
-            _ => {}
+            _ => vec![],
         }
     }
 
@@ -2806,9 +2886,28 @@ mod aspnet {
                 }
             }
             let body = &src.text[open.min(d.end)..d.end.min(src.text.len())];
-            let mentions = words(body, "Policy").count() + words(body, "Roles").count();
+            // A bare `Policy { get; set; }` (what `IAuthorizeData` demands) is a
+            // declaration holding null, not a mention.
+            let mentions = (words(body, "Policy").chain(words(body, "Roles")))
+                .filter(|&i| !bare_property(&body[i..]))
+                .count();
             c.opaque |= mentions > assigned;
             c
+        }
+
+        /// `Policy { get; set; }` without initializer; `rest` starts at the name.
+        fn bare_property(rest: &str) -> bool {
+            let after = rest.trim_start_matches(|c: char| c.is_alphanumeric() || c == '_');
+            let Some((inner, tail)) = after
+                .trim_start()
+                .strip_prefix('{')
+                .and_then(|a| a.split_once('}'))
+            else {
+                return false;
+            };
+            let inner: String = inner.split_whitespace().collect();
+            matches!(inner.as_str(), "get;" | "get;set;" | "get;init;")
+                && !tail.trim_start().starts_with('=')
         }
 
         /// A constructor with its parameter list `(paren, close)`: the parsed
@@ -3112,7 +3211,7 @@ mod aspnet {
                 let (key, class) = self.find(u.name)?;
                 let mut parts = Vec::new();
                 if class.authorize || class.data {
-                    match self.authorize_part(&key, class, u, text) {
+                    match self.authorize_part(&key, u, text) {
                         Some(c) => parts.push(c),
                         None => return Some(Some(out.unknown(u.src, u.at, &u.shown()))),
                     }
@@ -3128,13 +3227,7 @@ mod aspnet {
 
             /// What the `AuthorizeAttribute` / `IAuthorizeData` side of the type
             /// demands; none when the use is not readable.
-            fn authorize_part(
-                &self,
-                key: &str,
-                class: &AuthClass,
-                u: &Use,
-                text: Text,
-            ) -> Option<Condition> {
+            fn authorize_part(&self, key: &str, u: &Use, text: Text) -> Option<Condition> {
                 let (positional, named) = split_arguments(u.args, text)?;
                 let mut props = self.class_props(key, &positional, 0)?;
                 for (k, v) in named {
@@ -3151,11 +3244,10 @@ mod aspnet {
                 let items = (roles.and_then(|r| combine(r, Condition::Any)).into_iter())
                     .chain(props.policy.map(Condition::Policy))
                     .collect();
-                match combine(items, Condition::All) {
-                    None if class.authorize => Some(self.default_condition()),
-                    // `IAuthorizeData` without a readable `Policy`/`Roles`.
-                    found => found,
-                }
+                // No Policy/Roles: the default policy, for `IAuthorizeData` as for
+                // `AuthorizeAttribute` (AuthorizationPolicy.CombineAsync, see
+                // https://learn.microsoft.com/en-us/aspnet/core/security/authorization/iauthorizedata).
+                Some(combine(items, Condition::All).unwrap_or_else(|| self.default_condition()))
             }
 
             /// Requirement data counts on MVC from .NET 11 on.
@@ -5347,6 +5439,372 @@ pub(crate) mod spring {
                     return None;
                 }
             }
+        }
+    }
+}
+
+/// Razor Pages: every `.cshtml` with `@page` under a `Pages` root is an endpoint
+/// per handler verb of its page model (`@model`), with the access of the model
+/// class and its bases, `@attribute [...]` lines and the `Conventions.Authorize…`
+/// / `AllowAnonymous…` calls of `AddRazorPages(options => …)`; `MapRazorPages()`
+/// modifiers, the fallback policy and global filters apply as to any endpoint.
+/// Sources:
+/// <https://learn.microsoft.com/en-us/aspnet/core/razor-pages/security/authorization/conventions>
+/// <https://learn.microsoft.com/en-us/aspnet/core/razor-pages/security/authorization/simple>
+/// Case-insensitive matching of convention paths is not verified in the docs.
+/// An unreadable convention argument or a changed pages root is a gap, never
+/// open; `[Authorize]` on a handler method has no effect in the framework and is
+/// reported as such. Pages are endpoints only: Blazor pages are screens of the
+/// Blazor extractor and the screens model is not extended here.
+mod razor {
+    use super::controllers::{access, own};
+    use super::lex::{literal, skip_ws, split_top, words};
+    use super::*;
+
+    const VERBS: [&str; 7] = ["Get", "Post", "Put", "Delete", "Patch", "Head", "Options"];
+    /// (call, takes an area first, folder, anonymous)
+    const CONVENTIONS: [(&str, bool, bool, bool); 8] = [
+        ("AuthorizePage", false, false, false),
+        ("AuthorizeFolder", false, true, false),
+        ("AllowAnonymousToPage", false, false, true),
+        ("AllowAnonymousToFolder", false, true, true),
+        ("AuthorizeAreaPage", true, false, false),
+        ("AuthorizeAreaFolder", true, true, false),
+        ("AllowAnonymousToAreaPage", true, false, true),
+        ("AllowAnonymousToAreaFolder", true, true, true),
+    ];
+
+    struct Convention<'a> {
+        src: &'a Source,
+        at: usize,
+        area: Option<String>,
+        path: String,
+        folder: bool,
+        anonymous: bool,
+        /// Raw policy argument.
+        policy: Option<String>,
+        /// Area and path are literals; else the convention reaches every page.
+        readable: bool,
+        raw: String,
+    }
+
+    pub(super) fn scan(pages: &[Source], sources: &[Source], index: &Index, out: &mut Out) {
+        if pages.is_empty() {
+            return;
+        }
+        let cs: Vec<&Source> = sources.iter().filter(|s| s.rel.ends_with(".cs")).collect();
+        if let Some(src) = cs.iter().find(|s| moved_root(s)) {
+            let at = words(&src.text, "RootDirectory").next().unwrap_or(0);
+            let message = "Razor Pages root directory changed; pages not read".into();
+            return out.at(src, at, message);
+        }
+        let conventions = conventions(&cs, index);
+        let pages_mods = out.2.pages.clone();
+        let saved = std::mem::replace(&mut out.2.convention, pages_mods);
+        for page in pages {
+            one(page, pages, index, &conventions, out);
+        }
+        out.2.convention = saved;
+    }
+
+    fn moved_root(src: &Source) -> bool {
+        src.text.contains("WithRazorPagesAtContentRoot")
+            || src.text.contains("WithRazorPagesRoot")
+            || (src.text.contains("RazorPagesOptions") || src.text.contains("AddRazorPages"))
+                && words(&src.text, "RootDirectory").next().is_some()
+    }
+
+    fn conventions<'a>(cs: &[&'a Source], index: &Index) -> Vec<Convention<'a>> {
+        let mut found = Vec::new();
+        for src in cs {
+            for kind in CONVENTIONS {
+                let calls = words(&src.text, kind.0);
+                found.extend(calls.filter_map(|at| convention(src, index, at, kind)));
+            }
+        }
+        found
+    }
+
+    /// The call `Name(…)` at `at`, if it is one.
+    fn convention<'a>(
+        src: &'a Source,
+        index: &Index,
+        at: usize,
+        (name, area, folder, anonymous): (&str, bool, bool, bool),
+    ) -> Option<Convention<'a>> {
+        let close = minimal::call_close(src, at, name)?;
+        let open = skip_ws(src.bytes(), at + name.len());
+        let args = split_top(&src.text[open + 1..close]);
+        let skip = usize::from(area);
+        let read = |i: usize| args.get(i).and_then(|a| index.text(a));
+        let (a, path) = (read(0), read(skip));
+        Some(Convention {
+            src,
+            at,
+            readable: path.is_some() && (!area || a.is_some()),
+            area: a.filter(|_| area),
+            path: path.unwrap_or_default(),
+            folder,
+            anonymous,
+            policy: args.get(skip + 1).map(|p| p.trim().to_string()),
+            raw: src.text[at..close + 1].to_string(),
+        })
+    }
+
+    /// The area and the path below the pages root without extension (`/Private/Edit`).
+    fn locate(rel: &str) -> Option<(Option<String>, String)> {
+        let parts: Vec<&str> = rel.split('/').collect();
+        let root = parts.iter().position(|p| *p == "Pages")?;
+        let area = (root >= 2 && parts[root - 2] == "Areas").then(|| parts[root - 1].to_string());
+        let name = parts[root + 1..].join("/");
+        Some((area, format!("/{}", name.strip_suffix(".cshtml")?)))
+    }
+
+    fn matches(c: &Convention, area: &Option<String>, page: &str) -> bool {
+        let same_area = match (&c.area, area) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.to_lowercase() == b.to_lowercase(),
+            _ => false,
+        };
+        let path = format!("/{}", c.path.trim_matches('/')).to_lowercase();
+        let page = page.to_lowercase();
+        same_area
+            && match c.folder {
+                true => path == "/" || page.starts_with(&format!("{path}/")),
+                false => page == path,
+            }
+    }
+
+    /// What the `.cshtml` file itself says.
+    struct Directives {
+        at: usize,
+        model: Option<String>,
+        inherits: Option<String>,
+        /// `@page "template"`; `Err` with the raw text when it is no literal.
+        template: Option<Result<String, String>>,
+        attrs: Vec<Attr>,
+    }
+
+    /// The directives of a file and whether it has `@page`.
+    fn directives(page: &Source) -> (Directives, bool) {
+        let mut d = Directives {
+            at: 0,
+            model: None,
+            inherits: None,
+            template: None,
+            attrs: Vec::new(),
+        };
+        let (mut found, mut offset) = (false, 0);
+        // `@* … *@` comments hide directives; blanking keeps the offsets.
+        let text = crate::lang_markup::blank(&page.text, "@*", "*@");
+        for line in text.split_inclusive('\n') {
+            let t = line.trim_start();
+            let here = offset + (line.len() - t.len());
+            offset += line.len();
+            let page_rest = t
+                .strip_prefix("@page")
+                .filter(|r| r.is_empty() || r.starts_with(char::is_whitespace));
+            if let Some(rest) = page_rest {
+                (d.at, found) = if found { (d.at, true) } else { (here, true) };
+                let rest = rest.trim();
+                d.template = (!rest.is_empty()).then(|| literal(rest).ok_or_else(|| rest.into()));
+            } else if let Some(rest) = t.strip_prefix("@model ") {
+                d.model = Some(rest.trim().rsplit('.').next().unwrap_or("").to_string());
+            } else if let Some(rest) = t.strip_prefix("@inherits ") {
+                let name = rest.trim().split('<').next().unwrap_or("");
+                d.inherits = Some(name.rsplit('.').next().unwrap_or("").to_string());
+            } else if let Some(rest) = t.strip_prefix("@attribute ") {
+                let base = here + (t.len() - rest.len());
+                d.attrs
+                    .extend(directive_attrs(rest).into_iter().map(|mut a| {
+                        a.at += base;
+                        a
+                    }));
+            }
+        }
+        (d, found)
+    }
+
+    /// The directives of a page, with `@model` / `@inherits` of the
+    /// `_ViewImports.cshtml` files above it where it has none (the closest one
+    /// wins); none without `@page`. Docs:
+    /// <https://learn.microsoft.com/en-us/aspnet/core/mvc/views/layout#importing-shared-directives>
+    fn page_directives(page: &Source, pages: &[Source], out: &mut Out) -> Option<Directives> {
+        let (mut d, found) = directives(page);
+        if !found {
+            return None;
+        }
+        let mut cur = page.rel.as_str();
+        while let Some((dir, _)) = cur.rsplit_once('/') {
+            cur = dir;
+            let name = format!("{dir}/_ViewImports.cshtml");
+            if let Some(imp) = pages.iter().find(|p| p.rel == name) {
+                let (imp, _) = directives(imp);
+                if !imp.attrs.is_empty() {
+                    // Whether Razor applies it is not confirmed by the docs.
+                    let message = format!("@attribute in _ViewImports not read: {name}");
+                    out.at(page, d.at, message);
+                }
+                d.model = d.model.or(imp.model);
+                d.inherits = d.inherits.or(imp.inherits);
+            }
+        }
+        Some(d)
+    }
+
+    /// The route: the path below the root (`Index` is its folder), the area, and
+    /// the `@page` template (absolute replaces, relative is appended).
+    fn route(
+        page: &Source,
+        (area, path): &(Option<String>, String),
+        d: &Directives,
+        out: &mut Out,
+    ) -> String {
+        let mut route = match path.strip_suffix("/Index") {
+            Some(p) => p.to_string(),
+            None if path == "/Index" => String::new(),
+            None => path.clone(),
+        };
+        if let Some(area) = area {
+            route = format!("/{area}{route}");
+        }
+        match &d.template {
+            Some(Ok(t)) if t.starts_with('/') => route = t.clone(),
+            Some(Ok(t)) => route = format!("{route}/{}", t.trim_matches('/')),
+            Some(Err(raw)) => {
+                out.at(
+                    page,
+                    d.at,
+                    format!("@page template is not a literal: {raw}"),
+                );
+            }
+            None => {}
+        }
+        if route.is_empty() { "/".into() } else { route }
+    }
+
+    /// The attributes of the page model class and its bases and the verbs of its
+    /// handlers (`GET` for a page without handlers or model).
+    fn model_levels<'a>(
+        page: &'a Source,
+        index: &'a Index,
+        d: &'a Directives,
+        out: &mut Out,
+    ) -> (Vec<(&'a Source, &'a Attr)>, BTreeSet<String>) {
+        let mut levels: Vec<(&Source, &Attr)> = d.attrs.iter().map(|a| (page, a)).collect();
+        let mut verbs = BTreeSet::new();
+        for name in [&d.model, &d.inherits].into_iter().flatten() {
+            let classes: Vec<_> = (index.all_classes())
+                .filter(|(_, c)| c.class && &c.name == name)
+                .collect();
+            match classes.as_slice() {
+                [(src, class)] => model_class(index, (src, class), &mut levels, &mut verbs, out),
+                _ => {
+                    let message = format!(
+                        "Page model {name} not found or ambiguous; its attributes and handlers are not read"
+                    );
+                    out.at(page, d.at, message);
+                }
+            }
+        }
+        if verbs.is_empty() {
+            verbs.insert("GET".to_string());
+        }
+        (levels, verbs)
+    }
+
+    /// The attributes and handler verbs of `class` and its bases.
+    fn model_class<'a>(
+        index: &'a Index,
+        (src, class): (&'a Source, &'a Decl),
+        levels: &mut Vec<(&'a Source, &'a Attr)>,
+        verbs: &mut BTreeSet<String>,
+        out: &mut Out,
+    ) {
+        let bases = index.ancestors(out, src, class);
+        levels.extend(own(class, src));
+        let mut chain = vec![(src, class.open)];
+        for (s, b) in &bases {
+            levels.extend(own(b, s));
+            chain.push((*s, b.open));
+        }
+        for (s, open) in chain {
+            each_method(s, false, |c, m| {
+                if c.open == open {
+                    handler(s, m, verbs, out);
+                }
+            });
+        }
+    }
+
+    /// The conventions that reach a page, as attributes; an unreadable one reaches every page.
+    fn convention_attrs<'a>(
+        conventions: &[Convention<'a>],
+        area: &Option<String>,
+        path: &str,
+    ) -> Vec<(&'a Source, Attr)> {
+        let reaches = |c: &&Convention| !c.readable || matches(c, area, path);
+        let attr = |c: &Convention| {
+            let (name, args) = match (c.readable, c.anonymous) {
+                (false, _) => ("Authorize", format!("Policy = {}", c.raw)),
+                (true, true) => ("AllowAnonymous", String::new()),
+                (true, false) => ("Authorize", c.policy.clone().unwrap_or_default()),
+            };
+            Attr {
+                name: name.into(),
+                args,
+                at: c.at,
+            }
+        };
+        (conventions.iter().filter(reaches))
+            .map(|c| (c.src, attr(c)))
+            .collect()
+    }
+
+    fn one(
+        page: &Source,
+        pages: &[Source],
+        index: &Index,
+        conventions: &[Convention],
+        out: &mut Out,
+    ) {
+        let (Some(d), Some(place)) = (page_directives(page, pages, out), locate(&page.rel)) else {
+            return;
+        };
+        let route = route(page, &place, &d, out);
+        let (mut levels, verbs) = model_levels(page, index, &d, out);
+        let synthetic = convention_attrs(conventions, &place.0, &place.1);
+        levels.extend(synthetic.iter().map(|(s, a)| (*s, a)));
+        let state = access(index, out, &levels);
+        for verb in verbs {
+            out.endpoint(page, d.at, &verb, route.clone(), &state);
+        }
+    }
+
+    /// `OnGet`, `OnPostAsync`, `OnPostDelete`…: the verb of a page handler;
+    /// `[Authorize]` on it has no effect in the framework.
+    fn handler(src: &Source, m: &Decl, verbs: &mut BTreeSet<String>, out: &mut Out) {
+        let Some(rest) = m.name.strip_prefix("On") else {
+            return;
+        };
+        let verb = VERBS.iter().find(|v| {
+            (rest.strip_prefix(**v))
+                .is_some_and(|r| r.chars().next().is_none_or(char::is_uppercase))
+        });
+        let Some(verb) = verb else {
+            return;
+        };
+        verbs.insert(verb.to_ascii_uppercase());
+        for a in m
+            .attrs
+            .iter()
+            .filter(|a| a.name == "Authorize" || a.name == "AllowAnonymous")
+        {
+            let message = format!(
+                "[{}] on page handler {} is ignored by Razor Pages; put it on the page model",
+                a.name, m.name
+            );
+            out.at(src, a.at, message);
         }
     }
 }
@@ -8864,6 +9322,280 @@ public class MController : ControllerBase
         assert_eq!(
             access(&flow, "GET", "/m/e"),
             &protected(Condition::All(vec![policy("P"), policy("x")]))
+        );
+    }
+
+    const PAGES: &[(&str, &str)] = &[
+        ("Pages/Index.cshtml", "@page\n@model IndexModel\n"),
+        (
+            "Pages/Index.cshtml.cs",
+            "public class IndexModel : PageModel { public void OnGet() {} }",
+        ),
+        ("Pages/Contact.cshtml", "@page\n@model ContactModel\n"),
+        (
+            "Pages/Contact.cshtml.cs",
+            "[Authorize] public class ContactModel : PageModel { public void OnGet() {} public void OnPostSend() {} }",
+        ),
+        ("Pages/Anon.cshtml", "@page\n@model AnonModel\n"),
+        (
+            "Pages/Anon.cshtml.cs",
+            "[AllowAnonymous] public class AnonModel : PageModel { public void OnGet() {} }",
+        ),
+        ("Pages/Private/Index.cshtml", "@page\n@model PIndexModel\n"),
+        (
+            "Pages/Private/Index.cshtml.cs",
+            "public class PIndexModel : PageModel { public void OnGet() {} }",
+        ),
+        ("Pages/Private/Public.cshtml", "@page\n@model PublicModel\n"),
+        (
+            "Pages/Private/Public.cshtml.cs",
+            "public class PublicModel : PageModel { public void OnGet() {} }",
+        ),
+        (
+            "Pages/Admin/Panel.cshtml",
+            "@page \"{id:int}\"\n@model PanelModel\n",
+        ),
+        (
+            "Pages/Admin/Panel.cshtml.cs",
+            "public class PanelModel : PageModel { public void OnGet(int id) {} }",
+        ),
+        ("Pages/Handler.cshtml", "@page\n@model HandlerModel\n"),
+        (
+            "Pages/Handler.cshtml.cs",
+            "public class HandlerModel : PageModel { [Authorize] public void OnGet() {} }",
+        ),
+        ("Pages/NotAPage.cshtml", "<p>a view, no @page directive</p>"),
+    ];
+    const PAGE_CONVENTIONS: &str = r#"
+builder.Services.AddRazorPages(options =>
+{
+    options.Conventions.AuthorizeFolder("/Private").AllowAnonymousToPage("/Private/Public");
+    options.Conventions.AuthorizeFolder("/Admin", "AdminOnly");
+});
+"#;
+
+    // dotnet.md B-04/B-05; docs:
+    // https://learn.microsoft.com/en-us/aspnet/core/razor-pages/security/authorization/conventions
+    // https://learn.microsoft.com/en-us/aspnet/core/razor-pages/security/authorization/simple
+    #[test]
+    fn w5e_razor_pages_are_endpoints_with_attributes_and_conventions() {
+        let mut files = vec![("Program.cs", PAGE_CONVENTIONS)];
+        files.extend_from_slice(PAGES);
+        let flow = web(&tfm("net10.0"), &files);
+        assert_eq!(access(&flow, "GET", "/"), &AccessState::Undeclared);
+        assert_eq!(
+            access(&flow, "GET", "/Contact"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(
+            access(&flow, "POST", "/Contact"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(access(&flow, "GET", "/Anon"), &AccessState::Open);
+        assert_eq!(
+            access(&flow, "GET", "/Private"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(access(&flow, "GET", "/Private/Public"), &AccessState::Open);
+        assert_eq!(
+            access(&flow, "GET", "/Admin/Panel/{id:int}"),
+            &protected(policy("AdminOnly"))
+        );
+        // `[Authorize]` on a handler is ignored by the framework: a gap, never protected.
+        assert_eq!(access(&flow, "GET", "/Handler"), &AccessState::Undeclared);
+        assert!(gaps(&flow, "ignored") >= 1, "{:#?}", flow.diagnostics);
+        assert!(!flow.endpoints.iter().any(|e| e.path.contains("NotAPage")));
+    }
+
+    #[test]
+    fn w5e_razor_page_convention_with_unreadable_path_is_unknown_with_a_gap() {
+        let program = r#"
+builder.Services.AddRazorPages(o => { o.Conventions.AuthorizeFolder(Folders.Private); });
+"#;
+        let mut files = vec![("Program.cs", program)];
+        files.extend_from_slice(PAGES);
+        let flow = web(&tfm("net10.0"), &files);
+        let state = access(&flow, "GET", "/");
+        assert!(
+            matches!(state, AccessState::Protected(Condition::Unknown(_))),
+            "{state:?}"
+        );
+        assert!(
+            gaps(&flow, "Folders.Private") >= 1,
+            "{:#?}",
+            flow.diagnostics
+        );
+        // An explicit marker still wins.
+        assert_eq!(access(&flow, "GET", "/Anon"), &AccessState::Open);
+    }
+
+    // Review: Razor comments `@* … *@` hide directives; they stay hidden.
+    #[test]
+    fn w5e_razor_comments_hide_directives() {
+        let files = [
+            ("Program.cs", PAGE_CONVENTIONS),
+            (
+                "Pages/Admin/Secret.cshtml",
+                "@page\n@*\n@attribute [AllowAnonymous]\n*@\n",
+            ),
+            ("Pages/Admin/Gone.cshtml", "@* @page *@\n"),
+        ];
+        let flow = web(&tfm("net10.0"), &files);
+        assert_eq!(
+            access(&flow, "GET", "/Admin/Secret"),
+            &protected(policy("AdminOnly"))
+        );
+        assert!(!flow.endpoints.iter().any(|e| e.path.contains("Gone")));
+    }
+
+    // Review: OrdinalIgnoreCase is not ASCII-only.
+    #[test]
+    fn w5e_razor_folder_conventions_match_non_ascii_case_insensitively() {
+        let program = "builder.Services.AddRazorPages(o => { o.Conventions.AuthorizeFolder(\"/übersicht\"); });";
+        let flow = web(
+            &tfm("net10.0"),
+            &[
+                ("Program.cs", program),
+                ("Pages/Übersicht/Index.cshtml", "@page\n"),
+            ],
+        );
+        assert_eq!(
+            access(&flow, "GET", "/Übersicht"),
+            &protected(Condition::Authenticated)
+        );
+    }
+
+    // Review: `_ViewImports.cshtml` supplies `@model`/`@inherits`, the closest wins
+    // (https://learn.microsoft.com/en-us/aspnet/core/mvc/views/layout#importing-shared-directives).
+    #[test]
+    fn w5e_razor_view_imports_supply_model_and_inherits() {
+        let cs = "[AllowAnonymous] public class RootModel : PageModel {}\n\
+                  [Authorize] public class ImpModel : PageModel {}\n\
+                  [Authorize(\"B\")] public class BaseP : PageModel {}\n";
+        let files = [
+            ("Pages/_ViewImports.cshtml", "@model RootModel\n"),
+            ("Pages/Other.cshtml", "@page\n"),
+            ("Pages/Imp/_ViewImports.cshtml", "@model ImpModel\n"),
+            ("Pages/Imp/Page.cshtml", "@page\n"),
+            ("Pages/Inh/_ViewImports.cshtml", "@inherits BaseP\n"),
+            ("Pages/Inh/Page.cshtml", "@page\n@model RootModel\n"),
+            ("Pages/Miss/_ViewImports.cshtml", "@model Nowhere\n"),
+            ("Pages/Miss/Page.cshtml", "@page\n"),
+            ("M.cs", cs),
+        ];
+        let flow = web(&tfm("net10.0"), &files);
+        assert_eq!(access(&flow, "GET", "/Other"), &AccessState::Open);
+        assert_eq!(
+            access(&flow, "GET", "/Imp/Page"),
+            &protected(Condition::Authenticated)
+        );
+        // The page's own @model is RootModel (open); @inherits adds BaseP; open wins.
+        assert_eq!(access(&flow, "GET", "/Inh/Page"), &AccessState::Open);
+        assert!(gaps(&flow, "Nowhere") >= 1, "{:#?}", flow.diagnostics);
+    }
+
+    // Review: `@attribute` in `_ViewImports` is not confirmed by the docs: a gap,
+    // and the access is never upgraded by it.
+    #[test]
+    fn w5e_razor_view_imports_attribute_is_a_gap() {
+        let flow = web(
+            &tfm("net10.0"),
+            &[
+                ("Program.cs", "var x = 1;"),
+                ("Pages/_ViewImports.cshtml", "@attribute [AllowAnonymous]\n"),
+                ("Pages/P.cshtml", "@page\n"),
+            ],
+        );
+        assert_eq!(access(&flow, "GET", "/P"), &AccessState::Undeclared);
+        assert!(
+            gaps(&flow, "@attribute in _ViewImports") >= 1,
+            "{:#?}",
+            flow.diagnostics
+        );
+    }
+
+    // Review: blanking a comment with multi-byte text keeps byte offsets.
+    #[test]
+    fn w5e_razor_comment_with_multibyte_text_keeps_lines() {
+        let flow = web(
+            &tfm("net10.0"),
+            &[
+                ("Program.cs", "var x = 1;"),
+                ("Pages/P.cshtml", "@* für Admins *@\n@page\n"),
+            ],
+        );
+        let e = flow
+            .endpoints
+            .iter()
+            .find(|e| e.path == "/P")
+            .expect("endpoint");
+        assert_eq!(e.line, 2);
+    }
+
+    // Guard: `MapControllers().AllowAnonymous()` opens controllers, not pages;
+    // `MapRazorPages().RequireAuthorization()` protects pages (B-03).
+    #[test]
+    fn w5e_page_endpoints_use_the_map_razor_pages_conventions_only() {
+        let a = "app.MapControllers().AllowAnonymous();\napp.MapRazorPages();\n";
+        let b = "app.MapRazorPages().RequireAuthorization();\n";
+        for (program, want) in [
+            (a, AccessState::Undeclared),
+            (b, protected(Condition::Authenticated)),
+        ] {
+            let mut files = vec![("Program.cs", program)];
+            files.extend_from_slice(PAGES);
+            let flow = web(&tfm("net10.0"), &files);
+            assert_eq!(access(&flow, "GET", "/"), &want, "{program}");
+        }
+    }
+
+    // dotnet.md C-04; docs:
+    // https://learn.microsoft.com/en-us/aspnet/core/fundamentals/minimal-apis/security
+    // ("[Authorize]" / "[AllowAnonymous]" on the route handler lambda).
+    #[test]
+    fn w5e_minimal_api_lambda_attributes_are_read() {
+        let program = r#"
+app.MapGet("/la", [Authorize] () => 1);
+app.MapGet("/lb", [AllowAnonymous] () => 1);
+app.MapGet("/lc", [Authorize(Roles = "Admin")] async () => 1);
+app.MapGet("/ld", [Authorize("P")] [AllowAnonymous] static () => 1);
+app.MapPost("/le", [Authorize("P")] ([FromBody] string s) => 1);
+app.MapGet("/lf", () => 1);
+"#;
+        let flow = with_program(program);
+        assert_eq!(
+            access(&flow, "GET", "/la"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(access(&flow, "GET", "/lb"), &AccessState::Open);
+        assert_eq!(access(&flow, "GET", "/lc"), &protected(role("Admin")));
+        assert_eq!(access(&flow, "GET", "/ld"), &AccessState::Open);
+        assert_eq!(access(&flow, "POST", "/le"), &protected(policy("P")));
+        assert_eq!(access(&flow, "GET", "/lf"), &AccessState::Undeclared);
+    }
+
+    // dotnet.md A-07: `IAuthorizeData` with neither Policy nor Roles set means the
+    // default policy (AuthorizationPolicy.CombineAsync); docs:
+    // https://learn.microsoft.com/en-us/aspnet/core/security/authorization/iauthorizedata
+    #[test]
+    fn w5e_iauthorizedata_without_policy_or_roles_is_the_default_policy() {
+        let src = r#"
+public class PlainDataAttribute : Attribute, IAuthorizeData
+{
+    public string? Policy { get; set; }
+    public string? Roles { get; set; }
+    public string? AuthenticationSchemes { get; set; }
+}
+[Route("d")]
+public class DController : ControllerBase
+{
+    [HttpGet("a")][PlainData] public IActionResult A() => Ok();
+}
+"#;
+        let flow = web(&tfm("net10.0"), &[("C.cs", src)]);
+        assert_eq!(
+            access(&flow, "GET", "/d/a"),
+            &protected(Condition::Authenticated)
         );
     }
 

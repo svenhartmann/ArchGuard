@@ -107,7 +107,7 @@ pub(crate) fn attr<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
 }
 
 /// Replaces `open`...`close` regions (`<!--`…`-->`, `@*`…`*@`) with spaces,
-/// keeping line breaks; an unclosed region runs to the end.
+/// keeping line breaks and byte offsets; an unclosed region runs to the end.
 pub(crate) fn blank(text: &str, open: &str, close: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -117,9 +117,9 @@ pub(crate) fn blank(text: &str, open: &str, close: &str) -> String {
             .find(close)
             .map_or(rest.len(), |e| start + e + close.len());
         out.extend(
-            rest[start..end]
-                .chars()
-                .map(|c| if c == '\n' { '\n' } else { ' ' }),
+            rest[start..end].chars().flat_map(|c| {
+                std::iter::repeat_n(if c == '\n' { '\n' } else { ' ' }, c.len_utf8())
+            }),
         );
         rest = &rest[end..];
     }
