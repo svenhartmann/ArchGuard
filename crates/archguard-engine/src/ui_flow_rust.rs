@@ -78,9 +78,8 @@
 //! `@tauri-apps/api/core` or the v1 `@tauri-apps/api/tauri`, in `.ts`,
 //! `.tsx`, `.js`, `.jsx`, `.mjs`, `.svelte` and `.vue` files below the
 //! application folder) joins it as an `http` action with the same method and
-//! path from `any_screen`. A command not named in `AppManifest::commands`
-//! of `build.rs` is `undeclared`: Tauri lets every window call it. A listed
-//! one is guarded by the capability files `capabilities/*.json`: each that
+//! path from `any_screen`. Without an app ACL (see below) a command is
+//! `undeclared`: Tauri lets every window call it. Under one it is guarded by the capability files `capabilities/**`: each that
 //! grants `allow-<command>` (dashes for underscores) and does not deny it is
 //! `policy(capability:<identifier>)`, several are `any`; none is `never`,
 //! unless a capability names an app permission set (`default`) that is not
@@ -91,9 +90,27 @@
 //! and `WebviewWindow::builder` add windows, started inside `.setup(…)`, else
 //! a transition from `any_screen`. A label that is not literal is a gap.
 //!
-//! Not read: Dioxus `#[get]`/`#[post]` server routes, inline capabilities in
-//! `tauri.conf.json`, permission set files, Leptos route components placed
-//! inside another route (`<ContactRoutes/>` routes count from the root),
+//! Tauri capabilities: `capabilities/**` (`json`, `toml`; `json5` only with the
+//! cargo feature `config-json5`, read as far as it is JSON), one capability, a
+//! list or `{ "capabilities": [ … ] }` per file; with `app.security.capabilities`
+//! in the configuration (`tauri.conf.json`, `.json5`, `Tauri.toml`) only the
+//! listed ones are active, inline ones included, and one not found is a gap.
+//! App permissions and sets of `permissions/**` (`[[permission]]`, `[[set]]`,
+//! `[default]`) are expanded; a deny in any active capability of an
+//! overlapping window beats an allow. A non-empty `AppManifest::commands` or
+//! any permission file switches the app ACL on: every app command is then
+//! guarded (`never` without a grant), not only the listed ones.
+//!
+//! Leptos: a component that holds route tags and is placed by a `<Name/>` tag
+//! (`<ContactRoutes/>`) gets its routes below the placing route, with its path
+//! and condition; a component never placed that way counts from the root.
+//! Dioxus `RouterConfig::on_update` and a Yew `switch` arm that branches
+//! (`if`, `match`, match guard) make the router's or the arm's page `unknown`
+//! with a gap, or the `[views.access]` meaning of a function used as the condition.
+//!
+//! Not read: Dioxus `#[get]`/`#[post]` server routes, Tauri `platforms`,
+//! `remote` and per-window action checks, scopes, Leptos route components
+//! placed in a form other than a tag, Yew wrapper components,
 //! navigation through helper functions, and messages that carry the screen
 //! through more than one variable.
 use crate::extract_ctx::{ExtractContext, finish, with_root_config};
@@ -131,7 +148,7 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
 
 fn run_app(ctx: &ExtractContext, app: &App, flow: &mut UiFlow) {
     let mut known = Known::default();
-    routable::screens(app, flow, &mut known);
+    routable::screens(app, &ctx.config.views.access, flow, &mut known);
     leptos::screens(app, &ctx.config.views.access, flow, &mut known);
     let keys = state::screens(app, flow, &mut known);
     tauri::run(ctx.root, app, flow, &mut known);
@@ -205,6 +222,8 @@ pub(crate) struct App {
     /// `tauri.conf.json`, `build.rs` and `capabilities/*.json` of a Tauri package.
     tauri_files: Vec<String>,
     tauri: bool,
+    /// The `tauri` dependency has the cargo feature `config-json5`.
+    json5: bool,
 }
 
 /// What the screen rules found in one application.
@@ -238,6 +257,7 @@ mod files {
     struct Package {
         name: String,
         frameworks: BTreeSet<&'static str>,
+        json5: bool,
     }
 
     /// The applications below `root`, in path order.
@@ -289,13 +309,14 @@ mod files {
             return;
         };
         let src = Src::new(rel.to_string(), &text);
-        let (dir, name, tauri) = match owner(rel, packages) {
+        let (dir, name, tauri, json5) = match owner(rel, packages) {
             Some((dir, p)) => (
                 dir.to_string(),
                 p.name.clone(),
                 p.frameworks.contains("tauri"),
+                p.json5,
             ),
-            None if names_framework(&src.mask) => (String::new(), file_app(rel), false),
+            None if names_framework(&src.mask) => (String::new(), file_app(rel), false, false),
             None => return,
         };
         let key = format!("{dir}\n{name}");
@@ -306,6 +327,7 @@ mod files {
             web: vec![],
             tauri_files: vec![],
             tauri,
+            json5,
         });
         app.rust.push(src);
     }
@@ -319,6 +341,7 @@ mod files {
             return Some(Package {
                 name: String::new(),
                 frameworks: BTreeSet::new(),
+                json5: false,
             });
         };
         let package = manifest.get("package")?.get("name")?.as_str()?.to_string();
@@ -336,7 +359,14 @@ mod files {
             n if n == "src-tauri" => dir_name(root, parent(dir)),
             n => n,
         };
-        Some(Package { name, frameworks })
+        let features =
+            (tables.iter().flatten()).filter_map(|t| t.get("tauri")?.get("features")?.as_array());
+        let json5 = (features.flatten()).any(|f| f.as_str() == Some("config-json5"));
+        Some(Package {
+            name,
+            frameworks,
+            json5,
+        })
     }
 
     /// A crate of the framework itself (see the module documentation).
@@ -385,11 +415,13 @@ mod files {
         let config = |rel: &&String| {
             let l = local(rel);
             under(&app.dir, rel)
-                && (l == "tauri.conf.json"
-                    || l == "build.rs"
-                    || (l.starts_with("capabilities/")
-                        && l.ends_with(".json")
-                        && l.matches('/').count() == 1))
+                && (matches!(
+                    l.as_str(),
+                    "tauri.conf.json" | "tauri.conf.json5" | "Tauri.toml" | "build.rs"
+                ) || (l.starts_with("capabilities/")
+                    && [".json", ".json5", ".toml"].iter().any(|e| l.ends_with(e)))
+                    || (l.starts_with("permissions/")
+                        && [".json", ".toml"].iter().any(|e| l.ends_with(e))))
         };
         app.tauri_files = files.iter().filter(config).cloned().collect();
         let front = if app.dir.ends_with("src-tauri") {
@@ -444,6 +476,32 @@ mod nav {
             message,
             severity,
         });
+    }
+
+    /// `name`'s `[views.access]` meaning as a route condition: `None` when
+    /// not configured, else the condition (`Some(None)` for an open marker).
+    pub(crate) fn configured(
+        access: &BTreeMap<String, archguard_core::AccessMeaning>,
+        name: &str,
+        place: (&Src, usize),
+        flow: &mut UiFlow,
+    ) -> Option<Option<archguard_core::Condition>> {
+        use archguard_core::{AccessMeaning, Condition};
+        let meaning = access.get(name)?.at_use_site(false);
+        Some(match meaning {
+            AccessMeaning::Open => None,
+            AccessMeaning::Authenticated => Some(Condition::Authenticated),
+            AccessMeaning::Never => Some(Condition::Never),
+            AccessMeaning::Role(r) => Some(Condition::Role(r.clone())),
+            AccessMeaning::Policy(p) => Some(Condition::Policy(p.clone())),
+            _ => {
+                let message = format!(
+                    "[views.access] gives `{name}` a $arg meaning, but a route condition has no arguments."
+                );
+                diag(flow, &place.0.rel, place.0.line(place.1), message, true);
+                Some(Condition::Unknown(name.into()))
+            }
+        })
     }
 
     /// A screen of this application.
@@ -797,7 +855,12 @@ mod routable {
     }
 
     /// The pages of every routable enum.
-    pub(crate) fn screens(app: &App, flow: &mut UiFlow, known: &mut Known) {
+    pub(crate) fn screens(
+        app: &App,
+        access: &BTreeMap<String, archguard_core::AccessMeaning>,
+        flow: &mut UiFlow,
+        known: &mut Known,
+    ) {
         for src in &app.rust {
             for at in words(&src.mask, "enum") {
                 let routable = attrs_before(&src.mask, at).iter().any(|a| {
@@ -812,6 +875,7 @@ mod routable {
             }
         }
         components(app, known);
+        super::guard::guards(app, access, flow, known);
     }
 
     fn routes(
@@ -1051,6 +1115,162 @@ mod routable {
     }
 }
 
+/// Guards the Dioxus and Yew routing code puts on routable pages.
+mod guard {
+    use super::*;
+    use crate::lang_rust::words;
+    use crate::lang_text::{is_id, matching, next_nonws};
+
+    /// (enum, variant, screen id) of every routable page, and the conditions
+    /// the routing code adds to a screen id.
+    type Pages = Vec<(String, String, String)>;
+    type Marks = BTreeSet<(String, archguard_core::Condition)>;
+
+    /// Guards the routing code puts on pages: a Dioxus `RouterConfig`
+    /// `on_update` callback (any page of its router), a Yew `switch` arm
+    /// that branches (`Route::X => if cond { … } else { … }`, `match`, or a
+    /// match guard). Recognised but not readable is `unknown` with a gap;
+    /// a condition naming a `[views.access]` function takes its meaning.
+    pub(crate) fn guards(
+        app: &App,
+        access: &BTreeMap<String, archguard_core::AccessMeaning>,
+        flow: &mut UiFlow,
+        known: &mut Known,
+    ) {
+        use archguard_core::AccessState;
+        let mut marks = Marks::new();
+        let pages: Pages = (known.variants.iter())
+            .filter(|((e, _), _)| known.routable.contains(e))
+            .map(|((e, v), id)| (e.clone(), v.clone(), id.clone()))
+            .collect();
+        for src in &app.rust {
+            on_update(src, &pages, flow, &mut marks);
+            for (e, v, id) in &pages {
+                let pattern = format!("{e}::{v}");
+                for at in words(&src.mask, &pattern) {
+                    if let Some(c) = arm_condition(src, (at, &pattern), access, flow) {
+                        marks.insert((id.clone(), c));
+                    }
+                }
+            }
+        }
+        for (id, condition) in marks {
+            if let Some(screen) = known.screens.iter_mut().find(|s| s.id == id) {
+                let own = std::mem::take(&mut screen.access);
+                screen.access = own.and(AccessState::Protected(condition));
+            }
+        }
+    }
+
+    /// `.on_update(…)`: every page of the router it configures is unknown.
+    fn on_update(src: &Src, pages: &Pages, flow: &mut UiFlow, marks: &mut Marks) {
+        let b = src.mask.as_bytes();
+        for at in words(&src.mask, "on_update") {
+            if at == 0 || b[at - 1] != b'.' {
+                continue;
+            }
+            let named = router_enum(&src.mask, at);
+            let message = "A router `on_update` callback can redirect every navigation; the access of its pages is unknown.";
+            nav::diag(flow, &src.rel, src.line(at), message.into(), true);
+            for (e, _, id) in pages {
+                if named.as_ref().is_none_or(|n| n == e) {
+                    let unknown = archguard_core::Condition::Unknown("on_update".into());
+                    marks.insert((id.clone(), unknown));
+                }
+            }
+        }
+    }
+
+    /// The condition of the arm of `pattern` at offset `at`; `None` for no
+    /// guard or an open marker.
+    fn arm_condition(
+        src: &Src,
+        (at, pattern): (usize, &str),
+        access: &BTreeMap<String, archguard_core::AccessMeaning>,
+        flow: &mut UiFlow,
+    ) -> Option<archguard_core::Condition> {
+        let (cond_at, cond) = arm_guard(&src.mask, at + pattern.len())?;
+        let text = cond.trim().trim_end_matches("()");
+        let path = (text.chars()).all(|c| c.is_alphanumeric() || c == '_' || c == ':');
+        let name = text.rsplit("::").next().unwrap_or(text);
+        match path
+            .then(|| nav::configured(access, name, (src, at), flow))
+            .flatten()
+        {
+            Some(read) => read,
+            None => {
+                let shown = nav::shown(src, cond);
+                let message = format!(
+                    "The guard `{shown}` of route `{pattern}` is not read; its access is unknown."
+                );
+                nav::diag(flow, &src.rel, src.line(cond_at), message, true);
+                Some(archguard_core::Condition::Unknown(shown))
+            }
+        }
+    }
+
+    /// The enum of the `Router::<Enum> { … }` block holding offset `at`.
+    fn router_enum(mask: &str, at: usize) -> Option<String> {
+        let b = mask.as_bytes();
+        let found = words(&mask[..at], "Router").into_iter().rev();
+        found.into_iter().find_map(|w| {
+            let rest = mask[w + 6..].strip_prefix("::<")?;
+            let end = rest.find('>')?;
+            let open = next_nonws(b, w + 6 + 3 + end + 1).filter(|&k| b[k] == b'{')?;
+            (matching(b, open)? > at).then(|| rest[..end].trim().to_string())
+        })
+    }
+
+    /// The condition of the arm whose pattern ended at `k`: (offset, text) of
+    /// an `if`/`match` header after `=>`, or a match guard before it.
+    fn arm_guard(mask: &str, mut k: usize) -> Option<(usize, &str)> {
+        let b = mask.as_bytes();
+        k = next_nonws(b, k)?;
+        if matches!(b[k], b'{' | b'(') {
+            k = next_nonws(b, matching(b, k)? + 1)?;
+        }
+        if mask[k..].starts_with("if") && !b.get(k + 2).is_some_and(|&c| is_id(c)) {
+            let end = mask[k..].find("=>")? + k;
+            return Some((k + 2, &mask[k + 2..end]));
+        }
+        let rest = mask[k..].strip_prefix("=>")?;
+        let k = mask.len() - rest.len();
+        header(mask, next_nonws(b, k)?)
+    }
+
+    /// `if cond {` or `match scrutinee {` at `k`, or the first one in a block.
+    fn header(mask: &str, k: usize) -> Option<(usize, &str)> {
+        let b = mask.as_bytes();
+        let word = |at: usize, w: &str| {
+            mask[at..].starts_with(w) && !b.get(at + w.len()).is_some_and(|&c| is_id(c))
+        };
+        if b[k] == b'{' {
+            let close = matching(b, k)?;
+            let at = words(&mask[..close], "if")
+                .into_iter()
+                .chain(words(&mask[..close], "match"))
+                .filter(|&a| a > k)
+                .min()?;
+            return header(mask, at);
+        }
+        let skip = if word(k, "if") {
+            2
+        } else if word(k, "match") {
+            0
+        } else {
+            return None;
+        };
+        let mut i = k + skip;
+        while i < mask.len() && b[i] != b'{' {
+            i = match b[i] {
+                b'(' | b'[' => matching(b, i)? + 1,
+                _ => i + 1,
+            };
+        }
+        Some((k + skip, &mask[k + skip..i]))
+    }
+}
+
 /// Leptos `<Routes>` trees and links.
 mod leptos {
     use super::*;
@@ -1077,30 +1297,115 @@ mod leptos {
         access: &'a BTreeMap<String, AccessMeaning>,
     }
 
+    /// Components that hold route tags and are placed by a `<Name/>` tag:
+    /// name -> (source index, body braces). Their routes belong below the
+    /// route they are placed in (`<ContactRoutes/>`), not to the root.
+    type Places = BTreeMap<String, (usize, (usize, usize))>;
+
+    fn route_tags(mask: &str, (open, close): (usize, usize)) -> bool {
+        let found = |tag: &str| !tags(&mask[open..close], &format!("<{tag}")).is_empty();
+        LEAVES.iter().chain(&PARENTS).any(|t| found(t))
+    }
+
+    fn places(app: &App) -> Places {
+        let mut out = Places::new();
+        for (i, src) in app.rust.iter().enumerate() {
+            for f in fn_items(&src.mask) {
+                let placed = app
+                    .rust
+                    .iter()
+                    .any(|s| !tags(&s.mask, &format!("<{}", f.name)).is_empty());
+                if placed && route_tags(&src.mask, f.body) {
+                    out.entry(f.name).or_insert((i, f.body));
+                }
+            }
+        }
+        out
+    }
+
     pub(crate) fn screens(
         app: &App,
         access: &BTreeMap<String, AccessMeaning>,
         flow: &mut UiFlow,
         known: &mut Known,
     ) {
-        for src in &app.rust {
-            let mut events: Vec<(usize, &str, bool)> = vec![];
+        let places = places(app);
+        for (i, src) in app.rust.iter().enumerate() {
+            let skip: Vec<(usize, usize)> = (places.values())
+                .filter(|p| p.0 == i)
+                .map(|p| p.1)
+                .collect();
+            let mut place = Place {
+                app,
+                access,
+                places: &places,
+                active: vec![],
+            };
+            place.walk((i, (0, src.mask.len())), &skip, &[], flow, known);
+        }
+    }
+
+    struct Place<'a> {
+        app: &'a App,
+        access: &'a BTreeMap<String, AccessMeaning>,
+        places: &'a Places,
+        /// Components being walked; a component placed inside itself is skipped.
+        active: Vec<String>,
+    }
+
+    impl Place<'_> {
+        /// The route tags of `scope` (source index, range) below the levels
+        /// `base`; a placed component's routes are walked at its tag.
+        fn walk(
+            &mut self,
+            (i, range): (usize, (usize, usize)),
+            skip: &[(usize, usize)],
+            base: &[Level],
+            flow: &mut UiFlow,
+            known: &mut Known,
+        ) {
+            let (app, places) = (self.app, self.places);
+            let src = &app.rust[i];
+            let inside = |at: usize| {
+                range.0 <= at && at < range.1 && !skip.iter().any(|&(o, c)| o <= at && at < c)
+            };
+            // (offset, tag, kind): 0 closes a parent, 1 opens a route, 2 places a component.
+            let mut events: Vec<(usize, &str, u8)> = vec![];
             for tag in LEAVES.iter().chain(&PARENTS) {
                 let found = tags(&src.mask, &format!("<{tag}"));
-                events.extend(found.into_iter().map(|at| (at, *tag, true)));
+                events.extend(found.into_iter().map(|at| (at, *tag, 1)));
             }
             for tag in PARENTS {
                 let found = tags(&src.mask, &format!("</{tag}"));
-                events.extend(found.into_iter().map(|at| (at, tag, false)));
+                events.extend(found.into_iter().map(|at| (at, tag, 0)));
             }
+            for name in places.keys() {
+                let found = tags(&src.mask, &format!("<{name}"));
+                events.extend(found.into_iter().map(|at| (at, name.as_str(), 2)));
+            }
+            events.retain(|e| inside(e.0));
             events.sort();
+            let access = self.access;
             let tree = Tree { app, src, access };
-            let mut stack: Vec<Level> = vec![];
-            for (at, tag, open) in events {
-                if !open {
-                    stack.pop();
-                } else if let Some(level) = tree.route(at, tag, &stack, flow, known) {
-                    stack.push(level);
+            let mut stack: Vec<Level> = base.to_vec();
+            for (at, tag, kind) in events {
+                match kind {
+                    0 => {
+                        if stack.len() > base.len() {
+                            stack.pop();
+                        }
+                    }
+                    1 => {
+                        if let Some(level) = tree.route(at, tag, &stack, flow, known) {
+                            stack.push(level);
+                        }
+                    }
+                    _ if self.active.iter().any(|n| n == tag) => {}
+                    _ => {
+                        self.active.push(tag.to_string());
+                        self.walk(places[tag], &[], &stack, flow, known);
+                        self.active.pop();
+                    }
                 }
             }
         }
@@ -1211,20 +1516,9 @@ mod leptos {
                 gap(message, flow);
                 return Some(Condition::Unknown(shown));
             }
-            match self.access.get(name).map(|m| m.at_use_site(false)) {
+            match nav::configured(self.access, name, (src, at), flow) {
                 None => Some(Condition::Custom(name.into())),
-                Some(AccessMeaning::Open) => None,
-                Some(AccessMeaning::Authenticated) => Some(Condition::Authenticated),
-                Some(AccessMeaning::Never) => Some(Condition::Never),
-                Some(AccessMeaning::Role(r)) => Some(Condition::Role(r.clone())),
-                Some(AccessMeaning::Policy(p)) => Some(Condition::Policy(p.clone())),
-                Some(_) => {
-                    let message = format!(
-                        "[views.access] gives `{name}` a $arg meaning, but a route condition has no arguments."
-                    );
-                    gap(message, flow);
-                    Some(Condition::Unknown(name.into()))
-                }
+                Some(condition) => condition,
             }
         }
     }
@@ -1837,13 +2131,25 @@ mod tauri {
             })?;
             Some((rel.clone(), files::read(root, rel, flow)?))
         };
-        let manifest = read("build.rs", flow)
-            .map(|(_, text)| app_manifest(&text))
-            .unwrap_or_default();
-        let caps = capabilities(root, app, flow);
-        commands(app, &manifest, &caps, flow);
-        if let Some((rel, text)) = read("tauri.conf.json", flow) {
-            conf_windows(app, &rel, &text, flow, known);
+        let build = read("build.rs", flow).map(|(_, text)| app_manifest(&text));
+        let build_file = app.tauri_files.iter().any(|r| r.ends_with("build.rs"));
+        // A build script or configuration that exists but is not read leaves the ACL incomplete.
+        let mut incomplete = build_file && build.is_none();
+        let manifest = build.unwrap_or_default();
+        let conf = ["tauri.conf.json", "tauri.conf.json5", "Tauri.toml"]
+            .iter()
+            .find_map(|name| read(name, flow));
+        incomplete |= conf.is_none()
+            && (app.tauri_files.iter())
+                .any(|r| r.contains("tauri.conf.") || r.ends_with("Tauri.toml"));
+        let conf = conf.map(|(rel, text)| {
+            let value = parse(app, &rel, &text);
+            (rel, text, value)
+        });
+        let acl = Acl::read(root, app, (manifest, incomplete), conf.as_ref(), flow);
+        commands(app, &acl, flow);
+        if let Some(conf) = &conf {
+            conf_windows(app, conf, flow, known);
         }
         for src in &app.rust {
             builders(app, src, flow, known);
@@ -1851,66 +2157,313 @@ mod tauri {
         web::invokes(app, flow);
     }
 
-    /// Commands named in `AppManifest::new().commands(&[…])`.
-    fn app_manifest(text: &str) -> BTreeSet<String> {
+    /// A configuration or capability file as JSON; `json5` is read as far as
+    /// it is JSON (no JSON5 parser in the build).
+    fn parse(app: &App, rel: &str, text: &str) -> Result<Value, String> {
+        if rel.ends_with(".toml") {
+            let toml = toml::from_str::<toml::Value>(text).map_err(|e| e.to_string())?;
+            return serde_json::to_value(toml).map_err(|e| e.to_string());
+        }
+        if rel.ends_with(".json5") && !app.json5 {
+            return Err("json5 file without the `config-json5` feature of tauri".into());
+        }
+        serde_json::from_str(text).map_err(|e| e.to_string())
+    }
+
+    /// What `build.rs` says about the app ACL.
+    #[derive(Default)]
+    struct Manifest {
+        /// Literal names of `AppManifest::new().commands(&[…])`.
+        commands: BTreeSet<String>,
+        /// The `commands` argument is not a list of string literals.
+        unread: bool,
+    }
+
+    fn app_manifest(text: &str) -> Manifest {
         let mask = crate::lang_rust::mask(text);
         let code = crate::lang_rust::code(text);
+        let mut m = Manifest::default();
         let Some(at) = words(&mask, "AppManifest").first().copied() else {
-            return BTreeSet::new();
+            return m;
         };
         let Some(c) = words(&mask[at..], "commands").first().map(|c| c + at) else {
-            return BTreeSet::new();
+            return m;
         };
-        let Some(open) = mask[c..].find('[').map(|o| o + c) else {
-            return BTreeSet::new();
-        };
-        let close = matching(mask.as_bytes(), open).unwrap_or(open);
-        (split_top(&mask[open + 1..close], ","))
-            .into_iter()
-            .filter_map(|p| literal_value(&code[offset(&mask, p)..offset(&mask, p) + p.len()]))
-            .collect()
-    }
-
-    /// A capability file: identifier, permissions; or why it is not read.
-    type Capability = Result<(String, Vec<String>), String>;
-
-    fn capabilities(root: &Path, app: &App, flow: &mut UiFlow) -> Vec<(String, Capability)> {
-        let files = app
-            .tauri_files
-            .iter()
-            .filter(|r| r.contains("capabilities/"));
-        let mut out = vec![];
-        for rel in files {
-            let Some(text) = files::read(root, rel, flow) else {
-                continue;
+        let b = mask.as_bytes();
+        let args = next_nonws(b, c + 8).filter(|&k| b[k] == b'(');
+        let args = args.and_then(|o| Some((o, matching(b, o)?)));
+        let list = args.and_then(|(o, close)| {
+            let k = next_nonws(b, o + 1).filter(|&k| k < close)?;
+            let k = if b[k] == b'&' {
+                next_nonws(b, k + 1)?
+            } else {
+                k
             };
-            let parsed = serde_json::from_str::<Value>(&text)
-                .map_err(|e| e.to_string())
-                .and_then(|v| {
-                    let id = v
-                        .get("identifier")
-                        .and_then(Value::as_str)
-                        .ok_or("no literal identifier")?;
-                    let perms = v
-                        .get("permissions")
-                        .and_then(Value::as_array)
-                        .ok_or("no permissions list")?;
-                    let perms = perms
-                        .iter()
-                        .filter_map(|p| p.as_str().or_else(|| p.get("identifier")?.as_str()));
-                    Ok((id.to_string(), perms.map(str::to_string).collect()))
-                });
-            out.push((rel.clone(), parsed));
+            if b[k] == b'[' {
+                Some((k, matching(b, k)?))
+            } else {
+                None
+            }
+        });
+        let Some((open, close)) = list else {
+            m.unread = true;
+            return m;
+        };
+        for p in split_top(&mask[open + 1..close], ",") {
+            if p.trim().is_empty() {
+                continue;
+            }
+            match literal_value(&code[offset(&mask, p)..offset(&mask, p) + p.len()]) {
+                Some(name) => drop(m.commands.insert(name)),
+                None => m.unread = true,
+            }
         }
-        out
+        m
     }
 
-    fn commands(
-        app: &App,
-        manifest: &BTreeSet<String>,
-        caps: &[(String, Capability)],
-        flow: &mut UiFlow,
-    ) {
+    /// A capability: identifier, windows, permissions.
+    #[derive(Clone)]
+    struct Cap {
+        id: String,
+        windows: Vec<String>,
+        perms: Vec<String>,
+    }
+
+    /// A capability, or why it is not read.
+    type Capability = Result<Cap, String>;
+
+    /// An app permission (`commands.allow/deny`) or set (`includes`).
+    #[derive(Default)]
+    struct Def {
+        allow: Vec<String>,
+        deny: Vec<String>,
+        includes: Vec<String>,
+    }
+
+    /// The app ACL: active capabilities (file or inline) and app permissions.
+    struct Acl {
+        /// (file, capability) of every active capability.
+        caps: Vec<(String, Capability)>,
+        defs: BTreeMap<String, Def>,
+        /// A build manifest or a permission file exists: app commands are checked.
+        active: bool,
+        /// An input of the ACL (build script, configuration, capability or
+        /// permission file) is not read completely: nothing is `never` for lack of a grant.
+        incomplete: bool,
+    }
+
+    /// The parsed configuration: (file, text, value or parse error).
+    type Conf = (String, String, Result<Value, String>);
+
+    /// The names of a list; a string, or an object with an `identifier`.
+    fn strings(v: Option<&Value>) -> Result<Vec<String>, String> {
+        let list = v.and_then(Value::as_array).into_iter().flatten();
+        let name = |p: &Value| {
+            let id = p.as_str().or_else(|| p.get("identifier")?.as_str());
+            id.map(str::to_string)
+                .ok_or(format!("entry `{p}` is no name"))
+        };
+        list.map(name).collect()
+    }
+
+    /// One capability, a list of them, or `{ "capabilities": [ … ] }`.
+    fn capabilities_of(v: &Value) -> Vec<Capability> {
+        let nested = v.get("capabilities").filter(|c| c.is_array());
+        match (v, nested) {
+            (Value::Array(list), _) => list.iter().flat_map(capabilities_of).collect(),
+            (_, Some(list)) if v.get("identifier").is_none() => capabilities_of(list),
+            _ => vec![capability(v)],
+        }
+    }
+
+    fn capability(v: &Value) -> Capability {
+        let id = (v.get("identifier").and_then(Value::as_str)).ok_or("no literal identifier")?;
+        if !v.get("permissions").is_some_and(Value::is_array) {
+            return Err("no permissions list".into());
+        }
+        Ok(Cap {
+            id: id.to_string(),
+            windows: strings(v.get("windows"))?,
+            perms: strings(v.get("permissions"))?,
+        })
+    }
+
+    /// Whether two window label lists can name the same window; an empty
+    /// list (webviews only) counts as overlapping.
+    fn overlap(a: &[String], b: &[String]) -> bool {
+        a.is_empty() || b.is_empty() || a.iter().any(|x| b.iter().any(|y| glob(x, y) || glob(y, x)))
+    }
+
+    /// `*` matches any text.
+    fn glob(pattern: &str, text: &str) -> bool {
+        let parts: Vec<&str> = pattern.split('*').collect();
+        if parts.len() == 1 {
+            return pattern == text;
+        }
+        let Some(mut rest) = text.strip_prefix(parts[0]) else {
+            return false;
+        };
+        for p in &parts[1..parts.len() - 1] {
+            let Some(at) = rest.find(p) else {
+                return false;
+            };
+            rest = &rest[at + p.len()..];
+        }
+        rest.ends_with(parts[parts.len() - 1])
+    }
+
+    /// Capabilities of every file, permissions, and whether a permission file exists.
+    type Files = (Vec<(String, Capability)>, BTreeMap<String, Def>, bool);
+
+    impl Acl {
+        fn read(
+            root: &Path,
+            app: &App,
+            (manifest, mut incomplete): (Manifest, bool),
+            conf: Option<&Conf>,
+            flow: &mut UiFlow,
+        ) -> Acl {
+            let (files, defs, permission_files) = Acl::files(root, app, &mut incomplete, flow);
+            let caps = Acl::active(files, conf, &mut incomplete, flow);
+            incomplete |= manifest.unread;
+            if manifest.unread {
+                let message = "AppManifest::commands is not a list of string literals; the commands of the app ACL are unknown.";
+                nav::diag(flow, "build.rs", 0, message.into(), true);
+            }
+            if let Some((rel, _, Err(e))) = conf {
+                incomplete = true;
+                let message = format!(
+                    "Configuration not read ({e}); the active capability list is unknown, every capability file counts."
+                );
+                nav::diag(flow, rel, 0, message, true);
+            }
+            Acl {
+                caps,
+                active: !manifest.commands.is_empty() || manifest.unread || permission_files,
+                incomplete,
+                defs,
+            }
+        }
+
+        /// Every capability file and permission file of the package.
+        fn files(root: &Path, app: &App, incomplete: &mut bool, flow: &mut UiFlow) -> Files {
+            let (mut files, mut defs, mut permission_files) = (vec![], BTreeMap::new(), false);
+            for rel in &app.tauri_files {
+                let in_dir = |d: &str| rel.contains(&format!("{d}/"));
+                if !in_dir("capabilities") && !in_dir("permissions") {
+                    continue;
+                }
+                let Some(text) = files::read(root, rel, flow) else {
+                    *incomplete = true;
+                    continue;
+                };
+                let value = parse(app, rel, &text);
+                if in_dir("capabilities") {
+                    match &value {
+                        Ok(v) => {
+                            files.extend(capabilities_of(v).into_iter().map(|c| (rel.clone(), c)))
+                        }
+                        Err(e) => files.push((rel.clone(), Err(e.clone()))),
+                    }
+                } else {
+                    permission_files = true;
+                    match &value {
+                        Ok(v) => *incomplete |= !definitions(v, &mut defs),
+                        Err(e) => {
+                            *incomplete = true;
+                            let message = format!(
+                                "Permission file not read ({e}); its permissions are unknown."
+                            );
+                            nav::diag(flow, rel, 0, message, true);
+                        }
+                    }
+                }
+            }
+            for (rel, cap) in &files {
+                if let Err(e) = cap {
+                    let message =
+                        format!("Capability not read ({e}); its grants and denies are unknown.");
+                    nav::diag(flow, rel, 0, message, true);
+                }
+            }
+            (files, defs, permission_files)
+        }
+
+        /// The capabilities in force: all files, or only those the
+        /// configuration lists (inline ones included).
+        fn active(
+            files: Vec<(String, Capability)>,
+            conf: Option<&Conf>,
+            incomplete: &mut bool,
+            flow: &mut UiFlow,
+        ) -> Vec<(String, Capability)> {
+            let listed = conf.and_then(|(rel, _, v)| {
+                let entries = v.as_ref().ok()?.pointer("/app/security/capabilities")?;
+                Some((rel, entries.as_array()?))
+            });
+            let Some((conf_rel, entries)) = listed else {
+                return files;
+            };
+            let mut active = vec![];
+            for e in entries {
+                let Some(id) = e.as_str() else {
+                    let inline = capabilities_of(e).into_iter();
+                    active.extend(inline.map(|c| (conf_rel.clone(), c)));
+                    continue;
+                };
+                let before = active.len();
+                let named = |c: &Capability| c.as_ref().is_ok_and(|c| c.id == id);
+                active.extend(files.iter().filter(|(_, c)| named(c)).cloned());
+                if active.len() == before {
+                    *incomplete = true;
+                    let message = format!(
+                        "Capability `{id}` is listed in the configuration but not found in a capability file."
+                    );
+                    nav::diag(flow, conf_rel, 0, message.clone(), true);
+                    active.push((conf_rel.clone(), Err(message)));
+                }
+            }
+            active
+        }
+    }
+
+    /// `[[permission]]`, `[[set]]` and `[default]` of a permission file.
+    /// Returns whether every list was readable.
+    fn definitions(v: &Value, defs: &mut BTreeMap<String, Def>) -> bool {
+        let mut ok = true;
+        let mut names = |v: Option<&Value>| {
+            strings(v).unwrap_or_else(|_| {
+                ok = false;
+                vec![]
+            })
+        };
+        let list = |key: &str| {
+            v.get(key)
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        };
+        for p in list("permission") {
+            if let Some(id) = p.get("identifier").and_then(Value::as_str) {
+                let def = defs.entry(id.to_string()).or_default();
+                def.allow.extend(names(p.pointer("/commands/allow")));
+                def.deny.extend(names(p.pointer("/commands/deny")));
+            }
+        }
+        for s in list("set") {
+            if let Some(id) = s.get("identifier").and_then(Value::as_str) {
+                let def = defs.entry(id.to_string()).or_default();
+                def.includes.extend(names(s.get("permissions")));
+            }
+        }
+        if let Some(d) = v.get("default") {
+            let def = defs.entry("default".into()).or_default();
+            def.includes.extend(names(d.get("permissions")));
+        }
+        ok
+    }
+
+    fn commands(app: &App, acl: &Acl, flow: &mut UiFlow) {
         let mut defined = BTreeMap::new();
         for src in &app.rust {
             for f in &src.fns {
@@ -1933,10 +2486,10 @@ mod tauri {
                     let name = path.rsplit("::").next().unwrap_or(path).to_string();
                     let (file, line) =
                         (defined.get(&name).cloned()).unwrap_or((src.rel.clone(), src.line(open)));
-                    // Plugin commands always need a permission; app commands only under the manifest.
-                    let guarded = plugin.is_some() || manifest.contains(&name);
+                    // Plugin commands always need a permission; app commands once an app ACL exists.
+                    let guarded = plugin.is_some() || acl.active;
                     let command = (name, plugin.clone());
-                    let access = access(&command, guarded, caps, flow, (&file, line));
+                    let access = access(&command, guarded, acl, flow, (&file, line));
                     flow.endpoints.push(EndpointAccess {
                         method: INVOKE.into(),
                         path: match &command.1 {
@@ -1971,7 +2524,7 @@ mod tauri {
     fn access(
         command: &Command,
         guarded: bool,
-        caps: &[(String, Capability)],
+        acl: &Acl,
         flow: &mut UiFlow,
         (file, line): (&str, u32),
     ) -> AccessState {
@@ -1982,32 +2535,36 @@ mod tauri {
             .1
             .as_ref()
             .map_or(String::new(), |p| format!("{p}:"));
-        let permission = command.0.replace('_', "-");
-        let allow = format!("{prefix}allow-{permission}");
-        let deny = format!("{prefix}deny-{permission}");
-        let set = |p: &&String| {
+        let allow = format!("{prefix}allow-{}", command.0.replace('_', "-"));
+        let deny = allow.replacen("allow-", "deny-", 1);
+        let set = |p: &str| {
             (p.strip_prefix(prefix.as_str())).is_some_and(|r| {
                 !r.contains(':') && !r.starts_with("allow-") && !r.starts_with("deny-")
             })
         };
-        let (mut granting, mut unread) = (vec![], vec![]);
-        for (rel, cap) in caps {
+        let (mut grants, mut denies, mut unread) = (vec![], vec![], vec![]);
+        for (rel, cap) in &acl.caps {
             match cap {
-                Ok((id, perms)) if perms.contains(&allow) && !perms.contains(&deny) => {
-                    granting.push(Condition::Policy(format!("capability:{id}")));
-                }
-                Ok((_, perms)) => {
-                    unread.extend(perms.iter().filter(set).map(|p| format!("{rel}: {p}")))
+                Ok(cap) => {
+                    let (grant, denied, sets) = judge(cap, acl, command, (&allow, &deny), &set);
+                    unread.extend(sets.into_iter().map(|id| format!("{rel}: {id}")));
+                    grants.extend(grant.then_some(cap));
+                    denies.extend(denied.then_some(cap));
                 }
                 Err(e) => unread.push(format!("{rel}: {e}")),
             }
         }
+        // A deny in any active capability of an overlapping window wins.
+        grants.retain(|g| !denies.iter().any(|d| overlap(&g.windows, &d.windows)));
+        let mut granting: Vec<Condition> = (grants.iter())
+            .map(|c| Condition::Policy(format!("capability:{}", c.id)))
+            .collect();
         match (granting.len(), unread.is_empty()) {
             (1, _) => AccessState::Protected(granting.remove(0)),
-            (0, true) => AccessState::Protected(Condition::Never),
-            (0, false) => {
+            (0, true) if !acl.incomplete => AccessState::Protected(Condition::Never),
+            (0, _) => {
                 let message = format!(
-                    "No capability grants `{allow}` directly; permission sets are not read: {}.",
+                    "No capability grants `{allow}` directly; permission sets or ACL inputs are not read: {}.",
                     unread.join(", ")
                 );
                 nav::diag(flow, file, line, message, true);
@@ -2017,11 +2574,41 @@ mod tauri {
         }
     }
 
+    /// Whether `cap` allows and denies the command (sets and app permissions
+    /// expanded), and the set-like permissions it names that are not read.
+    fn judge(
+        cap: &Cap,
+        acl: &Acl,
+        command: &Command,
+        (allow, deny): (&str, &str),
+        set: &dyn Fn(&str) -> bool,
+    ) -> (bool, bool, Vec<String>) {
+        let (mut seen, mut todo) = (BTreeSet::new(), cap.perms.iter().collect::<Vec<_>>());
+        let (mut grant, mut denied, mut unread) = (false, false, vec![]);
+        while let Some(id) = todo.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            if id == allow {
+                grant = true;
+            } else if id == deny {
+                denied = true;
+            } else if let Some(def) = acl.defs.get(id) {
+                if command.1.is_none() {
+                    grant |= def.allow.contains(&command.0);
+                    denied |= def.deny.contains(&command.0);
+                }
+                todo.extend(&def.includes);
+            } else if set(id) {
+                unread.push(id.clone());
+            }
+        }
+        (grant, denied, unread)
+    }
+
     /// `app.windows` (v1 `tauri.windows`) of `tauri.conf.json`.
-    fn conf_windows(app: &App, rel: &str, text: &str, flow: &mut UiFlow, known: &mut Known) {
-        let Ok(conf) = serde_json::from_str::<Value>(text) else {
-            let message = "tauri.conf.json does not parse as JSON; its windows are unknown.";
-            nav::diag(flow, rel, 0, message.into(), true);
+    fn conf_windows(app: &App, (rel, text, conf): &Conf, flow: &mut UiFlow, known: &mut Known) {
+        let Ok(conf) = conf else {
             return;
         };
         let windows = (conf
@@ -2882,7 +3469,7 @@ export async function go(cmd: string) {
                 (
                     "INVOKE",
                     "greet",
-                    &AccessState::Undeclared,
+                    &AccessState::Protected(Condition::Never),
                     "notes/src-tauri/src/lib.rs",
                     4
                 ),
@@ -2957,5 +3544,417 @@ export async function go(cmd: string) {
                 ("notes:*".into(), "? format!(\"w{n}\")".into(), None, 22),
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod tests_tauri_acl {
+    use super::test_support::*;
+    use archguard_core::{AccessState, Condition};
+
+    const LIB: &str = "#[tauri::command]\nfn greet() {}\n#[tauri::command]\nfn other() {}\npub fn run() {\n    tauri::Builder::default().invoke_handler(tauri::generate_handler![greet, other]);\n}\n";
+    const BUILD: &str = "fn main() { tauri_build::try_build(tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(&[\"greet\"]))).unwrap(); }";
+    const CAP_TOML: &str =
+        "identifier = \"main\"\nwindows = [\"main\"]\npermissions = [\"allow-greet\"]\n";
+    const CAP_JSON5: &str =
+        r#"{"identifier": "x", "windows": ["main"], "permissions": ["allow-greet"]}"#;
+
+    fn cap(id: &str, perms: &str) -> String {
+        format!(r#"{{"identifier": "{id}", "windows": ["main"], "permissions": {perms}}}"#)
+    }
+
+    /// The access of `command` in a Tauri package with `extra` files, and
+    /// whether the flow has a gap. `dep` replaces the `tauri` dependency line.
+    fn access(dep: &str, extra: &[(&str, &str)], command: &str) -> (AccessState, bool) {
+        let dep = if dep.is_empty() { "tauri = \"2\"" } else { dep };
+        let cargo = format!("[package]\nname = \"app\"\n[dependencies]\n{dep}\n");
+        let mut files: Vec<(String, String)> = vec![
+            ("app/src-tauri/Cargo.toml".into(), cargo),
+            ("app/src-tauri/src/lib.rs".into(), LIB.into()),
+        ];
+        for (p, t) in extra {
+            files.retain(|(q, _)| *q != format!("app/src-tauri/{p}"));
+            files.push((format!("app/src-tauri/{p}"), t.to_string()));
+        }
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, t)| (p.as_str(), t.as_str()))
+            .collect();
+        let flow = extract_files(&refs);
+        let e = flow.endpoints.iter().find(|e| e.path == command).unwrap();
+        (e.access.clone(), !gaps(&flow).is_empty())
+    }
+
+    fn policy(id: &str) -> AccessState {
+        AccessState::Protected(Condition::Policy(format!("capability:{id}")))
+    }
+
+    #[test]
+    fn tf1_no_manifest_no_permissions_is_undeclared() {
+        assert_eq!(access("", &[], "greet").0, AccessState::Undeclared);
+    }
+
+    #[test]
+    fn tf2_toml_capability() {
+        let files = [("build.rs", BUILD), ("capabilities/main.toml", CAP_TOML)];
+        assert_eq!(access("", &files, "greet"), (policy("main"), false));
+    }
+
+    #[test]
+    fn tf3_capability_in_subfolder() {
+        let c = cap("main", r#"["allow-greet"]"#);
+        let files = [("build.rs", BUILD), ("capabilities/desktop/main.json", &c)];
+        assert_eq!(access("", &files, "greet"), (policy("main"), false));
+    }
+
+    #[test]
+    fn tf4_capability_list_in_one_file() {
+        let all = format!(
+            r#"{{"capabilities": [{}, {}]}}"#,
+            cap("a", r#"["allow-greet"]"#),
+            cap("b", "[]")
+        );
+        let files = [("build.rs", BUILD), ("capabilities/all.json", &all)];
+        assert_eq!(access("", &files, "greet"), (policy("a"), false));
+        let top = format!("[{}]", cap("a", r#"["allow-greet"]"#));
+        let files = [("build.rs", BUILD), ("capabilities/all.json", &top)];
+        assert_eq!(access("", &files, "greet"), (policy("a"), false));
+    }
+
+    #[test]
+    fn tf5_only_the_listed_capabilities_are_active() {
+        let (a, b) = (
+            cap("a", r#"["allow-greet"]"#),
+            cap("b", r#"["allow-greet"]"#),
+        );
+        let conf = r#"{"app": {"security": {"capabilities": ["b"]}}}"#;
+        let files = [
+            ("build.rs", BUILD),
+            ("capabilities/a.json", &a),
+            ("capabilities/b.json", &b),
+            ("tauri.conf.json", conf),
+        ];
+        assert_eq!(access("", &files, "greet"), (policy("b"), false));
+    }
+
+    #[test]
+    fn a_listed_capability_that_is_not_found_is_unknown_with_a_gap() {
+        let conf = r#"{"app": {"security": {"capabilities": ["ghost"]}}}"#;
+        let files = [("build.rs", BUILD), ("tauri.conf.json", conf)];
+        let (state, gap) = access("", &files, "greet");
+        assert!(gap);
+        assert!(matches!(
+            state,
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn tf6_inline_capability_in_the_config() {
+        let conf = r#"{"app": {"security": {"capabilities": [{"identifier": "inline", "windows": ["*"], "permissions": ["allow-greet"]}]}}}"#;
+        let files = [("build.rs", BUILD), ("tauri.conf.json", conf)];
+        assert_eq!(access("", &files, "greet"), (policy("inline"), false));
+    }
+
+    #[test]
+    fn tf7_deny_in_another_capability_wins() {
+        let (a, b) = (
+            cap("a", r#"["allow-greet"]"#),
+            cap("b", r#"["deny-greet"]"#),
+        );
+        let files = [
+            ("build.rs", BUILD),
+            ("capabilities/a.json", &a),
+            ("capabilities/b.json", &b),
+        ];
+        let never = AccessState::Protected(Condition::Never);
+        assert_eq!(access("", &files, "greet"), (never, false));
+    }
+
+    #[test]
+    fn tf8_app_permission_set() {
+        let a = cap("a", r#"["my-set"]"#);
+        let sets = "[[set]]\nidentifier = \"my-set\"\npermissions = [\"allow-greet\"]\n";
+        let files = [
+            ("build.rs", BUILD),
+            ("capabilities/a.json", &a),
+            ("permissions/sets.toml", sets),
+        ];
+        assert_eq!(access("", &files, "greet"), (policy("a"), false));
+    }
+
+    #[test]
+    fn tf9_permission_files_switch_the_app_acl_on() {
+        let perm = "[[permission]]\nidentifier = \"greeting\"\ncommands.allow = [\"greet\"]\n";
+        let c = cap("main", r#"["greeting"]"#);
+        let files = [
+            ("capabilities/main.json", c.as_str()),
+            ("permissions/custom.toml", perm),
+        ];
+        assert_eq!(access("", &files, "greet"), (policy("main"), false));
+        let never = AccessState::Protected(Condition::Never);
+        assert_eq!(access("", &files, "other"), (never, false));
+    }
+
+    #[test]
+    fn tf10_plugin_set_not_in_the_repo_is_unknown() {
+        let lib = LIB.replace(
+            "generate_handler![greet, other]",
+            "generate_handler![#![plugin(fs)] read_file]",
+        );
+        let c = cap("main", r#"["fs:default"]"#);
+        let files = [("capabilities/main.json", c.as_str()), ("src/lib.rs", &lib)];
+        let (state, gap) = access("", &files, "plugin:fs|read_file");
+        assert!(gap);
+        let unknown = Condition::Unknown("capability for fs:allow-read-file".into());
+        assert_eq!(state, AccessState::Protected(unknown));
+    }
+
+    fn not_never(state: &AccessState) -> bool {
+        *state != AccessState::Protected(Condition::Never)
+    }
+
+    #[test]
+    fn an_unreadable_acl_input_never_gives_never_to_an_unlisted_command() {
+        let c = cap("main", r#"["allow-greet"]"#);
+        let broken_conf = [
+            ("build.rs", BUILD),
+            ("capabilities/main.json", &c),
+            ("tauri.conf.json", "{ not json"),
+        ];
+        let broken_permission = [
+            ("build.rs", BUILD),
+            ("capabilities/main.json", &c),
+            ("permissions/bad.toml", "= ="),
+        ];
+        let broken_capability = [("build.rs", BUILD), ("capabilities/bad.json", "{ nope")];
+        for files in [
+            &broken_conf[..],
+            &broken_permission[..],
+            &broken_capability[..],
+        ] {
+            let (state, gap) = access("", files, "other");
+            assert!(gap && not_never(&state), "{files:?}: {state:?}");
+        }
+    }
+
+    #[test]
+    fn a_manifest_command_list_that_is_not_literal_is_a_gap() {
+        let build = "const COMMANDS: &[&str] = &[\"greet\"];\nfn main() { tauri_build::try_build(tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(COMMANDS))).unwrap(); let x = [\"a\"]; }";
+        let (state, gap) = access("", &[("build.rs", build)], "greet");
+        assert!(gap);
+        assert!(matches!(
+            state,
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn a_non_string_window_entry_makes_the_capability_unknown() {
+        let c = r#"{"identifier": "a", "windows": ["main", 5], "permissions": ["allow-greet"]}"#;
+        let d = cap("b", r#"["deny-greet"]"#);
+        let files = [
+            ("build.rs", BUILD),
+            ("capabilities/a.json", c),
+            ("capabilities/b.json", &d),
+        ];
+        let (state, gap) = access("", &files, "greet");
+        assert!(gap && not_never(&state));
+        assert!(matches!(
+            state,
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn tf13_json5_capability_needs_the_cargo_feature() {
+        let files = [("build.rs", BUILD), ("capabilities/x.json5", CAP_JSON5)];
+        let (state, gap) = access("tauri = \"2\"", &files, "greet");
+        assert!(gap);
+        assert!(matches!(
+            state,
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+        let dep = "tauri = { version = \"2\", features = [\"config-json5\"] }";
+        assert_eq!(access(dep, &files, "greet"), (policy("x"), false));
+    }
+}
+
+#[cfg(test)]
+mod tests_rust_access {
+    use super::test_support::*;
+    use archguard_core::{AccessState, Condition};
+
+    fn access(flow: &archguard_core::UiFlow, id: &str) -> AccessState {
+        (flow.screens.iter().find(|s| s.id == id))
+            .unwrap_or_else(|| panic!("no screen {id}: {:?}", routes(flow)))
+            .access
+            .clone()
+    }
+
+    const ADMIN_APP: &str = r#"use leptos::prelude::*;
+use leptos_router::{components::*, path};
+mod admin;
+
+#[component]
+pub fn App() -> impl IntoView {
+    view! {
+        <Router>
+            <Routes fallback=|| "Not found.">
+                <Route path=path!("home") view=Home/>
+                <ProtectedParentRoute path=path!("admin") condition=is_admin redirect_path=|| "/" view=Layout>
+                    <AdminRoutes/>
+                </ProtectedParentRoute>
+            </Routes>
+        </Router>
+    }
+}
+"#;
+    const ADMIN_ROUTES: &str = r#"use leptos::prelude::*;
+use leptos_router::{components::*, path};
+
+#[component(transparent)]
+pub fn AdminRoutes() -> impl MatchNestedRoutes {
+    view! {
+        <Route path=path!("logs") view=Logs/>
+    }
+}
+"#;
+
+    #[test]
+    fn lf2_route_component_inherits_the_placing_parents_path_and_condition() {
+        let flow = extract_files(&[
+            ("web/Cargo.toml", &cargo("web", "leptos")),
+            ("web/src/lib.rs", ADMIN_APP),
+            ("web/src/admin.rs", ADMIN_ROUTES),
+        ]);
+        assert_eq!(
+            routes(&flow),
+            [
+                ("web:/admin/logs", Some("/admin/logs")),
+                ("web:/home", Some("/home"))
+            ]
+        );
+        let custom = Condition::Custom("is_admin".into());
+        assert_eq!(
+            access(&flow, "web:/admin/logs"),
+            AccessState::Protected(custom)
+        );
+        assert_eq!(access(&flow, "web:/home"), AccessState::Undeclared);
+    }
+
+    #[test]
+    fn lf3_a_closure_condition_is_unknown_with_a_gap() {
+        let app = ADMIN_APP.replace("condition=is_admin", "condition=move || Some(true)");
+        let flow = extract_files(&[
+            ("web/Cargo.toml", &cargo("web", "leptos")),
+            ("web/src/lib.rs", &app),
+            ("web/src/admin.rs", ADMIN_ROUTES),
+        ]);
+        let unknown = Condition::Unknown("move || Some(true)".into());
+        assert_eq!(
+            access(&flow, "web:/admin/logs"),
+            AccessState::Protected(unknown)
+        );
+        assert_eq!(gaps(&flow).len(), 1);
+    }
+
+    const DIOXUS: &str = r#"use dioxus::prelude::*;
+
+#[derive(Routable, Clone, PartialEq)]
+enum Route {
+    #[route("/")]
+    Home {},
+    #[route("/admin")]
+    Admin {},
+}
+
+fn app() -> Element {
+    rsx! { Router::<Route> { config: move || RouterConfig::default().on_update(guard) } }
+}
+"#;
+
+    #[test]
+    fn df3_on_update_makes_every_page_unknown() {
+        let flow = extract_files(&[
+            ("site/Cargo.toml", &cargo("site", "dioxus")),
+            ("site/src/main.rs", DIOXUS),
+        ]);
+        let unknown = AccessState::Protected(Condition::Unknown("on_update".into()));
+        assert_eq!(access(&flow, "site:Route::Home"), unknown);
+        assert_eq!(access(&flow, "site:Route::Admin"), unknown);
+        assert_eq!(gaps(&flow).len(), 1);
+        let plain = DIOXUS.replace(".on_update(guard)", "");
+        let flow = extract_files(&[
+            ("site/Cargo.toml", &cargo("site", "dioxus")),
+            ("site/src/main.rs", &plain),
+        ]);
+        assert_eq!(access(&flow, "site:Route::Home"), AccessState::Undeclared);
+    }
+
+    const YEW: &str = r#"use yew::prelude::*;
+use yew_router::prelude::*;
+
+#[derive(Routable, PartialEq, Clone)]
+enum Route {
+    #[at("/")]
+    Home,
+    #[at("/admin")]
+    Admin,
+    #[at("/login")]
+    Login,
+}
+
+fn switch(route: Route) -> Html {
+    match route {
+        Route::Home => html! { <Home /> },
+        Route::Admin => if is_admin() { html! { <Admin /> } } else { html! { <Redirect<Route> to={Route::Login} /> } },
+        Route::Login => html! { <Login /> },
+    }
+}
+"#;
+
+    #[test]
+    fn a_yew_match_guard_is_read_like_an_if_arm() {
+        let yew = YEW.replace(
+            "Route::Admin => if is_admin() { html! { <Admin /> } } else { html! { <Redirect<Route> to={Route::Login} /> } },",
+            "Route::Admin if is_admin() => html! { <Admin /> },",
+        );
+        let flow = extract_files(&[
+            ("shop/Cargo.toml", &cargo("shop", "yew")),
+            ("shop/src/main.rs", &yew),
+        ]);
+        let unknown = Condition::Unknown("is_admin()".into());
+        assert_eq!(
+            access(&flow, "shop:Route::Admin"),
+            AccessState::Protected(unknown)
+        );
+    }
+
+    #[test]
+    fn yf1_a_yew_guard_arm_is_unknown_or_the_configured_meaning() {
+        let files = |extra: &'static str| {
+            extract_files(&[
+                ("shop/Cargo.toml", &cargo("shop", "yew")),
+                ("shop/src/main.rs", YEW),
+                (".archguard/archguard.toml", extra),
+            ])
+        };
+        let flow = files("");
+        let unknown = Condition::Unknown("is_admin()".into());
+        assert_eq!(
+            access(&flow, "shop:Route::Admin"),
+            AccessState::Protected(unknown)
+        );
+        assert_eq!(access(&flow, "shop:Route::Home"), AccessState::Undeclared);
+        assert_eq!(access(&flow, "shop:Route::Login"), AccessState::Undeclared);
+        assert_eq!(gaps(&flow).len(), 1);
+        let flow = files("[views.access]\nis_admin = \"role:admin\"\n");
+        let role = Condition::Role("admin".into());
+        assert_eq!(
+            access(&flow, "shop:Route::Admin"),
+            AccessState::Protected(role)
+        );
+        assert!(gaps(&flow).is_empty());
     }
 }
