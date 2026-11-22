@@ -131,7 +131,17 @@ pub fn relations(d: &DomainModel, i: usize, texts: &Texts) -> Vec<DomLink> {
                 index: from as i32,
             })
         });
-    out.chain(into).collect()
+    let external = (d.relations.iter())
+        .filter(|r| r.from == e.id && r.external)
+        .map(|r| DomLink {
+            text: texts
+                .f("\u{2192} {target} (external)", &[("target", r.to.clone())])
+                .into(),
+            note: r.via.as_str().into(),
+            kind: 0,
+            index: -1,
+        });
+    out.chain(into).chain(external).collect()
 }
 
 /// The domain events the entity raises, each followed by the integration
@@ -305,5 +315,24 @@ mod tests {
             .map(|l| l.text.to_string())
             .collect();
         assert_eq!(rel, ["← Order has one Address"]);
+    }
+
+    #[test]
+    fn external_relations_are_listed_without_a_link() {
+        let mut d = state().model().unwrap().clone();
+        let id = d.entities[0].id.clone();
+        d.relations
+            .push(archguard_engine::core::domain_model::Relation {
+                from: id,
+                to: "django.contrib.auth.User".into(),
+                kind: RelationKind::HasOne,
+                via: "owner".into(),
+                source: "t".into(),
+                external: true,
+            });
+        let links = relations(&d, 0, &Texts::default());
+        let ext = links.iter().find(|l| l.index < 0).expect("external row");
+        assert_eq!(ext.text, "\u{2192} django.contrib.auth.User (external)");
+        assert_eq!(ext.note, "owner");
     }
 }
