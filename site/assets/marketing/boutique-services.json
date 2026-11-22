@@ -1,0 +1,2702 @@
+{
+  "scenario": "Static service discovery; manifest rendering is disabled.",
+  "normalization": "Only the local checkout prefix is replaced with '.'; measurements are unchanged.",
+  "commit": "c7cb6d5bfd6ea3aed768634ebbcb98cb7a523712",
+  "cli_version": "archguard 0.3.5",
+  "exit_code": 0,
+  "report": {
+    "schema_version": 1,
+    "root": ".",
+    "monorepo": true,
+    "monorepo_reason": "13 distinct manifest project roots (excluding workspace aggregators), 0 verified local Compose build contexts; at least two project roots or build contexts establish monorepo evidence.",
+    "compose_files": [],
+    "services": [
+      {
+        "id": "kubernetes:kubernetes-manifests:default:Deployment:adservice",
+        "name": "adservice",
+        "compose_file": "kubernetes-manifests/adservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kubernetes-manifests:default"
+        ],
+        "profiles": [],
+        "project": "project:src/adservice/build.gradle"
+      },
+      {
+        "id": "kubernetes:kubernetes-manifests:default:Deployment:cartservice",
+        "name": "cartservice",
+        "compose_file": "kubernetes-manifests/cartservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kubernetes-manifests:default"
+        ],
+        "profiles": [],
+        "project": "project:src/cartservice/src/cartservice.csproj"
+      },
+      {
+        "id": "kubernetes:kubernetes-manifests:default:Deployment:checkoutservice",
+        "name": "checkoutservice",
+        "compose_file": "kubernetes-manifests/checkoutservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kubernetes-manifests:default"
+        ],
+        "profiles": [],
+        "project": "project:src/checkoutservice/go.mod"
+      },
+      {
+        "id": "kubernetes:kubernetes-manifests:default:Deployment:currencyservice",
+        "name": "currencyservice",
+        "compose_file": "kubernetes-manifests/currencyservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kubernetes-manifests:default"
+        ],
+        "profiles": [],
+        "project": "project:src/currencyservice/package.json"
+      },
+      {
+        "id": "kubernetes:kubernetes-manifests:default:Deployment:emailservice",
+        "name": "emailservice",
+        "compose_file": "kubernetes-manifests/emailservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kubernetes-manifests:default"
+        ],
+        "profiles": [],
+        "project": "project:src/emailservice/requirements.txt"
+      },
+      {
+        "id": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "name": "frontend",
+        "compose_file": "kubernetes-manifests/frontend.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kubernetes-manifests:default"
+        ],
+        "profiles": [],
+        "project": "project:src/frontend/go.mod"
+      },
+      {
+        "id": "kubernetes:kubernetes-manifests:default:Deployment:loadgenerator",
+        "name": "loadgenerator",
+        "compose_file": "kubernetes-manifests/loadgenerator.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kubernetes-manifests:default"
+        ],
+        "profiles": [],
+        "project": "project:src/loadgenerator/requirements.txt"
+      },
+      {
+        "id": "kubernetes:kubernetes-manifests:default:Deployment:paymentservice",
+        "name": "paymentservice",
+        "compose_file": "kubernetes-manifests/paymentservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kubernetes-manifests:default"
+        ],
+        "profiles": [],
+        "project": "project:src/paymentservice/package.json"
+      },
+      {
+        "id": "kubernetes:kubernetes-manifests:default:Deployment:productcatalogservice",
+        "name": "productcatalogservice",
+        "compose_file": "kubernetes-manifests/productcatalogservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kubernetes-manifests:default"
+        ],
+        "profiles": [],
+        "project": "project:src/productcatalogservice/go.mod"
+      },
+      {
+        "id": "kubernetes:kubernetes-manifests:default:Deployment:recommendationservice",
+        "name": "recommendationservice",
+        "compose_file": "kubernetes-manifests/recommendationservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kubernetes-manifests:default"
+        ],
+        "profiles": [],
+        "project": "project:src/recommendationservice/requirements.txt"
+      },
+      {
+        "id": "kubernetes:kubernetes-manifests:default:Deployment:redis-cart",
+        "name": "redis-cart",
+        "compose_file": "kubernetes-manifests/cartservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kubernetes-manifests:default"
+        ],
+        "profiles": [],
+        "project": null
+      },
+      {
+        "id": "kubernetes:kubernetes-manifests:default:Deployment:shippingservice",
+        "name": "shippingservice",
+        "compose_file": "kubernetes-manifests/shippingservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kubernetes-manifests:default"
+        ],
+        "profiles": [],
+        "project": "project:src/shippingservice/go.mod"
+      },
+      {
+        "id": "kubernetes:kustomize/base:default:Deployment:adservice",
+        "name": "adservice",
+        "compose_file": "kustomize/base/adservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kustomize/base:default"
+        ],
+        "profiles": [],
+        "project": "project:src/adservice/build.gradle"
+      },
+      {
+        "id": "kubernetes:kustomize/base:default:Deployment:cartservice",
+        "name": "cartservice",
+        "compose_file": "kustomize/base/cartservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kustomize/base:default"
+        ],
+        "profiles": [],
+        "project": "project:src/cartservice/src/cartservice.csproj"
+      },
+      {
+        "id": "kubernetes:kustomize/base:default:Deployment:checkoutservice",
+        "name": "checkoutservice",
+        "compose_file": "kustomize/base/checkoutservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kustomize/base:default"
+        ],
+        "profiles": [],
+        "project": "project:src/checkoutservice/go.mod"
+      },
+      {
+        "id": "kubernetes:kustomize/base:default:Deployment:currencyservice",
+        "name": "currencyservice",
+        "compose_file": "kustomize/base/currencyservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kustomize/base:default"
+        ],
+        "profiles": [],
+        "project": "project:src/currencyservice/package.json"
+      },
+      {
+        "id": "kubernetes:kustomize/base:default:Deployment:emailservice",
+        "name": "emailservice",
+        "compose_file": "kustomize/base/emailservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kustomize/base:default"
+        ],
+        "profiles": [],
+        "project": "project:src/emailservice/requirements.txt"
+      },
+      {
+        "id": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "name": "frontend",
+        "compose_file": "kustomize/base/frontend.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kustomize/base:default"
+        ],
+        "profiles": [],
+        "project": "project:src/frontend/go.mod"
+      },
+      {
+        "id": "kubernetes:kustomize/base:default:Deployment:loadgenerator",
+        "name": "loadgenerator",
+        "compose_file": "kustomize/base/loadgenerator.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kustomize/base:default"
+        ],
+        "profiles": [],
+        "project": "project:src/loadgenerator/requirements.txt"
+      },
+      {
+        "id": "kubernetes:kustomize/base:default:Deployment:paymentservice",
+        "name": "paymentservice",
+        "compose_file": "kustomize/base/paymentservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kustomize/base:default"
+        ],
+        "profiles": [],
+        "project": "project:src/paymentservice/package.json"
+      },
+      {
+        "id": "kubernetes:kustomize/base:default:Deployment:productcatalogservice",
+        "name": "productcatalogservice",
+        "compose_file": "kustomize/base/productcatalogservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kustomize/base:default"
+        ],
+        "profiles": [],
+        "project": "project:src/productcatalogservice/go.mod"
+      },
+      {
+        "id": "kubernetes:kustomize/base:default:Deployment:recommendationservice",
+        "name": "recommendationservice",
+        "compose_file": "kustomize/base/recommendationservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kustomize/base:default"
+        ],
+        "profiles": [],
+        "project": "project:src/recommendationservice/requirements.txt"
+      },
+      {
+        "id": "kubernetes:kustomize/base:default:Deployment:redis-cart",
+        "name": "redis-cart",
+        "compose_file": "kustomize/base/cartservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kustomize/base:default"
+        ],
+        "profiles": [],
+        "project": null
+      },
+      {
+        "id": "kubernetes:kustomize/base:default:Deployment:shippingservice",
+        "name": "shippingservice",
+        "compose_file": "kustomize/base/shippingservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kustomize/base:default"
+        ],
+        "profiles": [],
+        "project": "project:src/shippingservice/go.mod"
+      },
+      {
+        "id": "kubernetes:kustomize/components/google-cloud-operations:default:Deployment:opentelemetrycollector",
+        "name": "opentelemetrycollector",
+        "compose_file": "kustomize/components/google-cloud-operations/otel-collector.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kustomize/components/google-cloud-operations:default"
+        ],
+        "profiles": [],
+        "project": null
+      },
+      {
+        "id": "kubernetes:kustomize/components/shopping-assistant:default:Deployment:shoppingassistantservice",
+        "name": "shoppingassistantservice",
+        "compose_file": "kustomize/components/shopping-assistant/shoppingassistantservice.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kustomize/components/shopping-assistant:default"
+        ],
+        "profiles": [],
+        "project": "project:src/shoppingassistantservice/requirements.txt"
+      },
+      {
+        "id": "kubernetes:kustomize/components/without-loadgenerator:default:Deployment:loadgenerator",
+        "name": "loadgenerator",
+        "compose_file": "kustomize/components/without-loadgenerator/delete-loadgenerator.patch.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:kustomize/components/without-loadgenerator:default"
+        ],
+        "profiles": [],
+        "project": null
+      },
+      {
+        "id": "kubernetes:release:default:Deployment:adservice",
+        "name": "adservice",
+        "compose_file": "release/kubernetes-manifests.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:release:default"
+        ],
+        "profiles": [],
+        "project": "project:src/adservice/build.gradle"
+      },
+      {
+        "id": "kubernetes:release:default:Deployment:cartservice",
+        "name": "cartservice",
+        "compose_file": "release/kubernetes-manifests.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:release:default"
+        ],
+        "profiles": [],
+        "project": "project:src/cartservice/src/cartservice.csproj"
+      },
+      {
+        "id": "kubernetes:release:default:Deployment:checkoutservice",
+        "name": "checkoutservice",
+        "compose_file": "release/kubernetes-manifests.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:release:default"
+        ],
+        "profiles": [],
+        "project": "project:src/checkoutservice/go.mod"
+      },
+      {
+        "id": "kubernetes:release:default:Deployment:currencyservice",
+        "name": "currencyservice",
+        "compose_file": "release/kubernetes-manifests.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:release:default"
+        ],
+        "profiles": [],
+        "project": "project:src/currencyservice/package.json"
+      },
+      {
+        "id": "kubernetes:release:default:Deployment:emailservice",
+        "name": "emailservice",
+        "compose_file": "release/kubernetes-manifests.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:release:default"
+        ],
+        "profiles": [],
+        "project": "project:src/emailservice/requirements.txt"
+      },
+      {
+        "id": "kubernetes:release:default:Deployment:frontend",
+        "name": "frontend",
+        "compose_file": "release/kubernetes-manifests.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:release:default"
+        ],
+        "profiles": [],
+        "project": "project:src/frontend/go.mod"
+      },
+      {
+        "id": "kubernetes:release:default:Deployment:loadgenerator",
+        "name": "loadgenerator",
+        "compose_file": "release/kubernetes-manifests.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:release:default"
+        ],
+        "profiles": [],
+        "project": "project:src/loadgenerator/requirements.txt"
+      },
+      {
+        "id": "kubernetes:release:default:Deployment:paymentservice",
+        "name": "paymentservice",
+        "compose_file": "release/kubernetes-manifests.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:release:default"
+        ],
+        "profiles": [],
+        "project": "project:src/paymentservice/package.json"
+      },
+      {
+        "id": "kubernetes:release:default:Deployment:productcatalogservice",
+        "name": "productcatalogservice",
+        "compose_file": "release/kubernetes-manifests.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:release:default"
+        ],
+        "profiles": [],
+        "project": "project:src/productcatalogservice/go.mod"
+      },
+      {
+        "id": "kubernetes:release:default:Deployment:recommendationservice",
+        "name": "recommendationservice",
+        "compose_file": "release/kubernetes-manifests.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:release:default"
+        ],
+        "profiles": [],
+        "project": "project:src/recommendationservice/requirements.txt"
+      },
+      {
+        "id": "kubernetes:release:default:Deployment:redis-cart",
+        "name": "redis-cart",
+        "compose_file": "release/kubernetes-manifests.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:release:default"
+        ],
+        "profiles": [],
+        "project": null
+      },
+      {
+        "id": "kubernetes:release:default:Deployment:shippingservice",
+        "name": "shippingservice",
+        "compose_file": "release/kubernetes-manifests.yaml",
+        "build_context": null,
+        "networks": [
+          "kubernetes:release:default"
+        ],
+        "profiles": [],
+        "project": "project:src/shippingservice/go.mod"
+      }
+    ],
+    "projects": [
+      {
+        "id": "project:src/adservice/build.gradle",
+        "name": "adservice",
+        "path": "src/adservice",
+        "manifest": "src/adservice/build.gradle",
+        "ecosystem": "gradle",
+        "kind": "unknown",
+        "runtime": null,
+        "evidence": [
+          {
+            "file": "src/adservice/build.gradle",
+            "pointer": "/",
+            "line": null,
+            "description": "Source project boundary from manifest; build scripts and dependency installation are not executed."
+          }
+        ]
+      },
+      {
+        "id": "project:src/cartservice/src/cartservice.csproj",
+        "name": "cartservice",
+        "path": "src/cartservice/src",
+        "manifest": "src/cartservice/src/cartservice.csproj",
+        "ecosystem": "dotnet",
+        "kind": "application",
+        "runtime": "dotnet",
+        "evidence": [
+          {
+            "file": "src/cartservice/src/cartservice.csproj",
+            "pointer": "/Project",
+            "line": 1,
+            "description": ".NET project boundary is declared by this manifest; imported MSBuild properties are not evaluated."
+          },
+          {
+            "file": "src/cartservice/src/cartservice.csproj",
+            "pointer": "/Project",
+            "line": null,
+            "description": "Web SDK or executable OutputType declares an application project."
+          }
+        ]
+      },
+      {
+        "id": "project:src/cartservice/tests/cartservice.tests.csproj",
+        "name": "cartservice.tests",
+        "path": "src/cartservice/tests",
+        "manifest": "src/cartservice/tests/cartservice.tests.csproj",
+        "ecosystem": "dotnet",
+        "kind": "tooling",
+        "runtime": null,
+        "evidence": [
+          {
+            "file": "src/cartservice/tests/cartservice.tests.csproj",
+            "pointer": "/Project",
+            "line": 1,
+            "description": ".NET project boundary is declared by this manifest; imported MSBuild properties are not evaluated."
+          },
+          {
+            "file": "src/cartservice/tests/cartservice.tests.csproj",
+            "pointer": "/Project",
+            "line": null,
+            "description": "Explicit test/fuzz-project metadata identifies tooling, not a software service."
+          }
+        ]
+      },
+      {
+        "id": "project:src/checkoutservice/go.mod",
+        "name": "checkoutservice",
+        "path": "src/checkoutservice",
+        "manifest": "src/checkoutservice/go.mod",
+        "ecosystem": "go",
+        "kind": "unknown",
+        "runtime": null,
+        "evidence": [
+          {
+            "file": "src/checkoutservice/go.mod",
+            "pointer": "/",
+            "line": null,
+            "description": "Source project boundary from manifest; build scripts and dependency installation are not executed."
+          }
+        ]
+      },
+      {
+        "id": "project:src/currencyservice/package.json",
+        "name": "grpc-currency-service",
+        "path": "src/currencyservice",
+        "manifest": "src/currencyservice/package.json",
+        "ecosystem": "npm",
+        "kind": "unknown",
+        "runtime": null,
+        "evidence": [
+          {
+            "file": "src/currencyservice/package.json",
+            "pointer": "/name",
+            "line": null,
+            "description": "Project boundary is declared by package.json; scripts are inspected as metadata and never executed."
+          }
+        ]
+      },
+      {
+        "id": "project:src/emailservice/requirements.txt",
+        "name": "emailservice",
+        "path": "src/emailservice",
+        "manifest": "src/emailservice/requirements.txt",
+        "ecosystem": "python",
+        "kind": "unknown",
+        "runtime": null,
+        "evidence": [
+          {
+            "file": "src/emailservice/requirements.txt",
+            "pointer": "/",
+            "line": null,
+            "description": "Source project boundary from manifest; build scripts and dependency installation are not executed."
+          }
+        ]
+      },
+      {
+        "id": "project:src/frontend/go.mod",
+        "name": "frontend",
+        "path": "src/frontend",
+        "manifest": "src/frontend/go.mod",
+        "ecosystem": "go",
+        "kind": "unknown",
+        "runtime": null,
+        "evidence": [
+          {
+            "file": "src/frontend/go.mod",
+            "pointer": "/",
+            "line": null,
+            "description": "Source project boundary from manifest; build scripts and dependency installation are not executed."
+          }
+        ]
+      },
+      {
+        "id": "project:src/loadgenerator/requirements.txt",
+        "name": "loadgenerator",
+        "path": "src/loadgenerator",
+        "manifest": "src/loadgenerator/requirements.txt",
+        "ecosystem": "python",
+        "kind": "unknown",
+        "runtime": null,
+        "evidence": [
+          {
+            "file": "src/loadgenerator/requirements.txt",
+            "pointer": "/",
+            "line": null,
+            "description": "Source project boundary from manifest; build scripts and dependency installation are not executed."
+          }
+        ]
+      },
+      {
+        "id": "project:src/paymentservice/package.json",
+        "name": "paymentservice",
+        "path": "src/paymentservice",
+        "manifest": "src/paymentservice/package.json",
+        "ecosystem": "npm",
+        "kind": "library",
+        "runtime": null,
+        "evidence": [
+          {
+            "file": "src/paymentservice/package.json",
+            "pointer": "/name",
+            "line": null,
+            "description": "Project boundary is declared by package.json; scripts are inspected as metadata and never executed."
+          },
+          {
+            "file": "src/paymentservice/package.json",
+            "pointer": "/",
+            "line": null,
+            "description": "Published module entry metadata identifies a library project."
+          }
+        ]
+      },
+      {
+        "id": "project:src/productcatalogservice/go.mod",
+        "name": "productcatalogservice",
+        "path": "src/productcatalogservice",
+        "manifest": "src/productcatalogservice/go.mod",
+        "ecosystem": "go",
+        "kind": "unknown",
+        "runtime": null,
+        "evidence": [
+          {
+            "file": "src/productcatalogservice/go.mod",
+            "pointer": "/",
+            "line": null,
+            "description": "Source project boundary from manifest; build scripts and dependency installation are not executed."
+          }
+        ]
+      },
+      {
+        "id": "project:src/recommendationservice/requirements.txt",
+        "name": "recommendationservice",
+        "path": "src/recommendationservice",
+        "manifest": "src/recommendationservice/requirements.txt",
+        "ecosystem": "python",
+        "kind": "unknown",
+        "runtime": null,
+        "evidence": [
+          {
+            "file": "src/recommendationservice/requirements.txt",
+            "pointer": "/",
+            "line": null,
+            "description": "Source project boundary from manifest; build scripts and dependency installation are not executed."
+          }
+        ]
+      },
+      {
+        "id": "project:src/shippingservice/go.mod",
+        "name": "shippingservice",
+        "path": "src/shippingservice",
+        "manifest": "src/shippingservice/go.mod",
+        "ecosystem": "go",
+        "kind": "unknown",
+        "runtime": null,
+        "evidence": [
+          {
+            "file": "src/shippingservice/go.mod",
+            "pointer": "/",
+            "line": null,
+            "description": "Source project boundary from manifest; build scripts and dependency installation are not executed."
+          }
+        ]
+      },
+      {
+        "id": "project:src/shoppingassistantservice/requirements.txt",
+        "name": "shoppingassistantservice",
+        "path": "src/shoppingassistantservice",
+        "manifest": "src/shoppingassistantservice/requirements.txt",
+        "ecosystem": "python",
+        "kind": "unknown",
+        "runtime": null,
+        "evidence": [
+          {
+            "file": "src/shoppingassistantservice/requirements.txt",
+            "pointer": "/",
+            "line": null,
+            "description": "Source project boundary from manifest; build scripts and dependency installation are not executed."
+          }
+        ]
+      }
+    ],
+    "dependencies": [
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:checkoutservice",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:cartservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/checkoutservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/CART_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:checkoutservice",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:currencyservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/checkoutservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/CURRENCY_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:checkoutservice",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:emailservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/checkoutservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/EMAIL_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:checkoutservice",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:paymentservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/checkoutservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/PAYMENT_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:checkoutservice",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:productcatalogservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/checkoutservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/PRODUCT_CATALOG_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:checkoutservice",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:shippingservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/checkoutservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/SHIPPING_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:recommendationservice",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:productcatalogservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/recommendationservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/PRODUCT_CATALOG_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:adservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/frontend.yaml",
+            "pointer": "/spec/template/spec/containers/env/AD_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:cartservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/frontend.yaml",
+            "pointer": "/spec/template/spec/containers/env/CART_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:checkoutservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/frontend.yaml",
+            "pointer": "/spec/template/spec/containers/env/CHECKOUT_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:currencyservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/frontend.yaml",
+            "pointer": "/spec/template/spec/containers/env/CURRENCY_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:productcatalogservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/frontend.yaml",
+            "pointer": "/spec/template/spec/containers/env/PRODUCT_CATALOG_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:recommendationservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/frontend.yaml",
+            "pointer": "/spec/template/spec/containers/env/RECOMMENDATION_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:shippingservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/frontend.yaml",
+            "pointer": "/spec/template/spec/containers/env/SHIPPING_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:cartservice",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:redis-cart",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/cartservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/REDIS_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:loadgenerator",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/loadgenerator.yaml",
+            "pointer": "/spec/template/spec/containers/env/FRONTEND_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:checkoutservice",
+        "to": "kubernetes:release:default:Deployment:cartservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/CART_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:checkoutservice",
+        "to": "kubernetes:release:default:Deployment:currencyservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/CURRENCY_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:checkoutservice",
+        "to": "kubernetes:release:default:Deployment:emailservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/EMAIL_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:checkoutservice",
+        "to": "kubernetes:release:default:Deployment:paymentservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/PAYMENT_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:checkoutservice",
+        "to": "kubernetes:release:default:Deployment:productcatalogservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/PRODUCT_CATALOG_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:checkoutservice",
+        "to": "kubernetes:release:default:Deployment:shippingservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/SHIPPING_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:frontend",
+        "to": "kubernetes:release:default:Deployment:adservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/AD_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:frontend",
+        "to": "kubernetes:release:default:Deployment:cartservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/CART_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:frontend",
+        "to": "kubernetes:release:default:Deployment:checkoutservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/CHECKOUT_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:frontend",
+        "to": "kubernetes:release:default:Deployment:currencyservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/CURRENCY_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:frontend",
+        "to": "kubernetes:release:default:Deployment:productcatalogservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/PRODUCT_CATALOG_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:frontend",
+        "to": "kubernetes:release:default:Deployment:recommendationservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/RECOMMENDATION_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:frontend",
+        "to": "kubernetes:release:default:Deployment:shippingservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/SHIPPING_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:recommendationservice",
+        "to": "kubernetes:release:default:Deployment:productcatalogservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/PRODUCT_CATALOG_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:loadgenerator",
+        "to": "kubernetes:release:default:Deployment:frontend",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/FRONTEND_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:cartservice",
+        "to": "kubernetes:release:default:Deployment:redis-cart",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/spec/template/spec/containers/env/REDIS_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:checkoutservice",
+        "to": "kubernetes:kustomize/base:default:Deployment:cartservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/checkoutservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/CART_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:checkoutservice",
+        "to": "kubernetes:kustomize/base:default:Deployment:currencyservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/checkoutservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/CURRENCY_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:checkoutservice",
+        "to": "kubernetes:kustomize/base:default:Deployment:emailservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/checkoutservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/EMAIL_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:checkoutservice",
+        "to": "kubernetes:kustomize/base:default:Deployment:paymentservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/checkoutservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/PAYMENT_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:checkoutservice",
+        "to": "kubernetes:kustomize/base:default:Deployment:productcatalogservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/checkoutservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/PRODUCT_CATALOG_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:checkoutservice",
+        "to": "kubernetes:kustomize/base:default:Deployment:shippingservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/checkoutservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/SHIPPING_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:recommendationservice",
+        "to": "kubernetes:kustomize/base:default:Deployment:productcatalogservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/recommendationservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/PRODUCT_CATALOG_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "to": "kubernetes:kustomize/base:default:Deployment:adservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/frontend.yaml",
+            "pointer": "/spec/template/spec/containers/env/AD_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "to": "kubernetes:kustomize/base:default:Deployment:cartservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/frontend.yaml",
+            "pointer": "/spec/template/spec/containers/env/CART_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "to": "kubernetes:kustomize/base:default:Deployment:checkoutservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/frontend.yaml",
+            "pointer": "/spec/template/spec/containers/env/CHECKOUT_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "to": "kubernetes:kustomize/base:default:Deployment:currencyservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/frontend.yaml",
+            "pointer": "/spec/template/spec/containers/env/CURRENCY_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "to": "kubernetes:kustomize/base:default:Deployment:productcatalogservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/frontend.yaml",
+            "pointer": "/spec/template/spec/containers/env/PRODUCT_CATALOG_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "to": "kubernetes:kustomize/base:default:Deployment:recommendationservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/frontend.yaml",
+            "pointer": "/spec/template/spec/containers/env/RECOMMENDATION_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "to": "kubernetes:kustomize/base:default:Deployment:shippingservice",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/frontend.yaml",
+            "pointer": "/spec/template/spec/containers/env/SHIPPING_SERVICE_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:cartservice",
+        "to": "kubernetes:kustomize/base:default:Deployment:redis-cart",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/cartservice.yaml",
+            "pointer": "/spec/template/spec/containers/env/REDIS_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:loadgenerator",
+        "to": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "kind": "configured_reference",
+        "evidence": [
+          {
+            "file": "kustomize/base/loadgenerator.yaml",
+            "pointer": "/spec/template/spec/containers/env/FRONTEND_ADDR",
+            "line": null,
+            "description": "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:checkoutservice",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:shippingservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/checkoutservice.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 315,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 321,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 387,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 393,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:checkoutservice",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:cartservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/checkoutservice.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 325,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 329,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 333,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:checkoutservice",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:productcatalogservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 344,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "kubernetes-manifests/checkoutservice.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:checkoutservice",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:currencyservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 360,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "kubernetes-manifests/checkoutservice.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:checkoutservice",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:paymentservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/checkoutservice.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 370,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 376,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:checkoutservice",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:emailservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 380,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "kubernetes-manifests/checkoutservice.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:checkoutservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/frontend.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 355,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 375,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 377,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 380,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 381,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 395,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:currencyservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/frontend.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 32,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 82,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:productcatalogservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/frontend.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 47,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 48,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 53,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:cartservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/frontend.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 58,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 59,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 63,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 68,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:shippingservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/frontend.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 88,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 95,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:recommendationservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/frontend.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 100,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 105,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 106,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kubernetes-manifests:default:Deployment:frontend",
+        "to": "kubernetes:kubernetes-manifests:default:Deployment:adservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kubernetes-manifests/frontend.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 123,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 126,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:checkoutservice",
+        "to": "kubernetes:release:default:Deployment:shippingservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 315,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 321,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 387,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 393,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:checkoutservice",
+        "to": "kubernetes:release:default:Deployment:cartservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 325,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 329,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 333,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:checkoutservice",
+        "to": "kubernetes:release:default:Deployment:productcatalogservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 344,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:checkoutservice",
+        "to": "kubernetes:release:default:Deployment:currencyservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 360,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:checkoutservice",
+        "to": "kubernetes:release:default:Deployment:paymentservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 370,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 376,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:checkoutservice",
+        "to": "kubernetes:release:default:Deployment:emailservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 380,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:frontend",
+        "to": "kubernetes:release:default:Deployment:checkoutservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 355,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 375,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 377,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 380,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 381,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 395,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:frontend",
+        "to": "kubernetes:release:default:Deployment:currencyservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 32,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 82,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:frontend",
+        "to": "kubernetes:release:default:Deployment:productcatalogservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 47,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 48,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 53,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:frontend",
+        "to": "kubernetes:release:default:Deployment:cartservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 58,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 59,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 63,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 68,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:frontend",
+        "to": "kubernetes:release:default:Deployment:shippingservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 88,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 95,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:frontend",
+        "to": "kubernetes:release:default:Deployment:recommendationservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 100,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 105,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 106,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:release:default:Deployment:frontend",
+        "to": "kubernetes:release:default:Deployment:adservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "release/kubernetes-manifests.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 123,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 126,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:checkoutservice",
+        "to": "kubernetes:kustomize/base:default:Deployment:shippingservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kustomize/base/checkoutservice.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 315,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 321,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 387,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 393,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:checkoutservice",
+        "to": "kubernetes:kustomize/base:default:Deployment:cartservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kustomize/base/checkoutservice.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 325,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 329,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 333,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:checkoutservice",
+        "to": "kubernetes:kustomize/base:default:Deployment:productcatalogservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 344,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "kustomize/base/checkoutservice.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:checkoutservice",
+        "to": "kubernetes:kustomize/base:default:Deployment:currencyservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 360,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "kustomize/base/checkoutservice.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:checkoutservice",
+        "to": "kubernetes:kustomize/base:default:Deployment:paymentservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kustomize/base/checkoutservice.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 370,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 376,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:checkoutservice",
+        "to": "kubernetes:kustomize/base:default:Deployment:emailservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "src/checkoutservice/main.go",
+            "pointer": "go-client",
+            "line": 380,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "kustomize/base/checkoutservice.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "to": "kubernetes:kustomize/base:default:Deployment:checkoutservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kustomize/base/frontend.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 355,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 375,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 377,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 380,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 381,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/handlers.go",
+            "pointer": "go-client",
+            "line": 395,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "to": "kubernetes:kustomize/base:default:Deployment:currencyservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kustomize/base/frontend.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 32,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 82,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "to": "kubernetes:kustomize/base:default:Deployment:productcatalogservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kustomize/base/frontend.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 47,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 48,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 53,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "to": "kubernetes:kustomize/base:default:Deployment:cartservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kustomize/base/frontend.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 58,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 59,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 63,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 68,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "to": "kubernetes:kustomize/base:default:Deployment:shippingservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kustomize/base/frontend.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 88,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 95,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "to": "kubernetes:kustomize/base:default:Deployment:recommendationservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kustomize/base/frontend.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 100,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 105,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 106,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      },
+      {
+        "from": "kubernetes:kustomize/base:default:Deployment:frontend",
+        "to": "kubernetes:kustomize/base:default:Deployment:adservice",
+        "kind": "grpc_call",
+        "evidence": [
+          {
+            "file": "kustomize/base/frontend.yaml",
+            "pointer": "/environment",
+            "line": null,
+            "description": "Endpoint binding from this deployment; values omitted."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 123,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          },
+          {
+            "file": "src/frontend/rpc.go",
+            "pointer": "go-client",
+            "line": 126,
+            "description": "Static client call linked through bounded local assignments, verified helper bodies and a declared deployment endpoint; execution and branch reachability are not proven."
+          }
+        ]
+      }
+    ],
+    "cycles": [],
+    "diagnostics": [
+      {
+        "file": ".",
+        "service": null,
+        "message": "Communication coverage is partial: Go calls use bounded local value flow; Python/Gradle source clients, dynamic endpoints, generated deployment templates and runtime overrides are not fully resolved. Missing edges do not establish isolation."
+      },
+      {
+        "file": ".github/terraform/main.tf",
+        "service": null,
+        "message": "Remote Terraform module terraform-google-modules/project-factory/google//modules/project_services is not fetched; its resources are unknown."
+      },
+      {
+        "file": "helm-chart/Chart.yaml",
+        "service": null,
+        "message": "Helm chart is not rendered, so its services and connections stay unknown; templates are not executed. Set ARCHGUARD_RENDER_MANIFESTS=1 to render it offline with helm template (helm on PATH or ARCHGUARD_HELM)."
+      },
+      {
+        "file": "helm-chart/templates/adservice.yaml",
+        "service": null,
+        "message": "YAML is malformed or is an unrendered template; deployment coverage is incomplete. Templates are not executed."
+      },
+      {
+        "file": "helm-chart/templates/cartservice.yaml",
+        "service": null,
+        "message": "YAML is malformed or is an unrendered template; deployment coverage is incomplete. Templates are not executed."
+      },
+      {
+        "file": "helm-chart/templates/checkoutservice.yaml",
+        "service": null,
+        "message": "YAML is malformed or is an unrendered template; deployment coverage is incomplete. Templates are not executed."
+      },
+      {
+        "file": "helm-chart/templates/common.yaml",
+        "service": null,
+        "message": "YAML is malformed or is an unrendered template; deployment coverage is incomplete. Templates are not executed."
+      },
+      {
+        "file": "helm-chart/templates/currencyservice.yaml",
+        "service": null,
+        "message": "YAML is malformed or is an unrendered template; deployment coverage is incomplete. Templates are not executed."
+      },
+      {
+        "file": "helm-chart/templates/emailservice.yaml",
+        "service": null,
+        "message": "YAML is malformed or is an unrendered template; deployment coverage is incomplete. Templates are not executed."
+      },
+      {
+        "file": "helm-chart/templates/frontend.yaml",
+        "service": null,
+        "message": "YAML is malformed or is an unrendered template; deployment coverage is incomplete. Templates are not executed."
+      },
+      {
+        "file": "helm-chart/templates/loadgenerator.yaml",
+        "service": null,
+        "message": "YAML is malformed or is an unrendered template; deployment coverage is incomplete. Templates are not executed."
+      },
+      {
+        "file": "helm-chart/templates/opentelemetry-collector.yaml",
+        "service": null,
+        "message": "YAML is malformed or is an unrendered template; deployment coverage is incomplete. Templates are not executed."
+      },
+      {
+        "file": "helm-chart/templates/paymentservice.yaml",
+        "service": null,
+        "message": "YAML is malformed or is an unrendered template; deployment coverage is incomplete. Templates are not executed."
+      },
+      {
+        "file": "helm-chart/templates/productcatalogservice.yaml",
+        "service": null,
+        "message": "YAML is malformed or is an unrendered template; deployment coverage is incomplete. Templates are not executed."
+      },
+      {
+        "file": "helm-chart/templates/recommendationservice.yaml",
+        "service": null,
+        "message": "YAML is malformed or is an unrendered template; deployment coverage is incomplete. Templates are not executed."
+      },
+      {
+        "file": "helm-chart/templates/shippingservice.yaml",
+        "service": null,
+        "message": "YAML is malformed or is an unrendered template; deployment coverage is incomplete. Templates are not executed."
+      },
+      {
+        "file": "kubernetes-manifests/kustomization.yaml",
+        "service": null,
+        "message": "Kustomize overlay is not applied; its files are read only as plain manifests. Set ARCHGUARD_RENDER_MANIFESTS=1 to render it offline with kustomize build (kustomize or kubectl on PATH, or ARCHGUARD_KUSTOMIZE)."
+      },
+      {
+        "file": "kustomize/components/alloydb/kustomization.yaml",
+        "service": null,
+        "message": "Kustomize overlay is not applied; its files are read only as plain manifests. Set ARCHGUARD_RENDER_MANIFESTS=1 to render it offline with kustomize build (kustomize or kubectl on PATH, or ARCHGUARD_KUSTOMIZE)."
+      },
+      {
+        "file": "kustomize/components/container-images-registry/kustomization.yaml",
+        "service": null,
+        "message": "Kustomize overlay is not applied; its files are read only as plain manifests. Set ARCHGUARD_RENDER_MANIFESTS=1 to render it offline with kustomize build (kustomize or kubectl on PATH, or ARCHGUARD_KUSTOMIZE)."
+      },
+      {
+        "file": "kustomize/components/container-images-tag-suffix/kustomization.yaml",
+        "service": null,
+        "message": "Kustomize overlay is not applied; its files are read only as plain manifests. Set ARCHGUARD_RENDER_MANIFESTS=1 to render it offline with kustomize build (kustomize or kubectl on PATH, or ARCHGUARD_KUSTOMIZE)."
+      },
+      {
+        "file": "kustomize/components/container-images-tag/kustomization.yaml",
+        "service": null,
+        "message": "Kustomize overlay is not applied; its files are read only as plain manifests. Set ARCHGUARD_RENDER_MANIFESTS=1 to render it offline with kustomize build (kustomize or kubectl on PATH, or ARCHGUARD_KUSTOMIZE)."
+      },
+      {
+        "file": "kustomize/components/custom-base-url/kustomization.yaml",
+        "service": null,
+        "message": "Kustomize overlay is not applied; its files are read only as plain manifests. Set ARCHGUARD_RENDER_MANIFESTS=1 to render it offline with kustomize build (kustomize or kubectl on PATH, or ARCHGUARD_KUSTOMIZE)."
+      },
+      {
+        "file": "kustomize/components/non-public-frontend/kustomization.yaml",
+        "service": null,
+        "message": "Kustomize overlay is not applied; its files are read only as plain manifests. Set ARCHGUARD_RENDER_MANIFESTS=1 to render it offline with kustomize build (kustomize or kubectl on PATH, or ARCHGUARD_KUSTOMIZE)."
+      },
+      {
+        "file": "kustomize/components/shopping-assistant/kustomization.yaml",
+        "service": null,
+        "message": "Kustomize overlay is not applied; its files are read only as plain manifests. Set ARCHGUARD_RENDER_MANIFESTS=1 to render it offline with kustomize build (kustomize or kubectl on PATH, or ARCHGUARD_KUSTOMIZE)."
+      },
+      {
+        "file": "kustomize/components/single-shared-session/kustomization.yaml",
+        "service": null,
+        "message": "Kustomize overlay is not applied; its files are read only as plain manifests. Set ARCHGUARD_RENDER_MANIFESTS=1 to render it offline with kustomize build (kustomize or kubectl on PATH, or ARCHGUARD_KUSTOMIZE)."
+      },
+      {
+        "file": "kustomize/components/without-loadgenerator/kustomization.yaml",
+        "service": null,
+        "message": "Kustomize overlay is not applied; its files are read only as plain manifests. Set ARCHGUARD_RENDER_MANIFESTS=1 to render it offline with kustomize build (kustomize or kubectl on PATH, or ARCHGUARD_KUSTOMIZE)."
+      },
+      {
+        "file": "kustomize/kustomization.yaml",
+        "service": null,
+        "message": "Kustomize overlay is not applied; its files are read only as plain manifests. Set ARCHGUARD_RENDER_MANIFESTS=1 to render it offline with kustomize build (kustomize or kubectl on PATH, or ARCHGUARD_KUSTOMIZE)."
+      },
+      {
+        "file": "kustomize/tests/memorystore-with-all-components/kustomization.yaml",
+        "service": null,
+        "message": "Kustomize overlay is not applied; its files are read only as plain manifests. Set ARCHGUARD_RENDER_MANIFESTS=1 to render it offline with kustomize build (kustomize or kubectl on PATH, or ARCHGUARD_KUSTOMIZE)."
+      },
+      {
+        "file": "kustomize/tests/service-mesh-istio-with-all-components/kustomization.yaml",
+        "service": null,
+        "message": "Kustomize overlay is not applied; its files are read only as plain manifests. Set ARCHGUARD_RENDER_MANIFESTS=1 to render it offline with kustomize build (kustomize or kubectl on PATH, or ARCHGUARD_KUSTOMIZE)."
+      },
+      {
+        "file": "kustomize/tests/spanner-with-all-components/kustomization.yaml",
+        "service": null,
+        "message": "Kustomize overlay is not applied; its files are read only as plain manifests. Set ARCHGUARD_RENDER_MANIFESTS=1 to render it offline with kustomize build (kustomize or kubectl on PATH, or ARCHGUARD_KUSTOMIZE)."
+      },
+      {
+        "file": "terraform/main.tf",
+        "service": null,
+        "message": "Remote Terraform module terraform-google-modules/gcloud/google is not fetched; its resources are unknown."
+      },
+      {
+        "file": "terraform/main.tf",
+        "service": null,
+        "message": "Remote Terraform module terraform-google-modules/project-factory/google//modules/project_services is not fetched; its resources are unknown."
+      }
+    ],
+    "datastores": {
+      "nodes": [
+        {
+          "id": "kubernetes:kubernetes-manifests:default:Deployment:redis-cart",
+          "engine": "redis",
+          "service": "kubernetes:kubernetes-manifests:default:Deployment:redis-cart",
+          "host": null,
+          "port": null,
+          "evidence": [
+            {
+              "file": "kubernetes-manifests/cartservice.yaml",
+              "pointer": "/spec/template/spec/containers/image",
+              "line": null,
+              "description": "Well-known datastore image; the datastore runs as this service."
+            }
+          ]
+        },
+        {
+          "id": "kubernetes:kustomize/base:default:Deployment:redis-cart",
+          "engine": "redis",
+          "service": "kubernetes:kustomize/base:default:Deployment:redis-cart",
+          "host": null,
+          "port": null,
+          "evidence": [
+            {
+              "file": "kustomize/base/cartservice.yaml",
+              "pointer": "/spec/template/spec/containers/image",
+              "line": null,
+              "description": "Well-known datastore image; the datastore runs as this service."
+            }
+          ]
+        },
+        {
+          "id": "kubernetes:release:default:Deployment:redis-cart",
+          "engine": "redis",
+          "service": "kubernetes:release:default:Deployment:redis-cart",
+          "host": null,
+          "port": null,
+          "evidence": [
+            {
+              "file": "release/kubernetes-manifests.yaml",
+              "pointer": "/spec/template/spec/containers/image",
+              "line": null,
+              "description": "Well-known datastore image; the datastore runs as this service."
+            }
+          ]
+        },
+        {
+          "id": "terraform:terraform:google_redis_instance.redis-cart",
+          "engine": "redis",
+          "service": null,
+          "host": null,
+          "port": null,
+          "evidence": [
+            {
+              "file": "terraform/memorystore.tf",
+              "pointer": "/google_redis_instance/redis-cart",
+              "line": 16,
+              "description": "Declared in Terraform resource google_redis_instance.redis-cart (terraform/memorystore.tf:16). Managed datastore resource; only its engine setting is read."
+            }
+          ]
+        }
+      ],
+      "usages": [
+        {
+          "service": "kubernetes:kubernetes-manifests:default:Deployment:cartservice",
+          "datastore": "kubernetes:kubernetes-manifests:default:Deployment:redis-cart",
+          "database": null,
+          "evidence": [
+            {
+              "file": "kubernetes-manifests/cartservice.yaml",
+              "pointer": "/spec/template/spec/containers/env/REDIS_ADDR",
+              "line": null,
+              "description": "Conventional datastore host/database setting; credentials are not read."
+            }
+          ]
+        },
+        {
+          "service": "kubernetes:kustomize/base:default:Deployment:cartservice",
+          "datastore": "kubernetes:kustomize/base:default:Deployment:redis-cart",
+          "database": null,
+          "evidence": [
+            {
+              "file": "kustomize/base/cartservice.yaml",
+              "pointer": "/spec/template/spec/containers/env/REDIS_ADDR",
+              "line": null,
+              "description": "Conventional datastore host/database setting; credentials are not read."
+            }
+          ]
+        },
+        {
+          "service": "kubernetes:release:default:Deployment:cartservice",
+          "datastore": "kubernetes:release:default:Deployment:redis-cart",
+          "database": null,
+          "evidence": [
+            {
+              "file": "release/kubernetes-manifests.yaml",
+              "pointer": "/spec/template/spec/containers/env/REDIS_ADDR",
+              "line": null,
+              "description": "Conventional datastore host/database setting; credentials are not read."
+            }
+          ]
+        }
+      ],
+      "shared": [],
+      "note": "Datastore references come from static configuration (images, connection URLs, host/database settings, Terraform datastore resources); they do not prove runtime use. A shared database means the same configured database name, a shared server only the same configured server. A shared table is a table the services' own source names literally (entities, migrations, SQL); queries are not analyzed."
+    },
+    "complete": false
+  }
+}

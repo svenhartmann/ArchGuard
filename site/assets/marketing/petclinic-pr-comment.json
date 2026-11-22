@@ -1,0 +1,25 @@
+{
+  "kind": "Local generated PR-comment artifact; no GitHub PR was created or posted to.",
+  "scenario": "Deliberately restrictive local teaching policy; not an upstream defect report.",
+  "base": "500158f732419217507c7656904b8e6aa1bcc0d6",
+  "target_source_commit": "500158f732419217507c7656904b8e6aa1bcc0d6",
+  "target": "working tree with unchanged tracked sources and a local illustrative policy",
+  "tracked_source_changes": [],
+  "policy_file": "archguard.toml",
+  "policy_sha256": "96061409627d4b1f1fa127e3869c06f10fd03092cbbd85c14e99249e7e07ab68",
+  "policy": "derive_layers = false\n\n[project]\nsource_roots = [\"src/main/java\"]\nlanguages = [\"java\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 5\n\n# Deliberately restrictive teaching policy; not the upstream architecture policy.\n[[layers]]\nname = \"model\"\ncontains = [\"org/springframework/samples/petclinic/model/**\"]\nmay_depend_on = []\n\n[[layers]]\nname = \"owners-demo\"\ncontains = [\"org/springframework/samples/petclinic/owner/**\"]\nmay_depend_on = []\n",
+  "command": [
+    "archguard",
+    "review",
+    ".",
+    "--base",
+    "500158f732419217507c7656904b8e6aa1bcc0d6",
+    "--format",
+    "pr-comment"
+  ],
+  "exit_code": 0,
+  "normalization": "Only the local checkout prefix is replaced with '.'; measurements are unchanged.",
+  "policy_application": "The review command passes its current effective configuration to compare_to_ref for the base comparison.",
+  "interpretation": "The raw tool output reports prioritized findings 0 \u2192 1 despite unchanged tracked sources. These are review candidates, not a claim of a source-code regression or a real pull request.",
+  "cli_version": "archguard 0.3.5"
+}

@@ -1,0 +1,300 @@
+[
+  {
+    "id": "kafka-world",
+    "project": "kafka",
+    "view": "world",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "start",
+      "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+      "ARCHGUARD_DESKTOP_KPI": "0"
+    }
+  },
+  {
+    "id": "kafka-matrix",
+    "project": "kafka",
+    "view": "matrix",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "dsm",
+      "ARCHGUARD_DESKTOP_SIZE": "1480x920"
+    }
+  },
+  {
+    "id": "eshop-world",
+    "project": "eshop",
+    "view": "world",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "start",
+      "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+      "ARCHGUARD_DESKTOP_KPI": "0"
+    }
+  },
+  {
+    "id": "eshop-matrix",
+    "project": "eshop",
+    "view": "matrix",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "dsm",
+      "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+    }
+  },
+  {
+    "id": "nest-world",
+    "project": "nest",
+    "view": "world",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "start",
+      "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+      "ARCHGUARD_DESKTOP_KPI": "0"
+    }
+  },
+  {
+    "id": "nest-matrix",
+    "project": "nest",
+    "view": "matrix",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "dsm",
+      "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+    }
+  },
+  {
+    "id": "prometheus-world",
+    "project": "prometheus",
+    "view": "world",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "start",
+      "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+      "ARCHGUARD_DESKTOP_KPI": "0"
+    }
+  },
+  {
+    "id": "prometheus-matrix",
+    "project": "prometheus",
+    "view": "matrix",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "dsm",
+      "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+    }
+  },
+  {
+    "id": "ripgrep-world",
+    "project": "ripgrep",
+    "view": "world",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "start",
+      "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+      "ARCHGUARD_DESKTOP_KPI": "0"
+    }
+  },
+  {
+    "id": "ripgrep-matrix",
+    "project": "ripgrep",
+    "view": "matrix",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "dsm",
+      "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+    }
+  },
+  {
+    "id": "django-world",
+    "project": "django",
+    "view": "world",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "start",
+      "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+      "ARCHGUARD_DESKTOP_KPI": "0"
+    }
+  },
+  {
+    "id": "django-matrix",
+    "project": "django",
+    "view": "matrix",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "dsm",
+      "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+    }
+  },
+  {
+    "id": "symfony-world",
+    "project": "symfony",
+    "view": "world",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "start",
+      "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+      "ARCHGUARD_DESKTOP_KPI": "0"
+    }
+  },
+  {
+    "id": "symfony-matrix",
+    "project": "symfony",
+    "view": "matrix",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "dsm",
+      "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+    }
+  },
+  {
+    "id": "okhttp-world",
+    "project": "okhttp",
+    "view": "world",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "start",
+      "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+      "ARCHGUARD_DESKTOP_KPI": "0"
+    }
+  },
+  {
+    "id": "okhttp-matrix",
+    "project": "okhttp",
+    "view": "matrix",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "dsm",
+      "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+    }
+  },
+  {
+    "id": "leveldb-world",
+    "project": "leveldb",
+    "view": "world",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "start",
+      "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+      "ARCHGUARD_DESKTOP_KPI": "0"
+    }
+  },
+  {
+    "id": "leveldb-matrix",
+    "project": "leveldb",
+    "view": "matrix",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "dsm",
+      "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+    }
+  },
+  {
+    "id": "swift-nio-world",
+    "project": "swift-nio",
+    "view": "world",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "start",
+      "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+      "ARCHGUARD_DESKTOP_KPI": "0"
+    }
+  },
+  {
+    "id": "swift-nio-matrix",
+    "project": "swift-nio",
+    "view": "matrix",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "dsm",
+      "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+    }
+  },
+  {
+    "id": "mastodon-world",
+    "project": "mastodon",
+    "view": "world",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "start",
+      "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+      "ARCHGUARD_DESKTOP_KPI": "0"
+    }
+  },
+  {
+    "id": "mastodon-matrix",
+    "project": "mastodon",
+    "view": "matrix",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "dsm",
+      "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+    }
+  },
+  {
+    "id": "pekko-world",
+    "project": "pekko",
+    "view": "world",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "start",
+      "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+      "ARCHGUARD_DESKTOP_KPI": "0"
+    }
+  },
+  {
+    "id": "pekko-matrix",
+    "project": "pekko",
+    "view": "matrix",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "dsm",
+      "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+    }
+  },
+  {
+    "id": "boutique-services",
+    "project": "online-boutique",
+    "view": "services",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "services",
+      "ARCHGUARD_DESKTOP_SVC_KIND": "5",
+      "ARCHGUARD_DESKTOP_SVC_SERVICE": "checkoutservice"
+    },
+    "caption_en": "Online Boutique: static deployment evidence; Helm and Kustomize remain unrendered.",
+    "caption_de": "Online Boutique: statische Deployment-Belege; Helm und Kustomize bleiben ungerendert."
+  },
+  {
+    "id": "eshop-docs",
+    "project": "eshop",
+    "view": "arc42 context",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "architecture",
+      "ARCHGUARD_DESKTOP_CHAPTER": "3"
+    },
+    "caption_en": "eShop arc42 context derived from source and configuration.",
+    "caption_de": "arc42-Kontext von eShop aus Quellcode und Konfiguration."
+  },
+  {
+    "id": "commons-before",
+    "project": "commons-collections",
+    "view": "graph before simulation",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "graph",
+      "ARCHGUARD_DESKTOP_OPEN": "org/apache/commons/collections4",
+      "ARCHGUARD_DESKTOP_SIM": "explorer:1"
+    },
+    "caption_en": "Commons Collections before the virtual cut: three package cycle groups in this scope.",
+    "caption_de": "Commons Collections vor dem virtuellen Schnitt: drei Paketzyklusgruppen in diesem Umfang."
+  },
+  {
+    "id": "commons-after",
+    "project": "commons-collections",
+    "view": "graph with simulated edge cut",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "graph",
+      "ARCHGUARD_DESKTOP_OPEN": "org/apache/commons/collections4",
+      "ARCHGUARD_DESKTOP_SIM": "toggle,plan:org/apache/commons/collections4/comparators>org/apache/commons/collections4/ComparatorUtils.java,confirm,explorer:1"
+    },
+    "caption_en": "Cutting comparators \u2192 ComparatorUtils virtually leaves two cycle groups. Source files are unchanged.",
+    "caption_de": "Der virtuelle Schnitt comparators \u2192 ComparatorUtils l\u00e4sst zwei Zyklusgruppen \u00fcbrig. Quelldateien bleiben unver\u00e4ndert."
+  },
+  {
+    "id": "petclinic-ci",
+    "project": "petclinic",
+    "view": "illustrative layer policy violation",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "graph",
+      "ARCHGUARD_DESKTOP_OPEN": "org/springframework/samples/petclinic"
+    },
+    "caption_en": "Spring PetClinic under an illustrative local layer policy. The actual check exits 1.",
+    "caption_de": "Spring PetClinic mit einer beispielhaften lokalen Schichtenregel. Der echte Check endet mit Exit-Code 1."
+  },
+  {
+    "id": "boutique-datastore",
+    "project": "online-boutique",
+    "view": "configured Redis dependency evidence",
+    "environment": {
+      "ARCHGUARD_DESKTOP_TAB": "services",
+      "ARCHGUARD_DESKTOP_SVC_KIND": "5",
+      "ARCHGUARD_DESKTOP_SVC_SERVICE": "redis-cart"
+    },
+    "caption_en": "Online Boutique: redis-cart configuration evidence. A configured Redis reference does not establish a shared-table finding or live traffic.",
+    "caption_de": "Online Boutique: Konfigurationsbelege f\u00fcr redis-cart. Ein konfigurierter Redis-Verweis belegt weder eine gemeinsam genutzte Tabelle noch Live-Traffic."
+  }
+]

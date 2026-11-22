@@ -1,0 +1,144 @@
+[
+  {
+    "name": "Java",
+    "en": {
+      "analysis": "Types, methods, calls and source metrics; missing references leave partial results.",
+      "tools": "JDK 17+ and project classpath",
+      "setup": "Use java on PATH with a full JDK 17+. Supply dependency references in .archguard/java-classpath.txt (one classpath line) or semantic.java.classpath. The Java release level comes from pom.xml/build.gradle(.kts) or semantic.java.release. ArchGuard runs no Maven or Gradle build."
+    },
+    "de": {
+      "analysis": "Typen, Methoden, Aufrufe und Quellmetriken; fehlende Referenzen lassen Lücken.",
+      "tools": "JDK 17+ und Projekt-Classpath",
+      "setup": "java muss auf PATH auf ein vollständiges JDK 17+ zeigen. Abhängigkeitsreferenzen stehen in .archguard/java-classpath.txt (eine Classpath-Zeile) oder semantic.java.classpath. Der Java-Release-Stand stammt aus pom.xml/build.gradle(.kts) oder semantic.java.release. ArchGuard führt keinen Maven- oder Gradle-Build aus."
+    }
+  },
+  {
+    "name": "C#",
+    "en": {
+      "analysis": "Types, methods, calls and source metrics from Roslyn.",
+      "tools": ".NET SDK 8+, target reference packs and restored packages",
+      "setup": "Provide dotnet on PATH and the Microsoft.NETCore.App.Ref pack for the target framework. Restore the project first so obj/project.assets.json exists. Project references and local HintPath assemblies are read; supported SDK-style projects use Microsoft.NET.Sdk or Microsoft.NET.Sdk.Web."
+    },
+    "de": {
+      "analysis": "Typen, Methoden, Aufrufe und Quellmetriken aus Roslyn.",
+      "tools": ".NET SDK 8+, Ziel-Referenzpakete und wiederhergestellte Abhängigkeiten",
+      "setup": "dotnet muss auf PATH liegen; das Microsoft.NETCore.App.Ref-Paket muss zum Ziel-Framework passen. Stelle das Projekt vorher wieder her, damit obj/project.assets.json existiert. Projektreferenzen und lokale HintPath-Assemblies werden gelesen; unterstützte SDK-Projekte nutzen Microsoft.NET.Sdk oder Microsoft.NET.Sdk.Web."
+    }
+  },
+  {
+    "name": "TypeScript / JavaScript",
+    "en": {
+      "analysis": "Types, calls and source metrics; JavaScript needs allowJs. Repository compilers require explicit trust.",
+      "tools": "Node.js, TypeScript; ARCHGUARD_TRUST_PROJECT_COMPILER=1 for a project compiler",
+      "setup": "Use node on PATH. Provide TypeScript in node_modules or semantic.typescript.compiler, and tsconfig.json or semantic.typescript.project. A compiler selected by the repository runs only with ARCHGUARD_TRUST_PROJECT_COMPILER=1 set outside that repository. JavaScript needs allowJs."
+    },
+    "de": {
+      "analysis": "Typen, Aufrufe und Quellmetriken; JavaScript benötigt allowJs. Projekt-Compiler benötigen explizite Freigabe.",
+      "tools": "Node.js, TypeScript; ARCHGUARD_TRUST_PROJECT_COMPILER=1 für Projekt-Compiler",
+      "setup": "node muss auf PATH liegen. TypeScript wird aus node_modules oder semantic.typescript.compiler gelesen; die Projektkonfiguration aus tsconfig.json oder semantic.typescript.project. Ein vom Repository benannter Compiler läuft nur mit außerhalb des Repositorys gesetztem ARCHGUARD_TRUST_PROJECT_COMPILER=1. JavaScript benötigt allowJs."
+    }
+  },
+  {
+    "name": "Go",
+    "en": {
+      "analysis": "Packages, types, methods, functions and metrics. Embedding is composition; DIT/NOC are not applicable.",
+      "tools": "Go SDK",
+      "setup": "Use go on PATH or ARCHGUARD_GO. The bundled helper builds offline with the installed toolchain; no project build or dependency download is run. Missing third-party module references can leave partial results."
+    },
+    "de": {
+      "analysis": "Pakete, Typen, Methoden, Funktionen und Metriken. Embedding ist Komposition; DIT/NOC sind nicht anwendbar.",
+      "tools": "Go SDK",
+      "setup": "Nutze go auf PATH oder ARCHGUARD_GO. Der mitgelieferte Helfer wird offline mit der installierten Toolchain gebaut; Projekt-Builds und Abhängigkeitsdownloads werden nicht ausgeführt. Fehlende Drittmodulreferenzen können zu partiellen Ergebnissen führen."
+    }
+  },
+  {
+    "name": "Rust",
+    "en": {
+      "analysis": "Syntax metrics, abstractness and traits; calls and type references via rust-analyzer after opt-in. Generated code stays unresolved.",
+      "tools": "None for syntax; rust-analyzer and ARCHGUARD_TRUST_PROJECT_COMPILER=1 for calls"
+    },
+    "de": {
+      "analysis": "Syntaxmetriken, Abstraktheit und Traits; Aufrufe und Typreferenzen mit rust-analyzer nach Freigabe. Generierter Code bleibt unaufgelöst.",
+      "tools": "Keine für Syntax; rust-analyzer und ARCHGUARD_TRUST_PROJECT_COMPILER=1 für Aufrufe"
+    }
+  },
+  {
+    "name": "Python",
+    "en": {
+      "analysis": "Classes, functions and metrics; static calls from imports, definitions, self/cls and super(). Other calls and types remain unresolved.",
+      "tools": "Python 3.9+; imports need no interpreter",
+      "setup": "Use python3 on PATH or ARCHGUARD_PYTHON. The helper runs isolated with -I -S and never imports project code. Syntax newer than the installed interpreter is reported as a diagnostic, not measured."
+    },
+    "de": {
+      "analysis": "Klassen, Funktionen und Metriken; statische Aufrufe aus Imports, Definitionen, self/cls und super(). Andere Aufrufe und Typen bleiben unaufgelöst.",
+      "tools": "Python 3.9+; Imports benötigen keinen Interpreter",
+      "setup": "Nutze python3 auf PATH oder ARCHGUARD_PYTHON. Der Helfer läuft isoliert mit -I -S und importiert keinen Projektcode. Syntax, die neuer als der installierte Interpreter ist, wird als Diagnose gemeldet und nicht vermessen."
+    }
+  },
+  {
+    "name": "PHP",
+    "en": {
+      "analysis": "Token-based classes, functions and metrics; static calls from namespaces, imports and class/trait hierarchies. Types remain unresolved.",
+      "tools": "None"
+    },
+    "de": {
+      "analysis": "Klassen, Funktionen und Metriken aus Tokens; statische Aufrufe aus Namespaces, Imports und Klassen-/Trait-Hierarchien. Typen bleiben unaufgelöst.",
+      "tools": "Keine"
+    }
+  },
+  {
+    "name": "Kotlin",
+    "en": {
+      "analysis": "Imports resolve with Java; classes, objects, functions and metrics. Static calls include companion objects and hierarchy; calls into project Java classes need a JDK. Gradle scripts supply subproject dependencies only.",
+      "tools": "None for Kotlin syntax; JDK for Java analysis"
+    },
+    "de": {
+      "analysis": "Imports werden gemeinsam mit Java aufgelöst; Klassen, Objekte, Funktionen und Metriken. Statische Aufrufe inklusive Companion Objects und Hierarchie; Aufrufe in Java-Projektklassen benötigen ein JDK. Gradle-Skripte liefern nur Teilprojekt-Abhängigkeiten.",
+      "tools": "Keine für Kotlin-Syntax; JDK für Java-Analyse"
+    }
+  },
+  {
+    "name": "C / C++",
+    "en": {
+      "analysis": "Includes use compile_commands.json and literal CMake include paths. Types, functions and syntax metrics; calls and type references unresolved.",
+      "tools": "None"
+    },
+    "de": {
+      "analysis": "Includes berücksichtigen compile_commands.json und literale CMake-Include-Pfade. Typen, Funktionen und Syntaxmetriken; Aufrufe und Typreferenzen bleiben unaufgelöst.",
+      "tools": "Keine"
+    }
+  },
+  {
+    "name": "Swift",
+    "en": {
+      "analysis": "SwiftPM target imports, types, extensions, functions and metrics. Unique project constructors/static methods resolve; Xcode projects are not read.",
+      "tools": "None"
+    },
+    "de": {
+      "analysis": "SwiftPM-Target-Imports, Typen, Extensions, Funktionen und Metriken. Eindeutige Projekt-Konstruktoren/statische Methoden werden aufgelöst; Xcode-Projekte werden nicht gelesen.",
+      "tools": "Keine"
+    }
+  },
+  {
+    "name": "Ruby",
+    "en": {
+      "analysis": "require/require_relative and Rails Zeitwerk imports; classes, modules, methods and metrics. Selected static calls resolve; dynamic dispatch stays explicit.",
+      "tools": "None"
+    },
+    "de": {
+      "analysis": "require/require_relative und Rails-Zeitwerk-Imports; Klassen, Module, Methoden und Metriken. Ausgewählte statische Aufrufe werden aufgelöst; dynamische Aufrufe bleiben explizit.",
+      "tools": "Keine"
+    }
+  },
+  {
+    "name": "Scala",
+    "en": {
+      "analysis": "Scala 2/3 imports resolve with Java/Kotlin; types, defs and metrics, selected static Scala calls. Implicits, extension methods and Java/Kotlin call targets remain unresolved; no .sc scripts.",
+      "tools": "None"
+    },
+    "de": {
+      "analysis": "Scala-2/3-Imports werden mit Java/Kotlin aufgelöst; Typen, defs, Metriken und ausgewählte statische Scala-Aufrufe. Implicits, Extension-Methoden und Java-/Kotlin-Aufrufziele bleiben unaufgelöst; keine .sc-Skripte.",
+      "tools": "Keine"
+    }
+  }
+]

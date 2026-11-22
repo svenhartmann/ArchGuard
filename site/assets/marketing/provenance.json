@@ -1,0 +1,683 @@
+{
+  "capture_date": "2026-11-20",
+  "archguard_source_commit": "18fc5437afad88d3738513c966375ce4c7f97645",
+  "projects": [
+    {
+      "id": "commons-collections",
+      "name": "Apache Commons Collections",
+      "repository": "https://github.com/apache/commons-collections",
+      "commit": "2bcf69296bbde598b1e8bac1b3cd90a11ef3e563",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE.txt",
+      "license_sha256": "b1d2870f1a00e4d7f56576e5f0870cba109e041f8af66866cf5b499478e654e7",
+      "language": "java",
+      "source_roots": [
+        "src/main/java"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"src/main/java\"]\nlanguages = [\"java\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 4\n"
+    },
+    {
+      "id": "kafka",
+      "name": "Apache Kafka",
+      "repository": "https://github.com/apache/kafka",
+      "commit": "dc9f1f42828f2f301b77926b22b59fbbdfc0e4a9",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE",
+      "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "language": "java",
+      "source_roots": [
+        "clients/src/main/java"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"clients/src/main/java\"]\nlanguages = [\"java\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "eshop",
+      "name": "Microsoft eShop",
+      "repository": "https://github.com/dotnet/eShop",
+      "commit": "ab10e4c68fd26369578ebfb3fd1ccf3b867d0444",
+      "license": "MIT",
+      "license_path": "LICENSE",
+      "license_sha256": "baebca0309090f4eca1b7a82c836cc91e48b2b92139c2280fb0ff69af922c2ae",
+      "language": "csharp",
+      "source_roots": [
+        "src"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"src\"]\nlanguages = [\"cs\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "nest",
+      "name": "NestJS",
+      "repository": "https://github.com/nestjs/nest",
+      "commit": "e0600bb04c3aedc3f643cc1dd2d5e515e12cbc2a",
+      "license": "MIT",
+      "license_path": "LICENSE",
+      "license_sha256": "56967de93525b12a30717e4446ccef3bbe32fafdbe2350f143c1cc6971b19ed3",
+      "language": "typescript",
+      "source_roots": [
+        "packages"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"packages\"]\nlanguages = [\"ts\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "prometheus",
+      "name": "Prometheus",
+      "repository": "https://github.com/prometheus/prometheus",
+      "commit": "06170caaea449ce139982c9ca9ddb5bf499ad488",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE",
+      "license_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "language": "go",
+      "source_roots": [
+        "."
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\".\"]\nlanguages = [\"go\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "ripgrep",
+      "name": "ripgrep",
+      "repository": "https://github.com/BurntSushi/ripgrep",
+      "commit": "43fc97d43a4c61d65e7d74d4110c8480fe42ea5b",
+      "license": "MIT OR Unlicense",
+      "license_path": "LICENSE-MIT",
+      "license_sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f",
+      "language": "rust",
+      "source_roots": [
+        "crates"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"crates\"]\nlanguages = [\"rs\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n",
+      "additional_license_files": [
+        {
+          "path": "UNLICENSE",
+          "sha256": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c"
+        }
+      ]
+    },
+    {
+      "id": "django",
+      "name": "Django",
+      "repository": "https://github.com/django/django",
+      "commit": "c67d872765e05ebd009fadf7de8d834b01bae9e4",
+      "license": "BSD-3-Clause",
+      "license_path": "LICENSE",
+      "license_sha256": "b846415d1b514e9c1dff14a22deb906d794bc546ca6129f950a18cd091e2a669",
+      "language": "python",
+      "source_roots": [
+        "django"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"django\"]\nlanguages = [\"py\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "symfony",
+      "name": "Symfony",
+      "repository": "https://github.com/symfony/symfony",
+      "commit": "2894e4eeea9e328e5f38d5e5e52498438c9a12fc",
+      "license": "MIT",
+      "license_path": "LICENSE",
+      "license_sha256": "18da7e490d2aa77197a0619b25bcc771a0110132a9d76071665718d3295e73cb",
+      "language": "php",
+      "source_roots": [
+        "src/Symfony/Component"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"src/Symfony/Component\"]\nlanguages = [\"php\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "okhttp",
+      "name": "OkHttp",
+      "repository": "https://github.com/square/okhttp",
+      "commit": "619d9c987aa74de3a445b63d26e2dc328f03d873",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE.txt",
+      "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "language": "kotlin",
+      "source_roots": [
+        "okhttp/src/commonJvmAndroid/kotlin"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"okhttp/src/commonJvmAndroid/kotlin\"]\nlanguages = [\"kt\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "leveldb",
+      "name": "LevelDB",
+      "repository": "https://github.com/google/leveldb",
+      "commit": "29465588d3dfdc80fba5e198037582b8fdb5dd60",
+      "license": "BSD-3-Clause",
+      "license_path": "LICENSE",
+      "license_sha256": "ccc19f1da0798ed666609b65a5b44dd8b3abe6fc08b9c0592eb76e82e174db19",
+      "language": "cpp",
+      "source_roots": [
+        "."
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\".\"]\nlanguages = [\"cpp\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "swift-nio",
+      "name": "SwiftNIO",
+      "repository": "https://github.com/apple/swift-nio",
+      "commit": "ae78c343cde1fad5aad88f0bf59cc7a91dfec0e5",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE.txt",
+      "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "language": "swift",
+      "source_roots": [
+        "Sources"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"Sources\"]\nlanguages = [\"swift\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "mastodon",
+      "name": "Mastodon",
+      "repository": "https://github.com/mastodon/mastodon",
+      "commit": "9bd703117f9945f9a3ac657ba045e2549898bfcc",
+      "license": "AGPL-3.0",
+      "license_path": "LICENSE",
+      "license_sha256": "57c8ff33c9c0cfc3ef00e650a1cc910d7ee479a8bc509f6c9209a7c2a11399d6",
+      "language": "ruby",
+      "source_roots": [
+        "app",
+        "lib"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"app\", \"lib\"]\nlanguages = [\"rb\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "pekko",
+      "name": "Apache Pekko",
+      "repository": "https://github.com/apache/pekko",
+      "commit": "1d75feef39295f585314a55e521def94ed9aa3b3",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE",
+      "license_sha256": "2dca66a35023ac4f692030f7848d41098f622b18ab2f58a15cd48a6de272f30c",
+      "language": "scala",
+      "source_roots": [
+        "actor/src/main/scala"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"actor/src/main/scala\"]\nlanguages = [\"scala\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "online-boutique",
+      "name": "Online Boutique",
+      "repository": "https://github.com/GoogleCloudPlatform/microservices-demo",
+      "commit": "c7cb6d5bfd6ea3aed768634ebbcb98cb7a523712",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE",
+      "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "language": null,
+      "source_roots": null,
+      "verified_deployment_files": {
+        "kubernetes": [
+          "kubernetes-manifests/adservice.yaml",
+          "kubernetes-manifests/cartservice.yaml",
+          "kubernetes-manifests/checkoutservice.yaml",
+          "kubernetes-manifests/currencyservice.yaml"
+        ],
+        "helm": [
+          "helm-chart/Chart.yaml"
+        ],
+        "kustomize": [
+          "kustomize/base/kustomization.yaml",
+          "kustomize/components/alloydb/kustomization.yaml",
+          "kustomize/components/container-images-registry/kustomization.yaml",
+          "kustomize/components/container-images-tag/kustomization.yaml"
+        ],
+        "terraform": [
+          "terraform/main.tf",
+          "terraform/memorystore.tf",
+          "terraform/output.tf",
+          "terraform/providers.tf"
+        ]
+      }
+    },
+    {
+      "id": "petclinic",
+      "name": "Spring PetClinic",
+      "repository": "https://github.com/spring-projects/spring-petclinic",
+      "commit": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE.txt",
+      "license_sha256": "56dfc19e0dc836e30177332f73e8e6fbc297941acf3d906eec6eaaa46c2c452a",
+      "language": "java",
+      "source_roots": [
+        "src/main/java"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"src/main/java\"]\nlanguages = [\"java\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 5\n\n# Deliberately restrictive teaching policy; not the upstream architecture policy.\n[[layers]]\nname = \"model\"\ncontains = [\"org/springframework/samples/petclinic/model/**\"]\nmay_depend_on = []\n\n[[layers]]\nname = \"owners-demo\"\ncontains = [\"org/springframework/samples/petclinic/owner/**\"]\nmay_depend_on = []\n",
+      "scope_note": "Deliberately restrictive local layer policy demonstrates a failing gate; this is not an upstream defect report."
+    }
+  ],
+  "notes": [
+    "Fresh upstream clones; no checkout from another local project was used.",
+    "Missing evidence is not a zero. Snapshot software renders the real desktop widgets, without drawing graph data into images.",
+    "Upstream source and dependencies are not distributed in the site artifact.",
+    "Configuration records requested source filters. The desktop repository overview can additionally aggregate discovered project scopes, visible in the screenshot; it is not a claim that the CLI source filter fully bounds that overview."
+  ],
+  "environment": {
+    "os": "macOS",
+    "architecture": "arm64",
+    "jdk": "GraalVM Community JDK 23.0.1",
+    "go_sdk": "unavailable",
+    "project_compiler_opt_in": false,
+    "manifest_rendering_opt_in": false,
+    "project_builds_run": false,
+    "project_dependencies_installed": false,
+    "rendering": "Slint software renderer, English UI, 1480 x 920 logical points (World/features) or 1480 x 600 (matrix), 2x scale"
+  },
+  "desktop_sha256": "f438d341a5b7ae906f2ef42d2eb8a101fc7c763a70879493889d657686d37d18",
+  "cli_sha256": "94775859b50ef4404119e12b8dc1ac351855baa28e5372dc1e7efa2f8d40f228",
+  "captures": [
+    {
+      "id": "kafka-world",
+      "project": "kafka",
+      "view": "world",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "start",
+        "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+        "ARCHGUARD_DESKTOP_KPI": "0"
+      },
+      "asset": "assets/marketing/kafka-world.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "8c0a7cfbf6709895fe6db747fb932fb6f7777561a07e489f04da0455d0487de9"
+    },
+    {
+      "id": "kafka-matrix",
+      "project": "kafka",
+      "view": "matrix",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "dsm",
+        "ARCHGUARD_DESKTOP_SIZE": "1480x920"
+      },
+      "asset": "assets/marketing/kafka-matrix.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "022dad4335a3da0db3aa41c2a886474dc477db98d80907dfdff6e873cab055c3"
+    },
+    {
+      "id": "eshop-world",
+      "project": "eshop",
+      "view": "world",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "start",
+        "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+        "ARCHGUARD_DESKTOP_KPI": "0"
+      },
+      "asset": "assets/marketing/eshop-world.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "5465f227793e146a8ced20244b2624235cb48c67b28ca55a9fcc74e897496230"
+    },
+    {
+      "id": "eshop-matrix",
+      "project": "eshop",
+      "view": "matrix",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "dsm",
+        "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+      },
+      "asset": "assets/marketing/eshop-matrix.png",
+      "width": 2960,
+      "height": 1200,
+      "sha256": "e89728e92ba5f8a80457aaded36dccab04cf765333b0763976e8d1eab9daae14"
+    },
+    {
+      "id": "nest-world",
+      "project": "nest",
+      "view": "world",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "start",
+        "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+        "ARCHGUARD_DESKTOP_KPI": "0"
+      },
+      "asset": "assets/marketing/nest-world.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "2e7f0b0b9df423dab7430db0d0fe9765cfe0184cbf03cf51ad15bcc7f989ec7a"
+    },
+    {
+      "id": "nest-matrix",
+      "project": "nest",
+      "view": "matrix",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "dsm",
+        "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+      },
+      "asset": "assets/marketing/nest-matrix.png",
+      "width": 2960,
+      "height": 1200,
+      "sha256": "cad189ea7ad209e7affb79d8f28f9c4c36a884d79faf9937020650d171782335"
+    },
+    {
+      "id": "prometheus-world",
+      "project": "prometheus",
+      "view": "world",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "start",
+        "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+        "ARCHGUARD_DESKTOP_KPI": "0"
+      },
+      "asset": "assets/marketing/prometheus-world.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "43c0fee867e471479d0bb7132c3ae213494438a61acd28802098810533656643"
+    },
+    {
+      "id": "prometheus-matrix",
+      "project": "prometheus",
+      "view": "matrix",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "dsm",
+        "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+      },
+      "asset": "assets/marketing/prometheus-matrix.png",
+      "width": 2960,
+      "height": 1200,
+      "sha256": "57a16ddcdce4863277e17acc25ac51d8dad6caee5b1af58cad35ecbcc745c1d2"
+    },
+    {
+      "id": "ripgrep-world",
+      "project": "ripgrep",
+      "view": "world",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "start",
+        "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+        "ARCHGUARD_DESKTOP_KPI": "0"
+      },
+      "asset": "assets/marketing/ripgrep-world.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "30fba615555580d6d9081dbd2ae18160a859ee2dfc5c25bd896ee2ad0389b9a0"
+    },
+    {
+      "id": "ripgrep-matrix",
+      "project": "ripgrep",
+      "view": "matrix",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "dsm",
+        "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+      },
+      "asset": "assets/marketing/ripgrep-matrix.png",
+      "width": 2960,
+      "height": 1200,
+      "sha256": "e0fe9de6a863005302753f1629a3d5943c45f3bfa01a4aefdbe76d8c5d307dd7"
+    },
+    {
+      "id": "django-world",
+      "project": "django",
+      "view": "world",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "start",
+        "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+        "ARCHGUARD_DESKTOP_KPI": "0"
+      },
+      "asset": "assets/marketing/django-world.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "f24a97a55c185d338ed17fe20863797450b8bff8ad9782249b1810a38e6fd6b3"
+    },
+    {
+      "id": "django-matrix",
+      "project": "django",
+      "view": "matrix",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "dsm",
+        "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+      },
+      "asset": "assets/marketing/django-matrix.png",
+      "width": 2960,
+      "height": 1200,
+      "sha256": "bb3594d5b963b0b90fd1df585bfa18e69e2d37a4778dd4c380d46802e1da0383"
+    },
+    {
+      "id": "symfony-world",
+      "project": "symfony",
+      "view": "world",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "start",
+        "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+        "ARCHGUARD_DESKTOP_KPI": "0"
+      },
+      "asset": "assets/marketing/symfony-world.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "c1117bef14a4432b98eb9087bf289274cb6c206e5ae3d22e0170bf83dec3c5ce"
+    },
+    {
+      "id": "symfony-matrix",
+      "project": "symfony",
+      "view": "matrix",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "dsm",
+        "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+      },
+      "asset": "assets/marketing/symfony-matrix.png",
+      "width": 2960,
+      "height": 1200,
+      "sha256": "4369ecd293e6a3b8af4aa2d94f4ad8ebcf9addc16cda1d1ddddf06949a20d43e"
+    },
+    {
+      "id": "okhttp-world",
+      "project": "okhttp",
+      "view": "world",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "start",
+        "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+        "ARCHGUARD_DESKTOP_KPI": "0"
+      },
+      "asset": "assets/marketing/okhttp-world.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "2a1578a06e7e5c919ad72e6b9848196800646bcf4a9e25e432e6b0e7d123c9e9"
+    },
+    {
+      "id": "okhttp-matrix",
+      "project": "okhttp",
+      "view": "matrix",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "dsm",
+        "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+      },
+      "asset": "assets/marketing/okhttp-matrix.png",
+      "width": 2960,
+      "height": 1200,
+      "sha256": "5200b710a68b808886af80619d7c2b8274ccb91c54ad8fdd04ac46af04411787"
+    },
+    {
+      "id": "leveldb-world",
+      "project": "leveldb",
+      "view": "world",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "start",
+        "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+        "ARCHGUARD_DESKTOP_KPI": "0"
+      },
+      "asset": "assets/marketing/leveldb-world.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "3f01e576b297e8a83d7d27b29eb44ffbe056d1aa94f1a906d9896b919e6f6317"
+    },
+    {
+      "id": "leveldb-matrix",
+      "project": "leveldb",
+      "view": "matrix",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "dsm",
+        "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+      },
+      "asset": "assets/marketing/leveldb-matrix.png",
+      "width": 2960,
+      "height": 1200,
+      "sha256": "ca97ce42e45fe5e989f466b875c73161dcf72af7e5aca4334be4544e6b0b9d8b"
+    },
+    {
+      "id": "swift-nio-world",
+      "project": "swift-nio",
+      "view": "world",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "start",
+        "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+        "ARCHGUARD_DESKTOP_KPI": "0"
+      },
+      "asset": "assets/marketing/swift-nio-world.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "cbb98b7ed548ae127e7c9ad59276261cab7f1e3246082f764eb0e5fc9410caea"
+    },
+    {
+      "id": "swift-nio-matrix",
+      "project": "swift-nio",
+      "view": "matrix",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "dsm",
+        "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+      },
+      "asset": "assets/marketing/swift-nio-matrix.png",
+      "width": 2960,
+      "height": 1200,
+      "sha256": "803730fde6f2fbdd0adff35c6168acf1a90e8fe8623c181ba0dcb3b3d0f43c4a"
+    },
+    {
+      "id": "mastodon-world",
+      "project": "mastodon",
+      "view": "world",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "start",
+        "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+        "ARCHGUARD_DESKTOP_KPI": "0"
+      },
+      "asset": "assets/marketing/mastodon-world.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "3ad81b8f17062fedad3e45f6a26fe47b3f79059663b9e905671868b9223a3772"
+    },
+    {
+      "id": "mastodon-matrix",
+      "project": "mastodon",
+      "view": "matrix",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "dsm",
+        "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+      },
+      "asset": "assets/marketing/mastodon-matrix.png",
+      "width": 2960,
+      "height": 1200,
+      "sha256": "b71eb6c48d148fb17fbc40e3102feb9c2972031ddf28b75af9c5e7eaeccf02f2"
+    },
+    {
+      "id": "pekko-world",
+      "project": "pekko",
+      "view": "world",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "start",
+        "ARCHGUARD_DESKTOP_START_MODE": "architecture",
+        "ARCHGUARD_DESKTOP_KPI": "0"
+      },
+      "asset": "assets/marketing/pekko-world.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "e84bd0d6abb9bc4da4bf95753ba70326e6c36027ea391037ef2c44b28ea62372"
+    },
+    {
+      "id": "pekko-matrix",
+      "project": "pekko",
+      "view": "matrix",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "dsm",
+        "ARCHGUARD_DESKTOP_SIZE": "1480x600"
+      },
+      "asset": "assets/marketing/pekko-matrix.png",
+      "width": 2960,
+      "height": 1200,
+      "sha256": "4b436b925f15c688237729dadef944393258300fff9277002d8072722aa25268"
+    },
+    {
+      "id": "boutique-services",
+      "project": "online-boutique",
+      "view": "services",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "services",
+        "ARCHGUARD_DESKTOP_SVC_KIND": "5",
+        "ARCHGUARD_DESKTOP_SVC_SERVICE": "checkoutservice"
+      },
+      "caption_en": "Online Boutique: static deployment evidence; Helm and Kustomize remain unrendered.",
+      "caption_de": "Online Boutique: statische Deployment-Belege; Helm und Kustomize bleiben ungerendert.",
+      "asset": "assets/marketing/boutique-services.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "87deac7d0d589d0f6fba0f17072e6619e1d7be9bca3fd21c6fd239c80b384688"
+    },
+    {
+      "id": "eshop-docs",
+      "project": "eshop",
+      "view": "arc42 context",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "architecture",
+        "ARCHGUARD_DESKTOP_CHAPTER": "3"
+      },
+      "caption_en": "eShop arc42 context derived from source and configuration.",
+      "caption_de": "arc42-Kontext von eShop aus Quellcode und Konfiguration.",
+      "asset": "assets/marketing/eshop-docs.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "bcf4510407ef90b805c59ba8afc2fc16865a67ad5837673d49a520f30b7d0d44"
+    },
+    {
+      "id": "commons-before",
+      "project": "commons-collections",
+      "view": "graph before simulation",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "graph",
+        "ARCHGUARD_DESKTOP_OPEN": "org/apache/commons/collections4",
+        "ARCHGUARD_DESKTOP_SIM": "explorer:1"
+      },
+      "caption_en": "Commons Collections before the virtual cut: three package cycle groups in this scope.",
+      "caption_de": "Commons Collections vor dem virtuellen Schnitt: drei Paketzyklusgruppen in diesem Umfang.",
+      "asset": "assets/marketing/commons-before.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "b7d2cdc265253c4f01363029cc53038879acf28e8ef877e1ce04195def56899c"
+    },
+    {
+      "id": "commons-after",
+      "project": "commons-collections",
+      "view": "graph with simulated edge cut",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "graph",
+        "ARCHGUARD_DESKTOP_OPEN": "org/apache/commons/collections4",
+        "ARCHGUARD_DESKTOP_SIM": "toggle,plan:org/apache/commons/collections4/comparators>org/apache/commons/collections4/ComparatorUtils.java,confirm,explorer:1"
+      },
+      "caption_en": "Cutting comparators \u2192 ComparatorUtils virtually leaves two cycle groups. Source files are unchanged.",
+      "caption_de": "Der virtuelle Schnitt comparators \u2192 ComparatorUtils l\u00e4sst zwei Zyklusgruppen \u00fcbrig. Quelldateien bleiben unver\u00e4ndert.",
+      "asset": "assets/marketing/commons-after.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "0969736f653e35ff953162f15e315f1695720bcb12a45230442f89aa767f32c0"
+    },
+    {
+      "id": "petclinic-ci",
+      "project": "petclinic",
+      "view": "illustrative layer policy violation",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "graph",
+        "ARCHGUARD_DESKTOP_OPEN": "org/springframework/samples/petclinic"
+      },
+      "caption_en": "Spring PetClinic under an illustrative local layer policy. The actual check exits 1.",
+      "caption_de": "Spring PetClinic mit einer beispielhaften lokalen Schichtenregel. Der echte Check endet mit Exit-Code 1.",
+      "asset": "assets/marketing/petclinic-ci.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "bb37176f7b0f17c9fa04cadef1f03aca43dfe8544c93740e4b8c7f39ce646e75"
+    },
+    {
+      "id": "boutique-datastore",
+      "project": "online-boutique",
+      "view": "configured Redis dependency evidence",
+      "environment": {
+        "ARCHGUARD_DESKTOP_TAB": "services",
+        "ARCHGUARD_DESKTOP_SVC_KIND": "5",
+        "ARCHGUARD_DESKTOP_SVC_SERVICE": "redis-cart"
+      },
+      "caption_en": "Online Boutique: redis-cart configuration evidence. A configured Redis reference does not establish a shared-table finding or live traffic.",
+      "caption_de": "Online Boutique: Konfigurationsbelege f\u00fcr redis-cart. Ein konfigurierter Redis-Verweis belegt weder eine gemeinsam genutzte Tabelle noch Live-Traffic.",
+      "asset": "assets/marketing/boutique-datastore.png",
+      "width": 2960,
+      "height": 1840,
+      "sha256": "d2bb221f43361feb2b1dc9afc23a6b401d65263d6725d1718f5751ef6b82beaf"
+    }
+  ]
+}

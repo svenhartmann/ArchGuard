@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Capture every site screenshot and the flow video from the ArchGuard desktop app.
+# Capture the gallery screenshots from the ArchGuard desktop app.
 # Needs: an app built with `cargo build --release -p archguard-desktop --features snapshot`
-# (without the feature a real window opens), ffmpeg, and the pinned checkouts from
+# (without the feature a real window opens), and the pinned checkouts from
 # examples/ (Commons Collections and Kafka with their example configuration copied in).
 # Run from the repository root: site/media/capture-app.sh [path/to/archguard-desktop]
 set -euo pipefail
@@ -49,31 +49,3 @@ shot otel-grpc examples/checkouts/opentelemetry-demo ARCHGUARD_DESKTOP_TAB=servi
 shot otel-cycle examples/checkouts/opentelemetry-demo ARCHGUARD_DESKTOP_TAB=services \
   ARCHGUARD_DESKTOP_SVC_KIND=5 ARCHGUARD_DESKTOP_SVC_SERVICE=otel-collector
 shot kafka-world examples/checkouts/kafka ARCHGUARD_DESKTOP_TAB=start ARCHGUARD_DESKTOP_WORLD=org/apache/kafka
-
-# Flow video: one full turn of the World View (72 captures, 5 degrees apart, four at a time),
-# then six views, 4 s each with 0.6 s fades.
-mkdir -p "$tmp/turn"
-for a in $(seq 0 5 355); do
-  n=$(printf %03d $((a / 5))) # consecutive numbers for ffmpeg's r%03d pattern
-  out="$tmp/turn" shot "r$n" "$cc" ARCHGUARD_DESKTOP_TAB=start ARCHGUARD_DESKTOP_START_MODE=architecture \
-    ARCHGUARD_DESKTOP_ROTATE="$a" >/dev/null &
-  [ $(((a / 5 + 1) % 4)) -eq 0 ] && wait
-done
-wait
-ffmpeg -loglevel error -y -framerate 12 -i "$tmp/turn/r%03d.png" -vf scale=1480:920,setsar=1,fps=30 \
-  -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p "$tmp/turn.mp4"
-frames=(world-cbo world-package graph calls quality arc42)
-inputs=(-i "$tmp/turn.mp4"); filter="[0]setsar=1,fps=30[a0];"
-for i in "${!frames[@]}"; do
-  inputs+=(-loop 1 -t 4 -i "$out/${frames[$i]}.png")
-  filter+="[$((i + 1))]scale=1480:920,setsar=1,fps=30[a$((i + 1))];"
-done
-prev=a0; offset=5.4
-for i in $(seq 1 ${#frames[@]}); do
-  filter+="[$prev][a$i]xfade=transition=fade:duration=0.6:offset=$offset[x$i];"
-  prev=x$i; offset=$(echo "$offset + 3.4" | bc)
-done
-ffmpeg -loglevel error -y "${inputs[@]}" -filter_complex "${filter%;}" -map "[$prev]" -an \
-  -c:v libx264 -preset slow -crf 30 -pix_fmt yuv420p -movflags +faststart "$out/flow.mp4"
-ffmpeg -loglevel error -y -ss 0.5 -i "$out/flow.mp4" -frames:v 1 -q:v 3 "$out/flow-poster.jpg"
-echo "captured flow video"

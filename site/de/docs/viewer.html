@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="de">
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <meta name="description" content="Navigiere von der Repository-Übersicht zu Paketen, Dateien und Quellbelegen.">
+ <title>Desktop-Anleitung — ArchGuard-Dokumentation</title>
+ <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
+ <link rel="stylesheet" href="../../styles.css">
+ <link rel="alternate" hreflang="en" href="../../docs/viewer.html">
+ <script src="../../site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Zum Inhalt</a>
+<header class="header wrap">
+ <a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a>
+ <nav aria-label="Hauptnavigation"><a href="../index.html#examples">Beispiele</a><a class="nav-docs" href="index.html">Doku</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>GitHub</a><a class="language-switch" href="../../docs/viewer.html" lang="en" hreflang="en">EN</a><a class="nav-cta" href="getting-started.html">Loslegen</a></nav>
+</header>
+<div class="docs-layout wrap">
+ <aside class="docs-sidebar"><a class="docs-home" href="index.html">Dokumentation</a><nav aria-label="Dokumentation"><a href="overview.html">Was ist ArchGuard?</a><a href="getting-started.html">Erste Schritte</a><a href="viewer.html" aria-current="page">Desktop-Anleitung</a><a href="cli.html">CLI-Referenz</a><a href="configuration.html">Konfiguration und Regeln</a><a href="prerequisites.html">Werkzeuge und Voraussetzungen</a><a href="languages.html">Sprachen und Messgrenzen</a><a href="services.html">Services und Ereigniszyklen</a><a href="mcp.html">MCP und Coding-Agents</a><a href="ci.html">CI und Qualitäts-Gates</a><a href="workflows.html">Workflows und Evidenz</a><a href="troubleshooting.html">Fehlerdiagnose</a></nav><a class="docs-demo" href="../index.html#explore">Desktop-Screenshots ansehen</a></aside>
+ <main id="main" class="docs-article">
+  <div class="eyebrow">ARCHGUARD-DOKUMENTATION</div>
+  <h1>Desktop-Anleitung</h1><p class="docs-lead">Navigiere von der Repository-Übersicht zu Paketen, Dateien und Quellbelegen.</p>
+  <nav class="docs-toc" aria-label="Auf dieser Seite"><strong>Auf dieser Seite</strong><a href="#layout">Die Oberfläche kennenlernen</a><a href="#world">World View</a><a href="#details">Auswahl und Details</a><a href="#graph">Abhängigkeitsgraph</a><a href="#matrix">Baummatrix</a><a href="#architecture">Architektur und arc42</a><a href="#links">Exportieren und teilen</a></nav>
+
+<h2 id="layout">Die Oberfläche kennenlernen</h2>
+<p>Die Desktop-App behält in jeder Ansicht denselben Rahmen. Von oben nach unten:</p>
+<ul><li><strong>Menüleiste:</strong> <strong>Datei (File)</strong> öffnet Projekte (<strong>Projekt öffnen… / Open project…</strong>, zuletzt verwendete Projekte), exportiert und schließt sie. <strong>Ansicht (View)</strong> teilt Bereiche, wechselt Ansichten, Theme, Sprache und Vollbild und öffnet die <strong>Einstellungen (Settings)</strong>. <strong>Hilfe (Help)</strong> prüft auf Updates.</li><li><strong>Projekt-Tabs:</strong> Jedes geöffnete Projekt hat einen eigenen Tab; <strong>+</strong> öffnet ein weiteres.</li><li><strong>Projektleiste:</strong> Projektname, Build-Einheiten in einem Monorepo und die Ansichten in drei Gruppen: Übersicht (Start, Architektur), Struktur (Graph, Matrix, Aufrufe, Services, Laufzeit) und Findings (Qualität, Sicherheit).</li><li><strong>Module suchen (Search modules)</strong> findet Pakete und Dateien; das Mondsymbol schaltet das dunkle Theme um.</li><li><strong>Bereichsleiste:</strong> Der rechte Knopf teilt die Ansicht in zwei Bereiche, sodass zwei Ansichten nebeneinander stehen können.</li></ul>
+<p>Unter diesen Leisten hat jede Ansicht eine Zeile für ihre Optionen. Im Graphen enthält sie den Darstellungsmodus, die Kantenrichtung und <strong>Nur Zyklen (Cycles only)</strong>.</p>
+<h2 id="world">World View</h2>
+<p>Start zeigt eine Architekturlandschaft. Im Repository-Modus enthält sie erkannte Projekte und Service-Beziehungen. In einem Quellprojekt zeigt sie die verfügbaren Pakete, Klassen oder Dateien. Das sind unterschiedliche Analyseumfänge: Repository-Beziehungen sind nicht automatisch Aufrufe auf Quellebene.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Aktion</th><th scope="col">Bedienung</th></tr></thead><tbody><tr><td>Zoomen</td><td>Mausrad, <kbd>+</kbd> / <kbd>-</kbd> oder die Zoom-Knöpfe.</td></tr><tr><td>Verschieben</td><td>Ziehen oder Pfeiltasten.</td></tr><tr><td>Drehen</td><td><kbd>Q</kbd> / <kbd>E</kbd> oder die Drehknöpfe.</td></tr><tr><td>Ein Paket untersuchen</td><td>Wähle eine Paketbeschriftung oder öffne ihre Fläche. Kehre mit Zurück oder der Pfadnavigation zurück.</td></tr><tr><td>Einen Service öffnen</td><td>Wähle seine Fläche und <strong>In Service zoomen (Zoom into service)</strong> oder wähle ihn in der Bereichsauswahl.</td></tr><tr><td>Darstellung zurücksetzen</td><td>Passe mit Fit den sichtbaren Ausschnitt an oder stelle mit Reset den ursprünglichen World-Zustand wieder her.</td></tr></tbody></table></div>
+<p>Die Problems-Linse hebt Findings hervor. Explore wechselt die dargestellte Metrik, soweit Messungen vorliegen. Unbekannte Werte unterscheiden sich von niedrigen Werten. Höhe und Farbe einer Fläche sind nur zusammen mit der gewählten Metrik und ihrem Umfang aussagekräftig.</p>
+<p>Mit <strong>Explore</strong> färbt die Metrikauswahl neben den Linsen jede Klassenfläche nach Complexity (höchste zyklomatische Komplexität einer Methode), CBO (andere verwendete Klassen), RFC (von einer Instanz aus aufrufbare Methoden), DIT (Vererbungstiefe), NOC (direkte Unterklassen), WMC (Summe der Methodenkomplexität) oder LCOM4 (zusammenhängende Methodengruppen; 1 = kohäsiv). Beschriftungen zeigen den höchsten Wert innerhalb eines Pakets; die Statuszeile nennt den höchsten erfassten Wert mit seiner Position. Graue Flächen haben keine Messung.</p>
+<img src="../../assets/world-cbo.png" width="1480" height="920" loading="lazy" alt="World View von Apache Commons Collections in der ArchGuard-Desktop-App mit nach CBO eingefärbten Klassenflächen">
+<h2 id="details">Auswahl und Details</h2>
+<p>Eine Auswahl fokussiert ein Element und seine Beziehungen. Öffne es mit <strong>Details</strong> oder <strong>Enter</strong>. Wähle ein anderes Element, um die offenen Details zu aktualisieren. Schließe sie mit <strong>Esc</strong> oder ×. Das Overlay verschiebt den Graphen nicht; Anheften kann einen eigenen Bereich reservieren, sofern die Ansicht es unterstützt.</p>
+<p>Lies in den Details Quellstellen, Belegart und Hinweise zur Abdeckung. Eine dargestellte Kante kann eine Quellabhängigkeit, Konfigurationsreferenz oder abgeleitete Ereignisroute sein; die Ansicht benennt die Art.</p>
+<h2 id="graph">Abhängigkeitsgraph</h2>
+<p>Die Baumdarstellung erhält die Pakethierarchie und zeichnet eingehende und ausgehende Beziehungen. Wähle ein Paket, bevor du Eingehend (Incoming), Ausgehend (Outgoing) oder Beide (Both) nutzt. Alle (All) kehrt zur weiteren Sicht zurück; Nur Zyklen (Cycles only) fokussiert zyklische Abhängigkeiten.</p>
+<p>Klappe Pakete nur so weit wie nötig auf. Aggregation verändert die sichtbare Grenze; Zahlen auf Paket- und Dateiebene müssen daher nicht übereinstimmen. Eine Zyklusgruppe ist eine stark zusammenhängende Menge. Eine dargestellte Route ist ein Beispiel durch diese Menge, nicht zwingend jeder mögliche Zyklus.</p>
+<img src="../../assets/graph.png" width="1480" height="920" loading="lazy" alt="Baumförmiger Abhängigkeitsgraph in der ArchGuard-Desktop-App">
+<h2 id="matrix">Baummatrix</h2>
+<p>Lies Zeilen als Quellen von Abhängigkeiten und Spalten als Zielpakete. Eine gefüllte Zelle fasst Belege zwischen diesen Grenzen zusammen. Klappe eine Zeile auf, um ihre Dateien zu sehen; grenze große Projekte mit Suche, Umfang und Zyklusfiltern ein. Das Blättern durch Zielspalten entfernt keine Abhängigkeiten aus der zugrunde liegenden Analyse.</p>
+<p>Die Beleganzahl in der Matrix kann von der Zahl unterschiedlicher Graphkanten abweichen. Prüfe die jeweilige Beschriftung, bevor du Zahlen verschiedener Ansichten vergleichst.</p>
+<h2 id="architecture">Architektur und arc42</h2>
+<p>Die Architekturansicht kombiniert vorhandene Dokumentation und generierte Belege. Erkunde mit der Bausteinhierarchie tiefere Paketebenen, bis zu drei dargestellte Ebenen. Die Diagramme fassen das verfügbare Modell zusammen; für sich allein weisen sie weder einen vollständigen Systemkontext noch ein produktives Deployment nach.</p>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>archguard doc . --arc42 --stdout
+archguard doc . --arc42</code></pre></div>
+<p>Der erste Befehl zeigt Markdown als Vorschau. Der zweite erstellt oder aktualisiert das arc42-Dokument mit Belegkapiteln und erhält manuelle Texte außerhalb generierter Blöcke. Halte Entscheidungen und Erläuterungen außerhalb dieser Blöcke.</p>
+<h2 id="links">Exportieren und teilen</h2>
+<p><strong>Datei → Export (File → Export)</strong> schreibt die aktuelle Ansicht als Markdown mit Mermaid-Diagrammen, als JSON-Daten mit Belegen, als arc42-Dokumentation, als SVG-Diagramm oder als PNG-Bild. Nicht jedes Format passt zu jeder Ansicht; das Menü zeigt die passenden Formate.</p>
+<p>Jede Analyse ist auch auf der Kommandozeile verfügbar: <code>archguard diagram .</code> listet die arc42-Diagramme und zeichnet eines im Terminal; Analysebefehle geben mit <code>--format json</code> JSON aus. Exporte können Projektnamen und Quellreferenzen enthalten; entscheide, welche Artefakte du weitergibst.</p>
+
+  <div class="docs-next"><a href="getting-started.html">Mit den ersten Schritten beginnen</a><a href="index.html">Alle Leitfäden</a><a href="../index.html#examples">Beispiele erkunden</a></div>
+ <section><h2 id="application-views">Screens, Domäne, Laufzeit und Security</h2><p><strong>Screens:</strong> Anwendung und Screen wählen, Navigation und Aktionen bis ins Backend verfolgen, eine Rolle simulieren. <a href="ui-flows.html">Schritt-für-Schritt-Anleitung</a>.</p><p><strong>Domäne:</strong> Modul öffnen, Entität prüfen und einen Zustand oder ein Ereignis für Ursachen und Handler auswählen. <a href="domain-model.html">Domänenmodelle lesen</a>.</p><p><strong>Laufzeit:</strong> Aufgezeichnete Anfragen und Span-Zeitleisten untersuchen. Ohne Aufzeichnung entstehen keine Messwerte. <a href="runtime.html">Aufzeichnungen bereitstellen</a>.</p><p><strong>Security:</strong> Scan-Zustand, Abdeckung und Befunde gemeinsam betrachten. <a href="security.html">Qualität und Lieferkette</a>.</p></section></main>
+</div>
+<footer class="wrap footer"><a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a><p>Nicht-kommerzielles Open-Source-Projekt.<br>MIT OR Apache-2.0 · Drittprojekte behalten ihre eigenen Lizenzen.</p><a href="../about.html">Über diese Beispiele</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>Quellcode auf GitHub</a><a href="#main">Zum Seitenanfang</a><p class="evidence-motto">Fehlende Evidenz ist keine Null.</p></footer>
+<div id="copy-status" role="status" aria-live="polite"></div>
+</body>
+</html>

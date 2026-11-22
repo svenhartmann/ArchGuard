@@ -1,0 +1,131 @@
+[
+  {
+    "en": "Start here",
+    "de": "Einstieg",
+    "pages": [
+      {
+        "slug": "overview",
+        "en": "What is ArchGuard?",
+        "de": "Was ist ArchGuard?"
+      },
+      {
+        "slug": "getting-started",
+        "en": "Installation",
+        "de": "Installation"
+      },
+      {
+        "slug": "first-analysis",
+        "en": "Your first analysis",
+        "de": "Deine erste Analyse"
+      },
+      {
+        "slug": "prerequisites",
+        "en": "Tools and prerequisites",
+        "de": "Werkzeuge und Voraussetzungen"
+      }
+    ]
+  },
+  {
+    "en": "Explore and understand",
+    "de": "Erkunden und verstehen",
+    "pages": [
+      {
+        "slug": "viewer",
+        "en": "Desktop guide",
+        "de": "Desktop bedienen"
+      },
+      {
+        "slug": "services",
+        "en": "Services and dependencies",
+        "de": "Services und Abhängigkeiten"
+      },
+      {
+        "slug": "ui-flows",
+        "en": "Screens and navigation",
+        "de": "Screens und Navigation"
+      },
+      {
+        "slug": "permissions",
+        "en": "Roles and permissions",
+        "de": "Rollen und Berechtigungen"
+      },
+      {
+        "slug": "domain-model",
+        "en": "Domain models",
+        "de": "Domänenmodelle"
+      },
+      {
+        "slug": "languages",
+        "en": "Languages and metrics",
+        "de": "Sprachen und Metriken"
+      }
+    ]
+  },
+  {
+    "en": "Evaluate and document",
+    "de": "Bewerten und dokumentieren",
+    "pages": [
+      {
+        "slug": "simulation",
+        "en": "Refactoring and load",
+        "de": "Refactoring und Last"
+      },
+      {
+        "slug": "architecture",
+        "en": "Architecture documentation",
+        "de": "Architektur dokumentieren"
+      },
+      {
+        "slug": "runtime",
+        "en": "Runtime and contracts",
+        "de": "Laufzeit und Verträge"
+      },
+      {
+        "slug": "security",
+        "en": "Quality and supply chain",
+        "de": "Qualität und Lieferkette"
+      }
+    ]
+  },
+  {
+    "en": "Automate and reference",
+    "de": "Automatisierung und Referenz",
+    "pages": [
+      {
+        "slug": "configuration",
+        "en": "Configuration and rules",
+        "de": "Konfiguration und Regeln"
+      },
+      {
+        "slug": "cli",
+        "en": "CLI reference",
+        "de": "CLI-Referenz"
+      },
+      {
+        "slug": "mcp",
+        "en": "MCP and coding agents",
+        "de": "MCP und Coding-Agents"
+      },
+      {
+        "slug": "ci",
+        "en": "CI and quality gates",
+        "de": "CI und Quality-Gates"
+      },
+      {
+        "slug": "workflows",
+        "en": "Workflow recipes",
+        "de": "Workflow-Rezepte"
+      },
+      {
+        "slug": "development",
+        "en": "Feature coverage",
+        "de": "Funktionsübersicht"
+      },
+      {
+        "slug": "troubleshooting",
+        "en": "Troubleshooting",
+        "de": "Probleme lösen"
+      }
+    ]
+  }
+]
