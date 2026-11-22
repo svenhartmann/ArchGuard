@@ -159,6 +159,7 @@ pub mod ui_flow_replay;
 pub mod ui_flow_roles;
 #[cfg(test)]
 mod ui_flow_roles_tests;
+pub mod ui_flow_go;
 pub mod ui_flow_rust;
 pub mod ui_flow_slint;
 pub mod ui_flow_svelte;
