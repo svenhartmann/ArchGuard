@@ -124,6 +124,8 @@ pub(super) struct Interp<'a> {
     pub(super) default_mux: Option<usize>,
     pub(super) diags: Vec<UiFlowDiagnostic>,
     pub(super) depth: usize,
+    /// `(file, offset)` of the route calls the interpreter registered.
+    pub(super) seen: std::collections::HashSet<(usize, usize)>,
 }
 
 pub(super) fn join_path(prefix: &str, path: &str) -> String {
@@ -214,6 +216,7 @@ impl<'a> Interp<'a> {
             default_mux: None,
             diags: vec![],
             depth: 0,
+            seen: Default::default(),
         }
     }
 
@@ -340,6 +343,7 @@ impl<'a> Interp<'a> {
         let mut chain = r.chain.clone();
         chain.extend(reg.mws);
         let path = join_path(&r.prefix, &reg.path);
+        self.seen.insert((src, at));
         let (file, line) = self.at(src, at);
         let mut out = vec![];
         for method in reg.methods {

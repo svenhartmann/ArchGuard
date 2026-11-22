@@ -199,13 +199,14 @@ pub(super) fn chain(code: &str, start: usize, end: usize) -> Option<Vec<Seg>> {
         match b[i] {
             b'(' => i = push_call(code, &mut segs, i, end)?,
             b'.' => {
-                let e = ident_end(b, i + 1, end);
-                if e == i + 1 {
+                let j = skip_ws(code, i + 1);
+                let e = ident_end(b, j, end);
+                if e == j {
                     return None;
                 }
                 segs.push(Seg {
-                    name: code[i + 1..e].into(),
-                    at: i + 1,
+                    name: code[j..e].into(),
+                    at: j,
                     args: None,
                 });
                 i = e;
@@ -244,7 +245,7 @@ pub(super) fn default_name(path: &str) -> String {
     last.replace(['-', '.'], "")
 }
 
-fn skip_ws(code: &str, mut j: usize) -> usize {
+pub(super) fn skip_ws(code: &str, mut j: usize) -> usize {
     let b = code.as_bytes();
     while j < b.len() && b[j].is_ascii_whitespace() {
         j += 1;
@@ -434,6 +435,9 @@ impl Src {
     /// A string literal at `r` (a whole `"..."` expression without escapes).
     pub(super) fn lit(&self, r: (usize, usize)) -> Option<String> {
         let t = self.text(r).trim();
+        if let Some(raw) = t.strip_prefix('`').and_then(|x| x.strip_suffix('`')) {
+            return (!raw.contains('`')).then(|| raw.to_string());
+        }
         let inner = t.strip_prefix('"')?.strip_suffix('"')?;
         (!inner.contains('"') && !inner.contains('\\')).then(|| inner.to_string())
     }

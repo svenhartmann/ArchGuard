@@ -45,6 +45,7 @@ mod model;
 mod mw;
 mod oathkeeper;
 mod stmt;
+mod sweep;
 mod text;
 mod walk;
 use model::{Interp, Module};
@@ -94,6 +95,7 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
         }
         let mut it = Interp::new(ctx, &srcs, &mine, m);
         it.run();
+        it.sweep();
         it.finish_into(&mut flow);
     }
     oathkeeper::oathkeeper(ctx, &files.files, &mut flow);
@@ -402,6 +404,86 @@ mod tests {
                 unknown("ensureSession"),
                 unknown("logHandler")
             ]))
+        );
+        assert!(!flow.complete);
+    }
+
+    fn unknown_route<'a>(flow: &'a UiFlow, method: &str, path: &str) -> &'a EndpointAccess {
+        let e = ep(flow, method, path);
+        assert!(
+            matches!(e.access, AccessState::Protected(Condition::Unknown(_))),
+            "{e:#?}"
+        );
+        assert!(
+            !flow.complete && !gaps(flow).is_empty(),
+            "{:#?}",
+            flow.diagnostics
+        );
+        e
+    }
+
+    #[test]
+    fn struct_field_router_is_a_gap_and_an_unknown_route() {
+        let src = "package main\n\nimport \"github.com/gin-gonic/gin\"\n\ntype S struct{ router *gin.Engine }\n\n\
+            func main() {\n\ts := &S{router: gin.New()}\n\ts.router.Use(auth)\n\ts.routes()\n}\n\n\
+            func (s *S) routes() {\n\ts.router.GET(\"/a\", a)\n}\n";
+        unknown_route(&run(&[("main.go", src)], AUTH), "GET", "/a");
+    }
+
+    #[test]
+    fn package_level_router_is_a_gap_and_an_unknown_route() {
+        let src = "package main\n\nimport \"github.com/gin-gonic/gin\"\n\nvar r = gin.New()\n\n\
+            func init() {\n\tr.Use(auth)\n}\n\nfunc main() {\n\tr.GET(\"/b\", b)\n}\n";
+        unknown_route(&run(&[("main.go", src)], AUTH), "GET", "/b");
+    }
+
+    #[test]
+    fn closure_registrar_is_a_gap_and_an_unknown_route() {
+        let src =
+            gin("r := gin.New()\nreg := func(r *gin.Engine) {\n\tr.GET(\"/c\", c)\n}\nreg(r)");
+        unknown_route(&run(&[("main.go", &src)], ""), "GET", "/c");
+    }
+
+    #[test]
+    fn interface_registrar_is_a_gap_and_an_unknown_route() {
+        let src = "package main\n\nimport \"github.com/gin-gonic/gin\"\n\nfunc main() {\n\tr := gin.New()\n\
+            \tfor _, x := range regs {\n\t\tx.Register(r.Group(\"/v\"))\n\t}\n}\n\n\
+            func (a A) Register(g *gin.RouterGroup) {\n\tg.GET(\"/d\", d)\n}\n\n\
+            func (b B) Register(g *gin.RouterGroup) {\n\tg.GET(\"/e\", e)\n}\n";
+        let flow = run(&[("main.go", src)], "");
+        unknown_route(&flow, "GET", "/d");
+        unknown_route(&flow, "GET", "/e");
+    }
+
+    #[test]
+    fn a_call_split_over_lines_and_raw_string_paths_are_followed() {
+        let src = gin("r := gin.New()\nr.Use(auth)\nr.\n\tGET(\"/ml\", h)\nr.GET(`/raw`, h)");
+        let flow = run(&[("main.go", &src)], AUTH);
+        assert_eq!(
+            ep(&flow, "GET", "/ml").access,
+            prot(Condition::Authenticated)
+        );
+        assert_eq!(
+            ep(&flow, "GET", "/raw").access,
+            prot(Condition::Authenticated)
+        );
+        assert!(flow.complete, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn casbin_with_an_unreadable_policy_file_is_not_never() {
+        let main = "package main\n\nimport (\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/casbin/casbin/v2\"\n\
+            \t\"github.com/gin-contrib/authz\"\n)\n\nfunc main() {\n\
+            \te, _ := casbin.NewEnforcer(\"model.conf\", \"missing.csv\")\n\tr := gin.New()\n\
+            \tr.Use(authz.NewAuthorizer(e))\n\tr.GET(\"/users\", l)\n}\n";
+        let model = "[request_definition]\nr = sub, obj, act\n[policy_definition]\np = sub, obj, act\n\
+            [policy_effect]\ne = some(where (p.eft == allow))\n[matchers]\n\
+            m = r.sub == p.sub && keyMatch2(r.obj, p.obj) && r.act == p.act\n";
+        let flow = run(&[("main.go", main), ("model.conf", model)], "");
+        let e = ep(&flow, "GET", "/users");
+        assert!(
+            matches!(e.access, AccessState::Protected(Condition::Unknown(_))),
+            "{e:#?}"
         );
         assert!(!flow.complete);
     }
