@@ -1,7 +1,13 @@
 'use strict';
 const docsSearch = document.getElementById('docs-search');
 const docsNavigation = document.querySelector('.docs-navigation');
-if (docsNavigation && matchMedia('(max-width: 900px)').matches) docsNavigation.open = false;
+if (docsNavigation) {
+  const narrow = matchMedia('(max-width: 900px)');
+  const syncNavigation = () => { docsNavigation.open = !narrow.matches; };
+  syncNavigation();
+  if (narrow.addEventListener) narrow.addEventListener('change', syncNavigation);
+  else narrow.addListener?.(syncNavigation);
+}
 if (docsSearch) {
   const german = document.documentElement.lang === 'de';
   const status = document.getElementById('docs-search-status');
