@@ -25,7 +25,7 @@ use crate::extract_ctx::with_root_config;
 use crate::extract_ctx::{ExtractContext, ancestors, dir_name, finish, gap, read_text, walk};
 use crate::lang_csharp::literal;
 use crate::services::support::test_path;
-use crate::ui_flow_backend::{Attr, Decl, Source, decls, each_method};
+use crate::ui_flow_backend::{Attr, Decl, Source, class_header, decls, each_method};
 use archguard_core::{
     AccessState, Condition, DiagnosticSeverity, EndpointAccess, UiFlow, UiFlowDiagnostic,
 };
@@ -144,7 +144,10 @@ struct TypeInfo {
     name: String,
     attrs: Vec<Attr>,
     bases: Vec<String>,
-    methods: Vec<(String, Vec<Attr>, Sig)>,
+    /// Type parameters of the class.
+    vars: Vec<String>,
+    /// `(name, annotations, parameter types, type parameters in scope)`.
+    methods: Vec<(String, Vec<Attr>, Sig, Vec<String>)>,
 }
 
 /// Overload matching by parameter types.
@@ -162,10 +165,12 @@ mod sig {
             return Some(vec![]);
         }
         let (mut parts, mut depth, mut from) = (vec![], 0i32, 0);
-        for (i, c) in text.char_indices() {
+        let mut it = text.char_indices();
+        while let Some((i, c)) = it.next() {
             match c {
                 '(' | '<' | '[' | '{' => depth += 1,
                 ')' | '>' | ']' | '}' => depth -= 1,
+                '"' | '\'' => skip_quoted(&mut it, c),
                 ',' if depth == 0 => {
                     parts.push(&text[from..i]);
                     from = i + 1;
@@ -236,7 +241,7 @@ mod sig {
         while let Some(c) = it.next() {
             if c == '\\' {
                 it.next();
-            } else if c == quote {
+            } else if c == quote || c == '\n' {
                 break;
             }
         }
@@ -307,16 +312,18 @@ mod sig {
 
     /// Whether two parameter lists are the same overload. A type variable
     /// (`T`) or an unreadable list may stand for anything: `Maybe`.
-    pub(super) fn fits(a: &Sig, b: &Sig, overriding: bool) -> Fit {
+    pub(super) fn fits(a: &Sig, b: &Sig, overriding: bool, vars: &[String]) -> Fit {
         let (Some(a), Some(b)) = (a, b) else {
             return Fit::Maybe;
         };
         if a.len() != b.len() {
-            return Fit::No;
+            // An override that does not match by count was probably misread.
+            return if overriding { Fit::Maybe } else { Fit::No };
         }
         let var = |t: &str| {
             let word = t.trim_end_matches("[]");
-            word.len() <= 2 && word.starts_with(|c: char| c.is_ascii_uppercase())
+            (word.len() <= 2 && word.starts_with(|c: char| c.is_ascii_uppercase()))
+                || vars.iter().any(|v| v == word)
         };
         let mut maybe = false;
         for (x, y) in a.iter().zip(b) {
@@ -338,16 +345,117 @@ mod sig {
         if maybe { Fit::Maybe } else { Fit::Yes }
     }
 
+    /// Consumes the rest of a literal opened with `quote` (it ends at a line end).
+    fn skip_quoted(it: &mut std::str::CharIndices, quote: char) {
+        while let Some((_, c)) = it.next() {
+            if c == '\\' {
+                it.next();
+            } else if c == quote || c == '\n' {
+                break;
+            }
+        }
+    }
+
+    /// The declaration head before the parameter list at `open`: modifiers,
+    /// annotations, type parameters, return type and name. It starts after
+    /// the last `;`, `{` or `}` outside parentheses and literals.
+    fn head_of(src: &Source, open: usize) -> &str {
+        let text = &src.text[..open];
+        let (mut from, mut depth, mut it) = (0, 0u32, text.char_indices());
+        while let Some((i, c)) = it.next() {
+            match c {
+                '(' => depth += 1,
+                ')' => depth = depth.saturating_sub(1),
+                '"' | '\'' => skip_quoted(&mut it, c),
+                ';' | '{' | '}' if depth == 0 => from = i + 1,
+                _ => {}
+            }
+        }
+        &text[from..]
+    }
+
     /// Whether the method whose parameter list opens at `open` is marked as an
-    /// override: Kotlin `override`, Java `@Override`.
+    /// override: Kotlin `override`, Java `@Override`. Errs towards `true`.
     pub(super) fn overrides(src: &Source, open: usize) -> bool {
-        let before = &src.text[..open];
-        let from = before.rfind([';', '{', '}']).map_or(0, |i| i + 1);
-        let head = &before[from..];
+        let head = head_of(src, open);
         head.contains("@Override")
             || head
                 .split(|c: char| !(c.is_alphanumeric() || c == '_'))
                 .any(|w| w == "override")
+    }
+
+    /// The names declared by the `<…>` group at the start of `text`
+    /// (`<T, K extends X>`, `<out T>`).
+    fn group_params(text: &str) -> Vec<String> {
+        let (mut out, mut depth, mut from) = (vec![], 0, 1);
+        for (i, c) in text.char_indices() {
+            let end = c == '>' && depth == 1;
+            match c {
+                '<' => depth += 1,
+                '>' => depth -= 1,
+                _ => {}
+            }
+            if (c == ',' && depth == 1) || end {
+                let part = text.get(from..i).unwrap_or("");
+                let skip = ["out", "in", "reified"];
+                out.extend(
+                    part.split_whitespace()
+                        .find(|w| !skip.contains(w))
+                        .map(str::to_string),
+                );
+                from = i + 1;
+            }
+            if depth == 0 {
+                break;
+            }
+        }
+        out
+    }
+
+    /// Type parameters of the class `name` declared by `header`.
+    pub(super) fn class_vars(header: &str, name: &str) -> Vec<String> {
+        for kw in ["class ", "interface ", "record ", "struct ", "object "] {
+            let Some(i) = header.find(kw) else { continue };
+            let rest = header[i + kw.len()..].trim_start();
+            if let Some(after) = rest.strip_prefix(name).filter(|a| a.starts_with('<')) {
+                return group_params(after);
+            }
+        }
+        vec![]
+    }
+
+    /// Type parameters of the class and of the method at `open`
+    /// (`<T> String f(T a)`, `fun <T> f(a: T)`).
+    pub(super) fn vars_of(src: &Source, open: usize, class: &[String]) -> Vec<String> {
+        const MODS: [&str; 19] = [
+            "public",
+            "protected",
+            "private",
+            "static",
+            "abstract",
+            "default",
+            "final",
+            "synchronized",
+            "fun",
+            "override",
+            "open",
+            "suspend",
+            "inline",
+            "operator",
+            "infix",
+            "internal",
+            "external",
+            "native",
+            "strictfp",
+        ];
+        let mut out = class.to_vec();
+        let head = strip_annotations(head_of(src, open)).unwrap_or_default();
+        if let Some(lt) = head.find('<')
+            && head[..lt].split_whitespace().all(|w| MODS.contains(&w))
+        {
+            out.extend(group_params(&head[lt..]));
+        }
+        out
     }
 
     /// The methods named `name` declared in the body of `class`: `(offset of the
@@ -389,7 +497,7 @@ mod sig {
         out
     }
 }
-use sig::{Fit, Sig, declared, fits, overrides, sig_of};
+use sig::{Fit, Sig, class_vars, declared, fits, overrides, sig_of, vars_of};
 
 /// The annotated types and methods of a project by simple name.
 struct Types(Vec<TypeInfo>);
@@ -414,16 +522,18 @@ impl Types {
                 }
                 if d.class {
                     open.push((d.end, all.len()));
+                    let header = class_header(src, &d);
                     all.push(TypeInfo {
+                        vars: class_vars(header, &d.name),
                         name: d.name,
                         attrs: d.attrs,
                         bases: d.bases,
                         methods: vec![],
                     });
                 } else if let Some(o) = open.last() {
-                    all[o.1]
-                        .methods
-                        .push((d.name, d.attrs, sig_of(src, d.open)));
+                    let vars = vars_of(src, d.open, &all[o.1].vars);
+                    let sig = sig_of(src, d.open);
+                    all[o.1].methods.push((d.name, d.attrs, sig, vars));
                 }
             }
         }
@@ -539,13 +649,13 @@ impl Project {
         let verbs = |attrs: &[Attr]| attrs.iter().any(|a| VERBS.iter().any(|v| v.0 == a.name));
         let mut seen: BTreeSet<(&str, Sig)> = BTreeSet::new();
         for t in supers {
-            for (name, attrs, sig) in t.methods.iter().filter(|m| verbs(&m.1)) {
+            for (name, attrs, sig, vars) in t.methods.iter().filter(|m| verbs(&m.1)) {
                 if !seen.insert((name, sig.clone())) {
                     continue;
                 }
                 // Which method of the controller overrides it (by parameters)?
                 let found = declared(at.src, at.class, name);
-                let fit: Vec<_> = found.iter().map(|f| fits(&f.1, sig, f.2)).collect();
+                let fit: Vec<_> = found.iter().map(|f| fits(&f.1, sig, f.2, vars)).collect();
                 let chosen = if found.is_empty() || fit.iter().all(|f| *f == Fit::No) {
                     None
                 } else if fit.iter().filter(|f| **f == Fit::Yes).count() == 1
@@ -737,7 +847,7 @@ impl Project {
         for t in &supers {
             let same: Vec<_> = (t.methods.iter())
                 .filter(|m| m.0 == method.0)
-                .map(|m| (m, fits(&m.2, method.2, method.3)))
+                .map(|m| (m, fits(&m.2, method.2, method.3, &m.3)))
                 .filter(|m| m.1 != Fit::No)
                 .collect();
             if same.len() > 1 || same.iter().any(|m| m.1 == Fit::Maybe) {
@@ -1712,5 +1822,75 @@ mod tests {
             f.endpoints
         );
         assert!(gaps(&f) > 0, "{:#?}", f.diagnostics);
+    }
+
+    fn no_open_and_a_gap(f: &UiFlow) {
+        assert!(
+            f.endpoints.iter().all(|e| e.access != AccessState::Open),
+            "{:#?}",
+            f.endpoints
+        );
+        assert!(gaps(f) > 0, "{:#?}", f.diagnostics);
+    }
+
+    #[test]
+    fn brackets_inside_annotation_strings_do_not_change_the_parameter_count() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/f\") @Secured(\"isAnonymous()\") String f(@Pattern(regexp = \"[^)]*\") String a, String b);",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Override @Secured(\"ROLE_X\") public String f(String a, String b) { return \"\"; }",
+        );
+        let f = run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]);
+        assert_eq!(ep(&f, "GET", "/c/f").access, prot(role("ROLE_X")));
+    }
+
+    #[test]
+    fn override_marker_survives_braces_in_annotation_arguments() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/u\") @Secured(\"isAnonymous()\") String u(Base a);",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Override @Secured({\"ROLE_X\"}) public String u(Dto a) { return \"\"; }",
+        );
+        no_open_and_a_gap(&run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]));
+    }
+
+    #[test]
+    fn declared_type_parameters_of_the_supertype_are_unsure_types() {
+        let api = java_type(
+            "interface",
+            "Api<DTO>",
+            "@Get(\"/g\") @Secured(\"isAnonymous()\") String g(DTO a);",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api<Foo>",
+            "@Secured(\"ROLE_X\") public String g(Foo a) { return \"\"; }",
+        );
+        no_open_and_a_gap(&run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]));
+    }
+
+    #[test]
+    fn declared_method_type_parameters_are_unsure_types() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/h\") @Secured(\"isAnonymous()\") <ITEM> String h(ITEM a);",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Secured(\"ROLE_X\") public String h(Foo a) { return \"\"; }",
+        );
+        no_open_and_a_gap(&run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]));
     }
 }
