@@ -3393,6 +3393,25 @@ export const handle = sequence(authn, authz);
         }
     }
 
+    /// Guard: the same helper in two sibling branches is not a cycle.
+    #[test]
+    fn a_helper_reused_in_sibling_sequence_branches_is_not_a_cycle() {
+        let hooks = "import { sequence } from '@sveltejs/kit/hooks';
+const log = async ({ event, resolve }) => resolve(event);
+const authz = async ({ event, resolve }) => {
+  if (event.url.pathname.startsWith('/admin') && !event.locals.user) redirect(303, '/login');
+  return resolve(event);
+};
+export const handle = sequence(sequence(log, authz), sequence(log, log));
+";
+        let flow = hooks_project(hooks, &[]);
+        assert_eq!(
+            state(&flow, "web:/admin"),
+            Protected(custom("event.locals.user"))
+        );
+        assert!(flow.complete);
+    }
+
     #[test]
     fn nested_sequence_is_followed_recursively() {
         let hooks = "import { sequence } from '@sveltejs/kit/hooks';
