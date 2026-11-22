@@ -83,7 +83,7 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     let mut flow = UiFlow {
         roles: out.roles,
         policies: out.policies,
-        role_conventions: out.conventions.into_values().collect(),
+        role_conventions: out.conventions.into_values().chain(out.clashing).collect(),
         complete: out.notes.is_empty(),
         diagnostics: out.notes,
         ..UiFlow::default()
@@ -223,6 +223,9 @@ struct Out {
     notes: Vec<UiFlowDiagnostic>,
     /// Conventions read per application; never a whole-flow entry.
     conventions: BTreeMap<String, RoleConvention>,
+    /// A role prefix read with a second value for an application: kept as its
+    /// own entry so the merge sees the conflict instead of picking one.
+    clashing: Vec<RoleConvention>,
     /// Applications with ASP.NET authorization declarations.
     aspnet_apps: BTreeSet<String>,
 }
@@ -686,19 +689,27 @@ fn hierarchy_builder(
         out.gap(&src.rel, line, message);
         return;
     };
+    let origin = ConventionOrigin {
+        field: "role_prefix".into(),
+        file: src.rel.clone(),
+        line,
+        source: format!("RoleHierarchyImpl.{kind}"),
+    };
     if let Some(conv) = out.convention_of(src, line, "Role prefix") {
         if conv.role_prefix.as_ref().is_some_and(|p| *p != prefix) {
             let message = format!("Role prefix read twice with different values: {prefix}");
+            let second = RoleConvention {
+                application: conv.application.clone(),
+                role_prefix: Some(prefix.clone()),
+                origins: vec![origin],
+                ..RoleConvention::default()
+            };
+            out.clashing.push(second);
             out.gap(&src.rel, line, message);
-            return;
+        } else {
+            conv.role_prefix = Some(prefix.clone());
+            conv.origins.push(origin);
         }
-        conv.role_prefix = Some(prefix.clone());
-        conv.origins.push(ConventionOrigin {
-            field: "role_prefix".into(),
-            file: src.rel.clone(),
-            line,
-            source: format!("RoleHierarchyImpl.{kind}"),
-        });
     }
     let text = &src.text[at..];
     let end = text.find(';').unwrap_or(text.len());

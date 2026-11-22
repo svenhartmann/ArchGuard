@@ -146,7 +146,7 @@ def cmd_compare(a):
 
 
 KINDS = ("endpoints", "screens", "links", "actions")
-STATES = ("open", "undeclared", "protected", "unknown", "unrecognised")
+STATES = ("open", "undeclared", "protected", "unrecognised")
 COND_KEYS = {"all", "any", "not", "role", "policy", "custom", "unknown"}  # Condition variants with data
 COND_UNITS = {"authenticated", "never"}  # Condition variants without data serialize as strings
 
@@ -162,18 +162,6 @@ def _state(v, legacy_null):
     return "unrecognised"
 
 
-def _flow_is_new(flow):
-    """New shape: "open"/"undeclared" access, a "protected" wrapper or `weak` somewhere (or role_conventions)."""
-    if "role_conventions" in flow:
-        return True
-    for k in ("screens", "transitions", "actions"):
-        for e in flow.get(k, []):
-            v = e.get("access")
-            if "weak" in e or (isinstance(v, str) and v in ("open", "undeclared")) or (isinstance(v, dict) and "protected" in v):
-                return True
-    return False
-
-
 def _name(o):
     if isinstance(o, dict):
         k, v = next(iter(o.items()), ("", ""))
@@ -182,10 +170,9 @@ def _name(o):
 
 
 def access_elements(flow):
-    """{(kind, identity): Counter(state)}; elements sharing a key are all kept. Old shape: absent/null screen, link or action condition is "unknown"
-    (legacy), so a later switch to undeclared is no move; new shape: absent/null is undeclared."""
-    new = _flow_is_new(flow)
-    null = "undeclared" if new else "unknown"
+    """{(kind, identity): Counter(state)}; elements sharing a key are all kept. An absent/null screen, link or action condition is
+    undeclared in both shapes (an old null is no extra state, so old-vs-new prints no count noise)."""
+    null = "undeclared"
     out = collections.defaultdict(collections.Counter)
     for e in flow.get("endpoints", []):
         out[("endpoints", f"{e.get('application') or ''} {e['method']} {e['path']}".strip())][_state(e.get("access"), "undeclared")] += 1

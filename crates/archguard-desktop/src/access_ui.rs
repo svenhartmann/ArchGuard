@@ -4,17 +4,19 @@
 //! their own, and a path-only or hint layer carries its own badge.
 
 use archguard_engine::core::{
-    AccessState, ChainFrom, ChainRow, EnforcedAt, ServiceHow, ServiceLayer, UiFlow, access_chain,
+    AccessState, CallMethod, ChainFrom, ChainRow, EnforcedAt, ServiceHow, ServiceLayer, UiFlow,
+    access_chain,
 };
 use slint::{ComponentHandle, ModelRc, VecModel};
+use std::sync::Arc;
 
 use crate::context::Loaded;
 use crate::screens_ui::words;
-use crate::tab_support::{self, Actions, TabState, Texts, index};
+use crate::tab_support::{self, Actions, Flow, TabState, Texts, index};
 use crate::ui::{AccessData, AccessModel, AlLine, AlRow, AppWindow};
 
 pub struct AccessLayersState {
-    flow: Result<UiFlow, String>,
+    flow: Arc<Result<UiFlow, String>>,
     show_unguarded: bool,
     from: ChainFrom,
     only: bool,
@@ -62,11 +64,12 @@ impl TabState for AccessLayersState {
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
         let root = data.root.to_path_buf();
+        let flow = Flow::of(data);
         move || {
             let show_unguarded = archguard_engine::load_config(None, &root)
                 .map_or(true, |l| l.config.views.access_layers.show_unguarded);
             AccessLayersState {
-                flow: archguard_engine::ui_flow::analyze(&root).map_err(|e| e.to_string()),
+                flow: flow.get(),
                 show_unguarded,
                 from: ChainFrom::Endpoint,
                 only: false,
@@ -95,11 +98,8 @@ fn how_kind<'a>(layers: impl IntoIterator<Item = &'a ServiceLayer>) -> i32 {
 /// (file, `Class.method`) -> its strongest layer kind over all endpoints; empty when the flow cannot be read.
 pub type MethodLayers = std::collections::HashMap<(String, String), i32>;
 
-pub fn method_layers(root: &std::path::Path) -> MethodLayers {
-    let Ok(flow) = archguard_engine::ui_flow::analyze(root) else {
-        return Default::default();
-    };
-    layers_by_target(&flow)
+pub fn method_layers(flow: &Result<UiFlow, String>) -> MethodLayers {
+    flow.as_ref().map(layers_by_target).unwrap_or_default()
 }
 
 fn layers_by_target(flow: &UiFlow) -> MethodLayers {
@@ -114,30 +114,28 @@ fn layers_by_target(flow: &UiFlow) -> MethodLayers {
     out
 }
 
-/// The badge of a method declared in `file` (class id `class_id`): none unless exactly one layer
-/// names that file (up to a leading path prefix) and `Class.method`, or when `same_name_in_file`
-/// > 1 (overloads cannot be told apart).
-pub fn badge(
-    layers: &MethodLayers,
-    file: &str,
-    class_id: &str,
-    name: &str,
-    same_name_in_file: usize,
-) -> i32 {
-    let class = class_id.rsplit('.').next().unwrap_or(class_id);
-    if same_name_in_file > 1 {
+/// The badge of method `m`: none unless the pairing is bijective, i.e. exactly one layer names
+/// `m`'s file (up to a leading path prefix) and `Class.method`, and `m` is the only method of
+/// `methods` that layer maps to (overloads and same-named classes elsewhere get none).
+pub fn badge(layers: &MethodLayers, methods: &[CallMethod], m: &CallMethod) -> i32 {
+    let target = |m: &CallMethod| format!("{}.{}", short_class(&m.class_id), m.name);
+    // `analyze_calls` paths drop the project-relative prefix (`src/`): match on a path boundary.
+    let fits = |layer_file: &str, m: &CallMethod| {
+        layer_file == m.file || layer_file.ends_with(&format!("/{}", m.file))
+    };
+    let mine = target(m);
+    let mut hits = (layers.iter()).filter(|((f, t), _)| *t == mine && fits(f, m));
+    let (Some(((file, _), kind)), None) = (hits.next(), hits.next()) else {
         return 0;
-    }
-    // `analyze_calls` paths drop the project-relative prefix (`src/`): match on a path
-    // boundary, and only when exactly one layer file fits.
-    let target = format!("{class}.{name}");
-    let mut hits = layers
+    };
+    let rivals = methods
         .iter()
-        .filter(|((f, t), _)| *t == target && (f == file || f.ends_with(&format!("/{file}"))));
-    match (hits.next(), hits.next()) {
-        (Some((_, kind)), None) => *kind,
-        _ => 0,
-    }
+        .filter(|o| target(o) == mine && fits(file, o));
+    if rivals.count() == 1 { *kind } else { 0 }
+}
+
+fn short_class(class_id: &str) -> &str {
+    class_id.rsplit('.').next().unwrap_or(class_id)
 }
 
 fn state_kind(s: &AccessState) -> i32 {
@@ -239,7 +237,7 @@ fn detail(texts: &Texts, r: &ChainRow) -> Vec<AlLine> {
 }
 
 fn build(s: &AccessLayersState, texts: &Texts) -> AccessModel {
-    let flow = match &s.flow {
+    let flow = match &*s.flow {
         Ok(f) => f,
         Err(e) => {
             return AccessModel {
@@ -307,7 +305,7 @@ mod tests {
             note: String::new(),
         };
         AccessLayersState {
-            flow: Ok(UiFlow {
+            flow: Arc::new(Ok(UiFlow {
                 endpoints: vec![
                     ep("/a", 1, AccessState::Open),
                     ep("/b", 2, AccessState::Undeclared),
@@ -317,7 +315,7 @@ mod tests {
                     layer(ServiceHow::PathOnly, 2),
                 ],
                 ..UiFlow::default()
-            }),
+            })),
             show_unguarded: true,
             from: ChainFrom::Endpoint,
             only,
@@ -340,7 +338,8 @@ mod tests {
         assert_eq!(m.detail.row_count(), 2);
         // both endpoints name S.m: the enforced layer wins over the path-only one
         assert_eq!(
-            layers_by_target(state(false).flow.as_ref().unwrap())[&("S.java".into(), "S.m".into())],
+            layers_by_target((*state(false).flow).as_ref().unwrap())
+                [&("S.java".into(), "S.m".into())],
             1
         );
         assert_eq!(build(&state(true), &Texts::default()).rows.row_count(), 1);
@@ -350,42 +349,44 @@ mod tests {
     #[test]
     fn a_badge_needs_the_same_file_and_no_overload() {
         let mut st = state(false);
-        let Ok(flow) = st.flow.as_mut() else { panic!() };
+        let Ok(flow) = Arc::get_mut(&mut st.flow).unwrap().as_mut() else {
+            panic!()
+        };
         flow.service_layers.truncate(1);
         flow.service_layers[0].target = "UserService.delete".into();
         flow.service_layers[0].file = "admin/UserService.java".into();
         let map = layers_by_target(flow);
-        assert_eq!(
-            badge(
-                &map,
-                "admin/UserService.java",
-                "admin.UserService",
-                "delete",
-                1
-            ),
-            1
-        );
-        assert_eq!(
-            badge(&map, "web/UserService.java", "web.UserService", "delete", 1),
-            0
-        );
+        let ms = [
+            method("admin.UserService", "delete", "admin/UserService.java"),
+            method("web.UserService", "delete", "web/UserService.java"),
+        ];
+        assert_eq!(badge(&map, &ms, &ms[0]), 1);
+        assert_eq!(badge(&map, &ms, &ms[1]), 0);
         // an overload in the same file cannot be told apart: no badge
-        assert_eq!(
-            badge(
-                &map,
-                "admin/UserService.java",
-                "admin.UserService",
-                "delete",
-                2
-            ),
-            0
-        );
+        let over = [ms[0].clone(), ms[0].clone()];
+        assert_eq!(badge(&map, &over, &over[0]), 0);
+    }
+
+    fn method(class_id: &str, name: &str, file: &str) -> CallMethod {
+        CallMethod {
+            id: format!("{class_id}.{name}"),
+            class_id: class_id.into(),
+            name: name.into(),
+            signature: String::new(),
+            file: file.into(),
+            line: 1,
+            end_line: None,
+            is_static: false,
+            complexity: None,
+        }
     }
 
     #[test]
     fn enforced_with_unreadable_condition_is_not_path_only() {
         let mut st = state(false);
-        let Ok(flow) = st.flow.as_mut() else { panic!() };
+        let Ok(flow) = Arc::get_mut(&mut st.flow).unwrap().as_mut() else {
+            panic!()
+        };
         flow.service_layers[0].state = AccessState::Undeclared;
         assert_eq!(how_kind([&flow.service_layers[0]]), 2);
         assert_eq!(how_kind([&flow.service_layers[1]]), 3, "path only");
@@ -422,7 +423,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, text).unwrap();
         }
-        let layers = method_layers(dir.path());
+        let layers = method_layers(&Flow::unshared(dir.path()).get());
         let config = archguard_engine::load_config(None, dir.path())
             .unwrap()
             .config;
@@ -433,12 +434,65 @@ mod tests {
                 .iter()
                 .find(|m| m.name == "run" && m.class_id.ends_with(class))
                 .unwrap_or_else(|| panic!("no {class}.run in {:?}", analysis.methods));
-            let same = (analysis.methods.iter())
-                .filter(|o| o.file == m.file && o.name == m.name && o.class_id == m.class_id)
-                .count();
-            badge(&layers, &m.file, &m.class_id, &m.name, same)
+            badge(&layers, &analysis.methods, m)
         };
         assert_eq!(badge_of("app.Svc"), 1, "layers: {layers:?}");
         assert_eq!(badge_of("other.Svc"), 0);
+    }
+
+    /// Non-standard layout: the root `src/main/...` and `admin/main/...` both hold a `Svc.run`;
+    /// only the admin one is guarded. Paths come from the real producers (needs a JDK).
+    #[test]
+    fn a_shortened_path_that_fits_two_layers_gets_no_badge() {
+        let jdk = |t: &str| {
+            std::process::Command::new(t)
+                .arg("--version")
+                .output()
+                .is_ok_and(|o| o.status.success())
+        };
+        if !(jdk("java") && jdk("javac")) {
+            eprintln!("skipped: no JDK");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let svc = |pkg: &str, ann: &str| {
+            format!(
+                "package {pkg};\nimport org.springframework.stereotype.Service;\nimport org.springframework.security.access.prepost.*;\n@Service\npublic class Svc {{\n{ann} public String run() {{ return \"x\"; }}\n}}\n"
+            )
+        };
+        for (path, text) in [
+            ("pom.xml", "<project/>".to_string()),
+            ("src/main/java/app/Conf.java", "package app;\nimport org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;\n@EnableMethodSecurity\nclass Conf {}\n".into()),
+            ("src/main/java/app/Ctl.java", "package app;\nimport adm.Svc;\nimport org.springframework.web.bind.annotation.*;\n@RestController\nclass Ctl {\n  private Svc svc;\n  @GetMapping(\"/a\")\n  String a() { return svc.run(); }\n}\n".into()),
+            ("src/main/java/app/Svc.java", svc("app", "")),
+            ("admin/main/java/app/Svc.java", svc("adm","@PreAuthorize(\"hasRole('B')\")")),
+        ] {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let layers = method_layers(&Flow::unshared(dir.path()).get());
+        let config = archguard_engine::load_config(None, dir.path())
+            .unwrap()
+            .config;
+        let analysis = archguard_engine::analyze_calls(dir.path(), &config);
+        let runs: Vec<&CallMethod> = analysis
+            .methods
+            .iter()
+            .filter(|m| m.name == "run")
+            .collect();
+        eprintln!(
+            "layers {layers:?}\nmethods {:?}",
+            runs.iter().map(|m| &m.file).collect::<Vec<_>>()
+        );
+        let unguarded = runs
+            .iter()
+            .find(|m| !m.file.starts_with("admin"))
+            .expect("root Svc.run");
+        assert_eq!(
+            badge(&layers, &analysis.methods, unguarded),
+            0,
+            "layers: {layers:?}"
+        );
     }
 }

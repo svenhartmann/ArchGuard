@@ -255,10 +255,7 @@ fn layer_of(s: &State, node: &super::tree::Node) -> i32 {
     let Some(m) = s.idx.method(Some(&node.id)) else {
         return 0;
     };
-    let same = (s.idx.a.methods.iter())
-        .filter(|o| o.file == m.file && o.name == m.name && o.class_id == m.class_id)
-        .count();
-    crate::access_ui::badge(&s.layers, &m.file, &m.class_id, &m.name, same)
+    crate::access_ui::badge(&s.layers, &s.idx.a.methods, m)
 }
 
 /// `rows` with each row's parent row set (the keyboard's Left key).

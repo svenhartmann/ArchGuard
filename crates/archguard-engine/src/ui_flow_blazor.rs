@@ -485,8 +485,9 @@ mod attributes {
             }
         }
         let mut names = BTreeSet::new();
+        let mut walk = Walk::default();
         for name in bases.keys() {
-            if derives(name, &bases, &mut Vec::new()) {
+            if walk.derives(name, &bases) {
                 names.insert(name.clone());
             }
         }
@@ -495,26 +496,46 @@ mod attributes {
 
     const MAX_DEPTH: usize = 16;
 
-    fn derives(name: &str, bases: &BTreeMap<String, Vec<String>>, path: &mut Vec<String>) -> bool {
-        if path.iter().any(|p| p == name) {
-            return false;
-        }
-        if path.len() >= MAX_DEPTH {
-            return true;
-        }
-        path.push(name.to_string());
-        let hit = bases.get(name).is_some_and(|list| {
-            list.iter().any(|b| match b.as_str() {
+    /// The walk over base classes with a memo for interface diamonds.
+    #[derive(Default)]
+    struct Walk {
+        path: Vec<String>,
+        memo: BTreeMap<String, bool>,
+        /// Cycle or depth cuts so far; a result is memoised only if none happened inside it.
+        cuts: usize,
+    }
+
+    impl Walk {
+        fn derives(&mut self, name: &str, bases: &BTreeMap<String, Vec<String>>) -> bool {
+            if let Some(&hit) = self.memo.get(name) {
+                return hit;
+            }
+            if self.path.iter().any(|p| p == name) {
+                self.cuts += 1;
+                return false;
+            }
+            if self.path.len() >= MAX_DEPTH {
+                self.cuts += 1;
+                return true;
+            }
+            let cuts = self.cuts;
+            self.path.push(name.to_string());
+            let list = bases.get(name).map(Vec::as_slice).unwrap_or_default();
+            let hit = list.iter().any(|b| match b.as_str() {
                 "AuthorizeAttribute" | "IAuthorizeData" => true,
                 "Attribute" => false,
                 _ => match bases.contains_key(&backend::simple(b)) {
-                    true => derives(&backend::simple(b), bases, path),
-                    false => b.ends_with("Attribute"),
+                    true => self.derives(&backend::simple(b), bases),
+                    // Base outside the scanned files: unresolved, a gap, never "not authorize".
+                    false => true,
                 },
-            })
-        });
-        path.pop();
-        hit
+            });
+            self.path.pop();
+            if self.cuts == cuts {
+                self.memo.insert(name.to_string(), hit);
+            }
+            hit
+        }
     }
 }
 
@@ -3946,6 +3967,38 @@ mod access_tests {
             "App:P.razor",
         );
         assert_eq!(a, Undeclared);
+    }
+
+    #[test]
+    fn attribute_with_an_unscanned_base_is_a_gap() {
+        let page = "@page \"/p\"\n@attribute [My]\n";
+        let cs = "public class My : VendorBase { }";
+        let (a, flow) = state(&[("App/P.razor", page), ("App/My.cs", cs)], "App:P.razor");
+        assert_eq!(a, Protected(Condition::Unknown("My".into())));
+        assert!(!flow.complete);
+    }
+
+    /// Guard: interface diamonds terminate and give the same answer as chains.
+    #[test]
+    fn interface_diamonds_terminate_with_the_same_result() {
+        let page = "@page \"/p\"\n@attribute [My]\n";
+        let mut cs = String::from("public class My : IA0, IB0 { }\n");
+        for i in 0..14 {
+            let (a, b) = (format!("IA{i}"), format!("IB{i}"));
+            let next = if i == 13 {
+                "Attribute".to_string()
+            } else {
+                format!("IA{}, IB{}", i + 1, i + 1)
+            };
+            cs += &format!(
+                "public interface {a} : {next} {{ }}\npublic interface {b} : {next} {{ }}\n"
+            );
+        }
+        let (a, _) = state(&[("App/P.razor", page), ("App/My.cs", &cs)], "App:P.razor");
+        assert_eq!(a, Undeclared);
+        let cs = cs.replace(": Attribute", ": IAuthorizeData");
+        let (a, _) = state(&[("App/P.razor", page), ("App/My.cs", &cs)], "App:P.razor");
+        assert_eq!(a, Protected(Condition::Unknown("My".into())));
     }
 
     #[test]

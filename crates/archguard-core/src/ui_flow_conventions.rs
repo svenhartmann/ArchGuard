@@ -17,6 +17,10 @@ pub struct RoleConvention {
     /// used to canonicalize user input and shorten labels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role_prefix: Option<String>,
+    /// Fields read with different values; the merge left them unread and no
+    /// whole-flow entry refills them. Checks that depend on them are Unknown.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflicts: Vec<String>,
     /// Prefix for token scopes and authorities (Spring `SCOPE_`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope_prefix: Option<String>,
@@ -95,19 +99,36 @@ fn merge_group(group: &[RoleConvention], clashes: &mut Vec<Clash>) -> RoleConven
         application: group[0].application.clone(),
         ..RoleConvention::default()
     };
+    let mut conflicts: Vec<String> = group.iter().flat_map(|c| c.conflicts.clone()).collect();
     let mut pick = |field: &str, get: &dyn Fn(&RoleConvention) -> Option<String>| {
-        pick(group, field, get, clashes)
+        let before = clashes.len();
+        let v = pick(group, field, get, clashes);
+        if clashes.len() > before {
+            conflicts.push(field.to_string());
+        }
+        v
     };
     out.role_prefix = pick("role_prefix", &|c| c.role_prefix.clone());
     out.scope_prefix = pick("scope_prefix", &|c| c.scope_prefix.clone());
     out.role_claim = pick("role_claim", &|c| c.role_claim.clone());
-    out.role_case = case(pick("role_case", &|c| non_exact(c.role_case)));
-    out.policy_case = case(pick("policy_case", &|c| non_exact(c.policy_case)));
+    out.role_case = case(pick("role_case", &|c| {
+        case_value(c, "role_case", c.role_case)
+    }));
+    out.policy_case = case(pick("policy_case", &|c| {
+        case_value(c, "policy_case", c.policy_case)
+    }));
+    let chosen = pick("permissions", &|c| match &c.permissions {
+        PermissionFormat::Exact => None,
+        p => Some(format!("{p:?}")),
+    });
     out.permissions = (group.iter())
         .map(|c| &c.permissions)
-        .find(|p| **p != PermissionFormat::Exact)
+        .find(|p| Some(format!("{p:?}")) == chosen)
         .cloned()
         .unwrap_or_default();
+    conflicts.sort();
+    conflicts.dedup();
+    out.conflicts = conflicts;
     for c in group {
         out.action_aliases.extend(c.action_aliases.iter().cloned());
         out.origins.extend(c.origins.iter().cloned());
@@ -119,12 +140,21 @@ fn merge_group(group: &[RoleConvention], clashes: &mut Vec<Clash>) -> RoleConven
     out
 }
 
-fn non_exact(c: NameCase) -> Option<String> {
-    (c != NameCase::Exact).then(|| "insensitive".to_string())
+/// The case value of `field`; an `exact` is a value only when something recorded it.
+fn case_value(c: &RoleConvention, field: &str, v: NameCase) -> Option<String> {
+    match v {
+        NameCase::Insensitive => Some("insensitive".to_string()),
+        NameCase::Exact => {
+            (c.origins.iter().any(|o| o.field == field)).then(|| "exact".to_string())
+        }
+    }
 }
 
 fn case(v: Option<String>) -> NameCase {
-    v.map_or(NameCase::Exact, |_| NameCase::Insensitive)
+    match v.as_deref() {
+        Some("insensitive") => NameCase::Insensitive,
+        _ => NameCase::Exact,
+    }
 }
 
 /// Whether every origin of `field` in `c` is a framework default.
@@ -165,4 +195,52 @@ fn pick(
         ),
     ));
     None
+}
+
+impl RoleConvention {
+    /// Whether this entry read or clashed on `field`: it is never refilled.
+    fn recorded(&self, field: &str) -> bool {
+        self.conflicts.iter().any(|x| x == field) || self.origins.iter().any(|o| o.field == field)
+    }
+
+    /// Fills what this entry did not read from the whole-flow entry `w`.
+    /// Permission format and aliases always; prefixes, claim and case only
+    /// for a single-application flow.
+    pub(crate) fn fill_from_whole_flow(&mut self, w: &RoleConvention, single: bool) {
+        if !self.recorded("permissions") && self.permissions == PermissionFormat::Exact {
+            self.permissions = w.permissions.clone();
+        }
+        if self.action_aliases.is_empty() {
+            self.action_aliases = w.action_aliases.clone();
+        }
+        if !single {
+            return;
+        }
+        let open = |f: &str| !self.recorded(f);
+        let (prefix, scope, claim) = (
+            open("role_prefix"),
+            open("scope_prefix"),
+            open("role_claim"),
+        );
+        let (role_case, policy_case) = (open("role_case"), open("policy_case"));
+        let pick = |on: bool, own: &Option<String>, whole: &Option<String>| {
+            if on {
+                own.clone().or_else(|| whole.clone())
+            } else {
+                own.clone()
+            }
+        };
+        self.role_prefix = pick(prefix, &self.role_prefix, &w.role_prefix);
+        self.scope_prefix = pick(scope, &self.scope_prefix, &w.scope_prefix);
+        self.role_claim = pick(claim, &self.role_claim, &w.role_claim);
+        let case = |on: bool, own: NameCase, whole: NameCase| {
+            if on && own == NameCase::Exact {
+                whole
+            } else {
+                own
+            }
+        };
+        self.role_case = case(role_case, self.role_case, w.role_case);
+        self.policy_case = case(policy_case, self.policy_case, w.policy_case);
+    }
 }

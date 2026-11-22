@@ -13,10 +13,22 @@
 //! conditional, implementations differ) or `Hint` (self-invocation, a `private`
 //! or `final` method, a family that is not switched on, `@PostAuthorize`,
 //! `@HandleAuthorizationDenied`, `@RolesAllowed` on a plain CDI bean outside
-//! Quarkus, EJB annotations while an `ejb-jar.xml` may override them,
-//! imperative checks). Row filters are `DataFilter`. Not read: C# services
-//! (`IAuthorizationService`), Micronaut, `ejb-jar.xml` itself,
-//! `mode = ASPECTJ`. An earlier `return` in the handler makes the call
+//! Quarkus, EJB annotations while an `ejb-jar.xml` entry is unreadable,
+//! imperative checks). Row filters are `DataFilter`. A Spring check under
+//! `@EnableMethodSecurity(mode = AdviceMode.ASPECTJ)` stays `Enforced` for
+//! self-invocation and `private`/`final` methods when the aspect weaves the
+//! annotation (spring-security-aspects: a method-level `@PreAuthorize` or
+//! `@Secured` of the implementing class, a class-level `@Secured` on a public
+//! method; everything else, e.g. a class-level `@PreAuthorize` or an interface
+//! annotation, is `Hint`; the weaving setup itself is not read);
+//! an unreadable `mode` keeps the `Hint` and leaves a gap. The `method-permission`
+//! and `exclude-list` entries of an `ejb-jar.xml` give an EJB method its state
+//! like the annotations do (Jakarta Enterprise Beans 4.0, section 11.3.2.2: the
+//! descriptor overrides the annotations, `*` names every method, all matching
+//! permissions are united and an `unchecked` one permits every role,
+//! `exclude-list` denies; a bean only takes the descriptor of its own module). A reached project
+//! class whose source cannot be resolved leaves a gap. Not read: C# services
+//! (`IAuthorizationService`; see `service-level.md`), Micronaut. An earlier `return` in the handler makes the call
 //! `PathOnly`; an earlier `throw` does not.
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
@@ -29,9 +41,10 @@ use crate::extract_ctx::{ExtractContext, walk};
 use crate::ui_flow_backend::lex::{literals, named, positional, split_top};
 use crate::ui_flow_backend::spring::{Conf, declared_access, family};
 use crate::ui_flow_backend::{
-    Attr, Decl, Index, Out, Project, Source, class_header, quarkus_build, read_projects,
+    Attr, Decl, Index, Out, Project, Source, class_header, decls, quarkus_build, read_projects,
 };
 use archguard_extract::{Lang, strip_root};
+use ejb::Decision;
 
 /// Words that make a source file worth a call analysis.
 const SIGNS: [&str; 14] = [
@@ -121,7 +134,9 @@ pub(crate) fn apply(ctx: &ExtractContext, flow: &mut UiFlow) {
     }
     let mut scratch = Out::scratch();
     let projects = read_projects(ctx.root, &mut scratch);
-    if !has_signs(&projects) {
+    let descriptor =
+        walk(ctx.root).is_ok_and(|w| w.files.iter().any(|f| f.ends_with("ejb-jar.xml")));
+    if !has_signs(&projects) && !descriptor {
         return;
     }
     let analysis = jvm_calls(ctx, &projects);
@@ -175,7 +190,9 @@ struct World<'a> {
     sources: HashMap<String, &'a Source>,
     dir_of: HashMap<&'a str, &'a str>,
     confs: HashMap<&'a str, Conf>,
-    ejb_jar: bool,
+    jars: ejb::Jars,
+    /// How method-security advice is applied, by project dir.
+    advice: HashMap<&'a str, Advice>,
     analysis: &'a CallAnalysis,
     classes: HashMap<&'a str, &'a CallClass>,
     methods: HashMap<&'a str, &'a CallMethod>,
@@ -185,6 +202,49 @@ struct World<'a> {
     /// Direct subtypes by class id.
     subtypes: HashMap<&'a str, Vec<&'a str>>,
     gaps: Vec<Gap>,
+}
+
+/// How `@EnableMethodSecurity(mode = ...)` applies the advice.
+#[derive(Clone)]
+enum Advice {
+    Proxy,
+    Aspectj,
+    /// `mode` is not a literal `PROXY` or `ASPECTJ`.
+    Unreadable(Gap),
+}
+
+fn advice_of(srcs: &[Source]) -> Advice {
+    let (mut aspectj, mut proxy) = (false, false);
+    for src in srcs.iter().filter(|s| !s.rel.ends_with(".cs")) {
+        for a in (decls(src, true).iter())
+            .filter(|d| d.class)
+            .flat_map(|d| &d.attrs)
+            .filter(|a| {
+                matches!(
+                    a.name.as_str(),
+                    "EnableMethodSecurity" | "EnableGlobalMethodSecurity"
+                )
+            })
+        {
+            match named(&a.args, "mode").map(|v| v.trim().rsplit('.').next().unwrap_or("")) {
+                None | Some("PROXY") => proxy = true,
+                Some("ASPECTJ") => aspectj = true,
+                Some(_) => {
+                    let message = format!(
+                        "`@{}` attribute `mode` is not readable, so whether self-invocation is advised is unknown: {}",
+                        a.name, a.args
+                    );
+                    return Advice::Unreadable((src.rel.clone(), src.line(a.at), message));
+                }
+            }
+        }
+    }
+    // one proxy-mode annotation next to an AspectJ one: assume the weaker
+    if aspectj && !proxy {
+        Advice::Aspectj
+    } else {
+        Advice::Proxy
+    }
 }
 
 /// `(file, line, message)` of something read but not readable.
@@ -281,7 +341,9 @@ impl<'a> World<'a> {
         let roots = &ctx.config.project.source_roots;
         let mut sources: HashMap<String, &Source> = HashMap::new();
         let mut twice = BTreeSet::new();
+        let mut advice = HashMap::new();
         for (dir, (_, srcs, quarkus)) in projects {
+            advice.insert(dir.as_str(), advice_of(srcs));
             let mut conf = Conf::read(srcs, &index, *quarkus, scratch);
             conf.deferred_off = true;
             confs.insert(dir.as_str(), conf);
@@ -296,15 +358,20 @@ impl<'a> World<'a> {
         for key in &twice {
             sources.remove(key);
         }
-        let ejb_jar =
-            walk(ctx.root).is_ok_and(|w| w.files.iter().any(|f| f.ends_with("ejb-jar.xml")));
+        let dirs: Vec<&str> = projects.keys().map(String::as_str).collect();
+        let jars = ejb::Jars::read(
+            ctx.root,
+            &walk(ctx.root).map_or_else(|_| vec![], |w| w.files),
+            &dirs,
+        );
         let mut world = World {
             ctx,
             index,
             sources,
             dir_of,
             confs,
-            ejb_jar,
+            jars,
+            advice,
             classes: (analysis.classes.iter())
                 .map(|c| (c.id.as_str(), c))
                 .collect(),
@@ -505,24 +572,24 @@ impl<'a> World<'a> {
 
     /// What the annotations of method `m` of `cls` say.
     fn check(&mut self, cls: &CallClass, m: &CallMethod, same_class: bool) -> Option<Verdict> {
-        let src = self.source_of(cls)?;
-        let class = self.index.type_in(src, simple(&cls.name))?;
-        let (msrc, mclass) = if m.class_id == cls.id {
-            (src, class)
-        } else {
-            let dc = self.classes.get(m.class_id.as_str())?;
-            let ds = self.source_of(dc)?;
-            (ds, self.index.type_in(ds, simple(&dc.name))?)
+        let Some((src, class, msrc, mclass)) = self.resolve(cls, m) else {
+            let message = format!(
+                "Check of `{}.{}` not read: its source file or class declaration could not be resolved, so a check there is unknown.",
+                simple(&cls.name),
+                m.name
+            );
+            self.gaps.push((cls.file.clone(), m.line, message));
+            return None;
         };
-        let decl = self.decl_of(msrc, mclass, m);
+        let decl = self.decl_of(msrc, &mclass, m);
         let dir = (self.dir_of.get(src.rel.as_str())).copied();
         let dir = dir.unwrap_or_default();
-        let bean = bean_of(src, class, &self.index);
+        let bean = bean_of(src, &class, &self.index);
         let site = Site {
             src,
-            class,
+            class: &class,
             msrc,
-            mclass,
+            mclass: &mclass,
             decl: &decl,
             m,
             dir,
@@ -548,14 +615,55 @@ impl<'a> World<'a> {
             let why = if same_class {
                 Some("self-invocation: a call inside the same bean does not pass the proxy")
             } else {
-                unadvisable(src, class, m)
+                unadvisable(src, &class, m)
             };
-            if let Some(why) = why {
-                verdict.how = ServiceHow::Hint;
-                verdict.note = join(&verdict.note, why);
+            let advice = (bean == Bean::Spring)
+                .then(|| self.advice.get(dir).cloned())
+                .flatten();
+            match (why, advice) {
+                (why, Some(Advice::Aspectj)) => {
+                    if let Some(not) = not_woven(&site, msrc) {
+                        verdict.how = ServiceHow::Hint;
+                        verdict.note = join(&verdict.note, not);
+                    } else if let Some(why) = why {
+                        let note = format!(
+                            "{why}, but `mode = ASPECTJ` weaves the advice into the bytecode (the weaving setup is not read)"
+                        );
+                        verdict.note = join(&verdict.note, &note);
+                    }
+                }
+                (None, _) => {}
+                (Some(why), other) => {
+                    if let Some(Advice::Unreadable(gap)) = other {
+                        self.gaps.push(gap);
+                    }
+                    verdict.how = ServiceHow::Hint;
+                    verdict.note = join(&verdict.note, why);
+                }
             }
         }
         Some(verdict)
+    }
+
+    /// The sources and class declarations of `cls` and of the class that declares `m`.
+    fn resolve(
+        &self,
+        cls: &CallClass,
+        m: &CallMethod,
+    ) -> Option<(&'a Source, Decl, &'a Source, Decl)> {
+        let src = self.source_of(cls)?;
+        let class = self.index.type_in(src, simple(&cls.name))?.clone();
+        if m.class_id == cls.id {
+            return Some((src, class.clone(), src, class));
+        }
+        let dc = self.classes.get(m.class_id.as_str())?;
+        let ds = self.source_of(dc)?;
+        Some((
+            src,
+            class,
+            ds,
+            self.index.type_in(ds, simple(&dc.name))?.clone(),
+        ))
     }
 
     /// The annotated declaration of `m` in `mclass`, else an empty one.
@@ -627,13 +735,46 @@ impl<'a> World<'a> {
 
     /// EJB beans (enforced by the container) and CDI beans (enforced by Quarkus only).
     fn jakarta(&self, site: &Site, bean: Bean, gaps: &mut Vec<Gap>) -> Option<Read> {
-        let state = plain(gaps, site.src, site.class, site.decl)?;
         let mut soft = Vec::new();
         let mut how = ServiceHow::Enforced;
-        if bean == Bean::Ejb && self.ejb_jar {
+        let mut forced = None;
+        if bean == Bean::Ejb && self.jars.has(site.dir) {
+            let mut names = vec![simple(&site.class.name).to_string()];
+            let bean_name = (site.class.attrs.iter())
+                .filter(|a| {
+                    matches!(
+                        a.name.as_str(),
+                        "Stateless" | "Stateful" | "Singleton" | "MessageDriven"
+                    )
+                })
+                .find_map(|a| named(&a.args, "name"));
+            names.extend(
+                bean_name
+                    .and_then(literals)
+                    .and_then(|v| v.into_iter().next()),
+            );
+            match self.jars.decide(site.dir, &names, &site.m.name) {
+                Decision::State(s) => {
+                    let note = "permission read from ejb-jar.xml (it overrides the annotations)";
+                    return Some((s, vec![note.into()], how));
+                }
+                Decision::Unreadable(why) => {
+                    let message = format!(
+                        "ejb-jar.xml: {why}; the descriptor overrides the annotations and is not read there"
+                    );
+                    gaps.push((site.msrc.rel.clone(), site.m.line, message.clone()));
+                    forced = Some(message);
+                }
+                Decision::NoEntry => {}
+            }
+        }
+        let state = match plain(gaps, site.src, site.class, site.decl) {
+            Some(s) => s,
+            None if forced.is_some() => AccessState::Undeclared,
+            None => return None,
+        };
+        if let Some(message) = forced {
             how = ServiceHow::Hint;
-            let message = "an ejb-jar.xml is present; its method-permission entries override the annotations and are not read".to_string();
-            gaps.push((site.msrc.rel.clone(), site.m.line, message.clone()));
             soft.push(message);
         } else if bean == Bean::Cdi && !quarkus_build(self.ctx.root, site.dir) {
             how = ServiceHow::Hint;
@@ -851,6 +992,39 @@ fn bean_of(src: &Source, class: &Decl, index: &Index) -> Bean {
     Bean::None
 }
 
+/// Why `mode = ASPECTJ` does not weave the check on the method of `site`: the
+/// aspects of spring-security-aspects match a method-level `@PreAuthorize` or
+/// `@Secured` of the implementing class, and a class-level `@Secured` on a
+/// public method; interface annotations are never woven.
+fn not_woven(site: &Site, msrc: &Source) -> Option<&'static str> {
+    let on =
+        |attrs: &[Attr], names: &[&str]| attrs.iter().any(|a| names.contains(&a.name.as_str()));
+    if on(&site.decl.attrs, &["PreAuthorize", "Secured"]) {
+        return None;
+    }
+    let line = msrc
+        .text
+        .lines()
+        .nth((site.m.line as usize).saturating_sub(1))?;
+    let before = line
+        .split(&format!("{}(", site.m.name))
+        .next()
+        .unwrap_or("");
+    let public = if msrc.rel.ends_with(".kt") {
+        !before
+            .split_whitespace()
+            .any(|w| matches!(w, "private" | "protected" | "internal"))
+    } else {
+        before.split_whitespace().any(|w| w == "public")
+    };
+    if public && on(&site.mclass.attrs, &["Secured"]) {
+        return None;
+    }
+    Some(
+        "`mode = ASPECTJ` weaves only a method-level `@PreAuthorize`/`@Secured` of the implementing class or a class-level `@Secured` on a public method; this check is not woven",
+    )
+}
+
 /// Why a proxy cannot advise method `m` (`private`, `final`).
 fn unadvisable(src: &Source, class: &Decl, m: &CallMethod) -> Option<&'static str> {
     if src.rel.ends_with(".kt") {
@@ -1016,3 +1190,190 @@ mod body {
     }
 }
 use body::unconditional;
+
+/// The `method-permission` and `exclude-list` entries of `ejb-jar.xml`.
+mod ejb {
+    use std::path::Path;
+
+    use archguard_core::{AccessState, Condition};
+
+    enum Rule {
+        Roles(Vec<String>),
+        Unchecked,
+        Excluded,
+        /// `method-params`, `method-intf`, or a part that is missing.
+        Unreadable(String),
+    }
+
+    #[derive(Default)]
+    pub(super) struct Jars {
+        /// `(module dir, ejb-name, method-name, rule)`.
+        rules: Vec<(String, String, String, Rule)>,
+        /// `(module dir, ejb-name, simple name of ejb-class)`.
+        classes: Vec<(String, String, String)>,
+        /// `(module dir, why)`: a descriptor could not be parsed, or `metadata-complete` is not `false`.
+        broken: Vec<(String, String)>,
+        /// Module dirs that have a descriptor.
+        modules: Vec<String>,
+    }
+
+    pub(super) enum Decision {
+        NoEntry,
+        State(AccessState),
+        Unreadable(String),
+    }
+
+    fn text(n: roxmltree::Node, name: &str) -> Option<String> {
+        let child = n.children().find(|c| c.has_tag_name(name))?;
+        Some(child.text().unwrap_or("").trim().to_string())
+    }
+
+    impl Jars {
+        /// A descriptor belongs to the module (project dir) that holds its path.
+        pub(super) fn read(root: &Path, files: &[String], dirs: &[&str]) -> Jars {
+            let mut jars = Jars::default();
+            for f in files.iter().filter(|f| f.ends_with("ejb-jar.xml")) {
+                let dir = (dirs.iter())
+                    .filter(|d| d.is_empty() || f.starts_with(&format!("{d}/")))
+                    .max_by_key(|d| d.len())
+                    .map_or("", |d| *d)
+                    .to_string();
+                jars.modules.push(dir.clone());
+                let parsed = std::fs::read_to_string(root.join(f))
+                    .map_err(|e| e.to_string())
+                    .and_then(|s| {
+                        let doc = roxmltree::Document::parse(&s).map_err(|e| e.to_string())?;
+                        jars.add(&dir, &doc);
+                        Ok(())
+                    });
+                if let Err(e) = parsed {
+                    jars.broken
+                        .push((dir, format!("{f} is not readable ({e})")));
+                }
+            }
+            jars
+        }
+
+        pub(super) fn has(&self, dir: &str) -> bool {
+            self.modules.iter().any(|m| m == dir)
+        }
+
+        fn add(&mut self, dir: &str, doc: &roxmltree::Document) {
+            let root = doc.root_element();
+            if root
+                .attribute("metadata-complete")
+                .is_some_and(|v| v != "false")
+            {
+                let why = "`metadata-complete` is set, so the annotations are ignored";
+                self.broken.push((dir.to_string(), why.into()));
+            }
+            for n in doc.descendants().filter(|n| n.is_element()) {
+                match n.tag_name().name() {
+                    "session" | "message-driven" => {
+                        if let (Some(name), Some(class)) =
+                            (text(n, "ejb-name"), text(n, "ejb-class"))
+                        {
+                            let simple = class.rsplit('.').next().unwrap_or("").to_string();
+                            self.classes.push((dir.to_string(), name, simple));
+                        }
+                    }
+                    kind @ ("method-permission" | "exclude-list") => {
+                        self.permission(dir, n, kind == "exclude-list")
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        fn permission(&mut self, dir: &str, n: roxmltree::Node, exclude: bool) {
+            let roles: Vec<String> = (n.children().filter(|c| c.has_tag_name("role-name")))
+                .map(|c| c.text().unwrap_or("").trim().to_string())
+                .collect();
+            let unchecked = n.children().any(|c| c.has_tag_name("unchecked"));
+            let methods = n.children().filter(|c| c.has_tag_name("method"));
+            for m in methods {
+                let (Some(ejb), Some(name)) = (text(m, "ejb-name"), text(m, "method-name")) else {
+                    let why = "a `method` entry lacks `ejb-name` or `method-name`";
+                    self.broken.push((dir.to_string(), why.into()));
+                    continue;
+                };
+                let rule = if m
+                    .children()
+                    .any(|c| c.has_tag_name("method-params") || c.has_tag_name("method-intf"))
+                {
+                    Rule::Unreadable(format!(
+                        "the entry for `{ejb}.{name}` names method parameters or an interface"
+                    ))
+                } else if exclude {
+                    Rule::Excluded
+                } else if unchecked {
+                    Rule::Unchecked
+                } else if !roles.is_empty() && roles.iter().all(|r| !r.is_empty()) {
+                    Rule::Roles(roles.clone())
+                } else {
+                    Rule::Unreadable(format!(
+                        "the `method-permission` for `{ejb}.{name}` has no readable role"
+                    ))
+                };
+                self.rules.push((dir.to_string(), ejb, name, rule));
+            }
+        }
+
+        /// What the descriptor of module `dir` says about `method` of the bean that may be called `names`.
+        pub(super) fn decide(&self, dir: &str, names: &[String], method: &str) -> Decision {
+            if let Some((_, why)) = self.broken.iter().find(|(d, _)| d == dir) {
+                return Decision::Unreadable(why.clone());
+            }
+            let mut names = names.to_vec();
+            for (d, name, class) in &self.classes {
+                if d == dir && names.contains(class) {
+                    names.push(name.clone());
+                }
+            }
+            let hit: Vec<&Rule> = (self.rules.iter())
+                .filter(|(d, e, m, _)| d == dir && names.contains(e) && (m == method || m == "*"))
+                .map(|r| &r.3)
+                .collect();
+            if let Some(Rule::Unreadable(why)) =
+                hit.iter().find(|r| matches!(r, Rule::Unreadable(_)))
+            {
+                return Decision::Unreadable(why.clone());
+            }
+            if hit.iter().any(|r| matches!(r, Rule::Excluded)) {
+                return Decision::State(AccessState::Protected(Condition::Never));
+            }
+            if hit.is_empty() {
+                return Decision::NoEntry;
+            }
+            Decision::State(state_of(hit.into_iter()))
+        }
+    }
+
+    /// The state of the rules that apply: `unchecked` opens, otherwise the roles are unioned.
+    fn state_of<'r>(rules: impl Iterator<Item = &'r Rule> + Clone) -> AccessState {
+        if rules.clone().any(|r| matches!(r, Rule::Unchecked)) {
+            return AccessState::Open;
+        }
+        let mut roles: Vec<Condition> = Vec::new();
+        for x in rules
+            .filter_map(|r| {
+                if let Rule::Roles(rs) = r {
+                    Some(rs)
+                } else {
+                    None
+                }
+            })
+            .flatten()
+        {
+            let c = Condition::Role(x.clone());
+            if !roles.contains(&c) {
+                roles.push(c);
+            }
+        }
+        AccessState::Protected(if roles.len() == 1 {
+            roles.remove(0)
+        } else {
+            Condition::Any(roles)
+        })
+    }
+}

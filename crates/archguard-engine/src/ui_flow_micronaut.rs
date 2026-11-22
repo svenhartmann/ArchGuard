@@ -25,7 +25,7 @@ use crate::extract_ctx::with_root_config;
 use crate::extract_ctx::{ExtractContext, ancestors, dir_name, finish, gap, read_text, walk};
 use crate::lang_csharp::literal;
 use crate::services::support::test_path;
-use crate::ui_flow_backend::{Attr, Decl, Source, decls, each_method};
+use crate::ui_flow_backend::{Attr, Decl, Source, class_header, decls, each_method};
 use archguard_core::{
     AccessState, Condition, DiagnosticSeverity, EndpointAccess, UiFlow, UiFlowDiagnostic,
 };
@@ -144,8 +144,360 @@ struct TypeInfo {
     name: String,
     attrs: Vec<Attr>,
     bases: Vec<String>,
-    methods: Vec<(String, Vec<Attr>)>,
+    /// Type parameters of the class.
+    vars: Vec<String>,
+    /// `(name, annotations, parameter types, type parameters in scope)`.
+    methods: Vec<(String, Vec<Attr>, Sig, Vec<String>)>,
 }
+
+/// Overload matching by parameter types.
+mod sig {
+    use super::*;
+
+    /// Normalised parameter types of a method; `None` when not readable.
+    pub(super) type Sig = Option<Vec<String>>;
+
+    /// The parameter types of the method whose parameter list opens at `open`.
+    pub(super) fn sig_of(src: &Source, open: usize) -> Sig {
+        let close = src.pair(open)?;
+        let text = &src.text[open + 1..close];
+        if text.trim().is_empty() {
+            return Some(vec![]);
+        }
+        let (mut parts, mut depth, mut from) = (vec![], 0i32, 0);
+        let mut it = text.char_indices();
+        while let Some((i, c)) = it.next() {
+            match c {
+                '(' | '<' | '[' | '{' => depth += 1,
+                ')' | '>' | ']' | '}' => depth -= 1,
+                '"' | '\'' => skip_quoted(&mut it, c),
+                ',' if depth == 0 => {
+                    parts.push(&text[from..i]);
+                    from = i + 1;
+                }
+                _ => {}
+            }
+        }
+        parts.push(&text[from..]);
+        parts.into_iter().map(param_type).collect()
+    }
+
+    /// `final @A String name`, `name: String = x` -> `String`; generics and
+    /// package prefixes are dropped (erased comparison).
+    pub(super) fn param_type(p: &str) -> Option<String> {
+        let p = strip_annotations(p.trim())?;
+        let (ty, vararg) = if let Some((name, t)) = p.split_once(':') {
+            let vararg = name.split_whitespace().any(|w| w == "vararg");
+            (t.split('=').next().unwrap_or(t).to_string(), vararg)
+        } else {
+            let mut words: Vec<&str> = p.split_whitespace().collect();
+            // `String ids[]`: the brackets belong to the type.
+            let dims = words.pop()?.matches("[]").count();
+            (format!("{}{}", words.join(" "), "[]".repeat(dims)), false)
+        };
+        let ty = erase(ty.trim().trim_end_matches('?'))?;
+        Some(if vararg { ty + "[]" } else { ty })
+    }
+
+    type Chars<'a> = std::iter::Peekable<std::str::Chars<'a>>;
+
+    /// `p` without `@A` / `@A(…)`; parentheses inside string and char literals
+    /// do not count. `None` when an argument list is not closed.
+    fn strip_annotations(p: &str) -> Option<String> {
+        let (mut out, mut it) = (String::new(), p.chars().peekable());
+        while let Some(c) = it.next() {
+            out.push(if c == '@' { ' ' } else { c });
+            if c != '@' {
+                continue;
+            }
+            while it
+                .next_if(|c| c.is_alphanumeric() || matches!(c, '_' | '.'))
+                .is_some()
+            {}
+            while it.next_if(|c| c.is_whitespace()).is_some() {}
+            if it.next_if_eq(&'(').is_some() {
+                skip_arguments(&mut it)?;
+            }
+        }
+        Some(out)
+    }
+
+    /// Consumes up to the `)` that closes an already opened argument list.
+    fn skip_arguments(it: &mut Chars) -> Option<()> {
+        let mut depth = 1;
+        while depth > 0 {
+            match it.next()? {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                q @ ('"' | '\'') => skip_literal(it, q),
+                _ => {}
+            }
+        }
+        Some(())
+    }
+
+    /// Consumes the rest of a string or char literal opened with `quote`.
+    fn skip_literal(it: &mut Chars, quote: char) {
+        while let Some(c) = it.next() {
+            if c == '\\' {
+                it.next();
+            } else if c == quote || c == '\n' {
+                break;
+            }
+        }
+    }
+
+    /// `Array<out String>` -> `String[]`; other generics and packages dropped.
+    fn erase(ty: &str) -> Option<String> {
+        let ty = ty.trim().trim_end_matches('?');
+        if let Some(inner) = ty.strip_prefix("Array<").and_then(|r| r.strip_suffix('>')) {
+            let inner = inner
+                .trim()
+                .trim_start_matches("out ")
+                .trim_start_matches("in ");
+            return Some(erase(inner)? + "[]");
+        }
+        let (mut out, mut depth) = (String::new(), 0);
+        for c in ty.chars() {
+            match c {
+                '<' => depth += 1,
+                '>' => depth -= 1,
+                _ if depth == 0 => out.push(c),
+                _ => {}
+            }
+        }
+        let out = out.replace("...", "[]").replace('?', "");
+        let words: Vec<&str> = (out.split_whitespace())
+            .filter(|w| !matches!(*w, "final" | "vararg"))
+            .collect();
+        let ty = words.join("").rsplit('.').next()?.to_string();
+        (!ty.is_empty()).then_some(ty)
+    }
+
+    #[derive(PartialEq)]
+    pub(super) enum Fit {
+        Yes,
+        No,
+        Maybe,
+    }
+
+    /// Java and Kotlin spell some types differently (`int`/`Int`, `Object`/`Any`).
+    fn canon(t: &str) -> String {
+        let (word, dims) = (t.trim_end_matches("[]"), t.matches("[]").count());
+        let (word, extra) = match word.strip_suffix("Array").filter(|w| !w.is_empty()) {
+            Some(w) => (w, 1),
+            None => (word, 0),
+        };
+        let word = word
+            .strip_prefix("Mutable")
+            .filter(|w| !w.is_empty())
+            .unwrap_or(word);
+        let word = match word.to_ascii_lowercase().as_str() {
+            "integer" => "int".to_string(),
+            "character" => "char".to_string(),
+            "any" => "object".to_string(),
+            "unit" => "void".to_string(),
+            w if [
+                "int", "long", "short", "byte", "char", "boolean", "float", "double", "object",
+                "void",
+            ]
+            .contains(&w) =>
+            {
+                w.to_string()
+            }
+            _ => word.to_string(),
+        };
+        format!("{word}{}", "[]".repeat(dims + extra))
+    }
+
+    /// Whether two parameter lists are the same overload. A type variable
+    /// (`T`) or an unreadable list may stand for anything: `Maybe`.
+    pub(super) fn fits(a: &Sig, b: &Sig, overriding: bool, vars: &[String]) -> Fit {
+        let (Some(a), Some(b)) = (a, b) else {
+            return Fit::Maybe;
+        };
+        if a.len() != b.len() {
+            // An override that does not match by count was probably misread.
+            return if overriding { Fit::Maybe } else { Fit::No };
+        }
+        let var = |t: &str| {
+            let word = t.trim_end_matches("[]");
+            (word.len() <= 2 && word.starts_with(|c: char| c.is_ascii_uppercase()))
+                || vars.iter().any(|v| v == word)
+        };
+        let mut maybe = false;
+        for (x, y) in a.iter().zip(b) {
+            if canon(x) == canon(y) {
+                continue;
+            }
+            // A definite difference only between plain type names, and never
+            // for a method marked as an override (an alias or an unreadable
+            // spelling may hide the match).
+            let plain = |t: &str| {
+                t.chars()
+                    .all(|c| c.is_alphanumeric() || matches!(c, '_' | '[' | ']'))
+            };
+            if !(var(x) || var(y)) && plain(x) && plain(y) && !overriding {
+                return Fit::No;
+            }
+            maybe = true;
+        }
+        if maybe { Fit::Maybe } else { Fit::Yes }
+    }
+
+    /// Consumes the rest of a literal opened with `quote` (it ends at a line end).
+    fn skip_quoted(it: &mut std::str::CharIndices, quote: char) {
+        while let Some((_, c)) = it.next() {
+            if c == '\\' {
+                it.next();
+            } else if c == quote || c == '\n' {
+                break;
+            }
+        }
+    }
+
+    /// The declaration head before the parameter list at `open`: modifiers,
+    /// annotations, type parameters, return type and name. It starts after
+    /// the last `;`, `{` or `}` outside parentheses and literals.
+    fn head_of(src: &Source, open: usize) -> &str {
+        let text = &src.text[..open];
+        let (mut from, mut depth, mut it) = (0, 0u32, text.char_indices());
+        while let Some((i, c)) = it.next() {
+            match c {
+                '(' => depth += 1,
+                ')' => depth = depth.saturating_sub(1),
+                '"' | '\'' => skip_quoted(&mut it, c),
+                ';' | '{' | '}' if depth == 0 => from = i + 1,
+                _ => {}
+            }
+        }
+        &text[from..]
+    }
+
+    /// Whether the method whose parameter list opens at `open` is marked as an
+    /// override: Kotlin `override`, Java `@Override`. Errs towards `true`.
+    pub(super) fn overrides(src: &Source, open: usize) -> bool {
+        let head = head_of(src, open);
+        head.contains("@Override")
+            || head
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .any(|w| w == "override")
+    }
+
+    /// The names declared by the `<…>` group at the start of `text`
+    /// (`<T, K extends X>`, `<out T>`).
+    fn group_params(text: &str) -> Vec<String> {
+        let (mut out, mut depth, mut from) = (vec![], 0, 1);
+        for (i, c) in text.char_indices() {
+            let end = c == '>' && depth == 1;
+            match c {
+                '<' => depth += 1,
+                '>' => depth -= 1,
+                _ => {}
+            }
+            if (c == ',' && depth == 1) || end {
+                let part = text.get(from..i).unwrap_or("");
+                let skip = ["out", "in", "reified"];
+                out.extend(
+                    part.split_whitespace()
+                        .find(|w| !skip.contains(w))
+                        .map(str::to_string),
+                );
+                from = i + 1;
+            }
+            if depth == 0 {
+                break;
+            }
+        }
+        out
+    }
+
+    /// Type parameters of the class `name` declared by `header`.
+    pub(super) fn class_vars(header: &str, name: &str) -> Vec<String> {
+        for kw in ["class ", "interface ", "record ", "struct ", "object "] {
+            let Some(i) = header.find(kw) else { continue };
+            let rest = header[i + kw.len()..].trim_start();
+            if let Some(after) = rest.strip_prefix(name).filter(|a| a.starts_with('<')) {
+                return group_params(after);
+            }
+        }
+        vec![]
+    }
+
+    /// Type parameters of the class and of the method at `open`
+    /// (`<T> String f(T a)`, `fun <T> f(a: T)`).
+    pub(super) fn vars_of(src: &Source, open: usize, class: &[String]) -> Vec<String> {
+        const MODS: [&str; 19] = [
+            "public",
+            "protected",
+            "private",
+            "static",
+            "abstract",
+            "default",
+            "final",
+            "synchronized",
+            "fun",
+            "override",
+            "open",
+            "suspend",
+            "inline",
+            "operator",
+            "infix",
+            "internal",
+            "external",
+            "native",
+            "strictfp",
+        ];
+        let mut out = class.to_vec();
+        let head = strip_annotations(head_of(src, open)).unwrap_or_default();
+        if let Some(lt) = head.find('<')
+            && head[..lt].split_whitespace().all(|w| MODS.contains(&w))
+        {
+            out.extend(group_params(&head[lt..]));
+        }
+        out
+    }
+
+    /// The methods named `name` declared in the body of `class`: `(offset of the
+    /// parameter list, parameter types)`. Annotation-less ones are not `Decl`s.
+    pub(super) fn declared(src: &Source, class: &Decl, name: &str) -> Vec<(usize, Sig, bool)> {
+        let kotlin = src.rel.ends_with(".kt");
+        let mut out = vec![];
+        for (at, _) in src.text[class.open..class.end.min(src.text.len())].match_indices(name) {
+            let start = class.open + at;
+            let (before, after) = (&src.text[..start], &src.text[start + name.len()..]);
+            let ident = |c: char| c.is_alphanumeric() || c == '_';
+            if before.ends_with(ident) || after.starts_with(ident) {
+                continue;
+            }
+            let open = start + name.len() + (after.len() - after.trim_start().len());
+            if !src.text[open..].starts_with('(') {
+                continue;
+            }
+            let tail = src
+                .pair(open)
+                .map_or("", |c| src.text[c + 1..].trim_start());
+            let head = before.trim_end();
+            let is_decl = if kotlin {
+                // `fun name(` or `fun <T> name(`
+                head.rfind("fun").is_some_and(|i| {
+                    let rest = head[i + 3..].trim();
+                    !head[..i].ends_with(ident)
+                        && (rest.is_empty() || rest.starts_with('<') && rest.ends_with('>'))
+                })
+            } else {
+                !head.ends_with('.')
+                    && (tail.starts_with('{') || tail.starts_with("throws"))
+                    && !head.ends_with("new")
+            };
+            if is_decl {
+                out.push((open, sig_of(src, open), overrides(src, open)));
+            }
+        }
+        out
+    }
+}
+use sig::{Fit, Sig, class_vars, declared, fits, overrides, sig_of, vars_of};
 
 /// The annotated types and methods of a project by simple name.
 struct Types(Vec<TypeInfo>);
@@ -170,14 +522,18 @@ impl Types {
                 }
                 if d.class {
                     open.push((d.end, all.len()));
+                    let header = class_header(src, &d);
                     all.push(TypeInfo {
+                        vars: class_vars(header, &d.name),
                         name: d.name,
                         attrs: d.attrs,
                         bases: d.bases,
                         methods: vec![],
                     });
                 } else if let Some(o) = open.last() {
-                    all[o.1].methods.push((d.name, d.attrs));
+                    let vars = vars_of(src, d.open, &all[o.1].vars);
+                    let sig = sig_of(src, d.open);
+                    all[o.1].methods.push((d.name, d.attrs, sig, vars));
                 }
             }
         }
@@ -270,7 +626,9 @@ impl Project {
                 let methods = own.remove(&class.open).unwrap_or_default();
                 let at = Site { src, class };
                 for m in &methods {
-                    self.routes(&at, (&m.name, &m.attrs, &m.attrs), &env, flow);
+                    let sig = sig_of(src, m.open);
+                    let ov = overrides(src, m.open);
+                    self.routes(&at, (&m.name, &m.attrs, &m.attrs, &sig, ov), &env, flow);
                 }
                 self.inherited_routes(&at, &methods, &env, flow);
             }
@@ -289,18 +647,38 @@ impl Project {
             gap(&mut flow.diagnostics, &at.src.rel, line, message);
         }
         let verbs = |attrs: &[Attr]| attrs.iter().any(|a| VERBS.iter().any(|v| v.0 == a.name));
-        let mut seen: BTreeSet<&str> = (methods.iter())
-            .filter(|m| verbs(&m.attrs))
-            .map(|m| m.name.as_str())
-            .collect();
+        let mut seen: BTreeSet<(&str, Sig)> = BTreeSet::new();
         for t in supers {
-            for (name, attrs) in t.methods.iter().filter(|m| verbs(&m.1)) {
-                if !seen.insert(name) {
+            for (name, attrs, sig, vars) in t.methods.iter().filter(|m| verbs(&m.1)) {
+                if !seen.insert((name, sig.clone())) {
                     continue;
                 }
-                let own: &[Attr] =
-                    (methods.iter().find(|m| &m.name == name)).map_or(&[], |m| &m.attrs);
-                self.routes(at, (name, own, attrs), env, flow);
+                // Which method of the controller overrides it (by parameters)?
+                let found = declared(at.src, at.class, name);
+                let fit: Vec<_> = found.iter().map(|f| fits(&f.1, sig, f.2, vars)).collect();
+                let chosen = if found.is_empty() || fit.iter().all(|f| *f == Fit::No) {
+                    None
+                } else if fit.iter().filter(|f| **f == Fit::Yes).count() == 1
+                    && !fit.contains(&Fit::Maybe)
+                {
+                    fit.iter().position(|f| *f == Fit::Yes).map(|i| &found[i])
+                } else {
+                    let message = format!(
+                        "Route {name} of supertype {} is not inherited: the controller declares \
+                         {name} and which one overrides it cannot be told from the parameters.",
+                        t.name
+                    );
+                    gap(&mut flow.diagnostics, &at.src.rel, line, message);
+                    continue;
+                };
+                let overriding = chosen.and_then(|c| methods.iter().find(|m| m.open == c.0));
+                if overriding.is_some_and(|m| verbs(&m.attrs)) {
+                    continue;
+                }
+                let own: &[Attr] = overriding.map_or(&[], |m| &m.attrs);
+                let route_sig = chosen.map_or(sig, |c| &c.1);
+                let ov = chosen.is_some_and(|c| c.2);
+                self.routes(at, (name, own, attrs, route_sig, ov), env, flow);
             }
         }
     }
@@ -310,7 +688,7 @@ impl Project {
     fn routes(
         &self,
         at: &Site,
-        (name, own, route_attrs): (&str, &[Attr], &[Attr]),
+        (name, own, route_attrs, sig, ov): (&str, &[Attr], &[Attr], &Sig, bool),
         env: &Env,
         flow: &mut UiFlow,
     ) {
@@ -351,7 +729,7 @@ impl Project {
                 .iter()
                 .flat_map(|b| paths.iter().map(move |p| join(b, p)))
             {
-                let access = match self.decide(class, (name, own), verb, &path, env) {
+                let access = match self.decide(class, (name, own, sig, ov), verb, &path, env) {
                     Ok(a) => a,
                     Err(why) => {
                         gap(
@@ -392,7 +770,7 @@ impl Project {
     fn decide(
         &self,
         class: &Decl,
-        method: (&str, &[Attr]),
+        method: (&str, &[Attr], &Sig, bool),
         verb: &str,
         path: &str,
         env: &Env,
@@ -451,7 +829,12 @@ impl Project {
     /// The annotation decision of a route method: its own, then those of the
     /// methods it overrides, then the class's, then its supertypes'. A
     /// supertype outside the scan may carry any of them: unknown.
-    fn inherited(&self, class: &Decl, method: (&str, &[Attr]), types: &Types) -> Option<Decision> {
+    fn inherited(
+        &self,
+        class: &Decl,
+        method: (&str, &[Attr], &Sig, bool),
+        types: &Types,
+    ) -> Option<Decision> {
         if let Some(a) = self.annotation(method.1) {
             return Some(a);
         }
@@ -462,11 +845,15 @@ impl Project {
             ));
         }
         for t in &supers {
-            let same: Vec<_> = t.methods.iter().filter(|m| m.0 == method.0).collect();
-            if same.len() > 1 {
+            let same: Vec<_> = (t.methods.iter())
+                .filter(|m| m.0 == method.0)
+                .map(|m| (m, fits(&m.2, method.2, method.3, &m.3)))
+                .filter(|m| m.1 != Fit::No)
+                .collect();
+            if same.len() > 1 || same.iter().any(|m| m.1 == Fit::Maybe) {
                 return Some(Err(format!("{} is overloaded in {}", method.0, t.name)));
             }
-            if let Some(a) = same.first().and_then(|m| self.annotation(&m.1)) {
+            if let Some(a) = same.first().and_then(|m| self.annotation(&m.0.1)) {
                 return Some(a);
             }
         }
@@ -1237,5 +1624,273 @@ mod tests {
             "{:#?}",
             f.diagnostics
         );
+    }
+
+    #[test]
+    fn overload_inherits_only_the_matching_supertype_method() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Secured(\"ROLE_ADMIN\") String i(String a);",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Get(\"/n\") public String i(int a) { return \"\"; }\n\
+             @Get(\"/s\") public String i(String a) { return \"\"; }",
+        );
+        let f = run(
+            SEC,
+            &[("src/Api.java", &api), ("src/C.java", &ctl), (YML, ANY_URL)],
+        );
+        assert_eq!(ep(&f, "GET", "/c/s").access, prot(role("ROLE_ADMIN")));
+        assert_eq!(ep(&f, "GET", "/c/n").access, AccessState::Open);
+    }
+
+    #[test]
+    fn overloaded_override_takes_its_own_annotations_by_parameters() {
+        let api = java_type("interface", "Api", "@Get(\"/i\") String i(String a);");
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Secured(\"ROLE_Y\") public String i(int a) { return \"\"; }\n\
+             @Secured(\"ROLE_X\") public String i(String a) { return \"\"; }",
+        );
+        let f = run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]);
+        assert_eq!(ep(&f, "GET", "/c/i").access, prot(role("ROLE_X")));
+    }
+
+    #[test]
+    fn ambiguous_overload_gets_a_gap_and_no_route() {
+        let api = java_type("interface", "Api", "@Get(\"/i\") String i(T a);");
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "public String i(int a) { return \"\"; }\n\
+             public String i(String a) { return \"\"; }",
+        );
+        let f = run(
+            SEC,
+            &[("src/Api.java", &api), ("src/C.java", &ctl), (YML, ANY_URL)],
+        );
+        assert!(
+            f.endpoints.iter().all(|e| e.path != "/c/i"),
+            "{:#?}",
+            f.endpoints
+        );
+        assert!(
+            f.diagnostics
+                .iter()
+                .any(|d| d.severity == DiagnosticSeverity::Gap && d.message.contains("declares i")),
+            "{:#?}",
+            f.diagnostics
+        );
+    }
+
+    const KT_HEAD: &str = "package a\nimport io.micronaut.http.annotation.*\nimport io.micronaut.security.annotation.Secured\n";
+
+    #[test]
+    fn vararg_override_in_kotlin_matches_the_java_varargs_method() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/l\") @Secured(\"isAnonymous()\") String list(String... ids);",
+        );
+        let ctl = format!(
+            "{KT_HEAD}@Controller(\"/c\") class C : Api {{\n  fun list(): String = \"\"\n  @Secured(\"ROLE_X\") override fun list(vararg ids: String): String = \"\"\n}}\n"
+        );
+        let f = run(SEC, &[("src/Api.java", &api), ("src/C.kt", &ctl)]);
+        assert_eq!(ep(&f, "GET", "/c/l").access, prot(role("ROLE_X")));
+    }
+
+    #[test]
+    fn unmatched_overload_never_inherits_the_open_route() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/i\") @Secured(\"isAnonymous()\") String i(String a);",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Secured(\"ROLE_X\") public String i(int a) { return \"\"; }\n\
+             @Secured(\"ROLE_Y\") public String i(int) { return \"\"; }",
+        );
+        let f = run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]);
+        assert!(
+            f.endpoints.iter().all(|e| e.access != AccessState::Open),
+            "{:#?}",
+            f.endpoints
+        );
+        assert!(gaps(&f) > 0, "{:#?}", f.diagnostics);
+    }
+
+    #[test]
+    fn single_supertype_method_with_other_parameters_is_not_inherited() {
+        let base = java_type(
+            "class",
+            "Base",
+            "@Get(\"/g\") @Secured(\"ROLE_A\") String get(Long id) { return \"\"; }",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C extends Base",
+            "@Get(\"/h\") public String get(String s) { return \"\"; }",
+        );
+        let f = run(
+            SEC,
+            &[
+                ("src/Base.java", &base),
+                ("src/C.java", &ctl),
+                (YML, ANY_URL),
+            ],
+        );
+        assert_eq!(ep(&f, "GET", "/c/h").access, AccessState::Open);
+        assert_eq!(ep(&f, "GET", "/c/g").access, prot(role("ROLE_A")));
+    }
+
+    #[test]
+    fn kotlin_generic_function_counts_as_a_declaration() {
+        let api =
+            format!("{KT_HEAD}interface Api {{\n  @Get(\"/i\") fun i(a: String): String\n}}\n");
+        let ctl = format!(
+            "{KT_HEAD}@Controller(\"/c\") class C : Api {{\n  fun i(a: Int): String = \"\"\n  @Secured(\"ROLE_X\") override fun <T> i(a: String): String = \"\"\n}}\n"
+        );
+        let f = run(SEC, &[("src/Api.kt", &api), ("src/C.kt", &ctl)]);
+        assert_eq!(ep(&f, "GET", "/c/i").access, prot(role("ROLE_X")));
+    }
+
+    #[test]
+    fn annotation_argument_with_parentheses_in_a_string_is_skipped() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/f\") @Secured(\"isAnonymous()\") String find(@Pattern(regexp = \"^(a|b)$\") String code);",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Secured(\"ROLE_X\") public String find(String code) { return \"\"; }",
+        );
+        let f = run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]);
+        assert_eq!(ep(&f, "GET", "/c/f").access, prot(role("ROLE_X")));
+    }
+
+    #[test]
+    fn kotlin_mutable_collections_match_the_java_interfaces() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/m\") @Secured(\"isAnonymous()\") String m(List<String> a);",
+        );
+        let ctl = format!(
+            "{KT_HEAD}@Controller(\"/c\") class C : Api {{\n  @Secured(\"ROLE_X\") override fun m(a: MutableList<String>): String = \"\"\n}}\n"
+        );
+        let f = run(SEC, &[("src/Api.java", &api), ("src/C.kt", &ctl)]);
+        assert_eq!(ep(&f, "GET", "/c/m").access, prot(role("ROLE_X")));
+    }
+
+    #[test]
+    fn override_with_an_unmatched_type_is_a_gap_not_the_open_route() {
+        let api = format!(
+            "{KT_HEAD}interface Api {{\n  @Get(\"/t\") @Secured(\"isAnonymous()\") fun t(a: String): String\n}}\n"
+        );
+        let alias = format!(
+            "{KT_HEAD}typealias UserId = String\n@Controller(\"/c\") class C : Api {{\n  @Secured(\"ROLE_X\") override fun t(a: UserId): String = \"\"\n}}\n"
+        );
+        let f = run(SEC, &[("src/Api.kt", &api), ("src/C.kt", &alias)]);
+        assert!(
+            f.endpoints.iter().all(|e| e.access != AccessState::Open),
+            "{:#?}",
+            f.endpoints
+        );
+        assert!(gaps(&f) > 0, "{:#?}", f.diagnostics);
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/u\") @Secured(\"isAnonymous()\") String u(Base a);",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Override @Secured(\"ROLE_X\") public String u(Dto a) { return \"\"; }",
+        );
+        let f = run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]);
+        assert!(
+            f.endpoints.iter().all(|e| e.access != AccessState::Open),
+            "{:#?}",
+            f.endpoints
+        );
+        assert!(gaps(&f) > 0, "{:#?}", f.diagnostics);
+    }
+
+    fn no_open_and_a_gap(f: &UiFlow) {
+        assert!(
+            f.endpoints.iter().all(|e| e.access != AccessState::Open),
+            "{:#?}",
+            f.endpoints
+        );
+        assert!(gaps(f) > 0, "{:#?}", f.diagnostics);
+    }
+
+    #[test]
+    fn brackets_inside_annotation_strings_do_not_change_the_parameter_count() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/f\") @Secured(\"isAnonymous()\") String f(@Pattern(regexp = \"[^)]*\") String a, String b);",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Override @Secured(\"ROLE_X\") public String f(String a, String b) { return \"\"; }",
+        );
+        let f = run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]);
+        assert_eq!(ep(&f, "GET", "/c/f").access, prot(role("ROLE_X")));
+    }
+
+    #[test]
+    fn override_marker_survives_braces_in_annotation_arguments() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/u\") @Secured(\"isAnonymous()\") String u(Base a);",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Override @Secured({\"ROLE_X\"}) public String u(Dto a) { return \"\"; }",
+        );
+        no_open_and_a_gap(&run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]));
+    }
+
+    #[test]
+    fn declared_type_parameters_of_the_supertype_are_unsure_types() {
+        let api = java_type(
+            "interface",
+            "Api<DTO>",
+            "@Get(\"/g\") @Secured(\"isAnonymous()\") String g(DTO a);",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api<Foo>",
+            "@Secured(\"ROLE_X\") public String g(Foo a) { return \"\"; }",
+        );
+        no_open_and_a_gap(&run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]));
+    }
+
+    #[test]
+    fn declared_method_type_parameters_are_unsure_types() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/h\") @Secured(\"isAnonymous()\") <ITEM> String h(ITEM a);",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Secured(\"ROLE_X\") public String h(Foo a) { return \"\"; }",
+        );
+        no_open_and_a_gap(&run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]));
     }
 }
