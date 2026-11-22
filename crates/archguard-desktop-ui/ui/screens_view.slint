@@ -210,7 +210,8 @@ component TopBar inherits Rectangle {
         spacing: 10px;
         BarLabel { text: @tr("Application"); }
         apps := ComboBox {
-            width: 210px;
+            preferred-width: 210px;
+            min-width: 120px;
             model: m.apps;
             current-index: m.app-index;
             selected => { ScreensData.select-app(self.current-index); }
@@ -236,6 +237,9 @@ component TopBar inherits Rectangle {
         Rectangle { horizontal-stretch: 1; }
         BarLabel {
             text: @tr("{} of {} navigations readable", Fmt.int(m.resolved), Fmt.int(m.navigations));
+            // Gives way before the links at the right are cut; the tip has the meaning.
+            overflow: elide;
+            min-width: 0;
             TipArea { tip: @tr("Navigations whose target the rules could read literally. The others may hide a path."); }
         }
         BarLabel { text: "·"; }
@@ -250,7 +254,7 @@ component TopBar inherits Rectangle {
             vertical-alignment: center;
             // Narrow windows shorten this note first; the tip keeps it whole.
             overflow: elide;
-            min-width: 60px;
+            min-width: 0;
             TipArea { tip: @tr("Read from source files by fixed rules, not observed at run time. A screen marked reached can still fail on data the rules do not know."); }
         }
     }
