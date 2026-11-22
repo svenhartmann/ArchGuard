@@ -1,4 +1,4 @@
-import json, sys, tempfile, unittest
+import contextlib, io, json, sys, tempfile, unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -14,7 +14,7 @@ def flow(screen_access=None, ep="undeclared", extra=None):
     return f
 
 
-def run(base, head):
+def run(base, head, out=None):
     with tempfile.TemporaryDirectory() as t:
         dirs = []
         for n, f in (("b", base), ("h", head)):
@@ -22,7 +22,8 @@ def run(base, head):
             (Path(t) / n / "app.ui-flow.json").write_text(json.dumps({"flow": f}))
             dirs.append(str(Path(t) / n))
         try:
-            vc.main(["access-diff", *dirs])
+            with contextlib.redirect_stdout(out or io.StringIO()):
+                vc.main(["access-diff", *dirs])
         except SystemExit as e:
             return e.code
 
@@ -41,6 +42,11 @@ class T(unittest.TestCase):
     def test_legacy_null_to_undeclared(self):
         new = flow("undeclared", extra={"role_conventions": []})
         self.assertEqual(run(flow(None), new), 0)
+
+    def test_legacy_null_prints_no_count_noise(self):
+        out = io.StringIO()
+        run(flow(None), flow("undeclared", extra={"role_conventions": [{"a": 1}]}), out)
+        self.assertIn("app: no change", out.getvalue())
 
     def test_unrecognised_is_exit_2(self):
         f = flow(COND, {"open": None})
