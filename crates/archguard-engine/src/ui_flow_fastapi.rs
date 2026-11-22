@@ -48,8 +48,10 @@
 //! `starlette.authentication`): every scope as a `policy` atom, all required;
 //! non-literal scopes give `unknown` and a gap. `AuthenticationMiddleware` alone
 //! gives no access. Starlette `Route(…)` tables are not read.
-//! Not read: `add_api_route`, `mount` of sub-applications, websockets,
+//! Not read: `add_api_route`, `mount` of sub-applications,
 //! `Depends()` without argument (class dependencies), routers built in loops.
+//!
+//! `@app.websocket(path)` is an endpoint with method `WS`, read like a route.
 //!
 //! Endpoint `application`: the directory name of the nearest `pyproject.toml`,
 //! `setup.py`, `setup.cfg` or `requirements.txt`. `handler`: the dotted module
@@ -514,6 +516,9 @@ mod model {
             let parts = src.split(open);
             let methods = match (method, src.kwarg(&parts, "methods")) {
                 (m, _) if METHODS.contains(&m) => vec![m.to_ascii_uppercase()],
+                // FastAPI `@app.websocket(path, dependencies=…)`:
+                // https://fastapi.tiangolo.com/advanced/websockets/
+                ("websocket", _) => vec!["WS".to_string()],
                 ("api_route", None) => vec!["GET".to_string()],
                 ("api_route", Some(v)) => match src.strings(v) {
                     Some(list) => list.iter().map(|m| m.to_ascii_uppercase()).collect(),
@@ -618,15 +623,15 @@ mod model {
         }
     }
 
-    /// `name = rhs` or `name: T = rhs` at `at`: the name and the rhs range.
     /// `@router.get(…)`-style decorator that [`Facts::route`] turns into a route.
     fn is_route(src: &Src, at: usize) -> bool {
         let (name, j) = dotted(&src.b, at);
         let method = name.rsplit_once('.').map_or("", |(_, m)| m);
         src.b.get(skip_sp(&src.b, j)) == Some(&b'(')
-            && (METHODS.contains(&method) || method == "api_route")
+            && (METHODS.contains(&method) || matches!(method, "api_route" | "websocket"))
     }
 
+    /// `name = rhs` or `name: T = rhs` at `at`: the name and the rhs range.
     fn assignment(src: &Src, at: usize) -> Option<(String, (usize, usize))> {
         let (name, j) = dotted(&src.b, at);
         let end = src.stmt_end(at);
@@ -1880,6 +1885,31 @@ mod tests {
             )
         );
         assert!(!flow.complete);
+    }
+
+    #[test]
+    fn websocket_routes_are_ws_endpoints_read_like_http_routes() {
+        let user = all(vec![Condition::Authenticated, custom("cur")]);
+        let flow = one(
+            "@app.websocket('/ws')\nasync def ws(a=Depends(cur)):\n    pass\n\
+             @app.websocket('/pub')\nasync def pub(a=Depends(public)):\n    pass\n\
+             @app.websocket('/bare')\nasync def bare():\n    pass\n\
+             @app.websocket('/odd')\n@login_required\nasync def odd(a=Depends(public)):\n    pass\n",
+            "public = \"open\"\n",
+        );
+        assert_eq!(
+            eps(&flow),
+            vec![
+                ep("WS", "/bare", AccessState::Undeclared),
+                ep(
+                    "WS",
+                    "/odd",
+                    AccessState::Protected(Condition::Unknown("login_required".into()))
+                ),
+                ep("WS", "/pub", AccessState::Open),
+                ep("WS", "/ws", user),
+            ]
+        );
     }
 
     #[test]
