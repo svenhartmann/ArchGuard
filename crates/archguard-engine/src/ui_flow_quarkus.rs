@@ -129,9 +129,27 @@ fn scan(root: &Path, files: Vec<String>, out: &mut Out) {
         };
         let quarkus = ancestors(&probe).any(|d| quarkus_build(root, d));
         let props = Props::read(root, &project.configs, out);
-        protos.push((application, quarkus, props));
+        protos.push((application, quarkus, server_build(root, dir), props));
     }
     emit(srcs, protos, out);
+}
+
+/// Whether the build file of `dir` itself depends on a Quarkus REST server
+/// (not only on a REST client).
+fn server_build(root: &Path, dir: &str) -> bool {
+    (BUILD_FILES.iter()).any(|b| {
+        let rel = if dir.is_empty() {
+            (*b).to_string()
+        } else {
+            format!("{dir}/{b}")
+        };
+        read_text(root, &rel, MAX_BYTES).is_ok_and(|t| {
+            let t = t
+                .replace("quarkus-rest-client", "")
+                .replace("quarkus-resteasy-client", "");
+            t.contains("quarkus-rest") || t.contains("quarkus-resteasy")
+        })
+    })
 }
 
 fn quarkus_build(root: &Path, dir: &str) -> bool {
@@ -1079,6 +1097,9 @@ struct Src {
 struct Pctx {
     application: Option<String>,
     quarkus: bool,
+    /// Whether the project serves REST resources: a server dependency, an
+    /// `@ApplicationPath` or a class with `@Path`.
+    serves: bool,
     props: Props,
     sets: Vec<Set>,
     prefix: String,
@@ -1088,14 +1109,16 @@ struct Pctx {
 impl Pctx {
     fn build(
         index: usize,
-        (application, quarkus, props): (Option<String>, bool, Props),
+        (application, quarkus, dep, props): Proto,
         srcs: &[Src],
         classes: &[(usize, Decl)],
         out: &mut Out,
     ) -> Pctx {
+        let serves = Pctx::serves(dep, index, srcs, classes);
         let mut ctx = Pctx {
             application,
             quarkus,
+            serves,
             props,
             sets: Vec::new(),
             prefix: String::new(),
@@ -1164,6 +1187,17 @@ impl Pctx {
         ctx
     }
 
+    /// Whether project `index` serves REST resources: a server dependency, an
+    /// `@ApplicationPath` or a concrete class with `@Path`.
+    fn serves(dep: bool, index: usize, srcs: &[Src], classes: &[(usize, Decl)]) -> bool {
+        dep || (classes.iter())
+            .filter(|(si, _)| srcs[*si].proj == index)
+            .any(|(_, c)| {
+                find(&c.attrs, "ApplicationPath").is_some()
+                    || (!c.flag && find(&c.attrs, "Path").is_some())
+            })
+    }
+
     /// The HTTP layer of `method` `path` in this project.
     fn http(&self, method: &str, path: &str, site: (&str, u32), out: &mut Out) -> AccessState {
         if !self.quarkus || (self.sets.is_empty() && self.prefix_unknown.is_none()) {
@@ -1193,7 +1227,7 @@ impl Pctx {
 /// Source index, carrying class, its method annotations, and the class key.
 type Target = (usize, Decl, Vec<Attr>, Option<(usize, usize)>);
 
-type Proto = (Option<String>, bool, Props);
+type Proto = (Option<String>, bool, bool, Props);
 
 struct Member {
     si: usize,
@@ -1251,9 +1285,44 @@ fn emit(srcs: Vec<Src>, protos: Vec<Proto>, out: &mut Out) {
         seen,
     };
     let mut announced = BTreeSet::new();
+    let first = out.0.endpoints.len();
     for m in &world.members {
         world.member(m, &mut announced, out);
     }
+    // one endpoint per implementation method, however many interfaces declare it
+    let mut seen_keys = BTreeSet::new();
+    let mut index = 0;
+    out.0.endpoints.retain(|e| {
+        index += 1;
+        index <= first
+            || seen_keys.insert((
+                e.application.clone(),
+                e.method.clone(),
+                e.path.clone(),
+                e.handler.clone(),
+            ))
+    });
+}
+
+/// `package x.y;` of a source ("" for none).
+fn package_of(text: &str) -> &str {
+    (text.lines())
+        .find_map(|l| l.trim().strip_prefix("package "))
+        .map_or("", |p| p.trim().trim_end_matches(';').trim())
+}
+
+/// Whether the class in source `imp` can name interface `name` of source
+/// `api`: same package, or an import of it (single or `*`).
+fn names_interface(imp: &str, api: &str, name: &str) -> bool {
+    let pkg = package_of(api);
+    pkg == package_of(imp)
+        || imp
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("import "))
+            .any(|i| {
+                let i = i.trim().trim_end_matches(';').trim();
+                i == format!("{pkg}.{name}") || i == format!("{pkg}.*")
+            })
 }
 
 /// Everything the scan found, to place each resource method.
@@ -1359,8 +1428,16 @@ impl World<'_> {
             );
             out.note(file, line, message);
         }
+        let api = &self.srcs[m.si].src.text;
         let impls: Vec<&(usize, Decl)> = (self.classes.iter())
-            .filter(|(_, c)| !c.flag && c.bases.contains(&class.name))
+            .filter(|(isi, c)| {
+                let imp = &self.srcs[*isi].src.text;
+                !c.flag
+                    && c.bases.contains(&class.name)
+                    && names_interface(imp, api, &class.name)
+                    && self.ctxs[self.srcs[*isi].proj].serves
+                    && !imp.contains("WebTarget") // a client-side implementation
+            })
             .collect();
         if impls.is_empty() {
             let message = format!(
@@ -1738,6 +1815,41 @@ mod tests {
             Protected(Condition::Unknown(_))
         ));
         assert_eq!(f.endpoints.len(), 2);
+    }
+
+    #[test]
+    fn same_simple_name_interfaces_resolve_by_package() {
+        let a = "package a;\nimport jakarta.ws.rs.*;\n@Path(\"/a\") public interface RunService { @GET String g(); }\n";
+        let b = "package b;\nimport jakarta.ws.rs.*;\n@Path(\"/b\") public interface RunService { @GET String g(); }\n";
+        let imp = "package s;\nimport a.RunService;\nimport jakarta.annotation.security.*;\n@RolesAllowed(\"u\") public class Impl implements RunService { public String g() { return \"\"; } }\n";
+        let f = run(&[
+            ("api/pom.xml", "<project/>"),
+            ("api/src/main/java/a/RunService.java", a),
+            ("api/src/main/java/b/RunService.java", b),
+            ("server/pom.xml", POM),
+            ("server/src/main/java/s/Impl.java", imp),
+        ]);
+        assert_eq!(f.endpoints.len(), 2, "{:?}", f.endpoints);
+        assert_eq!(at(&f, "GET", "/a"), Protected(role("u")));
+        assert_eq!(at(&f, "GET", "/b"), Undeclared);
+    }
+
+    #[test]
+    fn client_side_implementation_serves_nothing() {
+        let api = "package a;\nimport jakarta.ws.rs.*;\n@Path(\"/a\") public interface Api { @GET String g(); }\n";
+        let client = "package c;\nimport a.Api;\npublic class ClientImpl implements Api { ResteasyWebTarget t; public String g() { return \"\"; } }\n";
+        let f = run(&[
+            ("api/pom.xml", "<project/>"),
+            ("api/src/main/java/a/Api.java", api),
+            (
+                "client/pom.xml",
+                "<project><artifactId>resteasy-client</artifactId></project>",
+            ),
+            ("client/src/main/java/c/ClientImpl.java", client),
+        ]);
+        assert_eq!(f.endpoints.len(), 1, "{:?}", f.endpoints);
+        assert_eq!(f.endpoints[0].handler.as_deref(), Some("Api.g"));
+        assert_eq!(f.endpoints[0].access, Undeclared);
     }
 
     #[test]
