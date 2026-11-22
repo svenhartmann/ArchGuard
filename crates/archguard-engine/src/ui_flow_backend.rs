@@ -3523,7 +3523,9 @@ pub(crate) mod spring {
                 }
                 if !is_abstract(src, c) {
                     found.insert(c.open);
-                } else if !index.all_classes().any(|(_, d)| d.bases.contains(&c.name)) {
+                } else if !index.all_classes().any(|(s, d)| {
+                    d.bases.contains(&c.name) && names_interface(&s.text, &src.text, &c.name)
+                }) {
                     let message = format!(
                         "Routes of abstract controller {} not emitted: no concrete subclass in the scan.",
                         c.name
@@ -9276,6 +9278,23 @@ class Impl implements Api {
             ),
         ]);
         access(&flow, "GET", "/base/c");
+    }
+
+    #[test]
+    fn spring_abstract_controller_subclass_in_another_package_does_not_hide_the_gap() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/a/Base.java",
+                "package a;\n@RestController\nabstract class Base { @GetMapping(\"/b\") String b() { return \"\"; } }\n",
+            ),
+            ("src/main/java/b/Base.java", "package b;\nclass Base {}\n"),
+            (
+                "src/main/java/b/X.java",
+                "package b;\nclass X extends Base {}\n",
+            ),
+        ]);
+        assert_eq!(gaps(&flow, "no concrete subclass"), 1);
     }
 
     // Guard: a class that is no controller serves nothing.
