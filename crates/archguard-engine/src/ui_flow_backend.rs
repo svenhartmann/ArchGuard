@@ -116,10 +116,14 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
         if spring && application.is_none() {
             // A whole-flow prefix would leak into every other application.
             let file = sources.first().map_or("", |s| s.rel.as_str());
-            let message = "Role prefix not attributed: Spring sources lie outside every build-file project".into();
+            let message =
+                "Role prefix not attributed: Spring sources lie outside every build-file project"
+                    .into();
             out.diag(file, 0, message);
         } else if spring {
-            out.0.role_conventions.push(conf.convention(application.clone()));
+            out.0
+                .role_conventions
+                .push(conf.convention(application.clone()));
         }
     }
     index.apply_request_access(&mut out);
@@ -2397,6 +2401,10 @@ mod spring {
                 };
                 match kind {
                     Atom::Role if name.starts_with(p) => Condition::Role(name.into()),
+                    // legacy JSR-250 adds the prefix only when it is missing
+                    Atom::Jsr250 if self.legacy() && name.starts_with(p) => {
+                        Condition::Role(name.into())
+                    }
                     Atom::Role | Atom::Jsr250 => Condition::Role(format!("{p}{name}")),
                     Atom::Authority if name.starts_with(p) => Condition::Role(name.into()),
                     _ => Condition::Policy(name.into()),
@@ -7457,5 +7465,27 @@ class Sec {
             ),
         ]);
         assert_eq!(access(&flow, "GET", "/api/me"), &AccessState::Undeclared);
+    }
+
+    // Legacy `@EnableGlobalMethodSecurity(jsr250Enabled)` adds the role prefix only when missing.
+    #[test]
+    fn legacy_jsr250_adds_the_role_prefix_only_when_missing() {
+        let flow = spring_flow(&[
+            (
+                "src/main/java/Enable.java",
+                "@EnableGlobalMethodSecurity(jsr250Enabled = true)\nclass Enable {}\n",
+            ),
+            (
+                "src/main/java/A.java",
+                &controller(
+                    r#"class A {
+    @RolesAllowed("ROLE_ADMIN") @GetMapping("/a") void a() {}
+    @RolesAllowed("ADMIN") @GetMapping("/b") void b() {}
+}"#,
+                ),
+            ),
+        ]);
+        assert_eq!(access(&flow, "GET", "/a"), &protected(role("ROLE_ADMIN")));
+        assert_eq!(access(&flow, "GET", "/b"), &protected(role("ROLE_ADMIN")));
     }
 }
