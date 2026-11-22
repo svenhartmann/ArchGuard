@@ -889,7 +889,8 @@ mod model {
             "before_action"
             | "prepend_before_action"
             | "append_before_action"
-            | "before_filter" => before_kind(&cl, o),
+            | "before_filter"
+            | "around_action" => before_kind(&cl, o),
             "skip_before_action" | "skip_before_filter" | "skip_action_callback" => Kind::Skip {
                 names: names_of(&cl),
                 o,
@@ -1549,7 +1550,7 @@ mod eval {
             }
         }
 
-        /// A callback without a meaning: unknown when a skip names it, else a Note.
+        /// A callback without a meaning: unknown when a skip names it; a gap when it may halt.
         fn unread(&mut self, acc: &mut Acc, name: &str, ev: &Ev) {
             if self.p.skip_named.contains(name) {
                 let msg = format!(
@@ -1561,7 +1562,7 @@ mod eval {
                 let msg = format!(
                     "before_action :{name} has no access meaning (project method or block); list it in [views.access] if it guards."
                 );
-                self.note(ev, msg);
+                self.gap(ev, msg);
                 acc.halting.push(name.to_string());
             }
         }
@@ -2205,6 +2206,13 @@ mod routes {
         fn mount(&mut self, cl: &Call, s: &Stmt, ctx: &Ctx) {
             let c = self.with_constraints(&cl.args, ctx, s.line);
             let at = cl.args.pairs.first().map(|(_, r)| r).or(cl.args.opt("at"));
+            if c.layer == AccessState::Undeclared {
+                let what = cl.args.pos.first().map_or("an engine".into(), V::text);
+                self.gap(
+                    s.line,
+                    format!("mount {what} outside any guard: the engine's own access is not read."),
+                );
+            }
             match at.and_then(V::name) {
                 Some(p) => self.push(
                     ANY_METHOD,
@@ -2520,7 +2528,7 @@ mod tests {
         ];
         let flow = run(&files, "");
         assert_eq!(state(&flow, "GET", "/x"), A::Undeclared);
-        assert!(has(&flow, DiagnosticSeverity::Note, "authenticate_user!"));
+        assert!(has(&flow, DiagnosticSeverity::Gap, "authenticate_user!"));
         let flow = run(&files, "\"authenticate_user!\" = \"authenticated\"\n");
         assert_eq!(state(&flow, "GET", "/x"), auth());
     }
@@ -2861,5 +2869,66 @@ mod tests {
         ] {
             state(&flow, m, p);
         }
+    }
+
+    fn halting(callback: &str, defs: &str) -> UiFlow {
+        run(
+            &[
+                (
+                    "config/routes.rb",
+                    "Rails.application.routes.draw do\n  get \"x\", to: \"pages#x\"\nend\n",
+                ),
+                (
+                    "app/controllers/pages_controller.rb",
+                    &format!(
+                        "class PagesController < ApplicationController\n  {callback}\n{defs}end\n"
+                    ),
+                ),
+            ],
+            "",
+        )
+    }
+
+    #[test]
+    fn halting_callback_not_named_by_a_skip_is_a_gap() {
+        let flow = halting(
+            "before_action :require_login",
+            "  def require_login\n    redirect_to login_path unless current_user\n  end\n",
+        );
+        assert_eq!(state(&flow, "GET", "/x"), A::Undeclared);
+        assert!(has(&flow, DiagnosticSeverity::Gap, "require_login"));
+        assert!(!flow.complete);
+        let flow = halting(
+            "before_action { redirect_to \"/\" unless current_user }",
+            "",
+        );
+        assert!(has(&flow, DiagnosticSeverity::Gap, "block"));
+    }
+
+    #[test]
+    fn around_action_is_read_like_before_action() {
+        let flow = halting(
+            "around_action :guard",
+            "  def guard\n    return head(:forbidden) unless admin?\n    yield\n  end\n",
+        );
+        assert_eq!(state(&flow, "GET", "/x"), A::Undeclared);
+        assert!(has(&flow, DiagnosticSeverity::Gap, "guard"));
+    }
+
+    #[test]
+    fn mount_outside_a_guard_is_a_gap_inside_one_is_not() {
+        let r = routes(
+            "  mount Blazer::Engine, at: \"/blazer\"\n  authenticate :user do\n    mount Sidekiq::Web => \"/sidekiq\"\n  end\n",
+        );
+        let flow = run(&[("config/routes.rb", &r)], "");
+        assert_eq!(state(&flow, "ANY", "/blazer"), A::Undeclared);
+        assert_eq!(state(&flow, "ANY", "/sidekiq"), auth());
+        let gaps: Vec<_> = flow
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == DiagnosticSeverity::Gap)
+            .collect();
+        assert_eq!(gaps.len(), 1);
+        assert!(gaps[0].message.contains("Blazer::Engine"));
     }
 }
