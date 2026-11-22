@@ -365,51 +365,19 @@ fn all(mut conditions: Vec<Condition>) -> Option<Condition> {
     }
 }
 
-/// Walks `s` from `i` past strings and templates (recursing into `${…}`); stops after
-/// the `}` closing a `${` when `in_expr`. Returns the end and whether a template
-/// follows an identifier, `)` or `]`, which makes it a tagged call.
-fn tagged_template(s: &str, mut i: usize, in_expr: bool) -> (usize, bool) {
-    let b = s.as_bytes();
-    let (mut depth, mut tagged) = (0usize, false);
-    while i < b.len() {
-        match b[i] {
-            b'\'' | b'"' => i = Parser { s, i }.string_end(),
-            b'`' => {
-                let before = s[..i].trim_end().chars().next_back();
-                tagged |= before.is_some_and(|c| c.is_alphanumeric() || "_$)]".contains(c));
-                i += 1;
-                while i < b.len() && b[i] != b'`' {
-                    if b[i] == b'\\' {
-                        i += 1;
-                    } else if b[i..].starts_with(b"${") {
-                        let (end, t) = tagged_template(s, i + 2, true);
-                        (i, tagged) = (end - 1, tagged || t);
-                    }
-                    i += 1;
-                }
-                i += 1;
-            }
-            b'{' => {
-                depth += 1;
-                i += 1;
-            }
-            b'}' if in_expr && depth == 0 => return (i + 1, tagged),
-            b'}' => {
-                depth = depth.saturating_sub(1);
-                i += 1;
-            }
-            _ => i += 1,
-        }
-    }
-    (b.len(), tagged)
-}
-
 /// Whether a binding's initializer awaits or calls anything; `useUserSession()` is the
 /// one call read (as `loggedIn`).
 fn calls(binding: &str) -> bool {
     let init = binding.split_once('=').map_or("", |(_, r)| r).trim();
-    // `new Foo` and tag`x` are calls without parentheses; a bare template is a value.
-    let tagged = tagged_template(init, 0, false).1;
+    // `new Foo` and tag`x` are calls without parentheses. Conservative: with any backtick
+    // (also in a comment, string or regex) only one plain template literal is a value.
+    let tagged = init.contains('`')
+        && !(init.len() > 1
+            && init.starts_with('`')
+            && init.ends_with('`')
+            && init.matches('`').count() == 2
+            && !init.contains("${")
+            && !init.contains('\\'));
     init != "useUserSession()"
         && (init.contains('(')
             || tagged
@@ -3415,6 +3383,21 @@ export default router",
     }
 
     #[test]
+    fn a_backtick_binding_is_pure_only_as_one_plain_template() {
+        for call in [
+            "const u = /* ` */ t`-`",
+            "const u = /`a`/.source + t`-`",
+            "const u = `a` // `\nconst v = t`-`",
+            "const u = '`' + t`-`",
+            "const u = `${t`-`}`",
+            "const u = `a${b}`",
+        ] {
+            assert!(calls(call), "{call}");
+        }
+        assert!(!calls("const u = `plain`"));
+    }
+
+    #[test]
     fn binding_with_new_or_a_tagged_template_is_a_call() {
         for init in [
             "new Checker",
@@ -3422,6 +3405,8 @@ export default router",
             "await check",
             "`${check`-`}`",
             "'`' + check`-`",
+            "/* ` */ t`-`",
+            "/`a`/.source + t`-`",
         ] {
             let middleware = format!(
                 "export default defineNuxtRouteMiddleware(async (to) => {{\n  const u = {init}\n  if (!loggedIn.value && to.path !== '/login') return navigateTo('/login')\n}})\n"
@@ -3434,11 +3419,11 @@ export default router",
             assert!(is_unknown(&state(&flow, "/login")), "{init}");
             assert_eq!(gap_count(&flow), 1, "{init}: {:#?}", flow.diagnostics);
         }
-        // an untagged template literal is a pure value
+        // a lone untagged template literal without `${` is a pure value
         let flow = nuxt_app(&[
             (
                 "middleware/a.global.ts",
-                "export default defineNuxtRouteMiddleware((to) => {\n  const p = `x${to.path}`\n  if (!loggedIn.value && to.path !== '/login') return navigateTo('/login')\n})\n",
+                "export default defineNuxtRouteMiddleware((to) => {\n  const p = `x`\n  if (!loggedIn.value && to.path !== '/login') return navigateTo('/login')\n})\n",
             ),
             ("pages/login.vue", PAGE),
         ]);
