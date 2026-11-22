@@ -3464,20 +3464,20 @@ pub(crate) mod spring {
     ];
 
     pub(super) fn scan(src: &Source, index: &Index, conf: &Conf, out: &mut Out) {
-        let controller = |c: &Decl| has(&c.attrs, "RestController") || has(&c.attrs, "Controller");
+        let controllers = inherit::controllers(src, index, out);
         let mut own: HashMap<usize, Vec<Decl>> = HashMap::new();
         each_method(src, true, |class, d| {
             own.entry(class.open).or_default().push(d.clone());
-            let abstract_ = class_header(src, class).contains("abstract");
-            if controller(class) && !abstract_ {
+            if controllers.contains(&class.open) {
                 method(src, index, conf, out, class, d);
             }
         });
-        for class in decls(src, true).iter().filter(|c| c.class && !c.flag) {
-            if controller(class) && !class_header(src, class).contains("abstract") {
-                let own = own.remove(&class.open).unwrap_or_default();
-                inherit::routes((src, index, conf), out, class, &own);
-            }
+        for class in decls(src, true)
+            .iter()
+            .filter(|c| controllers.contains(&c.open))
+        {
+            let own = own.remove(&class.open).unwrap_or_default();
+            inherit::routes((src, index, conf), out, class, &own);
         }
     }
 
@@ -3498,6 +3498,51 @@ pub(crate) mod spring {
             bases: Vec<String>,
             /// Where its routes without a method of their own are placed.
             site: usize,
+        }
+
+        fn is_controller(d: &Decl) -> bool {
+            has(&d.attrs, "RestController") || has(&d.attrs, "Controller")
+        }
+
+        fn is_abstract(src: &Source, class: &Decl) -> bool {
+            class_header(src, class)
+                .split_whitespace()
+                .any(|w| w == "abstract")
+        }
+
+        /// The concrete classes (by header offset) that are controllers: they
+        /// or a supertype carry `@Controller`/`@RestController` (Spring looks
+        /// through the type hierarchy). An abstract controller nothing in the
+        /// scan extends is a gap: its routes are not emitted.
+        pub(super) fn controllers(src: &Source, index: &Index, out: &mut Out) -> BTreeSet<usize> {
+            let mut found = BTreeSet::new();
+            for c in decls(src, true).iter().filter(|c| c.class && !c.flag) {
+                let (supers, _) = index.supers(src, c);
+                if !is_controller(c) && !supers.iter().any(|(_, t)| is_controller(t)) {
+                    continue;
+                }
+                if !is_abstract(src, c) {
+                    found.insert(c.open);
+                } else if !index.all_classes().any(|(_, d)| d.bases.contains(&c.name)) {
+                    let message = format!(
+                        "Routes of abstract controller {} not emitted: no concrete subclass in the scan.",
+                        c.name
+                    );
+                    out.at(src, c.attrs.first().map_or(c.open, |a| a.at), message);
+                }
+            }
+            found
+        }
+
+        /// The base paths of `class` from a type-level mapping of a supertype.
+        pub(super) fn inherited_bases(
+            src: &Source,
+            index: &Index,
+            out: &mut Out,
+            class: &Decl,
+        ) -> Option<Vec<String>> {
+            let (supers, _) = index.supers(src, class);
+            base_paths(src, index, out, class, &supers)
         }
 
         fn arity(src: &Source, d: &Decl) -> usize {
@@ -5265,7 +5310,10 @@ pub(crate) mod spring {
                 Some(p) => p,
                 None => return,
             },
-            None => vec![String::new()],
+            None => match inherit::inherited_bases(src, index, out, class) {
+                Some(p) => p,
+                None => return,
+            },
         };
         let first = out.0.endpoints.len();
         for a in &d.attrs {
@@ -9169,6 +9217,65 @@ class Impl implements Api {
             ),
         ]);
         access(&flow, "GET", "/r");
+    }
+
+    // Spring finds @Controller through the whole type hierarchy.
+    #[test]
+    fn spring_class_below_an_abstract_controller_is_a_controller() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Base.java",
+                "@RestController\nabstract class Base { @GetMapping(\"/b\") String b() { return \"\"; } }\n",
+            ),
+            (
+                "src/main/java/Impl.java",
+                "@Service\nclass Impl extends Base {}\n",
+            ),
+        ]);
+        let e = (flow.endpoints.iter().filter(|e| e.path == "/b")).collect::<Vec<_>>();
+        assert_eq!(e.len(), 1, "{e:#?}");
+        assert_eq!(e[0].file, "src/main/java/Impl.java");
+    }
+
+    #[test]
+    fn spring_abstract_controller_without_subclass_is_a_gap() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Base.java",
+                "@RestController\nabstract class Base { @GetMapping(\"/b\") String b() { return \"\"; } }\n",
+            ),
+        ]);
+        assert_eq!(gaps(&flow, "no concrete subclass"), 1);
+    }
+
+    #[test]
+    fn spring_abstract_in_a_type_name_is_not_an_abstract_class() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/C.java",
+                "@RestController\nclass C implements x.abstractapi.Api { @GetMapping(\"/c\") String c() { return \"\"; } }\n",
+            ),
+        ]);
+        access(&flow, "GET", "/c");
+    }
+
+    #[test]
+    fn spring_type_mapping_of_a_supertype_is_the_base_of_own_routes() {
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            (
+                "src/main/java/Base.java",
+                "@RequestMapping(\"/base\")\nclass Base {}\n",
+            ),
+            (
+                "src/main/java/C.java",
+                "@RestController\nclass C extends Base { @GetMapping(\"/c\") String c() { return \"\"; } }\n",
+            ),
+        ]);
+        access(&flow, "GET", "/base/c");
     }
 
     // Guard: a class that is no controller serves nothing.
