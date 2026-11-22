@@ -2189,12 +2189,20 @@ mod blade {
                 .map(String::from)
                 .collect();
             let arg = arg.unwrap_or_default();
-            let unread = matches!(name.as_str(), "if" | "elseif" | "unless")
-                && self.expr_cond(&arg).is_some_and(|c| unread_auth(&c));
+            let unread = match name.as_str() {
+                "if" | "elseif" | "unless" => self.expr_cond(&arg).is_some_and(|c| unread_auth(&c)),
+                "can" | "cannot" | "canany" | "auth" => self
+                    .directive_cond(&name, &arg, &args)
+                    .is_some_and(|c| has_unknown(&c)),
+                "elsecan" | "elsecannot" | "elsecanany" | "elseauth" => self
+                    .directive_cond(&name[4..], &arg, &args)
+                    .is_some_and(|c| has_unknown(&c)),
+                _ => false,
+            };
             if unread {
                 let text = collapse(&arg);
                 let message = format!(
-                    "Blade condition {text} checks the user but is not read; the links below it are Unknown."
+                    "Blade condition @{name}({text}) checks the user but is not read; the links below it are Unknown."
                 );
                 self.gap(&p.tpl.rel, line, message);
             }
@@ -2590,6 +2598,15 @@ mod blade {
         ["auth(", "Auth::", "Gate::"]
             .iter()
             .any(|p| flat.starts_with(p))
+    }
+
+    fn has_unknown(c: &Condition) -> bool {
+        match c {
+            Condition::Unknown(_) => true,
+            Condition::All(v) | Condition::Any(v) => v.iter().any(has_unknown),
+            Condition::Not(c) => has_unknown(c),
+            _ => false,
+        }
     }
 
     /// An `Unknown` of `c` that is an unread auth check.
@@ -4198,5 +4215,22 @@ class RouteServiceProvider extends ServiceProvider
                 custom("guard:admin")
             ]))
         );
+    }
+    #[test]
+    fn blade_unreadable_can_and_auth_directives_gap_with_line() {
+        let view = "<p>x</p>\n@auth($g)\n<a href=\"/x\">X</a>\n@endauth\n\
+                    @can($ability)\n<a href=\"/y\">Y</a>\n@endcan\n";
+        let (_d, flow) = app(&[
+            (
+                "shop/routes/web.php",
+                "<?php\nRoute::get('/', fn () => view('t'));\n",
+            ),
+            ("shop/resources/views/t.blade.php", view),
+            AUTH_CFG,
+        ]);
+        let found = messages(&flow);
+        let has = |at: &str| found.iter().any(|m| m.starts_with(at));
+        assert!(has("resources/views/t.blade.php:2 "), "{found:#?}");
+        assert!(has("resources/views/t.blade.php:5 "), "{found:#?}");
     }
 }
