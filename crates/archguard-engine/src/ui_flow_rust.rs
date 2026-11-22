@@ -2559,12 +2559,16 @@ mod tauri {
         let mut granting: Vec<Condition> = (grants.iter())
             .map(|c| Condition::Policy(format!("capability:{}", c.id)))
             .collect();
-        match (granting.len(), unread.is_empty()) {
-            (1, _) => AccessState::Protected(granting.remove(0)),
-            (0, true) if !acl.incomplete => AccessState::Protected(Condition::Never),
-            (0, _) => {
+        // LOGIC.md 7.5 (Tauri v2 capabilities/permissions: the ACL is the union of
+        // all capability and permission files): a grant or `Never` is only read
+        // when every input is read; an unread one may deny or grant.
+        let read = unread.is_empty() && !acl.incomplete;
+        match (granting.len(), read) {
+            (1, true) => AccessState::Protected(granting.remove(0)),
+            (0, true) => AccessState::Protected(Condition::Never),
+            (_, false) => {
                 let message = format!(
-                    "No capability grants `{allow}` directly; permission sets or ACL inputs are not read: {}.",
+                    "Whether `{allow}` is granted is unknown: permission sets or ACL inputs are not read: {}.",
                     unread.join(", ")
                 );
                 nav::diag(flow, file, line, message, true);
@@ -3735,6 +3739,26 @@ mod tests_tauri_acl {
         ] {
             let (state, gap) = access("", files, "other");
             assert!(gap && not_never(&state), "{files:?}: {state:?}");
+        }
+    }
+
+    /// LOGIC.md 7.5: a grant next to an unreadable ACL input is not a read chain
+    /// (the unread input may hold a deny), so the command is Unknown + gap.
+    #[test]
+    fn one_grant_next_to_an_unreadable_acl_input_is_unknown() {
+        let c = cap("main", r#"["allow-greet"]"#);
+        for bad in [
+            ("tauri.conf.json", "{ not json"),
+            ("permissions/bad.toml", "= ="),
+            ("capabilities/bad.json", "{ nope"),
+        ] {
+            let files = [("build.rs", BUILD), ("capabilities/main.json", &c), bad];
+            let (state, gap) = access("", &files, "greet");
+            assert!(gap, "{bad:?}");
+            assert!(
+                matches!(state, AccessState::Protected(Condition::Unknown(_))),
+                "{bad:?}: {state:?}"
+            );
         }
     }
 
