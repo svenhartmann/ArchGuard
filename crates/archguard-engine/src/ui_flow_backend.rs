@@ -90,11 +90,16 @@ const SOURCES: [&str; 3] = [".cs", ".java", ".kt"];
 /// Endpoints with their declared access, plus diagnostics. `[views.access]`
 /// comes from the root's configuration; an unreadable one is a note.
 pub fn extract(root: &Path) -> UiFlow {
-    with_root_config(root, extract_with)
+    with_root_config(root, |ctx| extract_with(ctx, None))
 }
 
-/// [`extract`] with the run's `[views.access]`.
-pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
+/// Reads further endpoints of a source file before the central rules run
+/// (`ui_flow_webflux`: functional routes).
+pub(crate) type RouteHook = fn(&Source, &[Source], &Index, &spring::Conf, &mut Out);
+
+/// [`extract`] with the run's `[views.access]`; `hook` adds endpoints per
+/// Java/Kotlin file.
+pub(crate) fn extract_with(ctx: &ExtractContext, hook: Option<RouteHook>) -> UiFlow {
     let mut out = Out(
         UiFlow::default(),
         Ignored::default(),
@@ -119,6 +124,9 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
                 minimal::scan(src, sources, &index, &mut call_sites, &mut out);
             } else {
                 spring::scan(src, &index, &conf, &mut out);
+                if let Some(hook) = hook {
+                    hook(src, sources, &index, &conf, &mut out);
+                }
             }
         }
         spring::central_rules(sources, &index, &conf, &mut out, first);
@@ -280,7 +288,7 @@ struct Ignored {
     endpoints: BTreeSet<(String, u32)>,
 }
 
-struct Out(UiFlow, Ignored, aspnet::Defaults);
+pub(crate) struct Out(UiFlow, Ignored, aspnet::Defaults);
 impl Out {
     /// A diagnostic for something not read literally: the flow is incomplete.
     fn diag(&mut self, file: &str, line: u32, message: String) {
@@ -301,14 +309,14 @@ impl Out {
             severity: DiagnosticSeverity::Note,
         });
     }
-    fn at(&mut self, src: &Source, at: usize, message: String) {
+    pub(crate) fn at(&mut self, src: &Source, at: usize, message: String) {
         self.diag(&src.rel, src.line(at), message);
     }
-    fn unknown(&mut self, src: &Source, at: usize, text: &str) -> Condition {
+    pub(crate) fn unknown(&mut self, src: &Source, at: usize, text: &str) -> Condition {
         self.at(src, at, format!("Access condition not readable: {text}"));
         Condition::Unknown(text.into())
     }
-    fn endpoint(
+    pub(crate) fn endpoint(
         &mut self,
         src: &Source,
         at: usize,
@@ -355,8 +363,8 @@ impl Out {
 
 /// A source file with comments blanked (offsets and lines unchanged).
 pub(crate) struct Source {
-    rel: String,
-    text: String,
+    pub(crate) rel: String,
+    pub(crate) text: String,
     pairs: HashMap<usize, usize>,
     lines: Vec<usize>,
 }
@@ -379,13 +387,13 @@ impl Source {
             lines,
         }
     }
-    fn line(&self, at: usize) -> u32 {
+    pub(crate) fn line(&self, at: usize) -> u32 {
         self.lines.partition_point(|&s| s <= at) as u32
     }
-    fn pair(&self, at: usize) -> Option<usize> {
+    pub(crate) fn pair(&self, at: usize) -> Option<usize> {
         self.pairs.get(&at).copied()
     }
-    fn bytes(&self) -> &[u8] {
+    pub(crate) fn bytes(&self) -> &[u8] {
         self.text.as_bytes()
     }
 }
@@ -423,7 +431,7 @@ fn combine(mut items: Vec<Condition>, many: fn(Vec<Condition>) -> Condition) -> 
     }
 }
 
-fn path(parts: &[&str]) -> String {
+pub(crate) fn path(parts: &[&str]) -> String {
     let segments: Vec<&str> = parts
         .iter()
         .flat_map(|p| p.split('/'))
@@ -445,14 +453,14 @@ pub(crate) struct Decl {
     pub(crate) name: String,
     pub(crate) attrs: Vec<Attr>,
     /// Offset of a method's parameter list; a class's header start.
-    open: usize,
+    pub(crate) open: usize,
     /// A class's body end (`}`, or `;` without a body); 0 for a method.
-    end: usize,
+    pub(crate) end: usize,
     /// A class's base list as simple names (`: Base<T>, IFoo`, `extends`,
     /// `implements`); empty for a method.
     pub(crate) bases: Vec<String>,
     /// `interface` for a class; `public` and not `static` for a method.
-    flag: bool,
+    pub(crate) flag: bool,
 }
 
 /// The header of a type declaration: from its modifiers to the body (or `;`).
@@ -462,7 +470,7 @@ fn class_header<'a>(src: &'a Source, d: &Decl) -> &'a str {
 }
 
 /// Calls `f(class, method)` for each method with the innermost class around it.
-fn each_method(src: &Source, annotations: bool, mut f: impl FnMut(&Decl, &Decl)) {
+pub(crate) fn each_method(src: &Source, annotations: bool, mut f: impl FnMut(&Decl, &Decl)) {
     let mut open: Vec<Decl> = Vec::new();
     for d in decls(src, annotations) {
         while open.last().is_some_and(|c| c.end < d.open) {
@@ -697,21 +705,21 @@ fn base_names(header: &str) -> Vec<String> {
 }
 
 /// Literals, brackets, identifiers and argument lists on raw text.
-mod lex {
+pub(crate) mod lex {
     pub(super) use crate::lang_csharp::{code as strip_comments, literal, literal_end};
 
-    pub(super) fn is_ident(c: u8) -> bool {
+    pub(crate) fn is_ident(c: u8) -> bool {
         c.is_ascii_alphanumeric() || c == b'_'
     }
 
-    pub(super) fn skip_ws(b: &[u8], i: usize) -> usize {
+    pub(crate) fn skip_ws(b: &[u8], i: usize) -> usize {
         i + b[i.min(b.len())..]
             .iter()
             .take_while(|c| c.is_ascii_whitespace())
             .count()
     }
 
-    pub(super) fn skip_ws_back(b: &[u8], mut i: usize) -> usize {
+    pub(crate) fn skip_ws_back(b: &[u8], mut i: usize) -> usize {
         while i > 0 && b[i - 1].is_ascii_whitespace() {
             i -= 1;
         }
@@ -719,7 +727,7 @@ mod lex {
     }
 
     /// The identifier right before `end` (exclusive), skipping blanks and one `<…>`.
-    pub(super) fn ident_before(b: &[u8], end: usize) -> (usize, usize) {
+    pub(crate) fn ident_before(b: &[u8], end: usize) -> (usize, usize) {
         let mut k = skip_ws_back(b, end);
         if k > 0 && b[k - 1] == b'>' {
             let mut depth = 0;
@@ -741,7 +749,7 @@ mod lex {
     }
 
     /// Whole-word occurrences of `word`.
-    pub(super) fn words<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
+    pub(crate) fn words<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
         let b = text.as_bytes();
         text.match_indices(word).map(|(i, _)| i).filter(move |&i| {
             (i == 0 || !is_ident(b[i - 1])) && b.get(i + word.len()).is_none_or(|c| !is_ident(*c))
@@ -749,7 +757,7 @@ mod lex {
     }
 
     /// Splits on commas outside brackets and literals.
-    pub(super) fn split_top(s: &str) -> Vec<&str> {
+    pub(crate) fn split_top(s: &str) -> Vec<&str> {
         split_by(s, b',')
     }
 
@@ -864,7 +872,7 @@ mod index {
         pub ambiguous: Vec<String>,
     }
 
-    pub(super) struct Index<'a> {
+    pub(crate) struct Index<'a> {
         access: BTreeMap<String, AccessMeaning>,
         /// `Class.Member` → the initializer texts found for it.
         constants: HashMap<String, BTreeSet<String>>,
@@ -926,7 +934,7 @@ mod index {
         }
 
         /// A string value: a literal, `nameof(X)`, a constant of the scan, or `+` of these.
-        pub(super) fn text(&self, raw: &str) -> Option<String> {
+        pub(crate) fn text(&self, raw: &str) -> Option<String> {
             self.text_at(raw, 0)
         }
 
@@ -1269,7 +1277,7 @@ mod index {
         found
     }
 }
-use index::Index;
+pub(crate) use index::Index;
 
 /// ASP.NET Core controllers: attribute routes, else the project's
 /// conventional routes ([`conventional`]). A class without its own `[Route]`
@@ -3131,7 +3139,7 @@ mod aspnet {
 }
 
 /// Spring MVC controllers and Spring Security / JSR-250 annotations.
-mod spring {
+pub(crate) mod spring {
     use super::lex::{literals, named, positional};
     use super::*;
 
@@ -3152,7 +3160,7 @@ mod spring {
     }
 
     pub(super) use chain::central_rules;
-    pub(super) use conf::Conf;
+    pub(crate) use conf::Conf;
     use conf::{Atom, Flag};
 
     /// The conventions and method-security switches of ONE application as its
@@ -3199,7 +3207,7 @@ mod spring {
             jsr250: Flag,
         }
 
-        pub(in super::super) struct Conf {
+        pub(crate) struct Conf {
             quarkus: bool,
             /// `None`: set by code that is not readable.
             role_prefix: Option<String>,
@@ -3518,7 +3526,11 @@ mod spring {
                     .is_some_and(|c| src.text[open + 1..c].trim().is_empty());
                 match (call, name) {
                     (true, "and") => return false,
-                    (true, "authorizeRequests" | "authorizeHttpRequests") if empty => return true,
+                    (true, "authorizeRequests" | "authorizeHttpRequests" | "authorizeExchange")
+                        if empty =>
+                    {
+                        return true;
+                    }
                     _ => {}
                 }
                 let before = skip_ws_back(b, start);
@@ -3629,10 +3641,20 @@ mod spring {
             None
         }
 
+        /// The servlet and the WebFlux security builder.
+        pub(super) const HTTP_TYPES: [&str; 2] = ["HttpSecurity", "ServerHttpSecurity"];
+
+        /// Whether `text` mentions a security builder type.
+        pub(super) fn mentions_http(text: &str) -> bool {
+            HTTP_TYPES
+                .iter()
+                .any(|t| lex::words(text, t).next().is_some())
+        }
+
         /// Names of the `HttpSecurity` parameters (`HttpSecurity http`, `http: HttpSecurity`).
         pub(super) fn http_vars(src: &Source) -> Vec<String> {
             let mut vars = Vec::new();
-            for p in lex::words(&src.text, "HttpSecurity") {
+            for p in HTTP_TYPES.iter().flat_map(|t| lex::words(&src.text, t)) {
                 let Some(open) = enclosing_open(src, p) else {
                     continue;
                 };
@@ -3640,7 +3662,7 @@ mod spring {
                     continue;
                 };
                 for part in lex::split_top(&src.text[open + 1..close]) {
-                    if lex::words(part, "HttpSecurity").next().is_none() {
+                    if !mentions_http(part) {
                         continue;
                     }
                     let name = match part.split_once(':') {
@@ -3657,7 +3679,7 @@ mod spring {
 
         /// Whole identifiers that scope a security chain when called outside the
         /// authorization block (`ignoringAntMatchers` and the like do not).
-        pub(super) const SCOPING: [&str; 10] = [
+        pub(super) const SCOPING: [&str; 11] = [
             "antMatcher",
             "antMatchers",
             "mvcMatcher",
@@ -3668,6 +3690,7 @@ mod spring {
             "requestMatchers",
             "securityMatcher",
             "securityMatchers",
+            "pathMatchers",
         ];
         /// Kotlin scope functions and Spring configurer calls: they take or
         /// provide the `HttpSecurity` as `this`/`it`/an argument.
@@ -3715,10 +3738,10 @@ mod spring {
         fn is_declaration(src: &Source, p: usize, end: usize) -> bool {
             let b = src.bytes();
             let typed = b.get(skip_ws(b, end)) == Some(&b':')
-                && src.text[skip_ws(b, end) + 1..]
-                    .trim_start()
-                    .starts_with("HttpSecurity");
-            typed || word_before(src, skip_ws_back(b, p)) == "HttpSecurity"
+                && HTTP_TYPES
+                    .iter()
+                    .any(|t| src.text[skip_ws(b, end) + 1..].trim_start().starts_with(t));
+            typed || HTTP_TYPES.contains(&word_before(src, skip_ws_back(b, p)))
         }
 
         /// The `{ … }` of `with(http) { … }` or `http.apply { … }` (any [`SCOPE_FUNS`]).
@@ -3840,7 +3863,7 @@ mod spring {
         ) -> Option<String> {
             let lambdas = |s: &Source| super::chain::auth_lambdas(s);
             let at = |s: &Source, p: usize| format!("{}:{}", s.rel, s.line(p));
-            let mentions = |s: &&Source| lex::words(&s.text, "HttpSecurity").next().is_some();
+            let mentions = |s: &&Source| mentions_http(&s.text);
             let scoped = (sources.iter())
                 .filter(|s| !s.rel.ends_with(".cs"))
                 .filter(mentions)
@@ -3908,7 +3931,7 @@ mod spring {
         use super::super::lex::{named, positional, skip_ws, skip_ws_back, split_top, words};
         use super::super::*;
         use super::chain::{
-            Hit, Rule, authorize_sites, bean, calls, conditional, is_adapter, matches,
+            CHAIN_TYPES, Hit, Rule, authorize_sites, bean, calls, conditional, is_adapter, matches,
         };
 
         /// One security configuration: a `SecurityFilterChain` bean method, a
@@ -3960,10 +3983,14 @@ mod spring {
                     rules: vec![],
                 })
                 .collect();
-            for p in words(&src.text, "SecurityFilterChain").filter(|p| bean(src, *p)) {
+            let beans = CHAIN_TYPES.iter().flat_map(|t| {
+                words(&src.text, t)
+                    .filter(|p| bean(src, *p, t.len()))
+                    .map(move |p| (p, t.len()))
+            });
+            for (p, len) in beans {
                 let b = src.bytes();
-                let name_end =
-                    super::chain_span::ident_end(src, skip_ws(b, p + "SecurityFilterChain".len()));
+                let name_end = super::chain_span::ident_end(src, skip_ws(b, p + len));
                 let open = skip_ws(b, name_end);
                 let close = src.pair(open).unwrap_or(open);
                 let body = src.text[close..].find(['{', ';']).map(|k| k + close);
@@ -3972,8 +3999,7 @@ mod spring {
                     _ => close,
                 };
                 let attrs = all.iter().find(|d| !d.class && d.open == open);
-                let name =
-                    src.text[skip_ws(b, p + "SecurityFilterChain".len())..name_end].to_string();
+                let name = src.text[skip_ws(b, p + len)..name_end].to_string();
                 units.push(Unit {
                     src,
                     name,
@@ -4115,7 +4141,8 @@ mod spring {
             let close = |a: &str| offset(src, a) + a.len() + 1;
             match name {
                 "securityMatcher" | "antMatcher" | "mvcMatcher" => {
-                    literal_matcher(src, index, at, close(args), args).map(|r| (r, close(args), 0))
+                    let inner = reactive_matcher(args).unwrap_or(args);
+                    literal_matcher(src, index, at, close(args), inner).map(|r| (r, close(args), 0))
                 }
                 "securityMatchers" => {
                     lambda_matchers(src, index, at, args).map(|r| (r, close(args), 0))
@@ -4124,6 +4151,17 @@ mod spring {
                     .map(|(r, last)| (r, close(chain[last].2), last)),
                 _ => None,
             }
+        }
+
+        /// The literal arguments of a WebFlux scope matcher,
+        /// `new PathPatternParserServerWebExchangeMatcher("/a")` or
+        /// `ServerWebExchangeMatchers.pathMatchers("/a")`; a slice of `args`.
+        fn reactive_matcher(args: &str) -> Option<&str> {
+            let t = args.trim();
+            let rest = t
+                .strip_prefix("new PathPatternParserServerWebExchangeMatcher")
+                .or_else(|| t.strip_prefix("ServerWebExchangeMatchers.pathMatchers"))?;
+            rest.strip_prefix('(')?.strip_suffix(')')
         }
 
         /// `securityMatchers(m -> m.requestMatchers("/a", "/b"))`.
@@ -4305,11 +4343,14 @@ mod spring {
         use super::sequence::{Unit, apply, scope, units, unordered, unreadable_classes};
         use super::spel;
 
-        const MATCHERS: [&str; 4] = [
+        const MATCHERS: [&str; 6] = [
             "requestMatchers",
             "mvcMatchers",
             "antMatchers",
             "anyRequest",
+            // WebFlux
+            "pathMatchers",
+            "anyExchange",
         ];
 
         pub(super) struct Rule {
@@ -4341,7 +4382,11 @@ mod spring {
         ) {
             let found: Vec<&Source> = (sources.iter())
                 .filter(|s| !s.rel.ends_with(".cs"))
-                .filter(|s| !adapters(s).is_empty() || s.text.contains("SecurityFilterChain"))
+                .filter(|s| {
+                    !adapters(s).is_empty()
+                        || s.text.contains("SecurityFilterChain")
+                        || s.text.contains("SecurityWebFilterChain")
+                })
                 .collect();
             let mut units: Vec<Unit> = found.iter().flat_map(|s| units(s)).collect();
             let Some(home) = units.first().map(|u| (u.src, u.span.0)) else {
@@ -4435,10 +4480,14 @@ mod spring {
                 .collect()
         }
 
-        /// A `SecurityFilterChain name(` method declaration at `p`.
-        pub(super) fn bean(src: &Source, p: usize) -> bool {
+        /// Types of a chain bean: servlet and WebFlux.
+        pub(super) const CHAIN_TYPES: [&str; 2] = ["SecurityFilterChain", "SecurityWebFilterChain"];
+
+        /// A `SecurityFilterChain name(` method declaration at `p`; `len` is the
+        /// length of the type name there.
+        pub(super) fn bean(src: &Source, p: usize, len: usize) -> bool {
             let b = src.bytes();
-            let s = skip_ws(b, p + "SecurityFilterChain".len());
+            let s = skip_ws(b, p + len);
             let e = s + b[s..].iter().take_while(|c| lex::is_ident(**c)).count();
             e > s && b.get(skip_ws(b, e)) == Some(&b'(')
         }
@@ -4446,14 +4495,18 @@ mod spring {
         /// The `(` of every `authorizeHttpRequests`/`authorizeRequests` call, in order.
         pub(super) fn authorize_sites(src: &Source) -> Vec<usize> {
             let b = src.bytes();
-            let mut sites: Vec<usize> = ["authorizeHttpRequests", "authorizeRequests"]
-                .iter()
-                .flat_map(|kw| words(&src.text, kw).map(move |p| (p, kw.len())))
-                .filter_map(|(p, len)| {
-                    let open = skip_ws(b, p + len);
-                    (b.get(open) == Some(&b'(')).then_some(open)
-                })
-                .collect();
+            let mut sites: Vec<usize> = [
+                "authorizeHttpRequests",
+                "authorizeRequests",
+                "authorizeExchange",
+            ]
+            .iter()
+            .flat_map(|kw| words(&src.text, kw).map(move |p| (p, kw.len())))
+            .filter_map(|(p, len)| {
+                let open = skip_ws(b, p + len);
+                (b.get(open) == Some(&b'(')).then_some(open)
+            })
+            .collect();
             sites.sort();
             sites
         }
@@ -4601,7 +4654,7 @@ mod spring {
             args: &str,
         ) -> (usize, Vec<String>, Option<Vec<String>>) {
             match name {
-                "anyRequest" => return (at, vec![], Some(vec!["/**".into()])),
+                "anyRequest" | "anyExchange" => return (at, vec![], Some(vec!["/**".into()])),
                 // Forwards and error dispatches, never a controller request.
                 "dispatcherTypeMatchers" => return (at, vec![], Some(vec![])),
                 _ => {}
@@ -4737,22 +4790,7 @@ mod spring {
             let arity = src
                 .pair(d.open)
                 .map_or(0, |c| split_top(&src.text[d.open + 1..c]).len());
-            let up = index.inherited(class, &d.name, arity);
-            let (on_method, ambiguous) = without_conflicts(conf, class, d, &up);
-            let mut levels: Vec<(&Source, &[Attr])> = vec![(src, &d.attrs)];
-            levels.extend(on_method.iter().map(|(s, a)| (*s, a.as_slice())));
-            levels.push((src, &class.attrs));
-            levels.extend(up.on_type.iter().map(|(s, a)| (*s, a.as_slice())));
-            out.1.hit = false;
-            let mut access = layer(conf, index, out, &levels).unwrap_or(AccessState::Undeclared);
-            let ignored = std::mem::take(&mut out.1.hit);
-            for g in &up.gaps {
-                out.at(src, d.open, g.clone());
-            }
-            for text in &ambiguous {
-                let unknown = out.unknown(src, d.open, text);
-                access = require(&access, unknown);
-            }
+            let (access, ignored) = declared_access(conf, index, out, (src, class, d), arity);
             let full: Vec<String> = bases
                 .iter()
                 .flat_map(|b| paths.iter().map(move |p| path(&[b, p])))
@@ -4771,6 +4809,35 @@ mod spring {
             first,
             handlers::of_method(src, &class.name, &d.name, d.open),
         );
+    }
+
+    /// The access the annotations of method `d` of `class` declare (own,
+    /// inherited and class level) and whether an annotation was not applied.
+    /// Shared with the WebFlux handler methods.
+    pub(crate) fn declared_access(
+        conf: &Conf,
+        index: &Index,
+        out: &mut Out,
+        (src, class, d): (&Source, &Decl, &Decl),
+        arity: usize,
+    ) -> (AccessState, bool) {
+        let up = index.inherited(class, &d.name, arity);
+        let (on_method, ambiguous) = without_conflicts(conf, class, d, &up);
+        let mut levels: Vec<(&Source, &[Attr])> = vec![(src, &d.attrs)];
+        levels.extend(on_method.iter().map(|(s, a)| (*s, a.as_slice())));
+        levels.push((src, &class.attrs));
+        levels.extend(up.on_type.iter().map(|(s, a)| (*s, a.as_slice())));
+        out.1.hit = false;
+        let mut access = layer(conf, index, out, &levels).unwrap_or(AccessState::Undeclared);
+        let ignored = std::mem::take(&mut out.1.hit);
+        for g in &up.gaps {
+            out.at(src, d.open, g.clone());
+        }
+        for text in &ambiguous {
+            let unknown = out.unknown(src, d.open, text);
+            access = require(&access, unknown);
+        }
+        (access, ignored)
     }
 
     /// The supertypes' method annotation levels without the families that
@@ -4843,7 +4910,7 @@ mod spring {
     /// The security annotation family of `name`: Spring overrides per family
     /// (a method's annotation replaces the class's of the same family) and
     /// checks every family in turn.
-    pub(super) fn family(name: &str) -> Option<&'static str> {
+    pub(crate) fn family(name: &str) -> Option<&'static str> {
         Some(match name {
             "PreAuthorize" => "PreAuthorize",
             "PostAuthorize" => "PostAuthorize",
@@ -6384,7 +6451,7 @@ public sealed class AppsController : ControllerBase
              ApiPermissionOrAnonymous = \"policy:$arg|open\"\n",
         )
         .unwrap();
-        let flow = extract_with(&ExtractContext::new(dir.path(), &config));
+        let flow = extract_with(&ExtractContext::new(dir.path(), &config), None);
         assert_eq!(
             access(&flow, "GET", "/api/apps"),
             &protected(Condition::Authenticated)

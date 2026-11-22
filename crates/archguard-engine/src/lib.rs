@@ -166,6 +166,7 @@ pub mod ui_flow_rust;
 pub mod ui_flow_slint;
 pub mod ui_flow_svelte;
 pub mod ui_flow_vue;
+pub mod ui_flow_webflux;
 pub mod ui_flow_xaml;
 pub mod view_conventions;
 mod workspace;
