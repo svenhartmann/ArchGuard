@@ -433,11 +433,8 @@ mod tests {
     /// The Start state of a fixture project, and its top-level packages
     /// as the analysis reports them.
     fn fixture_state(name: &str) -> (StartState, Vec<String>) {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures")
-            .join(name)
-            .canonicalize()
-            .expect("fixture");
+        let fixture = crate::config_editor::tests::fixture(name);
+        let root = fixture.path().canonicalize().expect("fixture");
         let loaded = archguard_engine::load_config(None, &root).expect("config");
         let run =
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
@@ -866,12 +863,6 @@ mod tests {
         assert_eq!(picked, Some("functions/a"));
     }
 
-    fn fixture_root(name: &str) -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures")
-            .join(name)
-    }
-
     /// The kinds of the detail lines of the current selection.
     fn detail_kinds(s: &StartState) -> Vec<i32> {
         use slint::Model;
@@ -884,7 +875,8 @@ mod tests {
     /// SDP violation and leak are cards that open their graph node.
     #[test]
     fn the_glance_shows_the_review_kpis_of_the_analysis() {
-        let s = fixture_state_at(&fixture_root("review-kpis"));
+        let copy = crate::config_editor::tests::fixture("review-kpis");
+        let s = fixture_state_at(copy.path());
         assert!(s.glance.kpis.is_some());
         let (cards, _) = kpis::cards(&s.glance, crate::format::Locale::En);
         let card = |k: i32| cards.iter().find(|c| c.kind == k).expect("card");
@@ -898,7 +890,8 @@ mod tests {
     /// Test gaps lens adds the file's coverage section.
     #[test]
     fn class_and_file_details_go_into_depth() {
-        let mut s = fixture_state_at(&fixture_root("java-packages"));
+        let copy = crate::config_editor::tests::fixture("java-packages");
+        let mut s = fixture_state_at(copy.path());
         let e = (0..s.ev.world.entities.len())
             .find(|&e| {
                 s.ev.entity(e)
