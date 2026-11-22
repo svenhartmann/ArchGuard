@@ -125,6 +125,84 @@ fn is_config(name: &str) -> bool {
     ext.is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
 }
 
+struct Rule {
+    name: String,
+    /// Overrides `getOrder`: it may run before the annotation rule.
+    ordered: bool,
+}
+
+struct Env {
+    rule: Option<Rule>,
+    types: Types,
+}
+
+struct TypeInfo {
+    name: String,
+    attrs: Vec<Attr>,
+    bases: Vec<String>,
+    methods: Vec<(String, Vec<Attr>)>,
+}
+
+/// The annotated types and methods of a project by simple name.
+struct Types(Vec<TypeInfo>);
+
+/// Supertypes that carry no security annotation.
+const PLAIN: [&str; 6] = [
+    "Object",
+    "Any",
+    "Serializable",
+    "Cloneable",
+    "Comparable",
+    "AutoCloseable",
+];
+
+impl Types {
+    fn new(sources: &[Source]) -> Self {
+        let (mut all, mut open): (Vec<TypeInfo>, Vec<(usize, usize)>) = (vec![], vec![]);
+        for src in sources {
+            for d in decls(src, true) {
+                while open.last().is_some_and(|o| o.0 < d.open) {
+                    open.pop();
+                }
+                if d.class {
+                    open.push((d.end, all.len()));
+                    all.push(TypeInfo {
+                        name: d.name,
+                        attrs: d.attrs,
+                        bases: d.bases,
+                        methods: vec![],
+                    });
+                } else if let Some(o) = open.last() {
+                    all[o.1].methods.push((d.name, d.attrs));
+                }
+            }
+        }
+        Self(all)
+    }
+
+    /// The supertypes of `bases` (transitively), and whether one is not
+    /// found exactly once in the scan.
+    fn supers(&self, bases: &[String]) -> (Vec<&TypeInfo>, bool) {
+        let (mut out, mut unresolved) = (Vec::new(), false);
+        let mut todo: Vec<&String> = bases.iter().rev().collect();
+        let mut seen = BTreeSet::new();
+        while let Some(name) = todo.pop() {
+            if PLAIN.contains(&name.as_str()) || !seen.insert(name) {
+                continue;
+            }
+            let found: Vec<&TypeInfo> = self.0.iter().filter(|t| &t.name == name).collect();
+            match found.as_slice() {
+                [t] => {
+                    out.push(*t);
+                    todo.extend(t.bases.iter().rev());
+                }
+                _ => unresolved = true,
+            }
+        }
+        (out, unresolved)
+    }
+}
+
 struct Site<'a> {
     src: &'a Source,
     class: &'a Decl,
@@ -163,8 +241,15 @@ impl Project {
             let class = decls(s, true)
                 .into_iter()
                 .find(|d| d.class && d.bases.iter().any(|b| b.starts_with("SecurityRule")))?;
-            Some(class.name)
+            Some(Rule {
+                name: class.name,
+                ordered: s.text.contains("getOrder"),
+            })
         });
+        let env = Env {
+            rule,
+            types: Types::new(&self.sources),
+        };
         let mut denied = BTreeSet::new();
         for src in &self.sources {
             if !src.text.contains("io.micronaut.http.annotation") {
@@ -172,7 +257,7 @@ impl Project {
             }
             each_method(src, true, |class, method| {
                 let at = Site { src, class, method };
-                self.routes(&at, &app, rule.as_deref(), &mut denied, flow);
+                self.routes(&at, &app, &env, &mut denied, flow);
             });
         }
     }
@@ -182,7 +267,7 @@ impl Project {
         &self,
         at: &Site,
         app: &Option<String>,
-        rule: Option<&str>,
+        env: &Env,
         denied: &mut BTreeSet<String>,
         flow: &mut UiFlow,
     ) {
@@ -219,7 +304,7 @@ impl Project {
                 .iter()
                 .flat_map(|b| paths.iter().map(move |p| join(b, p)))
             {
-                let access = match self.decide(class, method, verb, &path, rule) {
+                let access = match self.decide(class, method, verb, &path, env) {
                     Ok(a) => a,
                     Err(why) => {
                         gap(
@@ -257,24 +342,20 @@ impl Project {
     }
 
     /// `Ok` is the access; `Err` the reason it cannot be read (unknown + gap).
-    fn decide(
-        &self,
-        class: &Decl,
-        method: &Decl,
-        verb: &str,
-        path: &str,
-        rule: Option<&str>,
-    ) -> Decision {
+    fn decide(&self, class: &Decl, method: &Decl, verb: &str, path: &str, env: &Env) -> Decision {
         if !self.dependency || self.config.enabled == Some(false) {
             return Ok(AccessState::Undeclared);
         }
         if let Some(why) = &self.config.unreadable {
             return Err(why.clone());
         }
-        if let Some(a) = self
-            .annotation(&method.attrs)
-            .or_else(|| self.annotation(&class.attrs))
-        {
+        if let Some(r) = env.rule.as_ref().filter(|r| r.ordered) {
+            return Err(format!(
+                "custom SecurityRule {} overrides getOrder and may run before the annotation rule",
+                r.name
+            ));
+        }
+        if let Some(a) = self.inherited(class, method, &env.types) {
             return a;
         }
         let ordered = self
@@ -303,14 +384,41 @@ impl Project {
                 }
             }
         }
-        if let Some(rule) = rule {
-            return Err(format!("custom SecurityRule {rule} may decide"));
+        if let Some(rule) = &env.rule {
+            return Err(format!("custom SecurityRule {} may decide", rule.name));
         }
         Ok(if self.config.conditional {
             AccessState::Undeclared
         } else {
             AccessState::Protected(Condition::Never)
         })
+    }
+
+    /// The annotation decision of a route method: its own, then those of the
+    /// methods it overrides, then the class's, then its supertypes'. A
+    /// supertype outside the scan may carry any of them: unknown.
+    fn inherited(&self, class: &Decl, method: &Decl, types: &Types) -> Option<Decision> {
+        if let Some(a) = self.annotation(&method.attrs) {
+            return Some(a);
+        }
+        let (supers, unresolved) = types.supers(&class.bases);
+        if unresolved {
+            return Some(Err(
+                "a supertype is not in the scan; its annotations are unread".into(),
+            ));
+        }
+        for t in &supers {
+            let same: Vec<_> = t.methods.iter().filter(|m| m.0 == method.name).collect();
+            if same.len() > 1 {
+                return Some(Err(format!("{} is overloaded in {}", method.name, t.name)));
+            }
+            if let Some(a) = same.first().and_then(|m| self.annotation(&m.1)) {
+                return Some(a);
+            }
+        }
+        (self.annotation(&class.attrs).into_iter())
+            .chain(supers.iter().filter_map(|t| self.annotation(&t.attrs)))
+            .next()
     }
 
     /// The annotation decision of one element: none, or its access / why unreadable.
@@ -933,5 +1041,90 @@ mod tests {
                    @Controller(\"/s\")\nclass S { @Get(\"/x\") String x() {} }\n";
         let f = run(SEC, &[("src/S.java", src)]);
         assert!(f.endpoints.is_empty());
+    }
+
+    const ANY_URL: &str = "micronaut:\n  security:\n    intercept-url-map:\n      - pattern: /**\n        access: [isAnonymous()]\n";
+
+    fn java_type(kind: &str, header: &str, body: &str) -> String {
+        format!(
+            "package a;\nimport io.micronaut.http.annotation.*;\nimport io.micronaut.security.annotation.Secured;\n\
+             import io.micronaut.security.rules.SecurityRule;\n{kind} {header} {{\n{body}\n}}\n"
+        )
+    }
+
+    #[test]
+    fn inherited_interface_method_annotation_is_applied() {
+        let api = java_type("interface", "Api", "@Secured(\"ROLE_ADMIN\") String i();");
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Get(\"/i\") public String i() { return \"\"; }",
+        );
+        let f = run(
+            SEC,
+            &[("src/Api.java", &api), ("src/C.java", &ctl), (YML, ANY_URL)],
+        );
+        assert_eq!(ep(&f, "GET", "/c/i").access, prot(role("ROLE_ADMIN")));
+    }
+
+    #[test]
+    fn inherited_class_annotation_beats_the_url_map() {
+        let base = java_type("class", "Base", "");
+        let base = base.replace("class Base", "@Secured(\"ROLE_X\") class Base");
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C extends Base",
+            "@Get(\"/g\") String g() { return \"\"; }",
+        );
+        let f = run(
+            SEC,
+            &[
+                ("src/Base.java", &base),
+                ("src/C.java", &ctl),
+                (YML, ANY_URL),
+            ],
+        );
+        assert_eq!(ep(&f, "GET", "/c/g").access, prot(role("ROLE_X")));
+    }
+
+    #[test]
+    fn base_class_anonymous_marker_is_read() {
+        let base = java_type("class", "Base", "").replace(
+            "class Base",
+            "@Secured(SecurityRule.IS_ANONYMOUS) class Base",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C extends Base",
+            "@Get(\"/g\") String g() { return \"\"; }",
+        );
+        let f = run(SEC, &[("src/Base.java", &base), ("src/C.java", &ctl)]);
+        assert_eq!(ep(&f, "GET", "/c/g").access, AccessState::Open);
+    }
+
+    #[test]
+    fn unresolved_supertype_is_unknown_not_open_or_never() {
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C extends Lib",
+            "@Get(\"/g\") String g() { return \"\"; }",
+        );
+        let f = run(SEC, &[("src/C.java", &ctl)]);
+        assert!(is_unknown(&f, "GET", "/c/g"));
+        let f = run(SEC, &[("src/C.java", &ctl), (YML, ANY_URL)]);
+        assert!(is_unknown(&f, "GET", "/c/g"));
+        assert!(gaps(&f) > 0);
+    }
+
+    #[test]
+    fn custom_rule_with_get_order_may_precede_the_annotation() {
+        let src = java(
+            "@Controller(\"/r\")",
+            "@Get(\"/b\") @Secured(\"ROLE_A\") String b() {}",
+        );
+        let rule = "package a;\nimport io.micronaut.security.rules.SecurityRule;\n\
+                    class MyRule implements SecurityRule<Object> { public int getOrder() { return -500; } }\n";
+        let f = run(SEC, &[("src/B.java", &src), ("src/MyRule.java", rule)]);
+        assert!(is_unknown(&f, "GET", "/r/b"));
     }
 }
