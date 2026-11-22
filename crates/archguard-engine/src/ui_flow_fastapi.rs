@@ -315,6 +315,8 @@ mod model {
         Security,
         /// Starlette `@requires(scopes)` on the handler; scopes in `scopes`.
         Requires,
+        /// Any other decorator on a routed handler: not read, so unknown (ADR 0021).
+        Unread,
         /// A parameter annotation that may be an `Annotated` alias.
         Annotation,
         /// `dependencies=NAME`: a variable (or expression) holding the list.
@@ -456,6 +458,16 @@ mod model {
                     .iter()
                     .filter_map(|&d| self.requires(src, file, d)),
             );
+            // No decorator is assumed inert (FastAPI/Starlette document none that
+            // is); an empty allowlist keeps an explicit `open` from winning next to one.
+            if decorators.iter().any(|&d| is_route(src, d)) {
+                for &d in decorators {
+                    if !is_route(src, d) && self.requires(src, file, d).is_none() {
+                        let dep = Dep::new(file, d - 1, Kind::Unread, dotted(&src.b, d).0);
+                        own.push(dep);
+                    }
+                }
+            }
             for &d in decorators {
                 self.route(src, file, d, &name, &own);
             }
@@ -473,10 +485,11 @@ mod model {
             let direct = imp.module == "starlette.authentication"
                 && name == "requires"
                 && imp.name.as_deref() == Some("requires");
-            let attr = name.contains('.')
+            let attr = name.matches('.').count() == 1
                 && name.ends_with(".requires")
-                && imp.name.is_none()
-                && imp.module == "starlette.authentication";
+                && ((imp.name.is_none() && imp.module == "starlette.authentication")
+                    || (imp.name.as_deref() == Some("authentication")
+                        && imp.module == "starlette"));
             let open = skip_sp(&src.b, j);
             if !(direct || attr) || src.b.get(open) != Some(&b'(') {
                 return None;
@@ -606,6 +619,14 @@ mod model {
     }
 
     /// `name = rhs` or `name: T = rhs` at `at`: the name and the rhs range.
+    /// `@router.get(…)`-style decorator that [`Facts::route`] turns into a route.
+    fn is_route(src: &Src, at: usize) -> bool {
+        let (name, j) = dotted(&src.b, at);
+        let method = name.rsplit_once('.').map_or("", |(_, m)| m);
+        src.b.get(skip_sp(&src.b, j)) == Some(&b'(')
+            && (METHODS.contains(&method) || method == "api_route")
+    }
+
     fn assignment(src: &Src, at: usize) -> Option<(String, (usize, usize))> {
         let (name, j) = dotted(&src.b, at);
         let end = src.stmt_end(at);
@@ -1108,7 +1129,7 @@ mod access {
                     }
                 };
             }
-            if d.kind == Kind::Requires {
+            if matches!(d.kind, Kind::Requires | Kind::Unread) {
                 return self.requires(d);
             }
             let name = d.target.rsplit('.').next().unwrap_or("").to_string();
@@ -1133,7 +1154,12 @@ mod access {
             Meaning::Cond(all(conds))
         }
 
+        /// `@requires(…)` scopes, or an unread decorator (unknown).
         fn requires(&mut self, d: &Dep) -> Meaning {
+            if d.kind == Kind::Unread {
+                let why = "a decorator on a routed handler is not read";
+                return Meaning::Cond(self.unknown(d, &d.target, why));
+            }
             Meaning::Cond(match d.scopes.as_deref() {
                 Some(s) if !s.is_empty() => {
                     all(s.iter().map(|x| Condition::Policy(x.clone())).collect())
@@ -1854,6 +1880,35 @@ mod tests {
             )
         );
         assert!(!flow.complete);
+    }
+
+    #[test]
+    fn unread_decorator_is_unknown_and_beats_an_open_dependency() {
+        let flow = one(
+            "from app.auth import login_required\n@app.get('/x')\n@login_required\n\
+             def x(a=Depends(public)):\n    pass\n",
+            "public = \"open\"\n",
+        );
+        assert_eq!(
+            only(&flow),
+            (
+                AccessState::Protected(Condition::Unknown("login_required".into())),
+                vec![DiagnosticSeverity::Gap]
+            )
+        );
+        // A non-route decorator on a function without a route stays silent.
+        let flow = one("@app.on_event('startup')\ndef s():\n    pass\n", "");
+        assert!(flow.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn starlette_authentication_module_attribute_is_requires() {
+        let flow = one(
+            "from starlette import authentication\n@app.get('/x')\n\
+             @authentication.requires('x')\ndef x():\n    pass\n",
+            "",
+        );
+        assert_eq!(only(&flow), (AccessState::Protected(policy("x")), vec![]));
     }
 
     #[test]
