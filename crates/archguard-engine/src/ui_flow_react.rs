@@ -3814,10 +3814,10 @@ mod tanstack {
                 self.declared.extend(declared_by_call(stmt));
                 return wrapper_side_effect(stmt).map(|()| Ended::No);
             }
-            self.seen.push_str(stmt);
-            self.seen.push(' ');
             let renders = !words(stmt, "children").is_empty() || !words(stmt, "Outlet").is_empty();
             if !renders {
+                self.seen.push_str(stmt);
+                self.seen.push(' ');
                 self.reached(path);
                 return Ok(Ended::Redirect);
             }
@@ -6862,5 +6862,21 @@ export const GET = withA(withB(async () => Response.json({})));
             "{:?}",
             flow.diagnostics
         );
+    }
+
+    #[test]
+    fn a_hook_value_only_passed_to_the_rendered_children_is_unknown() {
+        for gate in [
+            "export function Gate({ children }) { const user = useRequireAuth(); return <Layout user={user}>{children}</Layout>; }\n",
+            "export function Gate({ children }) { const user = useRequireAuth(); if (loading) return null; return <Layout user={user}>{children}</Layout>; }\n",
+        ] {
+            let flow = gated(GATE_APP, gate);
+            assert!(
+                unknown_state(&state(&flow, "c:/a")),
+                "{gate}: {:?}",
+                flow.diagnostics
+            );
+            assert!(!flow.complete, "{gate}");
+        }
     }
 }
