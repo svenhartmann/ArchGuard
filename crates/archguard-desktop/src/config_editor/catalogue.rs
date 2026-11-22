@@ -360,6 +360,18 @@ pub const FIELDS: &[Field] = &[
         G::Rules,
         "Other repositories whose HTTP endpoints join the actions of this one, as paths relative to the project root or absolute.",
     ),
+    f(
+        "views.access_layers",
+        K::Table,
+        G::Rules,
+        "Which layers the access-layers view shows.",
+    ),
+    f(
+        "views.access_layers.show_unguarded",
+        K::Bool,
+        G::Rules,
+        "Show layers without a check of their own (default true).",
+    ),
     // Review
     f(
         "review",

@@ -38,6 +38,7 @@ pub fn wire(ui: &AppWindow) {
     calls_ui::wire(ui);
     services_ui::wire(ui);
     runtime_ui::wire(ui);
+    crate::access_ui::wire(ui);
     crate::screens_ui::wire(ui);
     crate::domain_ui::wire(ui);
     quality_ui::wire(ui);
@@ -415,6 +416,7 @@ fn show_tabs(ui: &AppWindow, data: &Loaded) {
     calls_ui::show(ui, data);
     services_ui::show(ui, data);
     runtime_ui::show(ui, data);
+    crate::access_ui::show(ui, data);
     crate::screens_ui::show(ui, data);
     crate::domain_ui::show(ui, data);
     quality_ui::show(ui, data);

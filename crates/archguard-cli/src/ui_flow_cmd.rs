@@ -344,11 +344,14 @@ pub(crate) fn matrix(cli: &Cli, root: &Path, kind: crate::ui_flow_run_cmd::Matri
 
 /// Aligned columns: kind, row, file:line, then one per role.
 fn matrix_table(m: &PermissionMatrix) -> String {
+    // Where an endpoint is enforced; only when the matrix holds endpoints.
+    let layers = m.rows.iter().any(|r| !r.layer.is_empty());
     let mut table = vec![
         ["kind", "row", "where"]
             .into_iter()
             .map(String::from)
             .chain(m.roles.iter().cloned())
+            .chain(layers.then(|| "layer".to_string()))
             .collect::<Vec<_>>(),
     ];
     for r in &m.rows {
@@ -366,6 +369,7 @@ fn matrix_table(m: &PermissionMatrix) -> String {
             ]
             .into_iter()
             .chain(cells)
+            .chain(layers.then(|| r.layer.clone()))
             .collect(),
         );
     }
@@ -574,9 +578,9 @@ mod tests {
         let m = permission_matrix(&flow, MatrixKind::Both);
         assert_eq!(
             matrix_table(&m),
-            "kind      row     where      anonymous   signed in\n\
+            "kind      row     where      anonymous   signed in   layer\n\
              screen    /a, b   A.razor:3  denied      allowed\n\
-             endpoint  GET /x  X.cs:9     undeclared  undeclared"
+             endpoint  GET /x  X.cs:9     undeclared  undeclared  none"
         );
         assert_eq!(
             matrix_csv(&m),

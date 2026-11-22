@@ -782,3 +782,17 @@ msgstr "Ausgeblendete Diagramme"
 msgctxt "Settings"
 msgid "Package map levels"
 msgstr "Ebenen der Paketkarte"
+
+msgid "Which layers the access-layers view shows."
+msgstr "Welche Schichten die Ansicht Zugriffsschichten zeigt."
+
+msgid "Show layers without a check of their own (default true)."
+msgstr "Schichten ohne eigene Prüfung trotzdem zeigen (Standard: true)."
+
+msgctxt "Settings"
+msgid "Access layers view"
+msgstr "Ansicht Zugriffsschichten"
+
+msgctxt "Settings"
+msgid "Show unguarded layers"
+msgstr "Ungeschützte Schichten zeigen"

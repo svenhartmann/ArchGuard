@@ -5,6 +5,7 @@
 //! pipeline as the CLI. Without arguments the last session reopens (see
 //! `settings.rs`), on the first start the current directory.
 
+mod access_ui;
 #[cfg(test)]
 mod app_check;
 mod architecture_ui;

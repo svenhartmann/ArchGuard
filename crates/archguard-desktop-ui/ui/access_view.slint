@@ -1,0 +1,200 @@
+// Access layers tab (LOGIC.md section 7, item 8): per endpoint the screens that
+// call it, its own check and the checks below it, with the effective access.
+// Rust (src/access_ui.rs) builds every text and number; this file holds labels.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, Badge, EmptyState } from "widgets.slint";
+
+export struct AlRow {
+    method: string,
+    path: string,
+    screens: string,
+    endpoint: string,
+    // 0 undeclared, 1 open (declared), 2 protected.
+    endpoint-kind: int,
+    service: string,
+    // Worst-first kind of the service/data layers: 0 none, 1 enforced, 2 enforced with unreadable condition, 3 path only, 4 hint, 5 data filter.
+    service-kind: int,
+    data: string,
+    data-kind: int,
+    effective: string,
+    effective-kind: int,
+    // 0 no check read, 1 endpoint, 2 service only, 3 endpoint and service.
+    enforced-at: int,
+    pressed: bool,
+}
+
+export struct AlLine {
+    // 0 screen, 1 endpoint, 2 service, 3 data.
+    layer: int,
+    text: string,
+    site: string,
+    state: string,
+    // As AlRow.service-kind for layers; 0 for screen and endpoint lines.
+    how: int,
+}
+
+export struct AccessModel {
+    // 0 loading, 1 ready, 2 failed (error).
+    state: int,
+    error: string,
+    // 0 by endpoint, 1 by screen.
+    from: int,
+    only: bool,
+    rows: [AlRow],
+    detail-title: string,
+    detail-effective: string,
+    detail: [AlLine],
+}
+
+export global AccessData {
+    in-out property <AccessModel> model;
+    callback set-from(int);
+    callback toggle-only();
+    callback select-row(int);
+}
+
+component Cell inherits Text {
+    in property <bool> muted;
+    color: muted ? Theme.muted : Theme.text;
+    font-size: Theme.font-small;
+    overflow: elide;
+    vertical-alignment: center;
+    min-width: 0px;
+    preferred-width: 0px;
+    vertical-stretch: 0;
+}
+
+// Unknown and path-only are never drawn like a protection.
+component HowBadge inherits Rectangle {
+    in property <int> how;
+    horizontal-stretch: 0;
+    if how == 1: Badge { variant: "success"; text: @tr("enforced"); }
+    if how == 2: Badge { variant: "warning"; text: @tr("enforced, condition unknown"); }
+    if how == 3: Badge { variant: "warning"; text: @tr("path only"); }
+    if how == 4: Badge { variant: "neutral"; text: @tr("hint"); }
+    if how == 5: Badge { variant: "neutral"; text: @tr("data filter"); }
+}
+
+component ChainRow inherits Rectangle {
+    in property <AlRow> r;
+    callback clicked();
+    height: 30px;
+    border-radius: 6px;
+    background: r.pressed ? Theme.accent.with-alpha(0.08) : touch.has-hover ? Theme.panel-2 : transparent;
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 8px;
+        Cell { text: r.method + " " + r.path; horizontal-stretch: 3; }
+        Cell { text: r.screens; muted: true; horizontal-stretch: 2; }
+        Cell { text: r.endpoint; color: r.endpoint-kind == 2 ? Theme.text : Theme.muted; horizontal-stretch: 2; }
+        HorizontalLayout {
+            horizontal-stretch: 2;
+            min-width: 0px;
+            preferred-width: 0px;
+            spacing: 4px;
+            Cell { text: r.service; muted: r.service-kind != 1; }
+            HowBadge { how: r.service-kind; }
+        }
+        Cell { text: r.data; muted: true; horizontal-stretch: 1; }
+        Cell { text: r.effective; color: r.effective-kind == 2 ? Theme.text : Theme.muted; horizontal-stretch: 2; }
+        // Protection only below the endpoint is flagged.
+        Rectangle {
+            width: 90px;
+            if r.enforced-at == 2: Badge { variant: "accent"; text: @tr("service only"); }
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component AccessView inherits Rectangle {
+    property <AccessModel> m: AccessData.model;
+    background: Theme.bg;
+    min-width: 360px;
+    preferred-width: 1480px;
+    max-width: 100000px;
+    preferred-height: 860px;
+
+    if m.state != 1: Text {
+        text: m.state == 2 ? m.error : @tr("Reading the access layers …");
+        color: m.state == 2 ? Theme.danger : Theme.muted;
+        font-size: Theme.font-body;
+        wrap: word-wrap;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if m.state == 1: VerticalLayout {
+        HorizontalLayout {
+            padding-left: Theme.page-pad;
+            padding-right: Theme.page-pad;
+            padding-top: 8px;
+            padding-bottom: 8px;
+            spacing: 8px;
+            alignment: start;
+            Button { text: @tr("By endpoint"); pressed-state: m.from == 0; clicked => { AccessData.set-from(0); } }
+            Button { text: @tr("By screen"); pressed-state: m.from == 1; clicked => { AccessData.set-from(1); } }
+            Button { text: @tr("Only service-guarded"); pressed-state: m.only; clicked => { AccessData.toggle-only(); } }
+        }
+        Rectangle { height: 1px; background: Theme.border; }
+        if m.rows.length == 0: EmptyState {
+            vertical-stretch: 1;
+            title: @tr("No endpoints found");
+            reason: @tr("The access chain needs backend endpoints; with “By screen” also a screen that calls one.");
+        }
+        if m.rows.length > 0: HorizontalLayout {
+            vertical-stretch: 1;
+            ScrollView {
+                horizontal-stretch: 3;
+                VerticalLayout {
+                    width: parent.visible-width;
+                    padding: 8px;
+                    spacing: 2px;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 8px;
+                        Cell { text: @tr("Endpoint"); muted: true; horizontal-stretch: 3; }
+                        Cell { text: @tr("Screen"); muted: true; horizontal-stretch: 2; }
+                        Cell { text: @tr("Controller"); muted: true; horizontal-stretch: 2; }
+                        Cell { text: @tr("Service"); muted: true; horizontal-stretch: 2; }
+                        Cell { text: @tr("Data"); muted: true; horizontal-stretch: 1; }
+                        Cell { text: @tr("Effective"); muted: true; horizontal-stretch: 2; }
+                        Rectangle { width: 90px; }
+                    }
+                    for r[i] in m.rows: ChainRow { r: r; clicked => { AccessData.select-row(i); } }
+                }
+            }
+            Rectangle { width: 1px; background: Theme.border; }
+            ScrollView {
+                horizontal-stretch: 2;
+                VerticalLayout {
+                    width: parent.visible-width;
+                    padding: Theme.page-pad;
+                    spacing: 6px;
+                    alignment: start;
+                    Text { text: m.detail-title; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; overflow: elide; }
+                    Cell { text: @tr("Effective: {}", m.detail-effective); }
+                    for l in m.detail: VerticalLayout {
+                        spacing: 2px;
+                        alignment: start;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            alignment: start;
+                            Badge {
+                                text: l.layer == 0 ? @tr("Screen") : l.layer == 1 ? @tr("Controller") : l.layer == 2 ? @tr("Service") : @tr("Data");
+                            }
+                            HowBadge { how: l.how; }
+                            Cell { text: l.state; }
+                        }
+                        Cell { text: l.text; muted: true; }
+                        Cell { text: l.site; muted: true; font-family: Theme.mono-family; }
+                    }
+                }
+            }
+        }
+    }
+}
