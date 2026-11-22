@@ -5502,7 +5502,7 @@ mod razor {
         let pages_mods = out.2.pages.clone();
         let saved = std::mem::replace(&mut out.2.convention, pages_mods);
         for page in pages {
-            one(page, index, &conventions, out);
+            one(page, pages, index, &conventions, out);
         }
         out.2.convention = saved;
     }
@@ -5563,11 +5563,11 @@ mod razor {
     fn matches(c: &Convention, area: &Option<String>, page: &str) -> bool {
         let same_area = match (&c.area, area) {
             (None, None) => true,
-            (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+            (Some(a), Some(b)) => a.to_lowercase() == b.to_lowercase(),
             _ => false,
         };
-        let path = format!("/{}", c.path.trim_matches('/')).to_ascii_lowercase();
-        let page = page.to_ascii_lowercase();
+        let path = format!("/{}", c.path.trim_matches('/')).to_lowercase();
+        let page = page.to_lowercase();
         same_area
             && match c.folder {
                 true => path == "/" || page.starts_with(&format!("{path}/")),
@@ -5579,21 +5579,25 @@ mod razor {
     struct Directives {
         at: usize,
         model: Option<String>,
+        inherits: Option<String>,
         /// `@page "template"`; `Err` with the raw text when it is no literal.
         template: Option<Result<String, String>>,
         attrs: Vec<Attr>,
     }
 
-    /// The directives of a page; none without `@page`.
-    fn directives(page: &Source) -> Option<Directives> {
+    /// The directives of a file and whether it has `@page`.
+    fn directives(page: &Source) -> (Directives, bool) {
         let mut d = Directives {
             at: 0,
             model: None,
+            inherits: None,
             template: None,
             attrs: Vec::new(),
         };
         let (mut found, mut offset) = (false, 0);
-        for line in page.text.split_inclusive('\n') {
+        // `@* … *@` comments hide directives; blanking keeps the offsets.
+        let text = crate::lang_markup::blank(&page.text, "@*", "*@");
+        for line in text.split_inclusive('\n') {
             let t = line.trim_start();
             let here = offset + (line.len() - t.len());
             offset += line.len();
@@ -5606,6 +5610,9 @@ mod razor {
                 d.template = (!rest.is_empty()).then(|| literal(rest).ok_or_else(|| rest.into()));
             } else if let Some(rest) = t.strip_prefix("@model ") {
                 d.model = Some(rest.trim().rsplit('.').next().unwrap_or("").to_string());
+            } else if let Some(rest) = t.strip_prefix("@inherits ") {
+                let name = rest.trim().split('<').next().unwrap_or("");
+                d.inherits = Some(name.rsplit('.').next().unwrap_or("").to_string());
             } else if let Some(rest) = t.strip_prefix("@attribute ") {
                 let base = here + (t.len() - rest.len());
                 d.attrs
@@ -5615,7 +5622,29 @@ mod razor {
                     }));
             }
         }
-        found.then_some(d)
+        (d, found)
+    }
+
+    /// The directives of a page, with `@model` / `@inherits` of the
+    /// `_ViewImports.cshtml` files above it where it has none (the closest one
+    /// wins); none without `@page`. Docs:
+    /// <https://learn.microsoft.com/en-us/aspnet/core/mvc/views/layout#importing-shared-directives>
+    fn page_directives(page: &Source, pages: &[Source]) -> Option<Directives> {
+        let (mut d, found) = directives(page);
+        if !found {
+            return None;
+        }
+        let mut cur = page.rel.as_str();
+        while let Some((dir, _)) = cur.rsplit_once('/') {
+            cur = dir;
+            let name = format!("{dir}/_ViewImports.cshtml");
+            if let Some(imp) = pages.iter().find(|p| p.rel == name) {
+                let (imp, _) = directives(imp);
+                d.model = d.model.or(imp.model);
+                d.inherits = d.inherits.or(imp.inherits);
+            }
+        }
+        Some(d)
     }
 
     /// The route: the path below the root (`Index` is its folder), the area, and
@@ -5659,7 +5688,7 @@ mod razor {
     ) -> (Vec<(&'a Source, &'a Attr)>, BTreeSet<String>) {
         let mut levels: Vec<(&Source, &Attr)> = d.attrs.iter().map(|a| (page, a)).collect();
         let mut verbs = BTreeSet::new();
-        if let Some(name) = &d.model {
+        for name in [&d.model, &d.inherits].into_iter().flatten() {
             let classes: Vec<_> = (index.all_classes())
                 .filter(|(_, c)| c.class && &c.name == name)
                 .collect();
@@ -5727,8 +5756,14 @@ mod razor {
             .collect()
     }
 
-    fn one(page: &Source, index: &Index, conventions: &[Convention], out: &mut Out) {
-        let (Some(d), Some(place)) = (directives(page), locate(&page.rel)) else {
+    fn one(
+        page: &Source,
+        pages: &[Source],
+        index: &Index,
+        conventions: &[Convention],
+        out: &mut Out,
+    ) {
+        let (Some(d), Some(place)) = (page_directives(page, pages), locate(&page.rel)) else {
             return;
         };
         let route = route(page, &place, &d, out);
@@ -9387,6 +9422,71 @@ builder.Services.AddRazorPages(o => { o.Conventions.AuthorizeFolder(Folders.Priv
         );
         // An explicit marker still wins.
         assert_eq!(access(&flow, "GET", "/Anon"), &AccessState::Open);
+    }
+
+    // Review: Razor comments `@* … *@` hide directives; they stay hidden.
+    #[test]
+    fn w5e_razor_comments_hide_directives() {
+        let files = [
+            ("Program.cs", PAGE_CONVENTIONS),
+            (
+                "Pages/Admin/Secret.cshtml",
+                "@page\n@*\n@attribute [AllowAnonymous]\n*@\n",
+            ),
+            ("Pages/Admin/Gone.cshtml", "@* @page *@\n"),
+        ];
+        let flow = web(&tfm("net10.0"), &files);
+        assert_eq!(
+            access(&flow, "GET", "/Admin/Secret"),
+            &protected(policy("AdminOnly"))
+        );
+        assert!(!flow.endpoints.iter().any(|e| e.path.contains("Gone")));
+    }
+
+    // Review: OrdinalIgnoreCase is not ASCII-only.
+    #[test]
+    fn w5e_razor_folder_conventions_match_non_ascii_case_insensitively() {
+        let program = "builder.Services.AddRazorPages(o => { o.Conventions.AuthorizeFolder(\"/übersicht\"); });";
+        let flow = web(
+            &tfm("net10.0"),
+            &[
+                ("Program.cs", program),
+                ("Pages/Übersicht/Index.cshtml", "@page\n"),
+            ],
+        );
+        assert_eq!(
+            access(&flow, "GET", "/Übersicht"),
+            &protected(Condition::Authenticated)
+        );
+    }
+
+    // Review: `_ViewImports.cshtml` supplies `@model`/`@inherits`, the closest wins
+    // (https://learn.microsoft.com/en-us/aspnet/core/mvc/views/layout#importing-shared-directives).
+    #[test]
+    fn w5e_razor_view_imports_supply_model_and_inherits() {
+        let cs = "[AllowAnonymous] public class RootModel : PageModel {}\n\
+                  [Authorize] public class ImpModel : PageModel {}\n\
+                  [Authorize(\"B\")] public class BaseP : PageModel {}\n";
+        let files = [
+            ("Pages/_ViewImports.cshtml", "@model RootModel\n"),
+            ("Pages/Other.cshtml", "@page\n"),
+            ("Pages/Imp/_ViewImports.cshtml", "@model ImpModel\n"),
+            ("Pages/Imp/Page.cshtml", "@page\n"),
+            ("Pages/Inh/_ViewImports.cshtml", "@inherits BaseP\n"),
+            ("Pages/Inh/Page.cshtml", "@page\n@model RootModel\n"),
+            ("Pages/Miss/_ViewImports.cshtml", "@model Nowhere\n"),
+            ("Pages/Miss/Page.cshtml", "@page\n"),
+            ("M.cs", cs),
+        ];
+        let flow = web(&tfm("net10.0"), &files);
+        assert_eq!(access(&flow, "GET", "/Other"), &AccessState::Open);
+        assert_eq!(
+            access(&flow, "GET", "/Imp/Page"),
+            &protected(Condition::Authenticated)
+        );
+        // The page's own @model is RootModel (open); @inherits adds BaseP; open wins.
+        assert_eq!(access(&flow, "GET", "/Inh/Page"), &AccessState::Open);
+        assert!(gaps(&flow, "Nowhere") >= 1, "{:#?}", flow.diagnostics);
     }
 
     // Guard: `MapControllers().AllowAnonymous()` opens controllers, not pages;
