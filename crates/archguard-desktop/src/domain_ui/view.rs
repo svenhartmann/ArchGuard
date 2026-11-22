@@ -140,7 +140,11 @@ fn diagram(m: &mut DomainViewModel, s: &DomainState, d: &DomainModel, texts: &Te
             }),
     );
     m.boxes = model(scene.boxes.into_iter().map(|b| DomBox {
-        title: b.title.into(),
+        title: if b.external {
+            b.title.replacen("external", texts.t("external"), 1).into()
+        } else {
+            b.title.into()
+        },
         sub: b.sub.into(),
         module: b.module as i32,
         x: b.x,

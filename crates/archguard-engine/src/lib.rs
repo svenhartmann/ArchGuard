@@ -118,6 +118,7 @@ mod lang_tests;
 mod lang_text;
 mod lang_ts;
 mod lang_ts_decl;
+mod lang_ts_imports;
 mod lang_ts_http;
 #[cfg(test)]
 mod lang_ts_tests;

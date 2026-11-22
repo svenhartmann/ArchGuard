@@ -58,9 +58,9 @@
 //!   unique entity is a diagnostic and makes the model incomplete.
 //!   Docs: <https://typeorm.io/relations>, <https://www.prisma.io/docs/orm/prisma-schema/data-model/relations>.
 //!
-//! Not read, with one diagnostic per app (first importing file): Kysely
-//! `interface DB` row maps (`import … from 'kysely'`) and Drizzle
-//! `pgTable/mysqlTable/sqliteTable(…)` (`import … from 'drizzle-orm…'`).
+//! Kysely `interface DB` row maps and Drizzle `pgTable/mysqlTable/sqliteTable(…)`
+//! tables (entities, fields, foreign-key relations; unreadable forms are
+//! diagnostics): see `domain_typescript_schema.rs` for the rules and the docs.
 //!
 //! Not recognized:
 //! constructor parameter properties as fields, properties
@@ -72,10 +72,13 @@
 //! constants below; reading them from the configuration comes later.
 use crate::extract_ctx::{ExtractContext, domain_sources, with_root_config};
 use crate::lang_text::*;
+use crate::lang_ts_imports::{imports, skip_generics, string_literal};
 use archguard_core::domain_model::{
     DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, Field, Relation, RelationKind,
     StateMachine, StateTransition, UseCase, UseCaseKind,
 };
+#[path = "domain_typescript_schema.rs"]
+mod schema;
 use members::{Kind, Member, field};
 use states::{Rules, Step, assignments, created, raise_calls};
 use std::collections::{BTreeMap, BTreeSet};
@@ -94,8 +97,6 @@ const TABLE_DECORATOR: &str = "Table";
 /// (<https://github.com/sequelize/sequelize-typescript>), `@immich/sql-tools`
 /// and TypeORM (<https://typeorm.io/decorator-reference>).
 const TABLE_PACKAGES: [&str; 3] = ["sequelize-typescript", "@immich/sql-tools", "typeorm"];
-/// Table builders of Drizzle (<https://orm.drizzle.team/docs/sql-schema-declaration>).
-const DRIZZLE_BUILDERS: [&str; 3] = ["pgTable", "mysqlTable", "sqliteTable"];
 /// Field decorators whose first argument `() => X` names the related entity
 /// when the field type does not (`Relation<X>`, `string` foreign keys).
 const ARROW_RELATIONS: [&str; 5] = [
@@ -168,6 +169,7 @@ pub fn extract_with(ctx: &ExtractContext) -> DomainModel {
     }
     x.entities();
     x.relations();
+    x.schemas();
     x.machines_and_events();
     x.use_cases();
     x.finish()
@@ -283,29 +285,31 @@ impl Extractor {
             .extend(found.into_iter().map(|d| Decl { file: f, ..d }));
     }
 
-    /// Kysely and Drizzle schemas are not read: one gap each for the app.
-    fn unread_schemas(&mut self) {
-        let kysely = (self.files.iter())
-            .find(|s| imports(&s.shown, |m| m == "kysely", &[]))
-            .map(|s| s.rel.clone());
-        let drizzle = (self.files.iter())
-            .find(|s| {
-                let module = |m: &str| m == "drizzle-orm" || m.starts_with("drizzle-orm/");
-                imports(&s.shown, module, &DRIZZLE_BUILDERS)
+    /// Kysely `interface DB` tables and Drizzle `pgTable(…)` tables.
+    fn schemas(&mut self) {
+        let files: Vec<schema::File> = (self.files.iter())
+            .map(|s| schema::File {
+                rel: &s.rel,
+                text: &s.text,
+                shown: &s.shown,
             })
-            .map(|s| s.rel.clone());
-        if let Some(rel) = kysely {
-            let msg = "Kysely database types (`interface DB`) are not read; first import here";
-            self.push_diag(&rel, msg.into());
+            .collect();
+        let known: BTreeSet<&str> = self.ents.iter().map(|e| e.name.as_str()).collect();
+        let found = schema::read(&files, &known, field);
+        for (f, pos, message) in found.gaps {
+            let d = DomainDiagnostic {
+                file: files[f].rel.into(),
+                line: line(files[f].text, pos),
+                message,
+            };
+            self.model.diagnostics.push(d);
+            self.model.complete = false;
         }
-        if let Some(rel) = drizzle {
-            let msg = "Drizzle table definitions are not read; first import here";
-            self.push_diag(&rel, msg.into());
-        }
+        self.model.entities.extend(found.entities);
+        self.model.relations.extend(found.relations);
     }
 
     fn entities(&mut self) {
-        self.unread_schemas();
         let mut ents: Vec<Ent> = (self.decls.iter().enumerate())
             .filter_map(|(d, decl)| {
                 marker_kind(decl, &self.files[decl.file].shown).map(|kind| Ent {
@@ -704,37 +708,6 @@ fn arrow_target(args: &str) -> Option<String> {
     (!id.is_empty() && (after.is_empty() || after.starts_with(','))).then_some(id)
 }
 
-/// Whether `shown` has an `import … from 'm'` with `module(m)` that names one
-/// of `names` (any name when empty).
-fn imports(shown: &str, module: impl Fn(&str) -> bool, names: &[&str]) -> bool {
-    let mut from = 0;
-    while let Some(i) = shown[from..].find("from") {
-        let at = from + i;
-        from = at + 4;
-        let rest = shown[from..].trim_start();
-        let Some(q) = rest.chars().next().filter(|c| matches!(c, '\'' | '"')) else {
-            continue;
-        };
-        let Some(end) = rest[1..].find(q) else {
-            continue;
-        };
-        if !module(&rest[1..1 + end]) {
-            continue;
-        }
-        let Some(start) = shown[..at].rfind("import") else {
-            continue;
-        };
-        let clause = &shown[start + 6..at];
-        if names.is_empty()
-            || (clause.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$')))
-                .any(|w| names.contains(&w))
-        {
-            return true;
-        }
-    }
-    false
-}
-
 fn marker_kind(decl: &Decl, shown: &str) -> Option<EntityKind> {
     if decl.kw == "model" {
         return Some(EntityKind::Entity);
@@ -782,14 +755,6 @@ fn arg_types(s: &str, (a, z): Span) -> Vec<String> {
         .map(simple)
         .filter(|t| !t.is_empty() && t.bytes().all(is_id))
         .collect()
-}
-
-/// `'x'`, `"x"` or `` `x` `` (in `shown` text) → `x`.
-fn string_literal(x: &str) -> Option<String> {
-    let x = x.trim();
-    let q = x.chars().next().filter(|c| matches!(c, '\'' | '"' | '`'))?;
-    let inner = x.strip_prefix(q)?.strip_suffix(q)?;
-    (!inner.contains(q)).then(|| inner.to_string())
 }
 
 /// The literals of a string-union alias value; `None` when one part is not a
@@ -989,13 +954,6 @@ mod decls {
             members: members::prisma(s, body),
             ..new_decl("model", name, pos, Some(body))
         })
-    }
-
-    pub(super) fn skip_generics(b: &[u8], i: usize) -> usize {
-        match next_nonws(b, i).filter(|&k| b[k] == b'<') {
-            Some(k) => matching(b, k).map_or(i, |e| e + 1),
-            None => i,
-        }
     }
 
     /// End of a type alias value: `;`, or a line break at depth 0 that the
@@ -2387,21 +2345,97 @@ enum InvoiceStatus {
     }
 
     #[test]
-    fn kysely_and_drizzle_imports_are_one_gap_each() {
+    fn kysely_import_without_db_interface_and_unread_drizzle_are_one_gap_each() {
         let model = run(&[
-            (
-                "a.ts",
-                "import { Kysely } from 'kysely';\nexport interface DB {}\n",
-            ),
+            ("a.ts", "import { Kysely } from 'kysely';\n"),
             ("b.ts", "import { Kysely } from 'kysely';\n"),
             (
                 "c.ts",
-                "import { pgTable, text } from 'drizzle-orm/pg-core';\nexport const u = pgTable('u', { a: text('a') });\n",
+                "import { pgTable, text } from 'drizzle-orm/pg-core';\nexport const u = pgTable(name, { a: text('a') });\n",
             ),
         ]);
         assert!(has_diag(&model, "Kysely"));
         assert!(has_diag(&model, "Drizzle"));
         assert_eq!(model.diagnostics.len(), 2);
         assert!(!model.complete);
+    }
+
+    const KYSELY: &str = "import { ColumnType, Generated } from 'kysely';\n\
+        interface PersonTable {\n  id: Generated<number>;\n  name: string;\n  born?: ColumnType<Date, string, never> | null;\n  tags: Generated<string[]>;\n}\n\
+        type PetRow = { id: Generated<number>; owner_id: number }\n\
+        export interface DB {\n  person: PersonTable;\n  pet: PetRow;\n  audit: { at: Date; who: string };\n}\n";
+
+    #[test]
+    fn kysely_db_interface_gives_entities_with_unwrapped_fields() {
+        let model = run(&[("src/db.ts", KYSELY)]);
+        assert!(model.complete, "{:?}", model.diagnostics);
+        let ids: Vec<&str> = model.entities.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["audit", "person", "pet"]);
+        let person = model.entities.iter().find(|e| e.id == "person").unwrap();
+        let fields: Vec<(&str, &str, bool)> = (person.fields.iter())
+            .map(|f| (f.name.as_str(), f.type_name.as_str(), f.collection))
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                ("id", "number", false),
+                ("name", "string", false),
+                ("born", "Date", false),
+                ("tags", "string", true)
+            ]
+        );
+        assert_eq!(person.file, "src/db.ts");
+        assert_eq!(person.source, "typescript");
+    }
+
+    #[test]
+    fn kysely_unreadable_row_type_is_a_gap_and_other_tables_stay() {
+        let model = run(&[(
+            "db.ts",
+            "import { Kysely } from 'kysely';\nimport { Elsewhere } from './x';\ninterface T { a: string }\nexport interface DB {\n  ok: T;\n  bad: Elsewhere;\n  piece: Pick<T, 'a'>;\n}\n",
+        )]);
+        assert_eq!(model.entities.len(), 1);
+        assert!(has_diag(&model, "bad"));
+        assert!(has_diag(&model, "piece"));
+        assert!(!model.complete);
+    }
+
+    const DRIZZLE: &str = "import { pgTable, serial, integer, text, type AnyPgColumn } from 'drizzle-orm/pg-core';\n\
+        export const users = pgTable('users', {\n  id: serial('id').primaryKey(),\n  name: text('name').notNull(),\n  invitedBy: integer('invited_by').references((): AnyPgColumn => users.id),\n});\n\
+        export const posts = pgTable('posts', {\n  id: serial('id').primaryKey(),\n  authorId: integer('author_id')\n    .notNull()\n    .references(() => users.id, { onDelete: 'cascade' }),\n});\n";
+
+    #[test]
+    fn drizzle_tables_give_entities_fields_and_references() {
+        let model = run(&[("src/schema.ts", DRIZZLE)]);
+        assert!(model.complete, "{:?}", model.diagnostics);
+        let ids: Vec<&str> = model.entities.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["posts", "users"]);
+        let users = model.entities.iter().find(|e| e.id == "users").unwrap();
+        let fields: Vec<(&str, &str)> = (users.fields.iter())
+            .map(|f| (f.name.as_str(), f.type_name.as_str()))
+            .collect();
+        assert_eq!(
+            fields,
+            [("id", "serial"), ("name", "text"), ("invitedBy", "integer")]
+        );
+        assert_eq!(
+            relations(&model),
+            [
+                ("posts", "users", RelationKind::HasOne, "authorId"),
+                ("users", "users", RelationKind::HasOne, "invitedBy"),
+            ]
+        );
+    }
+
+    #[test]
+    fn drizzle_unreadable_forms_are_gaps() {
+        let model = run(&[(
+            "s.ts",
+            "import { pgTable, integer, foreignKey } from 'drizzle-orm/pg-core';\nexport const a = pgTable('a', { id: integer('id'), x: integer('x').references(() => nowhere.id) });\nexport const b = pgTable('b', { ...base, id: integer('id') }, (t) => [foreignKey({ columns: [t.id], foreignColumns: [a.id] })]);\n",
+        )]);
+        assert!(!model.complete);
+        assert!(has_diag(&model, "nowhere"));
+        assert!(has_diag(&model, "spread"));
+        assert!(has_diag(&model, "foreignKey"));
     }
 }

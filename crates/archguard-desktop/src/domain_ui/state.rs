@@ -166,7 +166,11 @@ impl DomainState {
 
     /// Drill the diagram into module `i` of [`overview::modules`].
     pub fn open_module(&mut self, i: usize) {
-        self.module = (self.model()).and_then(|d| overview::modules(d).into_iter().nth(i));
+        let found = (self.model()).and_then(|d| overview::modules(d).into_iter().nth(i));
+        // An index past the modules (the external stub) changes nothing.
+        if found.is_some() {
+            self.module = found;
+        }
     }
 
     pub fn select_state(&mut self, name: &str) {
