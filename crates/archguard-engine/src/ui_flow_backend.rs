@@ -165,7 +165,7 @@ mod projects {
 
     /// Application name and source files by project directory; unreadable files
     /// become diagnostics.
-    pub(super) fn read_projects(root: &Path, out: &mut Out) -> BTreeMap<String, Project> {
+    pub(crate) fn read_projects(root: &Path, out: &mut Out) -> BTreeMap<String, Project> {
         let (projects, files) = discover(root, out);
         let mut by_project: BTreeMap<String, Project> = BTreeMap::new();
         for rel in files {
@@ -187,9 +187,20 @@ mod projects {
         by_project
     }
 
+    pub(crate) fn quarkus_build(root: &Path, dir: &str) -> bool {
+        (BUILD_FILES.iter()).any(|b| {
+            let rel = if dir.is_empty() {
+                (*b).to_string()
+            } else {
+                format!("{dir}/{b}")
+            };
+            read_text(root, &rel, MAX_BYTES).is_ok_and(|t| t.contains("quarkus"))
+        })
+    }
+
     /// The owning application of a project directory, its sources, and whether
     /// its build file depends on the Quarkus Spring compatibility extensions.
-    pub(super) type Project = (Option<String>, Vec<Source>, bool);
+    pub(crate) type Project = (Option<String>, Vec<Source>, bool);
 
     /// Whether a build file of project directory `dir` names a Quarkus Spring
     /// compatibility extension (`quarkus-spring-web`, `quarkus-spring-security`).
@@ -244,7 +255,7 @@ mod projects {
         (projects, files)
     }
 }
-use projects::read_projects;
+pub(crate) use projects::{Project, quarkus_build, read_projects};
 
 /// The lowest major version of the project's `<TargetFramework(s)>` (`net10.0`
 /// is 10, `netcoreapp3.1` 3, `net48` 4); none without a `.csproj` or when a
@@ -290,6 +301,18 @@ struct Ignored {
 
 pub(crate) struct Out(UiFlow, Ignored, aspnet::Defaults);
 impl Out {
+    /// An empty run, for readers that only want what the shared annotation
+    /// reader reports about one element.
+    pub(crate) fn scratch() -> Out {
+        Out(
+            UiFlow::default(),
+            Ignored::default(),
+            aspnet::Defaults::default(),
+        )
+    }
+    pub(crate) fn diagnostics(&self) -> &[UiFlowDiagnostic] {
+        &self.0.diagnostics
+    }
     /// A diagnostic for something not read literally: the flow is incomplete.
     fn diag(&mut self, file: &str, line: u32, message: String) {
         self.0.complete = false;
@@ -464,7 +487,7 @@ pub(crate) struct Decl {
 }
 
 /// The header of a type declaration: from its modifiers to the body (or `;`).
-fn class_header<'a>(src: &'a Source, d: &Decl) -> &'a str {
+pub(crate) fn class_header<'a>(src: &'a Source, d: &Decl) -> &'a str {
     let rest = &src.text[d.open..];
     &rest[..rest.find(['{', ';']).unwrap_or(rest.len())]
 }
@@ -886,7 +909,7 @@ mod index {
     }
 
     impl<'a> Index<'a> {
-        pub(super) fn new(
+        pub(crate) fn new(
             sources: impl Iterator<Item = &'a Source>,
             access: BTreeMap<String, AccessMeaning>,
         ) -> Self {
@@ -1073,7 +1096,7 @@ mod index {
         }
 
         /// The one declaration of annotation type `name`, for meta-annotations.
-        pub(super) fn meta(&self, name: &str) -> Option<(&'a Source, &Decl)> {
+        pub(crate) fn meta(&self, name: &str) -> Option<(&'a Source, &Decl)> {
             match self.interfaces.get(name)?.as_slice() {
                 [(s, d)] => Some((*s, d)),
                 _ => None,
@@ -1134,6 +1157,24 @@ mod index {
                 todo.extend(d.bases.iter().rev().cloned());
             }
             up
+        }
+
+        /// The class or interface `name` declared in `src`.
+        pub(crate) fn type_in(&self, src: &Source, name: &str) -> Option<&Decl> {
+            [&self.classes, &self.interfaces]
+                .into_iter()
+                .filter_map(|m| m.get(name))
+                .flatten()
+                .find(|(s, _)| std::ptr::eq(*s, src))
+                .map(|(_, d)| d)
+        }
+
+        /// The annotated methods of `class` declared in `src`.
+        pub(crate) fn methods_in(&self, src: &Source, class: &str) -> Vec<&Decl> {
+            (self.methods.get(class).into_iter().flatten())
+                .filter(|(s, _)| std::ptr::eq(*s, src))
+                .map(|(_, d)| d)
+                .collect()
         }
 
         /// The declaration of class `name` in `src`.
@@ -3200,6 +3241,7 @@ pub(crate) mod spring {
             Scope,
         }
 
+        #[derive(Clone)]
         struct Methods {
             legacy: bool,
             pre_post: Flag,
@@ -3207,6 +3249,7 @@ pub(crate) mod spring {
             jsr250: Flag,
         }
 
+        #[derive(Clone)]
         pub(crate) struct Conf {
             quarkus: bool,
             /// `None`: set by code that is not readable.
@@ -3218,6 +3261,8 @@ pub(crate) mod spring {
             methods: Option<Methods>,
             /// `AnnotationTemplateExpressionDefaults` is in the sources.
             pub(in super::super) templates: bool,
+            /// Service layers: `@PostAuthorize` is no check before the call.
+            pub(crate) deferred_off: bool,
         }
 
         /// `(source, offset, arguments)` of every call of `name` in the sources.
@@ -3268,7 +3313,7 @@ pub(crate) mod spring {
         }
 
         impl Conf {
-            pub(in super::super) fn read(
+            pub(crate) fn read(
                 sources: &[Source],
                 index: &Index,
                 quarkus: bool,
@@ -3284,6 +3329,7 @@ pub(crate) mod spring {
                     origins: vec![],
                     methods: None,
                     templates,
+                    deferred_off: false,
                 };
                 conf.prefixes(sources, index, out);
                 conf.method_security(sources, out);
@@ -3444,6 +3490,9 @@ pub(crate) mod spring {
 
             /// Whether the annotations of `family` are enforced.
             pub(in super::super) fn flag(&self, family: &str) -> Flag {
+                if self.deferred_off && family == "PostAuthorize" {
+                    return Flag::Off;
+                }
                 let Some(m) = &self.methods else {
                     return if self.quarkus { Flag::On } else { Flag::Off };
                 };
@@ -3462,6 +3511,9 @@ pub(crate) mod spring {
 
             /// Why the annotations of `family` are not enforced, for a gap.
             pub(in super::super) fn off(&self, family: &str) -> String {
+                if self.deferred_off && family == "PostAuthorize" {
+                    return "it is checked after the call, so it is not a check before it".into();
+                }
                 let switch = match family {
                     "PreAuthorize" | "PostAuthorize" => "prePostEnabled",
                     "Secured" => "securedEnabled",

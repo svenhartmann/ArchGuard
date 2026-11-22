@@ -152,6 +152,13 @@ fn add_backend(flow: &mut UiFlow, ctx: &ExtractContext, name: &str, itself: bool
         site.file = prefixed(&site.file);
         flow.handler_sites.push(site);
     }
+    for mut layer in backend.service_layers {
+        layer.endpoint_file = prefixed(&layer.endpoint_file);
+        layer.file = prefixed(&layer.file);
+        flow.service_layers.push(layer);
+    }
+    flow.service_layers.sort();
+    flow.service_layers.dedup();
     flow.endpoints.sort();
     flow.endpoints.dedup();
     flow.handler_sites.sort();
@@ -270,9 +277,11 @@ fn extract_all(ctx: &ExtractContext) -> UiFlow {
         crate::ui_flow_micronaut::extract_with,
         crate::ui_flow_roles::extract_with,
     ];
-    (extractors.into_iter()).fold(UiFlow::default(), |flow, extract| {
+    let mut flow = (extractors.into_iter()).fold(UiFlow::default(), |flow, extract| {
         merge_ui_flows(flow, extract(ctx))
-    })
+    });
+    crate::ui_flow_service::apply(ctx, &mut flow);
+    flow
 }
 
 #[cfg(test)]

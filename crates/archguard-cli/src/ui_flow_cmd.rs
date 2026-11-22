@@ -58,6 +58,20 @@ pub(crate) fn run(cli: &Cli, root: &Path, roles: &[String], anonymous: bool) -> 
         if let Some(simulation) = simulation {
             value["simulation"] = simulation;
         }
+        let layered: Vec<Value> = (flow.endpoints.iter())
+            .filter(|e| flow.service_layers_of(e).next().is_some())
+            .map(|e| {
+                json!({
+                    "method": e.method, "path": e.path, "application": e.application,
+                    "file": e.file, "line": e.line,
+                    "access": e.access, "effective_access": flow.effective_access(e),
+                    "service_layers": flow.service_layers_of(e).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        if !layered.is_empty() {
+            value["endpoints_with_service_layers"] = json!(layered);
+        }
         emit(&serde_json::to_string_pretty(&value).expect("ui flow serializes"));
     } else {
         print_text(&flow, simulation.as_ref(), cli.verbose);

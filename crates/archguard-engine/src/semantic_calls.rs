@@ -143,7 +143,7 @@ fn compute_calls(root: &Path, config: &Config) -> CallAnalysis {
 
 /// The call analysis of one language's backend; JavaScript is analysed with
 /// TypeScript.
-fn backend_report(lang: Lang, root: &Path, config: &Config) -> CallAnalysis {
+pub(crate) fn backend_report(lang: Lang, root: &Path, config: &Config) -> CallAnalysis {
     match lang {
         Lang::Java => crate::java_calls::analyze_java_calls(root, config),
         Lang::CSharp => crate::csharp_calls::analyze_csharp_calls(root, config),

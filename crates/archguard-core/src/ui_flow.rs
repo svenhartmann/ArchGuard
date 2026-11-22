@@ -42,6 +42,9 @@ pub struct UiFlow {
     /// an application without an entry compares exactly.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub role_conventions: Vec<RoleConvention>,
+    /// Checks below the endpoint; see [`UiFlow::effective_access`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_layers: Vec<ServiceLayer>,
 }
 impl Default for UiFlow {
     /// Empty and complete, so it is the identity of [`merge_ui_flows`].
@@ -59,6 +62,7 @@ impl Default for UiFlow {
             policies: vec![],
             handler_sites: vec![],
             role_conventions: vec![],
+            service_layers: vec![],
         }
     }
 }
@@ -124,6 +128,77 @@ impl UiFlow {
                 && s.endpoint_line == e.line
                 && e.handler.as_deref() == Some(s.handler.as_str())
         })
+    }
+}
+
+// ---- checks below the endpoint (LOGIC.md section 7, items 7-9) ----
+//
+// They sit on the flow, keyed by the endpoint, like `HandlerSite`, so code that
+// builds endpoints literally keeps compiling.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceKind {
+    Service,
+    Data,
+}
+
+/// What a layer means for the endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceHow {
+    /// A declarative check the handler always runs; ANDed into the effective access.
+    Enforced,
+    /// Declared, but only on some path (conditional, indirect, ambiguous).
+    PathOnly,
+    /// Not a protection: imperative check, ineffective annotation, self-invocation.
+    Hint,
+    /// Filters rows instead of denying; never protects.
+    DataFilter,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ServiceLayer {
+    /// The endpoint: `EndpointAccess::{file, line, method, path}`.
+    pub endpoint_file: String,
+    pub endpoint_line: u32,
+    pub endpoint_method: String,
+    pub endpoint_path: String,
+    pub kind: ServiceKind,
+    /// `Class.method` that carries the check.
+    pub target: String,
+    pub file: String,
+    pub line: u32,
+    #[serde(default)]
+    pub state: AccessState,
+    pub how: ServiceHow,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
+}
+
+impl UiFlow {
+    /// The service layers of endpoint `e`.
+    pub fn service_layers_of<'a>(
+        &'a self,
+        e: &'a EndpointAccess,
+    ) -> impl Iterator<Item = &'a ServiceLayer> {
+        (self.service_layers.iter()).filter(move |l| {
+            l.endpoint_file == e.file
+                && l.endpoint_line == e.line
+                && l.endpoint_method == e.method
+                && l.endpoint_path == e.path
+        })
+    }
+
+    /// The endpoint's access ANDed with every enforced service layer; other
+    /// layers never change it; an open or undeclared layer adds no condition
+    /// and must not turn an undeclared endpoint open.
+    pub fn effective_access(&self, e: &EndpointAccess) -> AccessState {
+        (self.service_layers_of(e))
+            .filter(|l| {
+                l.how == ServiceHow::Enforced && matches!(l.state, AccessState::Protected(_))
+            })
+            .fold(e.access.clone(), |acc, l| acc.and(l.state.clone()))
     }
 }
 
@@ -950,6 +1025,7 @@ pub fn merge_ui_flows(a: UiFlow, b: UiFlow) -> UiFlow {
         policies: union(a.policies, b.policies),
         handler_sites: union(a.handler_sites, b.handler_sites),
         role_conventions,
+        service_layers: union(a.service_layers, b.service_layers),
     }
 }
 

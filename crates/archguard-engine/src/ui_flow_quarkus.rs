@@ -38,7 +38,7 @@ use crate::extract_ctx::{
 };
 use crate::services::support::test_path;
 use crate::ui_flow_backend::lex::{literal, literals, named, positional, split_top};
-use crate::ui_flow_backend::{Attr, Decl, Source, decls, each_method};
+use crate::ui_flow_backend::{Attr, Decl, Source, decls, each_method, quarkus_build};
 use archguard_core::{
     AccessState, Condition, DiagnosticSeverity, EndpointAccess, PolicyDef, UiFlow, UiFlowDiagnostic,
 };
@@ -149,17 +149,6 @@ fn server_build(root: &Path, dir: &str) -> bool {
                 .replace("quarkus-resteasy-client", "");
             t.contains("quarkus-rest") || t.contains("quarkus-resteasy")
         })
-    })
-}
-
-fn quarkus_build(root: &Path, dir: &str) -> bool {
-    (BUILD_FILES.iter()).any(|b| {
-        let rel = if dir.is_empty() {
-            (*b).to_string()
-        } else {
-            format!("{dir}/{b}")
-        };
-        read_text(root, &rel, MAX_BYTES).is_ok_and(|t| t.contains("quarkus"))
     })
 }
 
