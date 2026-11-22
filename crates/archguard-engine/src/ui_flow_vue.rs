@@ -26,14 +26,28 @@
 //!   beside `x/index.vue` is a layout (no screen of its own). The screen name is the
 //!   file path; the route name for `{ name }` navigation is Nuxt's (`products-id`).
 //!
-//! Access, as screen conditions; children inherit their parent's, several are `all`:
-//! - Route `meta` and Nuxt `definePageMeta({ … })`: a key of [`AUTH_META`] set to
-//!   `true` is `authenticated`; a key of [`ROLE_META`] (string or string array) is
-//!   `role` (several: `any`). Both lists are constants: a project with other keys adds
-//!   them there.
-//! - Nuxt `definePageMeta({ middleware: 'auth' })` or `['auth', 'admin']`: `custom(name)`.
-//! - Not evaluated, each a note: `beforeEach` guards, a route's `beforeEnter`, Nuxt
-//!   global middleware (`middleware/*.global.*`).
+//! Access, as screen conditions; the conditions of `beforeEnter` and Nuxt `middleware`
+//! of a route and its parents are `all`ed. Route `meta` and `definePageMeta` keys carry
+//! no meaning of their own: they count only through a guard that reads them.
+//! - `router.beforeEach(…)` / `beforeResolve(…)` (any file of the application) and Nuxt
+//!   `middleware/*.global.*`: a function whose statements are `if (<a && b …>) return
+//!   <target>` / `next(<target>)` is read. A conjunct is `to.meta.K`, `!to.meta.K`,
+//!   `to.matched.some(r => r.meta.K)`, `to.path|name === 'x'` / `!==`, `<literal list>
+//!   .includes(to.path|name)` or a check name (`store.user`, `auth.isLoggedIn()`). Routes
+//!   the selectors pick get the negated checks as `custom(name)`; a route an opt-out
+//!   selector excludes is `open`; one a plain selector does not pick is undeclared. A
+//!   guard in any other shape makes every screen `unknown` and is a gap. `to.meta` takes
+//!   the nearest record, `matched.some` any record (child overrides parent per key).
+//! - `beforeEnter` (name or array of names → `custom`; anything else `unknown`, a gap),
+//!   `beforeRouteEnter` in the route component (`unknown`, a gap).
+//! - Nuxt `definePageMeta({ middleware: 'auth' })` or `['auth', 'admin']`: `custom(name)`,
+//!   also from parent pages (`pages/users.vue` for `pages/users/*.vue`).
+//! - `@sidebase/nuxt-auth`, read from `nuxt.config.{ts,js}` (`modules`, `auth:
+//!   { globalAppMiddleware }`): the global default is `authenticated`; page `auth: false`
+//!   is `open` (it replaces only that default), `true` is `authenticated`, `{
+//!   unauthenticatedOnly }` is guest-only. Without the module the key is inert.
+//! - A meta flag or list no guard reads is a note. Not evaluated: `addRoute`, Nuxt
+//!   `addRouteMiddleware`, `routeRules`, `pages:extend`, layers, Nuxt 2.
 //!
 //! Backend endpoints (Nuxt server): `server/api/**` (path `/api/…`) and
 //! `server/routes/**` (path `/…`), one per file, segments as for pages; the method
@@ -82,6 +96,7 @@ use crate::services::support::test_path;
 use archguard_core::{
     ANY_METHOD, AccessState, Action, Call, Condition, DiagnosticSeverity, EndpointAccess, Origin,
     Screen, ScreenKind, Target, Transition, UiFlow, UiFlowDiagnostic, best_route,
+    path_patterns_match,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -101,10 +116,9 @@ const SKIPPED_DIRS: [&str; 6] = [
 ];
 const EXTENSIONS: [&str; 5] = [".vue", ".ts", ".js", ".tsx", ".jsx"];
 const ROUTER_CALLS: [&str; 2] = ["createRouter(", "new VueRouter("];
-/// Meta keys that require a signed-in user when `true`.
-const AUTH_META: [&str; 1] = ["requiresAuth"];
-/// Meta keys that list the roles of which one is required.
-const ROLE_META: [&str; 1] = ["roles"];
+const SIDEBASE: &str = "@sidebase/nuxt-auth";
+/// Meta keys the router itself reads; never reported as unread.
+const BUILTIN_META: [&str; 1] = ["alias"];
 const LINK_TAGS: [&str; 4] = ["router-link", "RouterLink", "NuxtLink", "nuxt-link"];
 const TRIGGER_EVENTS: [&str; 2] = ["click", "submit"];
 const FETCHES: [&str; 4] = ["fetch", "$fetch", "useFetch", "useLazyFetch"];
@@ -163,6 +177,8 @@ struct Route {
     owner: Option<String>,
     /// The route name for `{ name: '…' }` targets.
     name: Option<String>,
+    /// The `meta` of every matched record, root first.
+    chain: Vec<Rec>,
 }
 
 fn applications(root: &Path, files: Vec<String>, out: &mut Vec<UiFlowDiagnostic>) -> Vec<App> {
@@ -247,11 +263,11 @@ impl App {
         if self.nuxt {
             nuxt::pages(self, &mut routes, out);
             nuxt::endpoints(self, &mut flow.endpoints);
-            nuxt::global_middleware(self, out);
         }
         for (file, text) in &self.files {
             router::routes(self, file, text, &mut routes, out);
         }
+        guard::apply(self, &mut routes, out);
         let clients = Clients::new(&self.files);
         for (file, text) in &self.files {
             if self.nuxt && nuxt::is_server(self, file) {
@@ -349,6 +365,13 @@ fn all(mut conditions: Vec<Condition>) -> Option<Condition> {
     }
 }
 
+/// Whether a binding's initializer awaits or calls anything; `useUserSession()` is the
+/// one call read (as `loggedIn`).
+fn calls(binding: &str) -> bool {
+    let init = binding.split_once('=').map_or("", |(_, r)| r).trim();
+    init != "useUserSession()" && (init.contains('(') || !words(init, "await").is_empty())
+}
+
 /// A string literal or an array of string literals.
 fn strings(value: &Value) -> Option<Vec<String>> {
     match value {
@@ -364,49 +387,119 @@ fn strings(value: &Value) -> Option<Vec<String>> {
     }
 }
 
-/// Conditions of a route `meta` or `definePageMeta` object; `middleware` counts only
-/// for Nuxt. A non-literal value is `unknown` and a diagnostic.
+/// A meta value as far as a guard can test it.
+#[derive(Clone)]
+enum Lit {
+    Bool(bool),
+    /// A non-empty string or a number.
+    Truthy,
+    Falsy,
+    List,
+    Obj(Vec<(String, Lit)>),
+    Unknown(String),
+}
+
+impl Lit {
+    fn of(text: &str, v: &Item) -> Lit {
+        match &v.value {
+            Value::Str(s) if s.is_empty() => Lit::Falsy,
+            Value::Str(_) => Lit::Truthy,
+            Value::Arr(_) => Lit::List,
+            Value::Obj(f) => Lit::Obj(
+                f.iter()
+                    .map(|(k, i)| (k.clone(), Lit::of(text, i)))
+                    .collect(),
+            ),
+            Value::Raw(r) => match r.as_str() {
+                "true" => Lit::Bool(true),
+                "false" => Lit::Bool(false),
+                "null" | "undefined" | "0" => Lit::Falsy,
+                _ => Lit::Unknown(v.source(text)),
+            },
+            Value::Tpl(_) => Lit::Unknown(v.source(text)),
+        }
+    }
+
+    /// `Err` holds the source of a value that cannot be tested.
+    fn truthy(&self) -> Result<bool, String> {
+        match self {
+            Lit::Bool(b) => Ok(*b),
+            Lit::Truthy | Lit::List | Lit::Obj(_) => Ok(true),
+            Lit::Falsy => Ok(false),
+            Lit::Unknown(s) => Err(s.clone()),
+        }
+    }
+}
+
+/// The meta fields of one route record (or Nuxt page), in source order; a spread is the
+/// field `""` and hides every key before it.
+#[derive(Clone, Default)]
+struct Rec {
+    fields: Vec<(String, Lit)>,
+    file: String,
+    line: u32,
+}
+
+impl Rec {
+    fn get(&self, key: &str) -> Option<&Lit> {
+        self.fields
+            .iter()
+            .rev()
+            .find(|(k, _)| k == key || k.is_empty())
+            .map(|(_, l)| l)
+    }
+}
+
+/// The nearest record that sets `key` (`to.meta.key`).
+fn nearest<'r>(chain: &'r [Rec], key: &str) -> Option<&'r Lit> {
+    chain.iter().rev().find_map(|r| r.get(key))
+}
+
+/// Nuxt `middleware` conditions and the meta record of a route `meta` or
+/// `definePageMeta` object. A non-literal middleware is `unknown` and a diagnostic.
 fn meta_access(
     text: &str,
     fields: &[(String, Item)],
     nuxt: bool,
     file: &str,
+    line: u32,
     out: &mut Vec<UiFlowDiagnostic>,
-) -> Vec<Condition> {
+) -> (Vec<Condition>, Rec) {
     let mut found = Vec::new();
+    let mut rec = Rec {
+        file: file.into(),
+        line,
+        ..Rec::default()
+    };
     for (key, v) in fields {
-        let known = if AUTH_META.contains(&key.as_str()) {
-            match v.source(text).as_str() {
-                "true" => Some(vec![Condition::Authenticated]),
-                "false" => Some(vec![]),
-                _ => None,
-            }
-        } else if ROLE_META.contains(&key.as_str()) {
-            strings(&v.value).map(|roles| {
-                let mut roles: Vec<Condition> = roles.into_iter().map(Condition::Role).collect();
-                match roles.len() {
-                    0 | 1 => roles,
-                    _ => vec![Condition::Any(std::mem::take(&mut roles))],
+        if nuxt && (key == "middleware" || key.is_empty()) {
+            let names = if key.is_empty() {
+                None
+            } else {
+                strings(&v.value)
+            };
+            match names {
+                Some(names) => found.extend(names.into_iter().map(Condition::Custom)),
+                None => {
+                    let source = v.source(text);
+                    let message = format!(
+                        "Page middleware is not a literal; the page's access is unknown: {source}"
+                    );
+                    diag(out, file, line_of(text, v.at), message);
+                    found.push(Condition::Unknown(source));
                 }
-            })
-        } else if nuxt && key == "middleware" {
-            strings(&v.value).map(|names| names.into_iter().map(Condition::Custom).collect())
-        } else {
-            continue;
-        };
-        match known {
-            Some(conditions) => found.extend(conditions),
-            None => {
-                let source = v.source(text);
-                let message = format!(
-                    "Access meta {key} is not a literal; the screen's access is unknown: {source}"
-                );
-                diag(out, file, line_of(text, v.at), message);
-                found.push(Condition::Unknown(source));
             }
         }
+        if key != "middleware" || !nuxt {
+            let lit = if key.is_empty() {
+                Lit::Unknown(v.source(text))
+            } else {
+                Lit::of(text, v)
+            };
+            rec.fields.push((key.clone(), lit));
+        }
     }
-    found
+    (found, rec)
 }
 
 /// A template start tag: its attributes, whether it closes itself, the offset after `>`.
@@ -578,8 +671,17 @@ mod nuxt {
         (format!("/{}", route.join("/")), name)
     }
 
+    /// Meta of every page file: line, `middleware` conditions and the meta record.
+    type PageMeta = (u32, Vec<Condition>, Rec);
+
     pub(super) fn pages(app: &App, routes: &mut Vec<Route>, out: &mut Vec<UiFlowDiagnostic>) {
-        for (file, text) in &app.files {
+        let metas: BTreeMap<&str, PageMeta> = app
+            .files
+            .iter()
+            .filter(|(f, _)| page_path(app, f).is_some())
+            .map(|(f, t)| (f.as_str(), page_meta(f, t, out)))
+            .collect();
+        for file in app.files.keys() {
             let Some(path) = page_path(app, file) else {
                 continue;
             };
@@ -587,24 +689,36 @@ mod nuxt {
             if app.files.contains_key(&layout) {
                 continue;
             }
-            let (route, name) = route_of(&path.split('/').collect::<Vec<_>>());
-            let (line, access) = page_meta(file, text, out);
-            let mut screen = app.screen(route, file.clone(), file, line);
-            screen.access = archguard_core::AccessState::from_parts(access, false);
+            let segments: Vec<&str> = path.split('/').collect();
+            let root = &file[..file.len() - path.len() - ".vue".len()];
+            // Pages above this one (`users.vue` for `users/[id].vue`) run their middleware too.
+            let mut chain = Vec::new();
+            let mut conditions = Vec::new();
+            for n in 1..segments.len() {
+                let parent = format!("{root}{}.vue", segments[..n].join("/"));
+                if let Some((_, c, rec)) = metas.get(parent.as_str()) {
+                    conditions.extend(c.iter().cloned());
+                    chain.push(rec.clone());
+                }
+            }
+            let (line, own, rec) = &metas[file.as_str()];
+            conditions.extend(own.iter().cloned());
+            chain.push(rec.clone());
+            let (route, name) = route_of(&segments);
+            let mut screen = app.screen(route, file.clone(), file, *line);
+            screen.access = archguard_core::AccessState::from_parts(all(conditions), false);
             routes.push(Route {
                 screen,
                 owner: Some(file.clone()),
                 name: Some(name),
+                chain,
             });
         }
     }
 
-    /// Line and access of `definePageMeta({ … })`; line 1 and no access without one.
-    fn page_meta(
-        file: &str,
-        text: &str,
-        out: &mut Vec<UiFlowDiagnostic>,
-    ) -> (u32, Option<Condition>) {
+    /// Line, `middleware` conditions and meta of `definePageMeta({ … })`; line 1 and
+    /// nothing without one.
+    fn page_meta(file: &str, text: &str, out: &mut Vec<UiFlowDiagnostic>) -> PageMeta {
         let b = text.as_bytes();
         for pos in words(text, "definePageMeta") {
             let open = skip_ws(b, pos + "definePageMeta".len());
@@ -617,20 +731,30 @@ mod nuxt {
                 i: open + 1,
             }
             .value(0);
-            let conditions = match &arg.value {
-                Value::Obj(fields) => meta_access(text, fields, true, file, out),
+            let (conditions, rec) = match &arg.value {
+                Value::Obj(fields) => meta_access(text, fields, true, file, line, out),
                 _ => {
                     let source = arg.source(text);
                     let message = format!(
                         "definePageMeta argument is not an object literal; the page's access is unknown: {source}"
                     );
                     diag(out, file, line, message);
-                    vec![Condition::Unknown(source)]
+                    let rec = Rec {
+                        fields: vec![(String::new(), Lit::Unknown(source.clone()))],
+                        file: file.into(),
+                        line,
+                    };
+                    (vec![Condition::Unknown(source)], rec)
                 }
             };
-            return (line, all(conditions));
+            return (line, conditions, rec);
         }
-        (1, None)
+        let rec = Rec {
+            file: file.into(),
+            line: 1,
+            ..Rec::default()
+        };
+        (1, vec![], rec)
     }
 
     pub(super) fn endpoints(app: &App, endpoints: &mut Vec<EndpointAccess>) {
@@ -665,17 +789,6 @@ mod nuxt {
                 handler: None,
                 sends: Vec::new(),
             });
-        }
-    }
-
-    pub(super) fn global_middleware(app: &App, out: &mut Vec<UiFlowDiagnostic>) {
-        for file in app.files.keys() {
-            let inner = file.strip_prefix(app.prefix.as_str()).unwrap_or(file);
-            let inner = inner.strip_prefix("app/").unwrap_or(inner);
-            if inner.starts_with("middleware/") && inner.contains(".global.") {
-                let message = "Global route middleware is not evaluated; what it checks on every page is unknown.";
-                note(out, file, 1, message);
-            }
         }
     }
 }
@@ -752,12 +865,8 @@ mod router {
                 out,
             };
             for it in (Parser { s: text, i: at }).array(0) {
-                walk(&mut ctx, &it, "", &[], 0);
+                walk(&mut ctx, &it, "", (&[], &[]), 0);
             }
-        }
-        for (pos, _) in text.match_indices(".beforeEach(") {
-            let message = "Navigation guard beforeEach is not evaluated; screen access comes from route meta only.";
-            note(out, file, line_of(text, pos), message);
         }
     }
 
@@ -840,15 +949,27 @@ mod router {
             .join("/")
     }
 
-    /// The inherited conditions plus the route's `meta`; `beforeEnter` is a note.
-    fn access(ctx: &mut Ctx, fields: &[(String, Item)], inherited: &[Condition]) -> Vec<Condition> {
+    /// The inherited conditions plus the route's `beforeEnter`, and the meta chain.
+    fn access(
+        ctx: &mut Ctx,
+        fields: &[(String, Item)],
+        inherited: &[Condition],
+        chain: &[Rec],
+    ) -> (Vec<Condition>, Vec<Rec>) {
         let text = ctx.text;
         let mut conditions = inherited.to_vec();
+        let mut chain = chain.to_vec();
+        let mut rec = Rec {
+            file: ctx.file.into(),
+            line: fields.first().map_or(1, |(_, v)| line_of(text, v.at)),
+            ..Rec::default()
+        };
         match field(fields, "meta") {
             Some(Item {
                 value: Value::Obj(meta),
+                at,
                 ..
-            }) => conditions.extend(meta_access(text, meta, false, ctx.file, ctx.out)),
+            }) => rec = meta_access(text, meta, false, ctx.file, line_of(text, *at), ctx.out).1,
             Some(v) => {
                 let source = v.source(text);
                 let message = format!(
@@ -859,11 +980,29 @@ mod router {
             }
             None => {}
         }
+        chain.push(rec);
         if let Some(v) = field(fields, "beforeEnter") {
-            let message = "Route guard beforeEnter is not evaluated; what it checks is unknown.";
-            note(ctx.out, ctx.file, line_of(text, v.at), message);
+            let named = |i: &Item| match &i.value {
+                Value::Raw(n) if is_name(n) => Some(Condition::Custom(n.clone())),
+                _ => None,
+            };
+            let read = match &v.value {
+                Value::Arr(items) => items.iter().map(named).collect(),
+                _ => named(v).map(|c| vec![c]),
+            };
+            match read {
+                Some(found) => conditions.extend(found),
+                None => {
+                    let source = v.source(text);
+                    let message = format!(
+                        "Route guard beforeEnter is not a guard name or a list of names; what it checks is unknown: {source}"
+                    );
+                    ctx.diag(v.at, message);
+                    conditions.push(Condition::Unknown(source));
+                }
+            }
         }
-        conditions
+        (conditions, chain)
     }
 
     fn children<'i>(ctx: &mut Ctx, fields: &'i [(String, Item)]) -> Vec<&'i Item> {
@@ -898,7 +1037,7 @@ mod router {
         item: &Item,
         fields: &[(String, Item)],
         full: &str,
-        conditions: &[Condition],
+        (conditions, chain): (&[Condition], &[Rec]),
         children: &[&Item],
     ) {
         let text = ctx.text;
@@ -938,10 +1077,17 @@ mod router {
             screen,
             owner,
             name,
+            chain: chain.to_vec(),
         });
     }
 
-    fn walk(ctx: &mut Ctx, item: &Item, prefix: &str, inherited: &[Condition], depth: usize) {
+    fn walk(
+        ctx: &mut Ctx,
+        item: &Item,
+        prefix: &str,
+        (inherited, chain): (&[Condition], &[Rec]),
+        depth: usize,
+    ) {
         let text = ctx.text;
         if depth >= MAX_DEPTH {
             let message = "Routes nest too deep; deeper routes are unknown.";
@@ -967,11 +1113,799 @@ mod router {
                 return ctx.diag(item.at, message);
             }
         };
-        let conditions = access(ctx, fields, inherited);
+        let (conditions, chain) = access(ctx, fields, inherited, chain);
         let children = children(ctx, fields);
-        push_screen(ctx, item, fields, &full, &conditions, &children);
+        push_screen(ctx, item, fields, &full, (&conditions, &chain), &children);
         for child in children {
-            walk(ctx, child, &full, &conditions, depth + 1);
+            walk(ctx, child, &full, (&conditions, &chain), depth + 1);
+        }
+    }
+}
+
+/// Guards that decide access: `beforeEach`/`beforeResolve`, Nuxt global middleware,
+/// `beforeRouteEnter` and the sidebase module.
+mod guard {
+    use super::shape::{self, Conj};
+    use super::sidebase::{Module, Presence};
+    use super::*;
+
+    struct Guard {
+        file: String,
+        line: u32,
+        /// `None`: the guard is not in a readable shape.
+        rules: Option<Vec<Vec<Conj>>>,
+    }
+
+    enum Tri {
+        Yes,
+        No,
+        Unknown(String),
+    }
+
+    pub(super) fn apply(app: &App, routes: &mut [Route], out: &mut Vec<UiFlowDiagnostic>) {
+        let guards = guards(app, out);
+        let module = if app.nuxt {
+            Module::read(app, out)
+        } else {
+            Module::default()
+        };
+        let (read, all_read) = read_keys(&guards, &module);
+        for r in routes.iter_mut() {
+            let mut layers = AccessState::Undeclared;
+            for g in &guards {
+                layers = layers.and(g.state(r, out));
+            }
+            layers = layers.and(module.state(r, out));
+            layers = layers.and(before_route_enter(app, r, out));
+            r.screen.access = std::mem::take(&mut r.screen.access).and(layers);
+            if all_read {
+                for rec in &r.chain {
+                    unread(rec, &read, out);
+                }
+            }
+        }
+    }
+
+    /// The meta keys some guard (or the auth module) reads, and whether every guard is
+    /// readable.
+    fn read_keys<'g>(guards: &'g [Guard], module: &Module) -> (BTreeSet<&'g str>, bool) {
+        let mut read: BTreeSet<&str> = BTreeSet::new();
+        let mut all_read = true;
+        for g in guards {
+            match &g.rules {
+                Some(rules) => read.extend(rules.iter().flatten().filter_map(|c| match c {
+                    Conj::Meta { key, .. } | Conj::Matched { key, .. } => Some(key.as_str()),
+                    _ => None,
+                })),
+                None => all_read = false,
+            }
+        }
+        if module.present != Presence::Absent {
+            read.insert("auth");
+        }
+        (read, all_read)
+    }
+
+    /// A note for each flag or list of a record that no guard reads.
+    fn unread(rec: &Rec, read: &BTreeSet<&str>, out: &mut Vec<UiFlowDiagnostic>) {
+        for (key, lit) in &rec.fields {
+            let flag = matches!(lit, Lit::Bool(_) | Lit::List);
+            if flag && !read.contains(key.as_str()) && !BUILTIN_META.contains(&key.as_str()) {
+                let message = format!("Route meta {key} is read by no guard; it grants no access.");
+                note(out, &rec.file, rec.line, &message);
+            }
+        }
+    }
+
+    fn before_route_enter(app: &App, r: &Route, out: &mut Vec<UiFlowDiagnostic>) -> AccessState {
+        let Some((file, text)) = r.owner.as_ref().and_then(|o| app.files.get_key_value(o)) else {
+            return AccessState::Undeclared;
+        };
+        match words(text, "beforeRouteEnter").first() {
+            Some(&at) => {
+                let message =
+                    "Component guard beforeRouteEnter is not evaluated; what it checks is unknown.";
+                diag(out, file, line_of(text, at), message);
+                AccessState::Protected(Condition::Unknown("beforeRouteEnter".into()))
+            }
+            None => AccessState::Undeclared,
+        }
+    }
+
+    fn guards(app: &App, out: &mut Vec<UiFlowDiagnostic>) -> Vec<Guard> {
+        let mut found = Vec::new();
+        for (file, text) in &app.files {
+            let mut sites: Vec<usize> = [".beforeEach(", ".beforeResolve("]
+                .iter()
+                .flat_map(|c| text.match_indices(c).map(|(i, _)| i + c.len()))
+                .collect();
+            if app.nuxt && global_middleware(app, file) {
+                sites = words(text, "defineNuxtRouteMiddleware")
+                    .into_iter()
+                    .filter_map(|p| {
+                        let open = skip_ws(text.as_bytes(), p + "defineNuxtRouteMiddleware".len());
+                        (text.as_bytes().get(open) == Some(&b'(')).then_some(open + 1)
+                    })
+                    .collect();
+                if sites.is_empty() {
+                    sites.push(usize::MAX);
+                }
+            }
+            for at in sites {
+                let (line, source) = if at == usize::MAX {
+                    (1, String::new())
+                } else {
+                    let arg = Parser { s: text, i: at }.value(0);
+                    (line_of(text, at), arg.source(text))
+                };
+                let rules =
+                    shape::read_fn(&source).and_then(|(tp, body)| shape::rules(body, tp, text));
+                if rules.is_none() {
+                    let message = "Navigation guard is not in a readable shape; what it checks on every route is unknown.";
+                    diag(out, file, line, message);
+                }
+                found.push(Guard {
+                    file: file.clone(),
+                    line,
+                    rules,
+                });
+            }
+        }
+        found
+    }
+
+    /// `middleware/*.global.*` of the application (Nuxt 4: below `app/`).
+    fn global_middleware(app: &App, file: &str) -> bool {
+        let inner = file.strip_prefix(app.prefix.as_str()).unwrap_or(file);
+        let inner = inner.strip_prefix("app/").unwrap_or(inner);
+        inner.starts_with("middleware/") && inner.contains(".global.")
+    }
+
+    impl Guard {
+        fn state(&self, r: &Route, out: &mut Vec<UiFlowDiagnostic>) -> AccessState {
+            let Some(rules) = &self.rules else {
+                let c = Condition::Unknown("unreadable navigation guard".into());
+                return AccessState::Protected(c);
+            };
+            let mut state = AccessState::Undeclared;
+            for rule in rules {
+                state = state.and(self.rule(rule, r, out));
+            }
+            state
+        }
+
+        fn rule(&self, rule: &[Conj], r: &Route, out: &mut Vec<UiFlowDiagnostic>) -> AccessState {
+            let (mut checks, mut opted_out) = (Vec::new(), false);
+            let mut unknown = None;
+            for c in rule {
+                let (tri, neg) = match c {
+                    Conj::Check(req) => {
+                        checks.push(req.clone());
+                        continue;
+                    }
+                    Conj::Meta { key, neg } => (meta(nearest(&r.chain, key)), *neg),
+                    Conj::Matched { key, neg } => (matched(&r.chain, key), *neg),
+                    Conj::Route { by_name, lits, neg } => (route(r, *by_name, lits), *neg),
+                };
+                match (tri, neg) {
+                    (Tri::Unknown(why), _) => unknown = Some(why),
+                    // `!x` over a true `x`: an opt-out selector excludes the route.
+                    (Tri::Yes, true) => opted_out = true,
+                    // A plain selector that misses: the guard does not concern the route.
+                    (Tri::No, false) => return AccessState::Undeclared,
+                    _ => {}
+                }
+            }
+            if let Some(why) = unknown {
+                let message = format!(
+                    "A guard tests a value that cannot be read; the screen's access is unknown: {why}"
+                );
+                diag(out, &self.file, self.line, message);
+                return AccessState::Protected(Condition::Unknown(why));
+            }
+            if opted_out {
+                return AccessState::Open;
+            }
+            let condition = match checks.len() {
+                0 => {
+                    let message = "A guard blocks selected routes without a check; what lets users in is unknown.";
+                    diag(out, &self.file, self.line, message);
+                    Condition::Unknown("guard without a check".into())
+                }
+                1 => checks.remove(0),
+                _ => Condition::Any(checks),
+            };
+            AccessState::Protected(condition)
+        }
+    }
+
+    fn meta(lit: Option<&Lit>) -> Tri {
+        lit.map_or(Tri::No, |l| match l.truthy() {
+            Ok(true) => Tri::Yes,
+            Ok(false) => Tri::No,
+            Err(why) => Tri::Unknown(why),
+        })
+    }
+
+    fn matched(chain: &[Rec], key: &str) -> Tri {
+        let mut unknown = None;
+        for rec in chain {
+            match meta(rec.get(key)) {
+                Tri::Yes => return Tri::Yes,
+                Tri::Unknown(why) => unknown = Some(why),
+                Tri::No => {}
+            }
+        }
+        unknown.map_or(Tri::No, Tri::Unknown)
+    }
+
+    fn route(r: &Route, by_name: bool, lits: &[String]) -> Tri {
+        let Some(path) = r.screen.route.as_deref() else {
+            return Tri::No;
+        };
+        let mut unknown = None;
+        for lit in lits {
+            if by_name {
+                if r.name.as_deref() == Some(lit) {
+                    return Tri::Yes;
+                }
+            } else if lit == path {
+                return Tri::Yes;
+            } else if path.contains([':', '*']) && path_patterns_match(path, lit) {
+                unknown = Some(format!("{lit} may match {path}"));
+            }
+        }
+        unknown.map_or(Tri::No, Tri::Unknown)
+    }
+}
+
+/// The text-level shape of a guard function: `if (…) <block>` statements over conjuncts.
+mod shape {
+    use super::*;
+
+    /// One conjunct of the condition under which a guard blocks.
+    pub(super) enum Conj {
+        Meta {
+            key: String,
+            neg: bool,
+        },
+        Matched {
+            key: String,
+            neg: bool,
+        },
+        /// `to.path` or `to.name` among literals.
+        Route {
+            by_name: bool,
+            lits: Vec<String>,
+            neg: bool,
+        },
+        /// What must hold for the guard not to block.
+        Check(Condition),
+    }
+
+    /// First parameter and the statements of `[async] (to, …) => { … }`, `to => { … }` or
+    /// `function (to, …) { … }`.
+    pub(super) fn read_fn(src: &str) -> Option<(String, &str)> {
+        let b = src.as_bytes();
+        let mut j = skip_ws(b, 0);
+        if ident_at(src, j) == "async" {
+            j = skip_ws(b, j + "async".len());
+        }
+        let (params, j) = if ident_at(src, j) == "function" {
+            function_head(src, j)?
+        } else {
+            arrow_head(src, j)?
+        };
+        if b.get(j) != Some(&b'{') {
+            return None;
+        }
+        let e = close(src, j);
+        if e != src.trim_end().len() || b.get(e - 1) != Some(&b'}') {
+            return None;
+        }
+        let first = params.split(',').next()?.split(':').next()?.trim();
+        // No parameter: the guard cannot test the route, only checks.
+        (first.is_empty() || is_ident(first)).then(|| (first.to_string(), &src[j + 1..e - 1]))
+    }
+
+    /// Parameters and the offset of the body of `function [name](…) [: T] {` at `j`.
+    fn function_head(src: &str, j: usize) -> Option<(&str, usize)> {
+        let b = src.as_bytes();
+        let j = skip_ws(b, j + "function".len());
+        let j = skip_ws(b, j + ident_at(src, j).len());
+        let (params, mut j) = paren_params(src, j)?;
+        if src[j..].starts_with(':') {
+            j += src[j..].find('{')?;
+        }
+        Some((params, j))
+    }
+
+    /// Parameters and the offset of the body of `(…) [: T] =>` or `x =>` at `j`.
+    fn arrow_head(src: &str, j: usize) -> Option<(&str, usize)> {
+        let b = src.as_bytes();
+        let (params, mut j) = if b.get(j) == Some(&b'(') {
+            paren_params(src, j)?
+        } else {
+            let id = ident_at(src, j);
+            (id, skip_ws(b, j + id.len()))
+        };
+        if src[j..].starts_with(':') {
+            j += src[j..].find("=>")?;
+        }
+        let arrow = src[j..].strip_prefix("=>")?;
+        Some((params, skip_ws(b, src.len() - arrow.len())))
+    }
+
+    /// The text inside the parentheses at `j` and the offset after them.
+    fn paren_params(src: &str, j: usize) -> Option<(&str, usize)> {
+        if src.as_bytes().get(j) != Some(&b'(') {
+            return None;
+        }
+        let e = close(src, j);
+        let params = src.get(j + 1..e.checked_sub(1)?)?;
+        Some((params, skip_ws(src.as_bytes(), e)))
+    }
+
+    fn skip_noise(s: &str, mut i: usize) -> usize {
+        loop {
+            let mut p = Parser { s, i };
+            p.ws();
+            i = p.i;
+            if s.as_bytes().get(i) == Some(&b';') {
+                i += 1;
+            } else {
+                return i;
+            }
+        }
+    }
+
+    /// End of the simple statement starting at `from`: `;`, a line break outside brackets,
+    /// or a closing bracket.
+    fn stmt_end(s: &str, from: usize) -> usize {
+        let b = s.as_bytes();
+        let (mut i, mut depth) = (from, 0usize);
+        while i < b.len() {
+            match b[i] {
+                b'\'' | b'"' | b'`' => {
+                    i = Parser { s, i }.string_end();
+                    continue;
+                }
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' if depth == 0 => return i,
+                b')' | b']' | b'}' => depth -= 1,
+                b';' if depth == 0 => return i,
+                b'\n' if depth == 0 && !s[from..i].trim().is_empty() => return i,
+                _ => {}
+            }
+            i += 1;
+        }
+        b.len()
+    }
+
+    enum Kind {
+        Block,
+        Pass,
+    }
+
+    /// `return false`, `return '/login'`, `return navigateTo(…)`, `next('/x')` block;
+    /// `next()`, `return true` and a bare `return` let the navigation go on.
+    fn classify(stmt: &str) -> Option<Kind> {
+        let s = stmt.trim().trim_end_matches(';').trim();
+        let (returns, e) = match s.strip_prefix("return") {
+            Some(r) if !r.starts_with(is_ident_char) => (true, r.trim()),
+            _ => (false, s),
+        };
+        if let Some(args) = e.strip_prefix("next(").and_then(|a| a.strip_suffix(')')) {
+            return Some(if args.trim().is_empty() {
+                Kind::Pass
+            } else {
+                Kind::Block
+            });
+        }
+        if returns { returned(e) } else { None }
+    }
+
+    /// What `return <e>` does: `true`/nothing continues, a literal, object or navigation
+    /// call blocks, anything else is not readable.
+    fn returned(e: &str) -> Option<Kind> {
+        let literal = matches!(e.chars().next(), Some('\'' | '"' | '`'))
+            && Parser { s: e, i: 0 }.string_end() == e.len();
+        let blocks = literal
+            || (e.starts_with('{') && e.ends_with('}'))
+            || e.starts_with("navigateTo(")
+            || e.starts_with("abortNavigation(");
+        match e {
+            "" | "true" | "undefined" => Some(Kind::Pass),
+            "false" => Some(Kind::Block),
+            _ => blocks.then_some(Kind::Block),
+        }
+    }
+
+    /// The branch of an `if`/`else` at `i`: its kind and the offset after it. A block holds
+    /// exactly one simple statement.
+    fn branch(s: &str, i: usize) -> Option<(Kind, usize)> {
+        if s.as_bytes().get(i) == Some(&b'{') {
+            let end = close(s, i);
+            let inner = s.get(i + 1..end.checked_sub(1)?)?;
+            let start = skip_noise(inner, 0);
+            let stop = stmt_end(inner, start);
+            if skip_noise(inner, stop) != inner.len() {
+                return None;
+            }
+            return Some((classify(&inner[start..stop])?, end));
+        }
+        let end = stmt_end(s, i);
+        Some((classify(&s[i..end])?, end))
+    }
+
+    /// The blocking rules of a guard body: `if (…) <block>` statements, an optional
+    /// `else <pass>`, bindings, `next()` and a final pass. Anything else is not readable.
+    pub(super) fn rules(body: &str, tp: String, file_text: &str) -> Option<Vec<Vec<Conj>>> {
+        let mut out = Vec::new();
+        let mut i = skip_noise(body, 0);
+        while i < body.len() {
+            if ident_at(body, i) == "if" {
+                let (rule, after) = if_rule(body, i, &tp, file_text)?;
+                out.push(rule);
+                i = after;
+            } else if matches!(ident_at(body, i), "const" | "let" | "var") {
+                // A pure binding blocks nothing; a call may throw or redirect, so it is unread.
+                let end = stmt_end(body, i);
+                if calls(&body[i..end]) {
+                    return None;
+                }
+                i = skip_noise(body, end);
+            } else {
+                let end = stmt_end(body, i);
+                if !matches!(classify(&body[i..end])?, Kind::Pass) {
+                    return None;
+                }
+                i = skip_noise(body, end);
+                if i < body.len() {
+                    return None; // a pass skips what follows
+                }
+            }
+        }
+        Some(out)
+    }
+
+    /// The conjuncts of the `if (…) <block> [else <pass>]` at `i` and the offset after it.
+    fn if_rule(body: &str, i: usize, tp: &str, file_text: &str) -> Option<(Vec<Conj>, usize)> {
+        let i = skip_noise(body, i + "if".len());
+        if body.as_bytes().get(i) != Some(&b'(') {
+            return None;
+        }
+        let end = close(body, i);
+        let cond = body.get(i + 1..end.checked_sub(1)?)?;
+        let (kind, after) = branch(body, skip_noise(body, end))?;
+        if !matches!(kind, Kind::Block) {
+            return None;
+        }
+        let rule = conjuncts(cond, tp, file_text)?;
+        let mut i = skip_noise(body, after);
+        if ident_at(body, i) == "else" {
+            let (kind, after) = branch(body, skip_noise(body, i + "else".len()))?;
+            if !matches!(kind, Kind::Pass) {
+                return None;
+            }
+            i = skip_noise(body, after);
+        }
+        Some((rule, i))
+    }
+
+    /// Splits at top-level `&&`; a top-level `||` is not readable.
+    fn conjuncts(cond: &str, tp: &str, file_text: &str) -> Option<Vec<Conj>> {
+        let b = cond.as_bytes();
+        let (mut i, mut depth, mut start) = (0, 0usize, 0);
+        let mut parts = Vec::new();
+        while i < b.len() {
+            match b[i] {
+                b'\'' | b'"' | b'`' => {
+                    i = Parser { s: cond, i }.string_end();
+                    continue;
+                }
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+                b'|' if depth == 0 && b.get(i + 1) == Some(&b'|') => return None,
+                b'&' if depth == 0 && b.get(i + 1) == Some(&b'&') => {
+                    parts.push(&cond[start..i]);
+                    start = i + 2;
+                    i += 1;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        parts.push(&cond[start..]);
+        parts
+            .into_iter()
+            .map(|p| conjunct(p, tp, file_text))
+            .collect()
+    }
+
+    fn unparen(mut t: &str) -> &str {
+        t = t.trim();
+        while t.starts_with('(') && close(t, 0) == t.len() {
+            t = t[1..t.len() - 1].trim();
+        }
+        t
+    }
+
+    fn conjunct(text: &str, tp: &str, file_text: &str) -> Option<Conj> {
+        let t = unparen(text);
+        let (neg, t) = match t.strip_prefix('!') {
+            Some(r) if !r.starts_with('=') => (true, unparen(r)),
+            _ => (false, t),
+        };
+        meta_conj(t, tp, neg)
+            .or_else(|| matched_conj(t, tp, neg))
+            .or_else(|| compare_conj(t, tp, neg))
+            .or_else(|| includes_conj(t, tp, neg, file_text))
+            .or_else(|| check_conj(t, tp, neg, file_text))
+    }
+
+    /// `to.meta.key`
+    fn meta_conj(t: &str, tp: &str, neg: bool) -> Option<Conj> {
+        let key = t.strip_prefix(&format!("{tp}.meta."))?;
+        is_ident(key).then(|| Conj::Meta {
+            key: key.into(),
+            neg,
+        })
+    }
+
+    /// `to.matched.some(r => r.meta.key)`
+    fn matched_conj(t: &str, tp: &str, neg: bool) -> Option<Conj> {
+        let rest = t.strip_prefix(&format!("{tp}.matched.some("))?;
+        let (param, expr) = rest.strip_suffix(')')?.split_once("=>")?;
+        let param = unparen(param);
+        let key = expr.trim().strip_prefix(&format!("{param}.meta."))?;
+        (is_ident(param) && is_ident(key)).then(|| Conj::Matched {
+            key: key.into(),
+            neg,
+        })
+    }
+
+    /// `to.path === '/x'`, `to.name !== 'x'`
+    fn compare_conj(t: &str, tp: &str, neg: bool) -> Option<Conj> {
+        if neg {
+            return None;
+        }
+        [("path", false), ("name", true)]
+            .into_iter()
+            .find_map(|(field, by_name)| {
+                let rest = t.strip_prefix(&format!("{tp}.{field}"))?.trim_start();
+                let (lit, negated) = [("===", false), ("!==", true), ("==", false), ("!=", true)]
+                    .into_iter()
+                    .find_map(|(op, n)| rest.strip_prefix(op).map(|l| (l.trim(), n)))?;
+                let quoted = matches!(lit.chars().next(), Some('\'' | '"'))
+                    && Parser { s: lit, i: 0 }.string_end() == lit.len();
+                quoted.then(|| Conj::Route {
+                    by_name,
+                    lits: vec![lit[1..lit.len() - 1].to_string()],
+                    neg: negated,
+                })
+            })
+    }
+
+    /// `['/a', '/b'].includes(to.path)` or `LIST.includes(to.name)`
+    fn includes_conj(t: &str, tp: &str, neg: bool, file_text: &str) -> Option<Conj> {
+        let (list, arg) = t.strip_suffix(')')?.split_once(".includes(")?;
+        let by_name = match arg.trim().strip_prefix(&format!("{tp}.")) {
+            Some("path") => false,
+            Some("name") => true,
+            _ => return None,
+        };
+        let lits = literal_list(list.trim(), file_text)?;
+        Some(Conj::Route { by_name, lits, neg })
+    }
+
+    /// A check by name: `store.user`, `auth.isLoggedIn()`, `loggedIn.value`.
+    fn check_conj(t: &str, tp: &str, neg: bool, file_text: &str) -> Option<Conj> {
+        let name = t.strip_suffix("()").unwrap_or(t);
+        let name = name.strip_suffix(".value").unwrap_or(name);
+        // Anything on the route object that is no selector above is not a check.
+        let on_route = !tp.is_empty() && (name == tp || name.starts_with(&format!("{tp}.")));
+        if !is_name(name) || on_route {
+            return None;
+        }
+        let uses_session = !words(file_text, "useUserSession").is_empty();
+        let held = if name == "loggedIn" && uses_session {
+            Condition::Authenticated
+        } else {
+            Condition::Custom(name.into())
+        };
+        Some(Conj::Check(if neg {
+            held
+        } else {
+            Condition::Not(Box::new(held))
+        }))
+    }
+
+    /// Strings of an array literal, or of a `const NAME = […]` of this file.
+    fn literal_list(list: &str, file_text: &str) -> Option<Vec<String>> {
+        let items = if list.starts_with('[') {
+            Parser { s: list, i: 0 }.array(0)
+        } else {
+            let at = local_array(file_text, list)?;
+            Parser {
+                s: file_text,
+                i: at,
+            }
+            .array(0)
+        };
+        items
+            .iter()
+            .map(|i| match &i.value {
+                Value::Str(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// `@sidebase/nuxt-auth`: module and global default from `nuxt.config`, page `auth` meta.
+mod sidebase {
+    use super::*;
+
+    #[derive(Default, PartialEq, Eq, Clone, Copy)]
+    pub(super) enum Presence {
+        #[default]
+        Absent,
+        Present,
+        Unknown,
+    }
+
+    #[derive(Default, Clone, Copy)]
+    enum Global {
+        #[default]
+        Off,
+        On,
+        Unknown,
+    }
+
+    #[derive(Default)]
+    pub(super) struct Module {
+        pub(super) present: Presence,
+        global: Global,
+    }
+
+    impl Module {
+        pub(super) fn read(app: &App, out: &mut Vec<UiFlowDiagnostic>) -> Module {
+            let Some((file, text)) = ["nuxt.config.ts", "nuxt.config.js"]
+                .iter()
+                .find_map(|n| app.files.get_key_value(&format!("{}{n}", app.prefix)))
+            else {
+                return Module::default();
+            };
+            let unknown = |out: &mut Vec<UiFlowDiagnostic>, line: u32, why: &str| {
+                diag(
+                    out,
+                    file,
+                    line,
+                    format!("{why}; whether @sidebase/nuxt-auth protects pages is unknown."),
+                );
+                Module {
+                    present: Presence::Unknown,
+                    global: Global::Unknown,
+                }
+            };
+            let b = text.as_bytes();
+            let Some(pos) = words(text, "defineNuxtConfig").first().copied() else {
+                return Module::default();
+            };
+            let open = skip_ws(b, pos + "defineNuxtConfig".len());
+            let line = line_of(text, pos);
+            let Value::Obj(fields) = (Parser {
+                s: text,
+                i: open + 1,
+            })
+            .value(0)
+            .value
+            else {
+                return unknown(out, line, "nuxt.config is not an object literal");
+            };
+            let Some((_, modules)) = fields.iter().find(|(k, _)| k == "modules") else {
+                return Module::default();
+            };
+            let Value::Arr(items) = &modules.value else {
+                return unknown(out, line, "modules is not an array literal");
+            };
+            let name = |i: &Item| match &i.value {
+                Value::Str(s) => Some(s.clone()),
+                Value::Arr(t) => match t.first().map(|f| &f.value) {
+                    Some(Value::Str(s)) => Some(s.clone()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let names: Vec<Option<String>> = items.iter().map(name).collect();
+            if names.iter().any(|n| n.as_deref() == Some(SIDEBASE)) {
+                let global = fields
+                    .iter()
+                    .find(|(k, _)| k == "auth")
+                    .map_or(Global::Off, |(_, v)| global_flag(&v.value));
+                if matches!(global, Global::Unknown) {
+                    diag(
+                        out,
+                        file,
+                        line,
+                        "auth.globalAppMiddleware is not a literal; whether every page requires a session is unknown.",
+                    );
+                }
+                Module {
+                    present: Presence::Present,
+                    global,
+                }
+            } else if names.iter().any(Option::is_none) {
+                unknown(out, line, "modules holds an entry that is not a literal")
+            } else {
+                Module::default()
+            }
+        }
+
+        pub(super) fn state(&self, r: &Route, out: &mut Vec<UiFlowDiagnostic>) -> AccessState {
+            let page = nearest(&r.chain, "auth");
+            let unknown = |out: &mut Vec<UiFlowDiagnostic>, why: &str| {
+                diag(
+                    out,
+                    &r.screen.file,
+                    r.screen.line,
+                    format!("Page meta auth is {why}; the page's access is unknown."),
+                );
+                AccessState::Protected(Condition::Unknown("auth".into()))
+            };
+            let authenticated = AccessState::Protected(Condition::Authenticated);
+            match (self.present, page) {
+                (Presence::Absent, _) | (Presence::Unknown, None) => AccessState::Undeclared,
+                (Presence::Unknown, Some(_)) => {
+                    unknown(out, "set while the auth module is unknown")
+                }
+                (Presence::Present, None) => match self.global {
+                    Global::On => authenticated,
+                    Global::Off => AccessState::Undeclared,
+                    Global::Unknown => unknown(out, "unset while the global middleware is unknown"),
+                },
+                (Presence::Present, Some(Lit::Bool(false))) => AccessState::Open,
+                (Presence::Present, Some(Lit::Bool(true))) => authenticated,
+                (Presence::Present, Some(Lit::Obj(fields))) => {
+                    match fields
+                        .iter()
+                        .rev()
+                        .find(|(k, _)| k == "unauthenticatedOnly")
+                    {
+                        Some((_, Lit::Bool(true))) => AccessState::Protected(Condition::Not(
+                            Box::new(Condition::Authenticated),
+                        )),
+                        Some((_, Lit::Bool(false))) => authenticated,
+                        _ => unknown(out, "an object without a literal unauthenticatedOnly"),
+                    }
+                }
+                (Presence::Present, Some(_)) => unknown(out, "not a literal true, false or object"),
+            }
+        }
+    }
+
+    /// `auth: { globalAppMiddleware: true }`, or an object with a literal `isEnabled`.
+    fn global_flag(auth: &Value) -> Global {
+        let Value::Obj(fields) = auth else {
+            return Global::Unknown;
+        };
+        let Some((_, v)) = fields.iter().find(|(k, _)| k == "globalAppMiddleware") else {
+            return Global::Off;
+        };
+        match &v.value {
+            Value::Raw(r) if r == "true" => Global::On,
+            Value::Raw(r) if r == "false" => Global::Off,
+            Value::Obj(f) => match f
+                .iter()
+                .find(|(k, _)| k == "isEnabled")
+                .map(|(_, i)| &i.value)
+            {
+                Some(Value::Raw(r)) if r == "true" => Global::On,
+                Some(Value::Raw(r)) if r == "false" => Global::Off,
+                _ => Global::Unknown,
+            },
+            _ => Global::Unknown,
         }
     }
 }
@@ -1519,10 +2453,6 @@ mod tests {
             .collect()
     }
 
-    fn role(name: &str) -> Condition {
-        Condition::Role(name.into())
-    }
-
     const ROUTER_PKG: &str = r#"{"dependencies":{"vue":"^3.5.0","vue-router":"^4.4.0"}}"#;
 
     const ROUTER: &str = "import { createRouter, createWebHistory } from 'vue-router'
@@ -1550,7 +2480,7 @@ const routes: RouteRecordRaw[] = [
 ]
 
 const router = createRouter({ history: createWebHistory(), routes })
-router.beforeEach((to) => to.meta.requiresAuth && !signedIn() ? '/login' : true)
+router.beforeEach((to) => { if (to.meta.requiresAuth && !signedIn()) return '/login' })
 export default router
 ";
 
@@ -1651,11 +2581,9 @@ fetch(url)
     fn vue_router_routes_children_meta_and_imported_arrays() {
         let dir = router_project();
         let flow = extract(dir.path());
-        let account = Some(Condition::Authenticated);
-        let order = Some(Condition::All(vec![
-            Condition::Authenticated,
-            Condition::Any(vec![role("clerk"), role("admin")]),
-        ]));
+        // `requiresAuth` counts through the guard; the child inherits it under `to.meta`.
+        let account = Some(Condition::Custom("signedIn".into()));
+        let order = account.clone();
         assert_eq!(
             screens(&flow),
             vec![
@@ -1688,15 +2616,22 @@ fetch(url)
         );
         assert_eq!(home.application.as_deref(), Some("shop"));
         assert_eq!(flow.screens[0].file, "admin/src/routes.ts");
-        // beforeEach is a note, not a gap.
+        // `roles` is read by no guard: a note, not a gap or a condition.
         let note = flow
             .diagnostics
             .iter()
-            .find(|d| d.message.contains("beforeEach"))
-            .expect("beforeEach note");
+            .find(|d| d.message.contains("roles"))
+            .expect("unread meta note");
         assert_eq!(
             (note.file.as_str(), note.line, note.severity),
-            ("shop/src/router/index.ts", 26, DiagnosticSeverity::Note)
+            ("shop/src/router/index.ts", 19, DiagnosticSeverity::Note)
+        );
+        assert!(
+            flow.diagnostics
+                .iter()
+                .all(|d| !d.message.contains("Navigation guard")),
+            "{:#?}",
+            flow.diagnostics
         );
     }
 
@@ -1841,10 +2776,7 @@ fetch(url)
                     "web:/account/settings",
                     "web/pages/account/settings.vue",
                     "/account/settings",
-                    Some(Condition::All(vec![
-                        Condition::Authenticated,
-                        role("admin")
-                    ]))
+                    None
                 ),
                 s(
                     "web:/cart",
@@ -1914,12 +2846,14 @@ fetch(url)
                 endpoint("ANY", "/health", "web/server/routes/health.ts", 1),
             ]
         );
-        let global = flow
-            .diagnostics
-            .iter()
-            .find(|d| d.file == "web/middleware/auth.global.ts")
-            .expect("global middleware note");
-        assert_eq!(global.severity, DiagnosticSeverity::Note);
+        // An empty global middleware checks nothing: no note, no gap.
+        assert!(
+            flow.diagnostics
+                .iter()
+                .all(|d| d.file != "web/middleware/auth.global.ts"),
+            "{:#?}",
+            flow.diagnostics
+        );
         assert!(flow.complete, "{:#?}", flow.diagnostics);
     }
 
@@ -1955,7 +2889,6 @@ export default createRouter({
                 file(4),
                 file(5),
                 file(6),
-                file(7),
                 file(8)
             ],
             "{:#?}",
@@ -1963,12 +2896,8 @@ export default createRouter({
         );
         assert_eq!(
             screens(&flow),
-            vec![(
-                "app:/y".into(),
-                "Home".into(),
-                Some("/y".into()),
-                Some(Condition::Unknown("ROLES.admin".into()))
-            )]
+            // `roles` is read by no guard, so its non-literal value decides nothing.
+            vec![("app:/y".into(), "Home".into(), Some("/y".into()), None)]
         );
         assert!(!flow.complete);
     }
@@ -1985,5 +2914,470 @@ export default createRouter({
         ]);
         let flow = extract(dir.path());
         assert_eq!(flow, UiFlow::default());
+    }
+
+    // --- Wave 2f: access only through a guard that reads it (AVS B1-B12, C1-C13) ---
+
+    fn state(flow: &UiFlow, route: &str) -> AccessState {
+        flow.screens
+            .iter()
+            .find(|s| s.route.as_deref() == Some(route))
+            .unwrap_or_else(|| panic!("no screen {route}: {:#?}", flow.screens))
+            .access
+            .clone()
+    }
+
+    fn gap_count(flow: &UiFlow) -> usize {
+        gaps(flow).len()
+    }
+
+    fn notes(flow: &UiFlow, word: &str) -> usize {
+        flow.diagnostics
+            .iter()
+            .filter(|d| d.severity == DiagnosticSeverity::Note && d.message.contains(word))
+            .count()
+    }
+
+    fn protected(c: Condition) -> AccessState {
+        AccessState::Protected(c)
+    }
+
+    fn custom(n: &str) -> Condition {
+        Condition::Custom(n.into())
+    }
+
+    fn is_unknown(a: &AccessState) -> bool {
+        matches!(a, AccessState::Protected(Condition::Unknown(_)))
+    }
+
+    fn vr(body: &str) -> UiFlow {
+        let head = "import A from './A.vue'\nimport B from './B.vue'\nimport Adm from './Adm.vue'\nimport Login from './Login.vue'\nimport X from './X.vue'\nimport P from './P.vue'\n";
+        let dir = project(&[
+            ("package.json", ROUTER_PKG),
+            ("src/router.ts", &format!("{head}{body}\n")),
+            ("src/A.vue", "<template />\n"),
+            (
+                "src/B.vue",
+                "<script>\nexport default { beforeRouteEnter(to, from) { return true } }\n</script>\n",
+            ),
+        ]);
+        extract(dir.path())
+    }
+
+    fn guarded(routes: &str, guard: &str) -> UiFlow {
+        vr(&format!(
+            "const router = createRouter({{ routes: [{routes}] }})\nrouter.beforeEach({guard})\nexport default router"
+        ))
+    }
+
+    #[test]
+    fn b1_no_guard_is_undeclared() {
+        let flow = vr("export default createRouter({ routes: [{ path: '/a', component: A }] })");
+        assert_eq!(state(&flow, "/a"), AccessState::Undeclared);
+        assert_eq!(gap_count(&flow), 0);
+    }
+
+    #[test]
+    fn b2_meta_without_a_guard_is_inert() {
+        let flow = vr(
+            "export default createRouter({ routes: [{ path: '/a', component: A, meta: { requiresAuth: true } }] })",
+        );
+        assert_eq!(state(&flow, "/a"), AccessState::Undeclared);
+        assert_eq!(notes(&flow, "requiresAuth"), 1, "{:#?}", flow.diagnostics);
+    }
+
+    const B3_GUARD: &str =
+        "(to) => { if (to.meta.requiresAuth && !auth.isLoggedIn()) return '/login' }";
+
+    #[test]
+    fn b3_meta_counts_through_the_guard_that_reads_it() {
+        let flow = guarded(
+            "{ path: '/a', component: A, meta: { requiresAuth: true } }, { path: '/b', component: X }",
+            B3_GUARD,
+        );
+        assert_eq!(state(&flow, "/a"), protected(custom("auth.isLoggedIn")));
+        assert_eq!(state(&flow, "/b"), AccessState::Undeclared);
+        assert_eq!(notes(&flow, "requiresAuth"), 0);
+        assert_eq!(gap_count(&flow), 0, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn b3_legacy_next_style_reads_too() {
+        let flow = guarded(
+            "{ path: '/a', component: A, meta: { requiresAuth: true } }",
+            "(to, from, next) => { if (to.meta.requiresAuth && !auth.isLoggedIn()) { next('/login') } else { next() } }",
+        );
+        assert_eq!(state(&flow, "/a"), protected(custom("auth.isLoggedIn")));
+        assert_eq!(gap_count(&flow), 0, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn b4_opt_out_guard_protects_routes_without_meta() {
+        let flow = guarded(
+            "{ path: '/x', component: X }, { path: '/login', component: Login, meta: { public: true } }",
+            "(to) => { if (!to.meta.public && !store.user) return '/login' }",
+        );
+        assert_eq!(state(&flow, "/x"), protected(custom("store.user")));
+        assert_eq!(state(&flow, "/login"), AccessState::Open);
+    }
+
+    #[test]
+    fn b5_literal_allowlist_is_open() {
+        let flow = vr("const white = ['/login', '/404']
+const router = createRouter({ routes: [{ path: '/login', component: Login }, { path: '/x', component: X }] })
+router.beforeEach((to) => { if (!white.includes(to.path) && !token) return '/login' })
+export default router");
+        assert_eq!(state(&flow, "/login"), AccessState::Open);
+        assert_eq!(state(&flow, "/x"), protected(custom("token")));
+    }
+
+    const PARENT_CHILD: &str = "{ path: '/p', component: P, meta: { requiresAuth: true }, children: [{ path: 'c', component: X, meta: { requiresAuth: false } }] }";
+
+    #[test]
+    fn b6_to_meta_child_overrides_parent() {
+        let flow = guarded(
+            PARENT_CHILD,
+            "(to) => { if (to.meta.requiresAuth && !ok) return '/login' }",
+        );
+        assert_eq!(state(&flow, "/p"), protected(custom("ok")));
+        assert_eq!(state(&flow, "/p/c"), AccessState::Undeclared);
+    }
+
+    #[test]
+    fn b7_matched_some_sees_every_ancestor() {
+        let flow = guarded(
+            PARENT_CHILD,
+            "(to) => { if (to.matched.some(r => r.meta.requiresAuth) && !ok) return '/login' }",
+        );
+        assert_eq!(state(&flow, "/p/c"), protected(custom("ok")));
+    }
+
+    #[test]
+    fn b8_unreadable_guard_makes_every_screen_unknown_with_a_gap() {
+        let flow = guarded(
+            "{ path: '/a', component: A }, { path: '/x', component: X }",
+            "async (to, from, next) => { await store.dispatch('x'); next() }",
+        );
+        assert!(is_unknown(&state(&flow, "/a")), "{:?}", state(&flow, "/a"));
+        assert!(is_unknown(&state(&flow, "/x")));
+        assert_eq!(gap_count(&flow), 1, "{:#?}", flow.diagnostics);
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn b8_unreadable_guard_never_lets_an_open_marker_win() {
+        let flow = vr("const router = createRouter({ routes: [{ path: '/login', component: Login, meta: { public: true } }] })
+router.beforeEach((to) => { if (!to.meta.public && !ok) return '/login' })
+router.beforeEach(async (to) => { await x() })
+export default router");
+        assert!(
+            is_unknown(&state(&flow, "/login")),
+            "{:?}",
+            state(&flow, "/login")
+        );
+    }
+
+    #[test]
+    fn guard_reading_a_non_literal_meta_is_unknown_with_a_gap() {
+        let flow = guarded(
+            "{ path: '/a', component: A, meta: { requiresAuth: flag } }",
+            B3_GUARD,
+        );
+        assert!(is_unknown(&state(&flow, "/a")), "{:?}", state(&flow, "/a"));
+        assert!(gap_count(&flow) >= 1);
+    }
+
+    #[test]
+    fn meta_spread_hides_the_key_so_a_reading_guard_is_unknown() {
+        let flow = guarded(
+            "{ path: '/a', component: A, meta: { ...base } }",
+            "(to) => { if (!to.meta.public && !ok) return '/login' }",
+        );
+        assert!(is_unknown(&state(&flow, "/a")), "{:?}", state(&flow, "/a"));
+    }
+
+    #[test]
+    fn b9_before_enter_name_is_custom() {
+        let flow = vr(
+            "export default createRouter({ routes: [{ path: '/adm', component: Adm, beforeEnter: requireAdmin }] })",
+        );
+        assert_eq!(state(&flow, "/adm"), protected(custom("requireAdmin")));
+        assert_eq!(gap_count(&flow), 0);
+    }
+
+    #[test]
+    fn b10_before_enter_array_on_parent_reaches_children() {
+        let flow = vr(
+            "export default createRouter({ routes: [{ path: '/p', component: P, beforeEnter: [a, b], children: [{ path: 'c', component: X }] }] })",
+        );
+        let both = protected(Condition::All(vec![custom("a"), custom("b")]));
+        assert_eq!(state(&flow, "/p"), both);
+        assert_eq!(state(&flow, "/p/c"), both);
+    }
+
+    #[test]
+    fn b11_inline_before_enter_is_unknown_with_a_gap() {
+        let flow = vr(
+            "export default createRouter({ routes: [{ path: '/a', component: A, beforeEnter: (to) => { if (!ok()) return false } }] })",
+        );
+        assert!(is_unknown(&state(&flow, "/a")), "{:?}", state(&flow, "/a"));
+        assert_eq!(gap_count(&flow), 1, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn b12_before_route_enter_in_the_component_is_unknown_with_a_gap() {
+        let flow = vr(
+            "export default createRouter({ routes: [{ path: '/b', component: B }, { path: '/a', component: A }] })",
+        );
+        assert!(is_unknown(&state(&flow, "/b")), "{:?}", state(&flow, "/b"));
+        assert_eq!(state(&flow, "/a"), AccessState::Undeclared);
+        assert_eq!(gap_count(&flow), 1, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn b13_after_each_is_no_access() {
+        let flow = vr(
+            "const router = createRouter({ routes: [{ path: '/a', component: A }] })
+router.afterEach(() => { track() })
+export default router",
+        );
+        assert_eq!(state(&flow, "/a"), AccessState::Undeclared);
+        assert_eq!(gap_count(&flow), 0);
+    }
+
+    fn nuxt_app(files: &[(&str, &str)]) -> UiFlow {
+        let mut all: Vec<(&str, &str)> =
+            vec![("package.json", r#"{"devDependencies":{"nuxt":"^3.13.0"}}"#)];
+        all.extend_from_slice(files);
+        extract(project(&all).path())
+    }
+
+    const PAGE: &str = "<template />\n";
+
+    #[test]
+    fn c1_plain_page_is_undeclared() {
+        let flow = nuxt_app(&[("pages/a.vue", PAGE)]);
+        assert_eq!(state(&flow, "/a"), AccessState::Undeclared);
+    }
+
+    #[test]
+    fn c2_c3_named_middleware_is_custom_and_all() {
+        let flow = nuxt_app(&[
+            (
+                "pages/a.vue",
+                "<script setup>definePageMeta({ middleware: 'auth' })</script>",
+            ),
+            (
+                "pages/b.vue",
+                "<script setup>definePageMeta({ middleware: ['auth', 'admin'] })</script>",
+            ),
+            (
+                "middleware/auth.ts",
+                "export default defineNuxtRouteMiddleware(() => { check() })",
+            ),
+        ]);
+        assert_eq!(state(&flow, "/a"), protected(custom("auth")));
+        assert_eq!(
+            state(&flow, "/b"),
+            protected(Condition::All(vec![custom("auth"), custom("admin")]))
+        );
+    }
+
+    #[test]
+    fn c4_inline_middleware_is_unknown_with_a_gap() {
+        let flow = nuxt_app(&[(
+            "pages/a.vue",
+            "<script setup>definePageMeta({ middleware: [(to) => { x() }] })</script>",
+        )]);
+        assert!(is_unknown(&state(&flow, "/a")));
+        assert_eq!(gap_count(&flow), 1);
+    }
+
+    #[test]
+    fn c5_global_middleware_reads_path_exemption() {
+        let flow = nuxt_app(&[
+            (
+                "middleware/01.auth.global.ts",
+                "export default defineNuxtRouteMiddleware((to, from) => {\n  if (!loggedIn.value && to.path !== '/login') return navigateTo('/login')\n})\n",
+            ),
+            ("pages/login.vue", PAGE),
+            ("pages/a.vue", PAGE),
+        ]);
+        assert_eq!(state(&flow, "/login"), AccessState::Open);
+        assert_eq!(state(&flow, "/a"), protected(custom("loggedIn")));
+        assert_eq!(gap_count(&flow), 0, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn c5_logged_in_from_use_user_session_is_authenticated() {
+        let flow = nuxt_app(&[
+            (
+                "middleware/auth.global.ts",
+                "export default defineNuxtRouteMiddleware(() => {\n  const { loggedIn } = useUserSession()\n  if (!loggedIn.value) return navigateTo('/login')\n})\n",
+            ),
+            ("pages/a.vue", PAGE),
+        ]);
+        assert_eq!(state(&flow, "/a"), protected(Condition::Authenticated));
+    }
+
+    #[test]
+    fn c6_unreadable_global_middleware_is_unknown_with_a_gap() {
+        let flow = nuxt_app(&[
+            (
+                "middleware/x.global.ts",
+                "export default defineNuxtRouteMiddleware(async (to) => { await load(); })\n",
+            ),
+            ("pages/a.vue", PAGE),
+            ("pages/b.vue", PAGE),
+        ]);
+        assert!(is_unknown(&state(&flow, "/a")));
+        assert!(is_unknown(&state(&flow, "/b")));
+        assert_eq!(gap_count(&flow), 1, "{:#?}", flow.diagnostics);
+        assert_eq!(notes(&flow, "Global route middleware"), 0);
+    }
+
+    #[test]
+    fn c7_parent_page_middleware_reaches_children() {
+        let flow = nuxt_app(&[
+            (
+                "pages/users.vue",
+                "<script setup>definePageMeta({ middleware: 'auth' })</script><template><NuxtPage /></template>",
+            ),
+            ("pages/users/index.vue", PAGE),
+            ("pages/users/[id].vue", PAGE),
+        ]);
+        assert_eq!(state(&flow, "/users"), protected(custom("auth")));
+        assert_eq!(state(&flow, "/users/:id"), protected(custom("auth")));
+    }
+
+    #[test]
+    fn c8_page_meta_without_a_reading_middleware_is_inert() {
+        let flow = nuxt_app(&[(
+            "pages/a.vue",
+            "<script setup>definePageMeta({ requiresAuth: true })</script>",
+        )]);
+        assert_eq!(state(&flow, "/a"), AccessState::Undeclared);
+        assert_eq!(notes(&flow, "requiresAuth"), 1, "{:#?}", flow.diagnostics);
+    }
+
+    const SIDEBASE: &str = "export default defineNuxtConfig({ modules: ['@sidebase/nuxt-auth'], auth: { globalAppMiddleware: true } })\n";
+
+    #[test]
+    fn c9_sidebase_global_middleware_with_page_opt_out() {
+        let flow = nuxt_app(&[
+            ("nuxt.config.ts", SIDEBASE),
+            ("pages/a.vue", PAGE),
+            (
+                "pages/login.vue",
+                "<script setup>definePageMeta({ auth: false })</script>",
+            ),
+        ]);
+        assert_eq!(state(&flow, "/a"), protected(Condition::Authenticated));
+        assert_eq!(state(&flow, "/login"), AccessState::Open);
+        assert_eq!(gap_count(&flow), 0, "{:#?}", flow.diagnostics);
+        assert_eq!(notes(&flow, "auth"), 0);
+    }
+
+    #[test]
+    fn c10_sidebase_guest_mode() {
+        let flow = nuxt_app(&[
+            ("nuxt.config.ts", SIDEBASE),
+            (
+                "pages/register.vue",
+                "<script setup>definePageMeta({ auth: { unauthenticatedOnly: true, navigateAuthenticatedTo: '/' } })</script>",
+            ),
+        ]);
+        assert_eq!(
+            state(&flow, "/register"),
+            protected(Condition::Not(Box::new(Condition::Authenticated)))
+        );
+    }
+
+    #[test]
+    fn c11_sidebase_local_mode() {
+        let flow = nuxt_app(&[
+            (
+                "nuxt.config.ts",
+                "export default defineNuxtConfig({ modules: ['@sidebase/nuxt-auth'] })\n",
+            ),
+            (
+                "pages/a.vue",
+                "<script setup>definePageMeta({ auth: true })</script>",
+            ),
+            ("pages/b.vue", PAGE),
+        ]);
+        assert_eq!(state(&flow, "/a"), protected(Condition::Authenticated));
+        assert_eq!(state(&flow, "/b"), AccessState::Undeclared);
+    }
+
+    #[test]
+    fn c12_auth_key_without_the_module_is_inert() {
+        let flow = nuxt_app(&[
+            (
+                "nuxt.config.ts",
+                "export default defineNuxtConfig({ modules: ['@nuxt/ui'] })\n",
+            ),
+            (
+                "pages/a.vue",
+                "<script setup>definePageMeta({ auth: false })</script>",
+            ),
+        ]);
+        assert_eq!(state(&flow, "/a"), AccessState::Undeclared);
+    }
+
+    #[test]
+    fn c13_auth_false_replaces_only_the_module_default() {
+        let flow = nuxt_app(&[
+            ("nuxt.config.ts", SIDEBASE),
+            (
+                "pages/adm.vue",
+                "<script setup>definePageMeta({ auth: false, middleware: 'admin' })</script>",
+            ),
+        ]);
+        assert_eq!(state(&flow, "/adm"), protected(custom("admin")));
+    }
+
+    #[test]
+    fn sidebase_unreadable_global_flag_never_shows_open_or_plain() {
+        let flow = nuxt_app(&[
+            (
+                "nuxt.config.ts",
+                "export default defineNuxtConfig({ modules: ['@sidebase/nuxt-auth'], auth: { globalAppMiddleware: cfg } })\n",
+            ),
+            ("pages/a.vue", PAGE),
+        ]);
+        assert!(is_unknown(&state(&flow, "/a")), "{:?}", state(&flow, "/a"));
+        assert!(gap_count(&flow) >= 1);
+    }
+
+    #[test]
+    fn binding_with_a_call_makes_the_guard_unreadable() {
+        let flow = nuxt_app(&[
+            (
+                "middleware/a.global.ts",
+                "export default defineNuxtRouteMiddleware(async (to) => {\n  const u = await check(to)\n  if (!loggedIn.value && to.path !== '/login') return navigateTo('/login')\n})\n",
+            ),
+            ("pages/login.vue", PAGE),
+            ("pages/a.vue", PAGE),
+        ]);
+        assert!(
+            is_unknown(&state(&flow, "/login")),
+            "{:?}",
+            state(&flow, "/login")
+        );
+        assert!(is_unknown(&state(&flow, "/a")));
+        assert_eq!(gap_count(&flow), 1, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn pure_bindings_stay_readable() {
+        let flow = nuxt_app(&[
+            (
+                "middleware/a.global.ts",
+                "export default defineNuxtRouteMiddleware((to) => {\n  const p = to.path\n  const { meta } = to\n  if (!loggedIn.value && to.path !== '/login') return navigateTo('/login')\n})\n",
+            ),
+            ("pages/login.vue", PAGE),
+        ]);
+        assert_eq!(state(&flow, "/login"), AccessState::Open);
     }
 }

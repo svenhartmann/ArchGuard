@@ -96,6 +96,31 @@ pub struct ViewsConfig {
     /// never guess from a name that is not listed (ADR 0021, decision 6).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub access: BTreeMap<String, AccessMeaning>,
+    /// `[views.access_layers]`: which layers the access-layers view shows.
+    #[serde(skip_serializing_if = "AccessLayersConfig::is_default")]
+    pub access_layers: AccessLayersConfig,
+}
+
+/// `[views.access_layers]`: `show_unguarded` keeps layers that do not enforce a
+/// check (path only, hint, data filter) in the view.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AccessLayersConfig {
+    pub show_unguarded: bool,
+}
+
+impl Default for AccessLayersConfig {
+    fn default() -> Self {
+        Self {
+            show_unguarded: true,
+        }
+    }
+}
+
+impl AccessLayersConfig {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// The meaning of one `[views.access]` entry. Written as `open`,
@@ -380,5 +405,24 @@ mod access_tests {
                 toml::from_str::<Config>(&format!("[views.access]\nx = {bad}\n")).unwrap_err();
             assert!(err.to_string().contains("x"), "{bad}: {err}");
         }
+    }
+}
+
+#[cfg(test)]
+mod access_layers_tests {
+    use super::Config;
+
+    #[test]
+    fn views_access_layers_default_and_parse() {
+        let none: Config = toml::from_str("").unwrap();
+        assert!(none.views.access_layers.show_unguarded);
+        let c: Config = toml::from_str("[views.access_layers]\nshow_unguarded = false\n").unwrap();
+        assert!(!c.views.access_layers.show_unguarded);
+        let text = toml::to_string(&c.views).unwrap();
+        assert_eq!(
+            toml::from_str::<super::ViewsConfig>(&text).unwrap(),
+            c.views
+        );
+        assert!(toml::from_str::<Config>("[views.access_layers]\nx = 1\n").is_err());
     }
 }

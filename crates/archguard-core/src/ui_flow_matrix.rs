@@ -29,6 +29,9 @@ pub struct MatrixRow {
     pub line: u32,
     /// The guard in words: `none`, `declared open`, `undeclared`, or the condition.
     pub requires: String,
+    /// Where an endpoint's access is enforced: `endpoint`, `service`, `both` or
+    /// `none` (no check read, not open); empty for screens.
+    pub layer: String,
     /// The guard is a weak one (layout load, parent loader): shown as "weakly protected".
     pub weak: bool,
     /// One outcome per [`PermissionMatrix::roles`] entry.
@@ -85,6 +88,7 @@ pub fn permission_matrix(flow: &UiFlow, kind: MatrixKind) -> PermissionMatrix {
                 file: s.file.clone(),
                 line: s.line,
                 requires: requires(&s.access),
+                layer: String::new(),
                 weak: s.weak,
                 cells: (assignments.iter())
                     .map(|a| evaluate_access(&s.access, a.in_app(s.application.as_deref())))
@@ -100,6 +104,7 @@ pub fn permission_matrix(flow: &UiFlow, kind: MatrixKind) -> PermissionMatrix {
                 file: e.file.clone(),
                 line: e.line,
                 requires: requires(&e.access),
+                layer: format!("{}", crate::access_layers::enforced_at(flow, e)),
                 weak: false,
                 cells: assignments
                     .iter()

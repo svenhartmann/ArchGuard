@@ -46,6 +46,13 @@
 //!   string of the same file. All
 //!   conditions must hold (`all`). Order counts: a `use` after the route is
 //!   ignored.
+//! - Auth packages are recognised by their import: `express-jwt` and
+//!   `express-oauth2-jwt-bearer` (`authenticated`; `credentialsRequired: false`
+//!   adds nothing, with a note) and `passport.authenticate('s', ...)` (literal
+//!   strategies: `authenticated`; `anonymous` among them adds nothing, with a
+//!   note; non-literal: gap). `x.unless({ path: [literals] })` exempts those full
+//!   paths from that middleware (they stay `undeclared`, never `open`); any other
+//!   `unless` form (`custom`, regex, other options) is `unknown` with a gap.
 //! - An inline error handler (four parameters) adds no condition: Express calls
 //!   it only after an error.
 //! - `handler` is the last handler argument when it is a name (`ctrl.fn`);
@@ -488,6 +495,8 @@ struct Guard {
     prefix: String,
     /// `None`: a middleware that `[views.access]` declares `open`.
     cond: Option<Condition>,
+    /// Full paths the middleware exempts (`.unless({ path })`): it adds nothing there.
+    except: Vec<String>,
 }
 
 /// What a middleware adds to access.
@@ -497,6 +506,8 @@ enum Mw {
     /// Declared `open` in `[views.access]`.
     Open,
     Cond(Condition),
+    /// A condition that a literal `.unless({ path: [...] })` lifts for those full paths.
+    Except(Condition, Vec<String>),
 }
 
 struct Scan<'a> {
@@ -631,6 +642,7 @@ impl Scan<'_> {
             guards.push(Guard {
                 prefix: String::new(),
                 cond: Some(Condition::Unknown(first.src.clone())),
+                except: vec![],
             });
             return None;
         }
@@ -671,11 +683,15 @@ impl Scan<'_> {
             );
             gap(&mut self.flow.diagnostics, file, line, message);
         }
-        let cond = match (self.middleware(file, line, text), conditional) {
+        let (mw, except) = match self.middleware(file, line, text) {
+            Mw::Except(c, paths) => (Mw::Cond(c), paths),
+            mw => (mw, vec![]),
+        };
+        let cond = match (mw, conditional) {
             (Mw::Nothing, _) | (Mw::Open, true) => return,
             (Mw::Open, false) => None,
-            (Mw::Cond(c), false) => Some(c),
-            (Mw::Cond(_), true) => {
+            (Mw::Cond(c) | Mw::Except(c, _), false) => Some(c),
+            (Mw::Cond(_) | Mw::Except(..), true) => {
                 let message = format!(
                     "Middleware `{text}` is registered inside if/ternary/switch; \
                      it may not apply, so it is unknown."
@@ -687,6 +703,7 @@ impl Scan<'_> {
         guards.push(Guard {
             prefix: abs.into(),
             cond,
+            except,
         });
     }
 
@@ -805,6 +822,97 @@ impl Scan<'_> {
     /// The condition of middleware `text`; `None` when it adds none.
     fn middleware(&mut self, file: &str, line: u32, text: &str) -> Mw {
         let text = text.trim();
+        let Some((base, unless)) = split_unless(text) else {
+            return self.middleware_call(file, line, text);
+        };
+        match self.middleware_call(file, line, base) {
+            Mw::Cond(c) => match unless {
+                Ok(paths) => Mw::Except(c, paths),
+                Err(what) => {
+                    let message = format!("`.unless` of `{base}` is not readable ({what}): {text}");
+                    gap(&mut self.flow.diagnostics, file, line, message);
+                    Mw::Cond(Condition::Unknown(format!("express-jwt unless {what}")))
+                }
+            },
+            other => other,
+        }
+    }
+
+    /// The module the first segment of `name` is imported from.
+    fn module_of(&self, file: &str, name: &str) -> Option<&str> {
+        let first = name.split('.').next().unwrap_or(name);
+        (self.files[file].binds.iter())
+            .find(|i| i.local == first)
+            .map(|i| i.module.as_str())
+    }
+
+    /// `express-jwt`, `express-oauth2-jwt-bearer` and `passport.authenticate`,
+    /// recognised by the module they are imported from; `None` for anything else.
+    fn auth_package(
+        &mut self,
+        file: &str,
+        line: u32,
+        name: &str,
+        text: &str,
+        args: &[Item],
+    ) -> Option<Mw> {
+        let unknown = || Some(Mw::Cond(Condition::Unknown(name.into())));
+        match (self.module_of(file, name)?, name) {
+            ("express-jwt" | "express-oauth2-jwt-bearer", _) => {
+                let required = (args.first())
+                    .and_then(|a| match &a.value {
+                        Value::Obj(f) => f.iter().find(|(k, _)| k == "credentialsRequired"),
+                        _ => None,
+                    })
+                    .map(|(_, i)| i.source(text));
+                match required.as_deref() {
+                    None | Some("true") => Some(Mw::Cond(Condition::Authenticated)),
+                    Some("false") => {
+                        let message = format!(
+                            "`{name}` with credentialsRequired: false is optional authentication; it decides nothing."
+                        );
+                        note(&mut self.flow.diagnostics, file, line, message);
+                        Some(Mw::Nothing)
+                    }
+                    Some(_) => {
+                        let message =
+                            format!("`credentialsRequired` of `{name}` is not a literal.");
+                        gap(&mut self.flow.diagnostics, file, line, message);
+                        unknown()
+                    }
+                }
+            }
+            ("passport", "passport.authenticate") => {
+                let strategies: Option<Vec<String>> = match args.first().map(|a| &a.value) {
+                    Some(Value::Str(s)) => Some(vec![s.clone()]),
+                    Some(Value::Arr(items)) => (items.iter())
+                        .map(|i| match &i.value {
+                            Value::Str(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => None,
+                };
+                match strategies {
+                    Some(s) if s.iter().any(|x| x == "anonymous") => {
+                        let message = "`passport.authenticate` accepts the `anonymous` strategy; it decides nothing.".to_string();
+                        note(&mut self.flow.diagnostics, file, line, message);
+                        Some(Mw::Nothing)
+                    }
+                    Some(s) if !s.is_empty() => Some(Mw::Cond(Condition::Authenticated)),
+                    _ => {
+                        let message =
+                            "Strategies of `passport.authenticate` are not literal.".to_string();
+                        gap(&mut self.flow.diagnostics, file, line, message);
+                        unknown()
+                    }
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn middleware_call(&mut self, file: &str, line: u32, text: &str) -> Mw {
         if error_handler(text) {
             return Mw::Nothing;
         }
@@ -831,6 +939,9 @@ impl Scan<'_> {
         }
         if self.passive(file, &name) {
             return Mw::Nothing;
+        }
+        if let Some(mw) = self.auth_package(file, line, &name, text, &args) {
+            return mw;
         }
         let message =
             format!("Middleware `{name}` is not listed in [views.access]; its access is unknown.");
@@ -867,11 +978,12 @@ impl Scan<'_> {
                 return;
             }
         };
-        let own: Vec<Option<Condition>> = (middleware.iter())
+        let own: Vec<(Option<Condition>, Vec<String>)> = (middleware.iter())
             .filter_map(|m| match self.middleware(file, line, &m.src) {
                 Mw::Nothing => None,
-                Mw::Open => Some(None),
-                Mw::Cond(c) => Some(Some(c)),
+                Mw::Open => Some((None, vec![])),
+                Mw::Cond(c) => Some((Some(c), vec![])),
+                Mw::Except(c, paths) => Some((Some(c), paths)),
             })
             .collect();
         let name = is_name(&handler.src).then(|| handler.src.clone());
@@ -880,8 +992,10 @@ impl Scan<'_> {
             let full = path_of(&[prefix, &p]);
             let declared: Vec<&Option<Condition>> = (guards.iter())
                 .filter(|g| below(&full, &g.prefix))
-                .map(|g| &g.cond)
-                .chain(own.iter())
+                .map(|g| (&g.cond, &g.except))
+                .chain(own.iter().map(|(c, e)| (c, e)))
+                .filter(|(_, except)| !except.contains(&full))
+                .map(|(c, _)| c)
                 .collect();
             let mut seen = BTreeSet::new();
             let mut conds: Vec<Condition> = (declared.iter().copied().flatten())
@@ -941,6 +1055,38 @@ impl Scan<'_> {
             }
         }
     }
+}
+
+/// `base.unless({ path })`: the call before `.unless` and the literal full paths it
+/// exempts; `Err` names what cannot be read.
+fn split_unless(text: &str) -> Option<(&str, Result<Vec<String>, &'static str>)> {
+    let end = close(text, text.find('(')?);
+    let rest = text.get(end..)?.trim_start().strip_prefix(".unless")?;
+    let args = Parser {
+        s: text,
+        i: text.len() - rest.len(),
+    }
+    .array(0);
+    let Some(Value::Obj(fields)) = args.first().map(|a| &a.value) else {
+        return Some((&text[..end], Err("custom")));
+    };
+    let mut paths = Vec::new();
+    for (key, item) in fields {
+        let items = match (key.as_str(), &item.value) {
+            ("path", Value::Str(_)) => std::slice::from_ref(item),
+            ("path", Value::Arr(items)) => items.as_slice(),
+            ("path", _) => return Some((&text[..end], Err("path"))),
+            ("custom", _) => return Some((&text[..end], Err("custom"))),
+            _ => return Some((&text[..end], Err("options"))),
+        };
+        for i in items {
+            match &i.value {
+                Value::Str(s) => paths.push(s.clone()),
+                _ => return Some((&text[..end], Err("path"))),
+            }
+        }
+    }
+    Some((&text[..end], Ok(paths)))
 }
 
 /// An inline error handler, `(err, req, res, next) => …` or `function (err, req,
@@ -1373,6 +1519,159 @@ mod tests {
         assert_eq!(
             ep(&flow, "GET", "/later").access,
             prot(Condition::Authenticated)
+        );
+    }
+
+    const JWT: &str = "const { expressjwt } = require('express-jwt');\nconst app = express();\n";
+
+    fn note_has(flow: &UiFlow, sev: DiagnosticSeverity, text: &str) -> bool {
+        (flow.diagnostics.iter()).any(|d| d.severity == sev && d.message.contains(text))
+    }
+
+    #[test]
+    fn ef4_sibling_router_guard_covers_later_sibling_at_same_prefix_only() {
+        let flow = one(
+            "const app = express();\nconst a = express.Router();\nconst b = express.Router();\n\
+             const c = express.Router();\na.use(auth);\na.get('/x', h);\nb.get('/y', h);\nc.get('/z', h);\n\
+             app.use('/api', a);\napp.use('/api', b);\napp.use('/other', c);\n",
+            "auth = \"authenticated\"\n",
+        );
+        assert_eq!(
+            ep(&flow, "GET", "/api/x").access,
+            prot(Condition::Authenticated)
+        );
+        assert_eq!(
+            ep(&flow, "GET", "/api/y").access,
+            prot(Condition::Authenticated)
+        );
+        assert_eq!(ep(&flow, "GET", "/other/z").access, AccessState::Undeclared);
+    }
+
+    #[test]
+    fn ef4b_sibling_open_marker_does_not_open_a_protected_sibling() {
+        let flow = one(
+            "const app = express();\nconst a = express.Router();\nconst b = express.Router();\n\
+             a.use(pub);\na.get('/x', h);\nb.use(auth);\nb.get('/y', h);\n\
+             app.use('/a', a);\napp.use('/b', b);\n",
+            "pub = \"open\"\nauth = \"authenticated\"\n",
+        );
+        assert_eq!(ep(&flow, "GET", "/a/x").access, AccessState::Open);
+        assert_eq!(
+            ep(&flow, "GET", "/b/y").access,
+            prot(Condition::Authenticated)
+        );
+    }
+
+    #[test]
+    fn ef5_unless_literal_path_is_undeclared_others_protected() {
+        let flow = one(
+            &format!(
+                "{JWT}app.use(expressjwt({{ secret, algorithms: ['HS256'] }}).unless({{ path: ['/token'] }}));\n\
+                 app.post('/token', h);\napp.get('/me', h);\n"
+            ),
+            "",
+        );
+        assert_eq!(ep(&flow, "POST", "/token").access, AccessState::Undeclared);
+        assert_eq!(
+            ep(&flow, "GET", "/me").access,
+            prot(Condition::Authenticated)
+        );
+    }
+
+    #[test]
+    fn ef5b_unless_with_other_guard_keeps_the_other_guard_and_non_literal_path_is_unknown() {
+        let flow = one(
+            &format!(
+                "{JWT}app.use(auth);\napp.use(expressjwt({{ secret }}).unless({{ path: ['/token'] }}));\n\
+                 app.post('/token', h);\n"
+            ),
+            "auth = \"policy:a\"\n",
+        );
+        assert_eq!(
+            ep(&flow, "POST", "/token").access,
+            prot(Condition::Policy("a".into()))
+        );
+        let flow = one(
+            &format!(
+                "{JWT}app.use(expressjwt({{ secret }}).unless({{ path: [/^\\/pub/, '/token'] }}));\n\
+                 app.get('/token', h);\n"
+            ),
+            "",
+        );
+        assert!(matches!(
+            ep(&flow, "GET", "/token").access,
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+        assert!(!gaps(&flow).is_empty());
+    }
+
+    #[test]
+    fn ef6_credentials_not_required_is_undeclared_with_a_note() {
+        let flow = one(
+            &format!(
+                "{JWT}app.use(expressjwt({{ secret, algorithms, credentialsRequired: false }}));\napp.get('/feed', h);\n"
+            ),
+            "",
+        );
+        assert_eq!(ep(&flow, "GET", "/feed").access, AccessState::Undeclared);
+        assert!(note_has(&flow, DiagnosticSeverity::Note, "optional"));
+    }
+
+    #[test]
+    fn ef7_unless_custom_is_unknown_with_a_gap() {
+        let flow = one(
+            &format!(
+                "{JWT}app.use(expressjwt({{ secret }}).unless({{ custom: fn }}));\napp.get('/a', h);\napp.get('/b', h);\n"
+            ),
+            "",
+        );
+        for p in ["/a", "/b"] {
+            assert_eq!(
+                ep(&flow, "GET", p).access,
+                prot(Condition::Unknown("express-jwt unless custom".into()))
+            );
+        }
+        assert!(note_has(&flow, DiagnosticSeverity::Gap, "unless"));
+    }
+
+    const PP: &str = "const passport = require('passport');\nconst app = express();\n";
+
+    #[test]
+    fn ef8_passport_jwt_on_a_route_is_authenticated() {
+        let flow = one(
+            &format!("{PP}app.get('/x', passport.authenticate('jwt', {{ session: false }}), h);\n"),
+            "",
+        );
+        assert_eq!(
+            ep(&flow, "GET", "/x").access,
+            prot(Condition::Authenticated)
+        );
+    }
+
+    #[test]
+    fn ef9_passport_with_anonymous_is_undeclared_with_a_note() {
+        let flow = one(
+            &format!(
+                "{PP}app.get('/x', passport.authenticate(['jwt', 'anonymous'], {{ session: false }}), h);\n"
+            ),
+            "",
+        );
+        assert_eq!(ep(&flow, "GET", "/x").access, AccessState::Undeclared);
+        assert!(note_has(&flow, DiagnosticSeverity::Note, "anonymous"));
+    }
+
+    #[test]
+    fn ef10_project_auth_function_wrapping_passport_stays_unknown() {
+        let flow = one(
+            &format!(
+                "{PP}const auth = () => (req, res, next) => passport.authenticate('jwt', {{ session: false }}, (e, u) => next())(req, res, next);\n\
+                 app.get('/x', auth(), h);\n"
+            ),
+            "",
+        );
+        assert_eq!(
+            ep(&flow, "GET", "/x").access,
+            prot(Condition::Unknown("auth".into()))
         );
     }
 

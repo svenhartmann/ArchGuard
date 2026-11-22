@@ -225,6 +225,7 @@ fn fill_tree(m: &mut CallsModel, s: &State, ui: &UiLabels) {
                     .class(Some(&node.id))
                     .is_some_and(|c| c.kind == "module"),
             cycle: s.is_cycle_member(node.kind, &node.id),
+            layer: layer_of(s, node),
             pressed,
             parent: -1,
         });
@@ -244,6 +245,20 @@ fn fill_tree(m: &mut CallsModel, s: &State, ui: &UiLabels) {
         })
         .unwrap_or_default()
         .into();
+}
+
+/// How the method's access check holds (0 none, see `access_ui::how_kind`); matched by the layer's own file, never by name alone.
+fn layer_of(s: &State, node: &super::tree::Node) -> i32 {
+    if node.kind != Kind::Method {
+        return 0;
+    }
+    let Some(m) = s.idx.method(Some(&node.id)) else {
+        return 0;
+    };
+    let same = (s.idx.a.methods.iter())
+        .filter(|o| o.file == m.file && o.name == m.name && o.class_id == m.class_id)
+        .count();
+    crate::access_ui::badge(&s.layers, &m.file, &m.class_id, &m.name, same)
 }
 
 /// `rows` with each row's parent row set (the keyboard's Left key).

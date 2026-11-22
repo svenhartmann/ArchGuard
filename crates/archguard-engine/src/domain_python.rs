@@ -1013,6 +1013,31 @@ mod resolving {
             (s != "auth.User" || self.auth_is_default()).then(|| Self::builtin(&s))?
         }
 
+        /// Whether `name` means the user model: `get_user_model()`,
+        /// `settings.AUTH_USER_MODEL` or a module-level `name =
+        /// get_user_model()` of file `f` (an extra assignment of another value
+        /// is a gap).
+        fn is_auth_user(&self, f: usize, name: &str) -> Result<bool, String> {
+            let settings = (name.rsplit_once('.'))
+                .is_some_and(|(p, n)| n == "AUTH_USER_MODEL" && last(p) == "settings");
+            if name == "get_user_model()" || settings {
+                return Ok(true);
+            }
+            let file = &self.0.files[f];
+            let values: Vec<&str> = (file.stmts.iter().filter(|s| s.indent == 0))
+                .filter_map(|st| member(file, st))
+                .filter(|m| m.name == name)
+                .filter_map(|m| m.value.map(|(_, v)| v))
+                .collect();
+            match values.as_slice() {
+                v if !v.contains(&"get_user_model()") => Ok(false),
+                v if v.iter().all(|x| *x == "get_user_model()") => Ok(true),
+                _ => Err(format!(
+                    "`{name}` is assigned several values in this module"
+                )),
+            }
+        }
+
         /// The entity id a relation target points to; `f` is the file the
         /// attribute is written in, `mf` the entity's file (Django strings
         /// resolve from the concrete model's app).
@@ -1029,14 +1054,7 @@ mod resolving {
                 (Target::Lit(s), true) => local(self.table(s)),
                 (Target::Lit(s), false) => local(self.name(f, s)),
                 (Target::Model(s), _) => self.model_or_builtin(mf, me, s),
-                (Target::Ref(r), _)
-                    if r == "get_user_model()"
-                        || r.rsplit_once('.').is_some_and(|(p, n)| {
-                            n == "AUTH_USER_MODEL" && last(p) == "settings"
-                        }) =>
-                {
-                    self.auth_user(mf, me)
-                }
+                (Target::Ref(r), _) if self.is_auth_user(f, r)? => self.auth_user(mf, me),
                 (Target::Ref(r), by_table) => {
                     let mut name = r.as_str();
                     if let Some((class, _)) = name.rsplit_once('.').filter(|_| by_table) {
@@ -1926,6 +1944,49 @@ class Tag(models.Model):
         ]);
         assert!(rels(&m).is_empty(), "{:?}", rels(&m));
         assert!(m.diagnostics.iter().any(|d| d.message.contains("Note.u")));
+    }
+
+    const ALIASED: &str = "from django.db import models\nfrom django.contrib.auth import get_user_model\nUser = get_user_model()\nclass Note(models.Model):\n    owner = models.ForeignKey(User, on_delete=models.CASCADE)\n";
+
+    #[test]
+    fn django_user_alias_of_get_user_model_follows_auth_user_model() {
+        let default = model(&[("notes/models.py", ALIASED)]);
+        assert_eq!(
+            rels(&default),
+            ["Note-HasOne->django.contrib.auth.User via owner"]
+        );
+        assert!(default.complete, "{:?}", default.diagnostics);
+        let acc = "from django.db import models\nclass Account(models.Model):\n    n = models.CharField(max_length=1)\n";
+        let custom = model(&[
+            ("accounts/apps.py", ""),
+            ("accounts/models.py", acc),
+            ("proj/settings.py", "AUTH_USER_MODEL = 'accounts.Account'\n"),
+            ("notes/models.py", ALIASED),
+        ]);
+        assert_eq!(rels(&custom), ["Note-HasOne->Account via owner"]);
+        let computed = model(&[
+            ("proj/settings.py", "AUTH_USER_MODEL = os.environ['U']\n"),
+            ("notes/models.py", ALIASED),
+        ]);
+        assert!(rels(&computed).is_empty());
+        let msgs: Vec<&str> = computed
+            .diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .collect();
+        assert!(msgs.iter().any(|s| s.contains("Note.owner")), "{msgs:?}");
+    }
+
+    #[test]
+    fn django_user_alias_with_another_assignment_is_a_gap() {
+        let src = ALIASED.replace("class Note", "User = other()\nclass Note");
+        let m = model(&[("notes/models.py", &src)]);
+        assert!(rels(&m).is_empty(), "{:?}", rels(&m));
+        assert!(
+            m.diagnostics
+                .iter()
+                .any(|d| d.message.contains("Note.owner"))
+        );
     }
 
     #[test]

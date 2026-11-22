@@ -26,11 +26,32 @@
 //!   `hasRole`, `hasAnyRole`, `hasAuthority`, `hasAnyAuthority`,
 //!   `isAuthenticated()`, `isFullyAuthenticated()`, `and`/`or`/`!`/`not`/`&&`/`||`
 //!   and parentheses, `permitAll()` alone = `open`; `@Secured`, `@RolesAllowed`,
-//!   `@PermitAll`, `@DenyAll` (`never`). Authorities become `role` atoms too, stored as the runtime
-//!   authority: `hasRole('A')` adds Spring's `ROLE_` (unless present), so
+//!   `@PermitAll`, `@DenyAll` (`never`). Names are stored as the runtime
+//!   authority: `hasRole('A')` adds the role prefix (unless present), so
 //!   `hasRole('A')`, `hasAuthority('ROLE_A')` and `@Secured("ROLE_A")` all
-//!   read `role(ROLE_A)`; the convention (`role_prefix = ROLE_`) is emitted
-//!   per application and shortens labels only.
+//!   read `role(ROLE_A)`; `@RolesAllowed("A")` always adds it. Any other
+//!   authority (`hasAuthority('read')`, `@Secured("x")`, OAuth2 `hasScope`) is
+//!   an exact `policy`. The prefix is `GrantedAuthorityDefaults`' literal
+//!   (else `ROLE_`; Quarkus Spring compatibility: none); an unreadable one
+//!   makes role names `unknown` with a gap. The convention per application
+//!   (`role_prefix`, `scope_prefix`, `role_claim` from a
+//!   `JwtGrantedAuthoritiesConverter`) is emitted with its origins.
+//!   Method-security annotations count only for an enabled family
+//!   (`@EnableMethodSecurity`: pre-post; `securedEnabled`, `jsr250Enabled`;
+//!   legacy `@EnableGlobalMethodSecurity`: all off by default, the first
+//!   family with annotations decides); a disabled family is ignored with a
+//!   gap and never lifted to `open` by a chain `permitAll`. Several chains
+//!   apply by `@Order` and their literal `securityMatcher` scope.
+//!
+//! ASP.NET app-wide facts are read per project (`aspnet`): `DefaultPolicy`
+//! (what a bare `[Authorize]`/`RequireAuthorization()` means), `FallbackPolicy`
+//! (only for endpoints without authorization metadata), global
+//! `Filters.Add(new AuthorizeFilter(…))` (MVC actions), and
+//! `MapControllers().RequireAuthorization()`; project attributes deriving from
+//! `AuthorizeAttribute` or implementing `IAuthorizeData` /
+//! `IAuthorizationRequirementData` (also generic `[Authorize<T>]`) are read
+//! through their constructors. Actions of base controllers belong to the
+//! derived controller; abstract and generic classes are no controllers.
 //!
 //! Each endpoint also gets its handler method and the request types it sends
 //! (`handlers`, ADR 0022 decision 4).
@@ -46,18 +67,15 @@
 //! `build.gradle(.kts)`; its directory name is the endpoint's `application`.
 //! Not recognized (left `undeclared`, or a diagnostic): `[AcceptVerbs]`,
 //! `MapMethods`, `MapGroup` prefixes passed in from a call site, guards added
-//! inside helper extension methods, `[Authorize<T>]`, `FallbackPolicy`, other
+//! inside helper extension methods, attributes on a minimal-API lambda, other
 //! SpEL (`unknown`), non-constant routes or roles (diagnostic, the endpoint
-//! is skipped or the condition is `unknown`), actions inherited from a base
-//! controller under conventional routing, `MapIdentityApi`.
+//! is skipped or the condition is `unknown`), `MapIdentityApi`, Razor Pages.
 use crate::extract_ctx::{ExtractContext, ancestors, dir_name, read_text, walk, with_root_config};
 use crate::services::support::test_path;
 use archguard_core::{
     ANY_METHOD, AccessMeaning, AccessState, Condition, ConventionOrigin, DiagnosticSeverity,
     EndpointAccess, HandlerSite, RoleConvention, UiFlow, UiFlowDiagnostic,
 };
-/// Spring `GrantedAuthorityDefaults` default role prefix (framework default).
-const ROLE_PREFIX: &str = "ROLE_";
 use lex::{ident_before, literal_end, split_top};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
@@ -72,51 +90,62 @@ const SOURCES: [&str; 3] = [".cs", ".java", ".kt"];
 /// Endpoints with their declared access, plus diagnostics. `[views.access]`
 /// comes from the root's configuration; an unreadable one is a note.
 pub fn extract(root: &Path) -> UiFlow {
-    with_root_config(root, extract_with)
+    with_root_config(root, |ctx| extract_with(ctx, None))
 }
 
-/// [`extract`] with the run's `[views.access]`.
-pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
-    let mut out = Out(UiFlow::default());
+/// Reads further endpoints of a source file before the central rules run
+/// (`ui_flow_webflux`: functional routes).
+pub(crate) type RouteHook = fn(&Source, &[Source], &Index, &spring::Conf, &mut Out);
+
+/// [`extract`] with the run's `[views.access]`; `hook` adds endpoints per
+/// Java/Kotlin file.
+pub(crate) fn extract_with(ctx: &ExtractContext, hook: Option<RouteHook>) -> UiFlow {
+    let mut out = Out(
+        UiFlow::default(),
+        Ignored::default(),
+        aspnet::Defaults::default(),
+    );
     if let Some(e) = &ctx.config_error {
         let message = format!("Configuration not read; [views.access] not applied: {e}");
         out.note(".", 0, message);
     }
     let projects = read_projects(ctx.root, &mut out);
     let access = ctx.config.views.access.clone();
-    let index = Index::new(projects.values().flat_map(|(_, s)| s), access);
-    for (application, sources) in projects.values() {
+    let index = Index::new(projects.values().flat_map(|(_, s, _)| s), access);
+    for (dir, (application, sources, quarkus)) in &projects {
         let first = out.0.endpoints.len();
+        aspnet::read(sources, &index, target_framework(ctx.root, dir), &mut out);
         let mut call_sites = HashMap::new();
         let routes = conventional::routes(sources, &index, &mut out);
+        let conf = spring::Conf::read(sources, &index, *quarkus, &mut out);
         for src in sources {
             if src.rel.ends_with(".cs") {
                 controllers::scan(src, &index, &routes, &mut out);
                 minimal::scan(src, sources, &index, &mut call_sites, &mut out);
             } else {
-                spring::scan(src, &index, &mut out);
+                spring::scan(src, &index, &conf, &mut out);
+                if let Some(hook) = hook {
+                    hook(src, sources, &index, &conf, &mut out);
+                }
             }
         }
-        spring::central_rules(sources, &index, &mut out, first);
+        spring::central_rules(sources, &index, &conf, &mut out, first);
         for e in &mut out.0.endpoints[first..] {
             e.application = application.clone();
         }
-        if out.0.endpoints.len() > first
-            && sources
-                .iter()
-                .any(|s| s.text.contains("org.springframework"))
-        {
-            out.0.role_conventions.push(RoleConvention {
-                application: application.clone(),
-                role_prefix: Some(ROLE_PREFIX.into()),
-                origins: vec![ConventionOrigin {
-                    field: "role_prefix".into(),
-                    file: String::new(),
-                    line: 0,
-                    source: "framework default spring GrantedAuthorityDefaults".into(),
-                }],
-                ..RoleConvention::default()
-            });
+        let spring = out.0.endpoints.len() > first
+            && (sources.iter()).any(|s| s.text.contains("org.springframework"));
+        if spring && application.is_none() {
+            // A whole-flow prefix would leak into every other application.
+            let file = sources.first().map_or("", |s| s.rel.as_str());
+            let message =
+                "Role prefix not attributed: Spring sources lie outside every build-file project"
+                    .into();
+            out.diag(file, 0, message);
+        } else if spring {
+            out.0
+                .role_conventions
+                .push(conf.convention(application.clone()));
         }
     }
     index.apply_request_access(&mut out);
@@ -136,14 +165,20 @@ mod projects {
 
     /// Application name and source files by project directory; unreadable files
     /// become diagnostics.
-    pub(super) fn read_projects(root: &Path, out: &mut Out) -> BTreeMap<String, Project> {
+    pub(crate) fn read_projects(root: &Path, out: &mut Out) -> BTreeMap<String, Project> {
         let (projects, files) = discover(root, out);
         let mut by_project: BTreeMap<String, Project> = BTreeMap::new();
         for rel in files {
             match read_text(root, &rel, MAX_BYTES) {
                 Ok(text) => by_project
                     .entry(project_of(&rel, &projects))
-                    .or_insert_with_key(|dir| (application(root, dir, &projects), vec![]))
+                    .or_insert_with_key(|dir| {
+                        (
+                            application(root, dir, &projects),
+                            vec![],
+                            quarkus(root, dir),
+                        )
+                    })
                     .1
                     .push(Source::new(rel, &text)),
                 Err(e) => out.diag(&rel, 0, format!("Source file not read (limit 1 MiB): {e}")),
@@ -152,8 +187,32 @@ mod projects {
         by_project
     }
 
-    /// The owning application of a project directory, and its sources.
-    pub(super) type Project = (Option<String>, Vec<Source>);
+    pub(crate) fn quarkus_build(root: &Path, dir: &str) -> bool {
+        (BUILD_FILES.iter()).any(|b| {
+            let rel = if dir.is_empty() {
+                (*b).to_string()
+            } else {
+                format!("{dir}/{b}")
+            };
+            read_text(root, &rel, MAX_BYTES).is_ok_and(|t| t.contains("quarkus"))
+        })
+    }
+
+    /// The owning application of a project directory, its sources, and whether
+    /// its build file depends on the Quarkus Spring compatibility extensions.
+    pub(crate) type Project = (Option<String>, Vec<Source>, bool);
+
+    /// Whether a build file of project directory `dir` names a Quarkus Spring
+    /// compatibility extension (`quarkus-spring-web`, `quarkus-spring-security`).
+    fn quarkus(root: &Path, dir: &str) -> bool {
+        let build = |b: &str| match dir {
+            "" => b.to_string(),
+            _ => format!("{dir}/{b}"),
+        };
+        (BUILD_FILES.iter()).any(|b| {
+            read_text(root, &build(b), MAX_BYTES).is_ok_and(|t| t.contains("quarkus-spring-"))
+        })
+    }
 
     /// The project directory's name (the root's for a build file at the root);
     /// none for files outside every project.
@@ -196,10 +255,64 @@ mod projects {
         (projects, files)
     }
 }
-use projects::read_projects;
+pub(crate) use projects::{Project, quarkus_build, read_projects};
 
-struct Out(UiFlow);
+/// The lowest major version of the project's `<TargetFramework(s)>` (`net10.0`
+/// is 10, `netcoreapp3.1` 3, `net48` 4); none without a `.csproj` or when a
+/// framework is unreadable.
+fn target_framework(root: &Path, dir: &str) -> Option<u32> {
+    let mut names: Vec<String> = std::fs::read_dir(root.join(dir))
+        .ok()?
+        .filter_map(|e| Some(e.ok()?.file_name().to_string_lossy().into_owned()))
+        .filter(|n| n.ends_with(".csproj"))
+        .collect();
+    names.sort();
+    let rel = match dir {
+        "" => names.first()?.clone(),
+        _ => format!("{dir}/{}", names.first()?),
+    };
+    let text = read_text(root, &rel, MAX_BYTES).ok()?;
+    let value = ["TargetFrameworks", "TargetFramework"]
+        .iter()
+        .find_map(|tag| {
+            let rest = &text[text.find(&format!("<{tag}>"))? + tag.len() + 2..];
+            Some(&rest[..rest.find('<')?])
+        })?;
+    let major = |t: &str| {
+        let rest = ["netcoreapp", "netstandard", "net"]
+            .iter()
+            .find_map(|p| t.trim().strip_prefix(p))?;
+        match rest.contains('.') {
+            true => rest.split('.').next()?.parse::<u32>().ok(),
+            false => Some(4), // `net48`, `net472`: .NET Framework
+        }
+    };
+    value.split(';').map(major).min().flatten()
+}
+
+/// Endpoints whose method-security annotations were not applied (their family is
+/// not enabled); a filter chain `permitAll` never turns them `Open`.
+#[derive(Default)]
+struct Ignored {
+    /// Set by the annotation reader while it works on one endpoint.
+    hit: bool,
+    endpoints: BTreeSet<(String, u32)>,
+}
+
+pub(crate) struct Out(UiFlow, Ignored, aspnet::Defaults);
 impl Out {
+    /// An empty run, for readers that only want what the shared annotation
+    /// reader reports about one element.
+    pub(crate) fn scratch() -> Out {
+        Out(
+            UiFlow::default(),
+            Ignored::default(),
+            aspnet::Defaults::default(),
+        )
+    }
+    pub(crate) fn diagnostics(&self) -> &[UiFlowDiagnostic] {
+        &self.0.diagnostics
+    }
     /// A diagnostic for something not read literally: the flow is incomplete.
     fn diag(&mut self, file: &str, line: u32, message: String) {
         self.0.complete = false;
@@ -219,14 +332,14 @@ impl Out {
             severity: DiagnosticSeverity::Note,
         });
     }
-    fn at(&mut self, src: &Source, at: usize, message: String) {
+    pub(crate) fn at(&mut self, src: &Source, at: usize, message: String) {
         self.diag(&src.rel, src.line(at), message);
     }
-    fn unknown(&mut self, src: &Source, at: usize, text: &str) -> Condition {
+    pub(crate) fn unknown(&mut self, src: &Source, at: usize, text: &str) -> Condition {
         self.at(src, at, format!("Access condition not readable: {text}"));
         Condition::Unknown(text.into())
     }
-    fn endpoint(
+    pub(crate) fn endpoint(
         &mut self,
         src: &Source,
         at: usize,
@@ -273,8 +386,8 @@ impl Out {
 
 /// A source file with comments blanked (offsets and lines unchanged).
 pub(crate) struct Source {
-    rel: String,
-    text: String,
+    pub(crate) rel: String,
+    pub(crate) text: String,
     pairs: HashMap<usize, usize>,
     lines: Vec<usize>,
 }
@@ -297,13 +410,13 @@ impl Source {
             lines,
         }
     }
-    fn line(&self, at: usize) -> u32 {
+    pub(crate) fn line(&self, at: usize) -> u32 {
         self.lines.partition_point(|&s| s <= at) as u32
     }
-    fn pair(&self, at: usize) -> Option<usize> {
+    pub(crate) fn pair(&self, at: usize) -> Option<usize> {
         self.pairs.get(&at).copied()
     }
-    fn bytes(&self) -> &[u8] {
+    pub(crate) fn bytes(&self) -> &[u8] {
         self.text.as_bytes()
     }
 }
@@ -341,7 +454,7 @@ fn combine(mut items: Vec<Condition>, many: fn(Vec<Condition>) -> Condition) -> 
     }
 }
 
-fn path(parts: &[&str]) -> String {
+pub(crate) fn path(parts: &[&str]) -> String {
     let segments: Vec<&str> = parts
         .iter()
         .flat_map(|p| p.split('/'))
@@ -363,18 +476,24 @@ pub(crate) struct Decl {
     pub(crate) name: String,
     pub(crate) attrs: Vec<Attr>,
     /// Offset of a method's parameter list; a class's header start.
-    open: usize,
+    pub(crate) open: usize,
     /// A class's body end (`}`, or `;` without a body); 0 for a method.
-    end: usize,
+    pub(crate) end: usize,
     /// A class's base list as simple names (`: Base<T>, IFoo`, `extends`,
     /// `implements`); empty for a method.
     pub(crate) bases: Vec<String>,
     /// `interface` for a class; `public` and not `static` for a method.
-    flag: bool,
+    pub(crate) flag: bool,
+}
+
+/// The header of a type declaration: from its modifiers to the body (or `;`).
+pub(crate) fn class_header<'a>(src: &'a Source, d: &Decl) -> &'a str {
+    let rest = &src.text[d.open..];
+    &rest[..rest.find(['{', ';']).unwrap_or(rest.len())]
 }
 
 /// Calls `f(class, method)` for each method with the innermost class around it.
-fn each_method(src: &Source, annotations: bool, mut f: impl FnMut(&Decl, &Decl)) {
+pub(crate) fn each_method(src: &Source, annotations: bool, mut f: impl FnMut(&Decl, &Decl)) {
     let mut open: Vec<Decl> = Vec::new();
     for d in decls(src, annotations) {
         while open.last().is_some_and(|c| c.end < d.open) {
@@ -394,6 +513,9 @@ fn has(attrs: &[Attr], name: &str) -> bool {
 
 /// Last segment of a qualified attribute name, without `Attribute` and a target.
 pub(crate) fn simple(name: &str) -> String {
+    if let Some((head, generic)) = name.split_once('<') {
+        return format!("{}<{generic}", simple(head));
+    }
     let name = name.rsplit([':', '.']).next().unwrap_or(name).trim();
     name.strip_suffix("Attribute")
         .filter(|n| !n.is_empty())
@@ -606,21 +728,21 @@ fn base_names(header: &str) -> Vec<String> {
 }
 
 /// Literals, brackets, identifiers and argument lists on raw text.
-mod lex {
-    pub(super) use crate::lang_csharp::{code as strip_comments, literal, literal_end};
+pub(crate) mod lex {
+    pub(crate) use crate::lang_csharp::{code as strip_comments, literal, literal_end};
 
-    pub(super) fn is_ident(c: u8) -> bool {
+    pub(crate) fn is_ident(c: u8) -> bool {
         c.is_ascii_alphanumeric() || c == b'_'
     }
 
-    pub(super) fn skip_ws(b: &[u8], i: usize) -> usize {
+    pub(crate) fn skip_ws(b: &[u8], i: usize) -> usize {
         i + b[i.min(b.len())..]
             .iter()
             .take_while(|c| c.is_ascii_whitespace())
             .count()
     }
 
-    pub(super) fn skip_ws_back(b: &[u8], mut i: usize) -> usize {
+    pub(crate) fn skip_ws_back(b: &[u8], mut i: usize) -> usize {
         while i > 0 && b[i - 1].is_ascii_whitespace() {
             i -= 1;
         }
@@ -628,7 +750,7 @@ mod lex {
     }
 
     /// The identifier right before `end` (exclusive), skipping blanks and one `<…>`.
-    pub(super) fn ident_before(b: &[u8], end: usize) -> (usize, usize) {
+    pub(crate) fn ident_before(b: &[u8], end: usize) -> (usize, usize) {
         let mut k = skip_ws_back(b, end);
         if k > 0 && b[k - 1] == b'>' {
             let mut depth = 0;
@@ -650,7 +772,7 @@ mod lex {
     }
 
     /// Whole-word occurrences of `word`.
-    pub(super) fn words<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
+    pub(crate) fn words<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
         let b = text.as_bytes();
         text.match_indices(word).map(|(i, _)| i).filter(move |&i| {
             (i == 0 || !is_ident(b[i - 1])) && b.get(i + word.len()).is_none_or(|c| !is_ident(*c))
@@ -658,12 +780,12 @@ mod lex {
     }
 
     /// Splits on commas outside brackets and literals.
-    pub(super) fn split_top(s: &str) -> Vec<&str> {
+    pub(crate) fn split_top(s: &str) -> Vec<&str> {
         split_by(s, b',')
     }
 
     /// Splits on `sep` outside brackets and literals; empty parts are dropped.
-    pub(super) fn split_by(s: &str, sep: u8) -> Vec<&str> {
+    pub(crate) fn split_by(s: &str, sep: u8) -> Vec<&str> {
         let b = s.as_bytes();
         let (mut parts, mut depth, mut start, mut i) = (Vec::new(), 0i32, 0, 0);
         while i < b.len() {
@@ -688,7 +810,7 @@ mod lex {
     }
 
     /// `name = value` (Java/Kotlin/C# attribute) or `name: value` (C# argument).
-    pub(super) fn named_part(part: &str) -> Option<(&str, &str)> {
+    pub(crate) fn named_part(part: &str) -> Option<(&str, &str)> {
         let b = part.as_bytes();
         let end = b.iter().take_while(|c| is_ident(**c)).count();
         let k = skip_ws(b, end);
@@ -698,20 +820,20 @@ mod lex {
         (end > 0 && named).then(|| (&part[..end], part[k + 1..].trim()))
     }
 
-    pub(super) fn named<'a>(args: &'a str, key: &str) -> Option<&'a str> {
+    pub(crate) fn named<'a>(args: &'a str, key: &str) -> Option<&'a str> {
         split_top(args)
             .into_iter()
             .find_map(|p| named_part(p).filter(|(k, _)| *k == key).map(|(_, v)| v))
     }
 
-    pub(super) fn positional(args: &str) -> Option<&str> {
+    pub(crate) fn positional(args: &str) -> Option<&str> {
         split_top(args)
             .into_iter()
             .find(|p| named_part(p).is_none())
     }
 
     /// A literal or an array (`{…}`, `[…]`, `arrayOf(…)`) of literals.
-    pub(super) fn literals(s: &str) -> Option<Vec<String>> {
+    pub(crate) fn literals(s: &str) -> Option<Vec<String>> {
         let s = s.trim();
         if let Some(one) = literal(s) {
             return Some(vec![one]);
@@ -759,6 +881,9 @@ mod index {
     /// Bound for constant-to-constant and base-class hops.
     const MAX_DEPTH: usize = 8;
 
+    /// Base classes with the files they are declared in.
+    type Bases<'a, 's> = Vec<(&'a Source, &'s Decl)>;
+
     /// What the supertypes of a class contribute: annotation levels `(source,
     /// attributes)` on a method and on the type, gaps, and ambiguous supertypes
     /// that may carry a check.
@@ -770,7 +895,7 @@ mod index {
         pub ambiguous: Vec<String>,
     }
 
-    pub(super) struct Index<'a> {
+    pub(crate) struct Index<'a> {
         access: BTreeMap<String, AccessMeaning>,
         /// `Class.Member` → the initializer texts found for it.
         constants: HashMap<String, BTreeSet<String>>,
@@ -784,7 +909,7 @@ mod index {
     }
 
     impl<'a> Index<'a> {
-        pub(super) fn new(
+        pub(crate) fn new(
             sources: impl Iterator<Item = &'a Source>,
             access: BTreeMap<String, AccessMeaning>,
         ) -> Self {
@@ -832,7 +957,7 @@ mod index {
         }
 
         /// A string value: a literal, `nameof(X)`, a constant of the scan, or `+` of these.
-        pub(super) fn text(&self, raw: &str) -> Option<String> {
+        pub(crate) fn text(&self, raw: &str) -> Option<String> {
             self.text_at(raw, 0)
         }
 
@@ -927,6 +1052,24 @@ mod index {
             src: &Source,
             class: &Decl,
         ) -> Vec<(&'a Source, &'s Decl)> {
+            let (found, ambiguous) = self.chain(class);
+            if let Some((name, count)) = ambiguous {
+                let message = format!(
+                    "Base class {name} is ambiguous ({count} classes of that name); its \
+                     attributes are not applied to {}.",
+                    class.name
+                );
+                out.note(&src.rel, src.line(class.open), message);
+            }
+            found
+        }
+
+        /// [`Self::ancestors`] without the note: the bases and the ambiguous
+        /// base (name, count) that stopped the walk.
+        pub(super) fn chain<'s>(
+            &'s self,
+            class: &Decl,
+        ) -> (Bases<'a, 's>, Option<(String, usize)>) {
             let mut found: Vec<(&'a Source, &'s Decl)> = Vec::new();
             let mut seen = BTreeSet::from([class.name.clone()]);
             let mut base = class.bases.first();
@@ -938,24 +1081,22 @@ mod index {
                     break;
                 }
                 if candidates.len() > 1 {
-                    let message = format!(
-                        "Base class {name} is ambiguous ({} classes of that name); its \
-                         attributes are not applied to {}.",
-                        candidates.len(),
-                        class.name
-                    );
-                    out.note(&src.rel, src.line(class.open), message);
-                    break;
+                    return (found, Some((name.clone(), candidates.len())));
                 }
                 let (s, d) = &candidates[0];
                 found.push((*s, d));
                 base = d.bases.first();
             }
-            found
+            (found, None)
+        }
+
+        /// Every class of the scan (interfaces excluded).
+        pub(super) fn all_classes(&self) -> impl Iterator<Item = (&'a Source, &Decl)> + '_ {
+            self.classes.values().flatten().map(|(s, d)| (*s, d))
         }
 
         /// The one declaration of annotation type `name`, for meta-annotations.
-        pub(super) fn meta(&self, name: &str) -> Option<(&'a Source, &Decl)> {
+        pub(crate) fn meta(&self, name: &str) -> Option<(&'a Source, &Decl)> {
             match self.interfaces.get(name)?.as_slice() {
                 [(s, d)] => Some((*s, d)),
                 _ => None,
@@ -1016,6 +1157,24 @@ mod index {
                 todo.extend(d.bases.iter().rev().cloned());
             }
             up
+        }
+
+        /// The class or interface `name` declared in `src`.
+        pub(crate) fn type_in(&self, src: &Source, name: &str) -> Option<&Decl> {
+            [&self.classes, &self.interfaces]
+                .into_iter()
+                .filter_map(|m| m.get(name))
+                .flatten()
+                .find(|(s, _)| std::ptr::eq(*s, src))
+                .map(|(_, d)| d)
+        }
+
+        /// The annotated methods of `class` declared in `src`.
+        pub(crate) fn methods_in(&self, src: &Source, class: &str) -> Vec<&Decl> {
+            (self.methods.get(class).into_iter().flatten())
+                .filter(|(s, _)| std::ptr::eq(*s, src))
+                .map(|(_, d)| d)
+                .collect()
         }
 
         /// The declaration of class `name` in `src`.
@@ -1159,7 +1318,7 @@ mod index {
         found
     }
 }
-use index::Index;
+pub(crate) use index::Index;
 
 /// ASP.NET Core controllers: attribute routes, else the project's
 /// conventional routes ([`conventional`]). A class without its own `[Route]`
@@ -1167,7 +1326,7 @@ use index::Index;
 /// `[Area]` and listed attributes of base classes apply too.
 mod controllers {
     use super::conventional::Route;
-    use super::lex::{named, positional};
+    use super::lex::{named, positional, words};
     use super::*;
 
     const VERBS: [(&str, &str); 7] = [
@@ -1188,15 +1347,60 @@ mod controllers {
     }
 
     pub(super) fn scan(src: &Source, index: &Index, routes: &[Route], out: &mut Out) {
+        let mut methods: BTreeMap<usize, Vec<Decl>> = BTreeMap::new();
         each_method(src, false, |class, d| {
-            let controller = class.name.ends_with("Controller")
-                || has(&class.attrs, "ApiController")
-                || has(&class.attrs, "Controller");
-            if controller && !has(&class.attrs, "NonController") {
-                let ancestors = index.ancestors(out, src, class);
-                action(src, index, routes, out, (class, &ancestors), d);
-            }
+            methods.entry(class.open).or_default().push(d.clone());
         });
+        for class in decls(src, false).iter().filter(|d| d.class) {
+            if !controller(src, class, &index.chain(class).0) {
+                continue;
+            }
+            let ancestors = index.ancestors(out, src, class);
+            let own = methods.get(&class.open).map_or(&[][..], Vec::as_slice);
+            for d in own {
+                let at = (src, src, class.name.as_str());
+                action(at, index, routes, out, (class, &ancestors), d);
+            }
+            // Public actions of a base class belong to the derived controller too.
+            for (base_src, base) in &ancestors {
+                let mut inherited = Vec::new();
+                each_method(base_src, false, |c, m| {
+                    if c.open == base.open && !own.iter().any(|o| o.name == m.name) {
+                        inherited.push(m.clone());
+                    }
+                });
+                for d in &inherited {
+                    let at = (src, *base_src, base.name.as_str());
+                    action(at, index, routes, out, (class, &ancestors), d);
+                }
+            }
+        }
+    }
+
+    /// ASP.NET's own rules: a concrete, non-generic class that is not
+    /// `[NonController]` and is named `*Controller`, or marked `[ApiController]` /
+    /// `[Controller]`, or derives from `ControllerBase` / `Controller` (which carry
+    /// `[Controller]`). Attributes and bases count through the base classes.
+    fn controller(src: &Source, class: &Decl, ancestors: &[(&Source, &Decl)]) -> bool {
+        let header = class_header(src, class);
+        let generic = words(header, &class.name)
+            .next()
+            .is_some_and(|p| header.as_bytes().get(p + class.name.len()) == Some(&b'<'));
+        if generic
+            || words(header, "abstract").next().is_some()
+            || has(&class.attrs, "NonController")
+        {
+            return false;
+        }
+        let chain = || std::iter::once(class).chain(ancestors.iter().map(|(_, d)| *d));
+        class.name.ends_with("Controller")
+            || chain().any(|c| {
+                has(&c.attrs, "ApiController")
+                    || has(&c.attrs, "Controller")
+                    || c.bases
+                        .iter()
+                        .any(|b| b == "ControllerBase" || b == "Controller")
+            })
     }
 
     fn verbs(attrs: &[Attr]) -> Vec<(&Attr, &'static str)> {
@@ -1211,8 +1415,10 @@ mod controllers {
             .collect()
     }
 
+    /// One action `d`, declared in `declaring` (the class or a base class) and
+    /// served by the controller `class`.
     fn action(
-        src: &Source,
+        (class_src, src, declaring): (&Source, &Source, &str),
         index: &Index,
         routes: &[Route],
         out: &mut Out,
@@ -1229,7 +1435,7 @@ mod controllers {
         if d.name == class.name || has(&d.attrs, "NonAction") || verbs.is_empty() && !conventional {
             return;
         }
-        let route_level = std::iter::once((src, class))
+        let route_level = std::iter::once((class_src, class))
             .chain(ancestors.iter().copied())
             .find(|(_, c)| has(&c.attrs, "Route"));
         let class_attrs: Attrs = route_level.map_or_else(Vec::new, |(s, c)| own(c, s));
@@ -1242,7 +1448,7 @@ mod controllers {
         if verbs.is_empty() && !class_routes.is_empty() {
             return;
         }
-        let mut levels = own(class, src);
+        let mut levels = own(class, class_src);
         for (s, base) in ancestors {
             levels.extend(own(base, s));
         }
@@ -1270,10 +1476,7 @@ mod controllers {
         for (attr, method) in verbs {
             emit.verb(index, out, attr, method);
         }
-        out.link(
-            first,
-            handlers::of_method(src, &class.name, &d.name, d.open),
-        );
+        out.link(first, handlers::of_method(src, declaring, &d.name, d.open));
     }
 
     /// One action's routes and access, ready to give endpoints.
@@ -1393,21 +1596,45 @@ mod controllers {
         Some(found)
     }
 
-    /// `[AllowAnonymous]` or an `open` listed attribute anywhere wins; otherwise
-    /// every `[Authorize]` and listed attribute must hold.
+    /// `[AllowAnonymous]`, an `open` listed attribute or `MapControllers()
+    /// .AllowAnonymous()` wins; otherwise every `[Authorize]`, listed or project
+    /// authorization attribute and `MapControllers().RequireAuthorization()` must
+    /// hold, the fallback policy only when none of these exists, and every global
+    /// `AuthorizeFilter` in addition.
     fn access(index: &Index, out: &mut Out, levels: &Attrs) -> AccessState {
         let open = |a: &Attr| a.name == "AllowAnonymous" || index.is_open(a);
-        if levels.iter().any(|(_, a)| open(a)) {
+        if levels.iter().any(|(_, a)| open(a))
+            || out.2.convention.contains(&minimal::Mod::Anonymous)
+        {
             return AccessState::Open;
         }
         let mut conditions = Vec::new();
         for (src, a) in levels {
             if a.name == "Authorize" {
                 conditions.push(authorize(index, src, out, a));
+            } else if let Some(listed) = index.listed(out, src, a) {
+                conditions.extend(listed);
             } else {
-                conditions.extend(index.listed(out, src, a).flatten());
+                let text = |s: &str| index.text(s);
+                let attr = aspnet::Use {
+                    src,
+                    at: a.at,
+                    name: &a.name,
+                    args: &a.args,
+                    mvc: true,
+                };
+                conditions.extend(aspnet::custom(out, &attr, &text).flatten());
             }
         }
+        for m in &out.2.convention {
+            if let minimal::Mod::Auth(c) = m {
+                conditions.push(c.clone());
+            }
+        }
+        if conditions.is_empty() {
+            conditions.extend(out.2.fallback.clone());
+        }
+        conditions.extend(out.2.filters.clone());
         combine(conditions, Condition::All).map_or(AccessState::Undeclared, AccessState::Protected)
     }
 
@@ -1428,7 +1655,7 @@ mod controllers {
             let policy = index.text(raw).map(Condition::Policy);
             parts.push(policy.unwrap_or_else(|| out.unknown(src, a.at, raw)));
         }
-        combine(parts, Condition::All).unwrap_or(Condition::Authenticated)
+        combine(parts, Condition::All).unwrap_or_else(|| out.2.default_condition())
     }
 }
 
@@ -1612,9 +1839,9 @@ mod minimal {
     }
 
     #[derive(Default)]
-    struct Chain {
+    pub(super) struct Chain {
         prefix: Vec<String>,
-        mods: Vec<Mod>,
+        pub(super) mods: Vec<Mod>,
         vars: Vec<String>,
     }
 
@@ -1679,7 +1906,8 @@ mod minimal {
             .collect();
         parts.push(&pattern);
         let n = out.0.endpoints.len();
-        out.endpoint(src, p, method, path(&parts), &access(&mods));
+        let access = access(&mods, &out.2);
+        out.endpoint(src, p, method, path(&parts), &access);
         if let Some(delegate) = delegate {
             out.link(n, handlers::of_delegate(src, sources, delegate));
         }
@@ -1819,7 +2047,8 @@ mod minimal {
         mods
     }
 
-    fn access(mods: &[Mod]) -> AccessState {
+    /// Without any authorization metadata the fallback policy applies.
+    fn access(mods: &[Mod], defaults: &aspnet::Defaults) -> AccessState {
         if mods.contains(&Mod::Anonymous) {
             return AccessState::Open;
         }
@@ -1830,28 +2059,27 @@ mod minimal {
                 Mod::Anonymous => None,
             })
             .collect();
-        combine(conditions, Condition::All).map_or(AccessState::Undeclared, AccessState::Protected)
+        match combine(conditions, Condition::All).or_else(|| defaults.fallback.clone()) {
+            Some(c) => AccessState::Protected(c),
+            None => AccessState::Undeclared,
+        }
     }
 
     fn modifier(src: &Source, out: &mut Out, at: usize, name: &str, args: &str) -> Vec<Mod> {
         match (name, split_top(args)) {
             ("AllowAnonymous", _) => vec![Mod::Anonymous],
             ("RequireAuthorization", parts) if parts.is_empty() => {
-                vec![Mod::Auth(Condition::Authenticated)]
+                vec![Mod::Auth(out.2.default_condition())]
             }
-            ("RequireAuthorization", parts) => parts
-                .into_iter()
-                .map(|p| {
-                    let policy = literal(p).map(Condition::Policy);
-                    Mod::Auth(policy.unwrap_or_else(|| out.unknown(src, at, p)))
-                })
+            ("RequireAuthorization", parts) => (parts.into_iter())
+                .filter_map(|p| aspnet::argument(src, out, at, p))
                 .collect(),
             _ => vec![],
         }
     }
 
     /// Modifiers in up to `max` `.X(…)` calls chained after position `close`.
-    fn trailing(src: &Source, out: &mut Out, close: usize, max: usize) -> Vec<Mod> {
+    pub(super) fn trailing(src: &Source, out: &mut Out, close: usize, max: usize) -> Vec<Mod> {
         let b = src.bytes();
         let mut mods = Vec::new();
         let mut j = skip_ws(b, close + 1);
@@ -1882,7 +2110,7 @@ mod minimal {
 
     /// The route group of the expression ending at `end` (exclusive). Every step
     /// moves left, so it ends. `Err` for a group prefix that is not a literal.
-    fn group(src: &Source, out: &mut Out, end: usize) -> Result<Chain, String> {
+    pub(super) fn group(src: &Source, out: &mut Out, end: usize) -> Result<Chain, String> {
         let b = src.bytes();
         let j = skip_ws_back(b, end);
         if j > 0 && b[j - 1] == b')' {
@@ -2072,8 +2300,887 @@ mod minimal {
     }
 }
 
+/// ASP.NET authorization facts that no single endpoint states, read once per
+/// project before its endpoints (A-06, A-07, A-10, B-02, B-03).
+///
+/// - `DefaultPolicy`: what a bare `[Authorize]` / `RequireAuthorization()`
+///   means (`authenticated` when never assigned).
+/// - `FallbackPolicy`: applies to an endpoint without any authorization
+///   metadata, never together with it.
+/// - `Filters.Add(new AuthorizeFilter(…))`: every MVC action also needs it;
+///   minimal endpoints are not affected.
+/// - `MapControllers()` / `MapControllerRoute(…)` followed by
+///   `.RequireAuthorization(…)` / `.AllowAnonymous()`: metadata of every action.
+/// - Attribute classes of the scan that derive from `AuthorizeAttribute` or
+///   implement `IAuthorizeData` / `IAuthorizationRequirementData`; their
+///   constructor and property assignments are read when literal.
+///
+/// A setting assigned twice, under a condition, or from an expression that is
+/// not a policy-builder chain, a single local variable or `o.DefaultPolicy` is
+/// `Unknown` with a gap, never absent.
+mod aspnet {
+    use super::lex::{literal, named_part, skip_ws, skip_ws_back, split_top, words};
+    use super::minimal::{self, Mod, call_close, statement_end};
+    use super::*;
+
+    const MAX_DEPTH: usize = 8;
+    /// Words that make a statement conditional.
+    const BRANCHES: [&str; 7] = ["if", "else", "for", "foreach", "while", "switch", "case"];
+
+    #[derive(Default)]
+    pub(super) struct Defaults {
+        default: Option<Condition>,
+        pub(super) fallback: Option<Condition>,
+        pub(super) filters: Vec<Condition>,
+        pub(super) convention: Vec<Mod>,
+        /// Lowest target framework major version; none when unreadable.
+        net: Option<u32>,
+        classes: BTreeMap<String, AuthClass>,
+        /// The framework's own `AuthorizeAttribute`.
+        framework: AuthClass,
+    }
+
+    impl Defaults {
+        /// What a bare authorization datum means.
+        pub(super) fn default_condition(&self) -> Condition {
+            self.default.clone().unwrap_or(Condition::Authenticated)
+        }
+    }
+
+    #[derive(Default, Clone)]
+    struct Ctor {
+        params: Vec<String>,
+        base_args: Vec<String>,
+        /// `Policy = …;` / `Roles = …;` in the body.
+        assigns: Vec<(String, String)>,
+    }
+
+    #[derive(Default)]
+    struct AuthClass {
+        /// Derives from `AuthorizeAttribute`.
+        authorize: bool,
+        /// Implements `IAuthorizeData`.
+        data: bool,
+        /// Implements `IAuthorizationRequirementData`.
+        requirement: bool,
+        /// Implements a filter interface: it also decides in code.
+        filter: bool,
+        /// Declared more than once under this name.
+        ambiguous: bool,
+        /// `Policy`/`Roles` appear in the body outside a constructor assignment.
+        opaque: bool,
+        bases: Vec<String>,
+        primary: Option<Ctor>,
+        ctors: Vec<Ctor>,
+    }
+
+    #[derive(Default)]
+    struct Props {
+        policy: Option<String>,
+        roles: Option<String>,
+    }
+
+    pub(super) fn read(sources: &[Source], index: &Index, net: Option<u32>, out: &mut Out) {
+        out.2 = Defaults {
+            net,
+            classes: classes::build(index),
+            framework: AuthClass {
+                authorize: true,
+                ..AuthClass::default()
+            },
+            ..Defaults::default()
+        };
+        let cs: Vec<&Source> = sources.iter().filter(|s| s.rel.ends_with(".cs")).collect();
+        out.2.default = policy_setting(&cs, index, out, "DefaultPolicy", "SetDefaultPolicy");
+        out.2.fallback = policy_setting(&cs, index, out, "FallbackPolicy", "SetFallbackPolicy");
+        filters(&cs, index, out);
+        conventions(&cs, out);
+    }
+
+    /// The value assigned to `name` (or passed to `setter(…)`): none when never
+    /// set, `Unknown` when set twice, conditionally or unreadably.
+    fn policy_setting(
+        cs: &[&Source],
+        index: &Index,
+        out: &mut Out,
+        name: &str,
+        setter: &str,
+    ) -> Option<Condition> {
+        // (source, position, expression span)
+        let mut sites: Vec<(&Source, usize, (usize, usize))> = Vec::new();
+        for src in cs {
+            let b = src.bytes();
+            for p in words(&src.text, name) {
+                let eq = skip_ws(b, p + name.len());
+                let prev = skip_ws_back(b, p);
+                // A declaration (`public X DefaultPolicy = …`) is no assignment.
+                let declared =
+                    prev > 0 && (lex::is_ident(b[prev - 1]) || matches!(b[prev - 1], b'>' | b']'));
+                let assign =
+                    b.get(eq) == Some(&b'=') && !matches!(b.get(eq + 1), Some(b'=' | b'>'));
+                if assign && !declared {
+                    sites.push((src, p, first_part(src, eq + 1, statement_end(src, eq + 1))));
+                }
+            }
+            for p in words(&src.text, setter) {
+                if let Some(close) = call_close(src, p, setter) {
+                    let open = skip_ws(b, p + setter.len());
+                    sites.push((src, p, first_part(src, open + 1, close)));
+                }
+            }
+        }
+        match sites.as_slice() {
+            [] => None,
+            [(src, at, span)] if !conditional(src, *at) => {
+                Some(eval(src, index, out, *span, name, 0))
+            }
+            [(src, at, _), ..] => Some(out.unknown(src, *at, name)),
+        }
+    }
+
+    /// The span of the first top-level argument/expression in `from..to`.
+    fn first_part(src: &Source, from: usize, to: usize) -> (usize, usize) {
+        let base = src.text.as_ptr() as usize;
+        match split_top(&src.text[from..to]).first() {
+            Some(part) => {
+                let start = part.as_ptr() as usize - base;
+                (start, start + part.len())
+            }
+            None => (from, from),
+        }
+    }
+
+    /// Whether the statement at `at` runs only under a condition.
+    fn conditional(src: &Source, at: usize) -> bool {
+        let b = src.bytes();
+        let branches = |from: usize, to: usize| {
+            BRANCHES
+                .iter()
+                .any(|w| words(&src.text[from..to], w).next().is_some())
+        };
+        let head = |to: usize| {
+            b[..to]
+                .iter()
+                .rposition(|c| matches!(c, b';' | b'{' | b'}'))
+                .map_or(0, |p| p + 1)
+        };
+        branches(head(at), at)
+            || (0..at)
+                .filter(|&k| b[k] == b'{')
+                .filter(|&k| src.pair(k).is_some_and(|c| c > at))
+                .any(|k| branches(head(k), k))
+    }
+
+    /// A policy expression: a builder chain, `o.DefaultPolicy`, or a local
+    /// variable assigned once; anything else is `Unknown(label)`.
+    fn eval(
+        src: &Source,
+        index: &Index,
+        out: &mut Out,
+        (s, e): (usize, usize),
+        label: &str,
+        depth: usize,
+    ) -> Condition {
+        let text = src.text[s..e].trim();
+        if text == "DefaultPolicy" || text.ends_with(".DefaultPolicy") {
+            return out.2.default_condition();
+        }
+        if text.contains("new AuthorizationPolicyBuilder") {
+            return chain(src, index, out, (s, e), label);
+        }
+        if !text.is_empty() && text.bytes().all(lex::is_ident) && depth < 3 {
+            let b = src.bytes();
+            let defs: Vec<usize> = words(&src.text, text)
+                .filter(|&p| {
+                    let eq = skip_ws(b, p + text.len());
+                    let prev = skip_ws_back(b, p);
+                    b.get(eq) == Some(&b'=')
+                        && !matches!(b.get(eq + 1), Some(b'=' | b'>'))
+                        && (prev == 0 || b[prev - 1] != b'.')
+                })
+                .collect();
+            if let [p] = defs.as_slice() {
+                let eq = skip_ws(b, p + text.len()) + 1;
+                let span = first_part(src, eq, statement_end(src, eq));
+                return eval(src, index, out, span, label, depth + 1);
+            }
+        }
+        out.unknown(src, s, label)
+    }
+
+    /// The requirements of an `AuthorizationPolicyBuilder` chain, all required.
+    fn chain(
+        src: &Source,
+        index: &Index,
+        out: &mut Out,
+        (s, e): (usize, usize),
+        label: &str,
+    ) -> Condition {
+        let b = src.bytes();
+        let (mut items, mut i) = (Vec::new(), s);
+        while i < e {
+            if let Some(end) = literal_end(b, i) {
+                i = end;
+                continue;
+            }
+            match b[i] {
+                b'(' | b'[' | b'{' => i = src.pair(i).map_or(i + 1, |c| c + 1),
+                b'.' => {
+                    let st = skip_ws(b, i + 1);
+                    let en = st + b[st..].iter().take_while(|c| lex::is_ident(**c)).count();
+                    let open = skip_ws(b, en);
+                    let close = (b.get(open) == Some(&b'('))
+                        .then(|| src.pair(open))
+                        .flatten();
+                    match close {
+                        Some(c) => {
+                            let args = &src.text[open + 1..c];
+                            items.extend(step(src, index, out, st, &src.text[st..en], args));
+                            i = c + 1;
+                        }
+                        None => i += 1,
+                    }
+                }
+                _ => i += 1,
+            }
+        }
+        combine(items, Condition::All).unwrap_or_else(|| out.unknown(src, s, label))
+    }
+
+    fn step(
+        src: &Source,
+        index: &Index,
+        out: &mut Out,
+        at: usize,
+        name: &str,
+        args: &str,
+    ) -> Option<Condition> {
+        let parts = split_top(args);
+        let texts: Option<Vec<String>> = parts.iter().map(|p| index.text(p)).collect();
+        match (name, texts) {
+            ("Build" | "AddAuthenticationSchemes", _) => None,
+            ("RequireAuthenticatedUser", _) => Some(Condition::Authenticated),
+            ("RequireRole", Some(roles)) if !roles.is_empty() => combine(
+                roles.into_iter().map(Condition::Role).collect(),
+                Condition::Any,
+            ),
+            ("RequireClaim", Some(t)) if !t.is_empty() => Some(Condition::Custom(match t.len() {
+                1 => format!("claim {}", t[0]),
+                _ => format!("claim {} = {}", t[0], t[1..].join("|")),
+            })),
+            ("AddRequirements", _) if !parts.is_empty() => {
+                let custom = parts.iter().map(|p| {
+                    let p = p.trim();
+                    Condition::Custom(p.strip_prefix("new ").unwrap_or(p).trim().to_string())
+                });
+                combine(custom.collect(), Condition::All)
+            }
+            _ => Some(out.unknown(src, at, &format!("{name}({})", args.trim()))),
+        }
+    }
+
+    const NEW_FILTER: &str = "new AuthorizeFilter";
+
+    /// `Filters.Add(new AuthorizeFilter(…))`; any other `AuthorizeFilter` is a gap.
+    fn filters(cs: &[&Source], index: &Index, out: &mut Out) {
+        for src in cs {
+            let mut read = BTreeSet::new();
+            for p in words(&src.text, "Filters") {
+                if let Some(q) = added_filter(src, p) {
+                    read.insert(q + 4);
+                    filter_policy(src, index, out, q);
+                }
+            }
+            for p in words(&src.text, "AuthorizeFilter").filter(|p| !read.contains(p)) {
+                let message = "AuthorizeFilter outside Filters.Add(new …) not read";
+                out.at(src, p, message.into());
+            }
+        }
+    }
+
+    /// The position of `new AuthorizeFilter` inside the `Filters.Add(…)` call
+    /// whose receiver word starts at `p`.
+    fn added_filter(src: &Source, p: usize) -> Option<usize> {
+        let b = src.bytes();
+        let dot = skip_ws(b, p + "Filters".len());
+        let add = skip_ws(b, dot + 1);
+        let open = skip_ws(b, add + 3);
+        if b.get(dot) != Some(&b'.')
+            || !src.text[add..].starts_with("Add")
+            || b.get(open) != Some(&b'(')
+        {
+            return None;
+        }
+        let close = src.pair(open)?;
+        src.text[open..close].find(NEW_FILTER).map(|q| open + q)
+    }
+
+    /// The policy `new AuthorizeFilter(…)` at `q` enforces.
+    fn filter_policy(src: &Source, index: &Index, out: &mut Out, q: usize) {
+        let b = src.bytes();
+        let ctor = skip_ws(b, q + NEW_FILTER.len());
+        let end = (b.get(ctor) == Some(&b'('))
+            .then(|| src.pair(ctor))
+            .flatten();
+        let Some(end) = end else {
+            return out.at(src, q, "AuthorizeFilter arguments not readable".into());
+        };
+        let (s, e) = first_part(src, ctor + 1, end);
+        let arg = src.text[s..e].trim();
+        let policy = match (arg.is_empty(), literal(arg)) {
+            (true, _) => out.2.default_condition(),
+            (_, Some(name)) => Condition::Policy(name),
+            _ => eval(src, index, out, (s, e), arg, 0),
+        };
+        out.2.filters.push(policy);
+    }
+
+    /// The modifiers of the route builder the call `.name(…)` at `p` (closing
+    /// at `close`) extends: those before it in the chain and those after it.
+    fn call_mods(src: &Source, out: &mut Out, p: usize, close: usize) -> Vec<Mod> {
+        let before = skip_ws_back(src.bytes(), p) - 1;
+        let mut mods = minimal::group(src, out, before).map_or_else(|_| vec![], |c| c.mods);
+        mods.extend(minimal::trailing(src, out, close, usize::MAX));
+        mods
+    }
+
+    /// Modifiers chained on `MapControllers()` and the other controller routes.
+    fn conventions(cs: &[&Source], out: &mut Out) {
+        let mut found: Vec<Vec<Mod>> = Vec::new();
+        let mut first = None;
+        for src in cs {
+            for name in [
+                "MapControllers",
+                "MapDefaultControllerRoute",
+                "MapControllerRoute",
+                "MapAreaControllerRoute",
+            ] {
+                for p in words(&src.text, name) {
+                    let Some(close) = call_close(src, p, name) else {
+                        continue;
+                    };
+                    let mut mods = call_mods(src, out, p, close);
+                    mods.sort();
+                    mods.dedup();
+                    first.get_or_insert((src, p));
+                    found.push(mods);
+                }
+            }
+        }
+        let same = found.windows(2).all(|w| w[0] == w[1]);
+        match (found.first(), first) {
+            (Some(mods), _) if same => out.2.convention = mods.clone(),
+            (Some(_), Some((src, at))) => {
+                let c = out.unknown(src, at, "MapControllers conventions differ");
+                out.2.convention = vec![Mod::Auth(c)];
+            }
+            _ => {}
+        }
+    }
+
+    /// Reads the attribute classes of the scan: which derive from
+    /// `AuthorizeAttribute` / implement the authorization interfaces, and their constructors.
+    mod classes {
+        use super::*;
+
+        #[derive(Default, Clone, Copy)]
+        struct Flags {
+            authorize: bool,
+            data: bool,
+            requirement: bool,
+            filter: bool,
+        }
+        type Memo = BTreeMap<String, Flags>;
+
+        fn class_key(src: &Source, d: &Decl) -> String {
+            let header = class_header(src, d);
+            let generic = words(header, &d.name)
+                .next()
+                .is_some_and(|p| header.as_bytes().get(p + d.name.len()) == Some(&b'<'));
+            match generic {
+                true => format!("{}<>", d.name),
+                false => d.name.clone(),
+            }
+        }
+
+        /// `(authorize, data, requirement)` of the class under `key`, through the
+        /// project base classes.
+        fn flags(bases: &BTreeMap<String, Vec<String>>, key: &str, memo: &mut Memo) -> Flags {
+            if let Some(f) = memo.get(key) {
+                return *f;
+            }
+            // A cycle sees the class as not (yet) deriving.
+            memo.insert(key.to_string(), Flags::default());
+            let mut f = Flags::default();
+            for b in bases.get(key).into_iter().flatten() {
+                match b.as_str() {
+                    "AuthorizeAttribute" => f.authorize = true,
+                    "IAuthorizeData" => f.data = true,
+                    "IAuthorizationRequirementData" => f.requirement = true,
+                    // The framework's filter interfaces decide in code.
+                    n if n.ends_with("Filter") || n == "IFilterFactory" => f.filter = true,
+                    _ => {
+                        for k in [b.clone(), format!("{b}<>")] {
+                            let g = flags(bases, &k, memo);
+                            f.authorize |= g.authorize;
+                            f.data |= g.data;
+                            f.requirement |= g.requirement;
+                            f.filter |= g.filter;
+                        }
+                    }
+                }
+            }
+            memo.insert(key.to_string(), f);
+            f
+        }
+
+        pub(super) fn build(index: &Index) -> BTreeMap<String, AuthClass> {
+            let all: Vec<(&Source, &Decl, String)> = index
+                .all_classes()
+                .filter(|(s, _)| s.rel.ends_with(".cs"))
+                .map(|(s, d)| (s, d, class_key(s, d)))
+                .collect();
+            let mut bases: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for (_, d, key) in &all {
+                bases
+                    .entry(key.clone())
+                    .or_default()
+                    .extend(d.bases.clone());
+            }
+            let mut found: BTreeMap<String, AuthClass> = BTreeMap::new();
+            let mut memo = Memo::new();
+            for (src, d, key) in all {
+                let f = flags(&bases, &key, &mut memo);
+                if !(f.authorize || f.data || f.requirement) {
+                    continue;
+                }
+                if let Some(c) = found.get_mut(&key) {
+                    c.ambiguous = true;
+                    continue;
+                }
+                let mut c = parse(src, d);
+                (c.authorize, c.data, c.requirement, c.filter) =
+                    (f.authorize, f.data, f.requirement, f.filter);
+                found.insert(key, c);
+            }
+            found
+        }
+
+        /// Constructors and `Policy`/`Roles` assignments of a class.
+        fn parse(src: &Source, d: &Decl) -> AuthClass {
+            let b = src.bytes();
+            let header = class_header(src, d);
+            let open = d.open + header.len();
+            let mut c = AuthClass {
+                bases: d.bases.clone(),
+                primary: primary(header, &d.name),
+                ..AuthClass::default()
+            };
+            let mut assigned = 0;
+            let mut j = open + 1;
+            while b.get(open) == Some(&b'{') && j < d.end && j < b.len() {
+                if let Some(end) = literal_end(b, j) {
+                    j = end;
+                    continue;
+                }
+                match b[j] {
+                    b'{' | b'(' | b'[' => j = src.pair(j).map_or(j + 1, |c| c + 1),
+                    ch if lex::is_ident(ch) && (j == 0 || !lex::is_ident(b[j - 1])) => {
+                        let e = j + b[j..].iter().take_while(|c| lex::is_ident(**c)).count();
+                        let paren = skip_ws(b, e);
+                        let (ps, pe) = ident_before(b, skip_ws_back(b, j));
+                        let declared = src.text[j..e] == d.name
+                            && b.get(paren) == Some(&b'(')
+                            && &src.text[ps..pe] != "new"
+                            && !(skip_ws_back(b, j) > 0 && b[skip_ws_back(b, j) - 1] == b'.');
+                        j = e;
+                        if let (true, Some(close)) = (declared, src.pair(paren)) {
+                            let (ctor, next, opaque) = constructor(src, paren, close);
+                            assigned += ctor.assigns.len();
+                            c.opaque |= opaque;
+                            c.ctors.push(ctor);
+                            j = next;
+                        }
+                    }
+                    _ => j += 1,
+                }
+            }
+            let body = &src.text[open.min(d.end)..d.end.min(src.text.len())];
+            let mentions = words(body, "Policy").count() + words(body, "Roles").count();
+            c.opaque |= mentions > assigned;
+            c
+        }
+
+        /// A constructor with its parameter list `(paren, close)`: the parsed
+        /// constructor, where the scan goes on, and whether it chains with `this(…)`.
+        fn constructor(src: &Source, paren: usize, close: usize) -> (Ctor, usize, bool) {
+            let b = src.bytes();
+            let mut ctor = Ctor {
+                params: params(&src.text[paren + 1..close]),
+                ..Ctor::default()
+            };
+            let mut j = skip_ws(b, close + 1);
+            let mut opaque = false;
+            if b.get(j) == Some(&b':') {
+                let k = skip_ws(b, j + 1);
+                let e = k + b[k..].iter().take_while(|c| lex::is_ident(**c)).count();
+                let open = skip_ws(b, e);
+                let call = (b.get(open) == Some(&b'('))
+                    .then(|| src.pair(open))
+                    .flatten();
+                match (&src.text[k..e], call) {
+                    ("base", Some(c)) => {
+                        ctor.base_args = split_top(&src.text[open + 1..c])
+                            .iter()
+                            .map(|a| a.to_string())
+                            .collect();
+                        j = skip_ws(b, c + 1);
+                    }
+                    _ => opaque = true,
+                }
+            }
+            let Some(end) = (b.get(j) == Some(&b'{')).then(|| src.pair(j)).flatten() else {
+                return (ctor, close + 1, opaque);
+            };
+            for prop in ["Policy", "Roles"] {
+                for p in words(&src.text[j..end], prop).map(|p| p + j) {
+                    let eq = skip_ws(b, p + prop.len());
+                    let prev = skip_ws_back(b, p);
+                    let this = prev > 1
+                        && b[prev - 1] == b'.'
+                        && src.text[..prev - 1].trim_end().ends_with("this");
+                    let plain = prev == 0 || matches!(b[prev - 1], b'{' | b';' | b'}') || this;
+                    if plain && b.get(eq) == Some(&b'=') && b.get(eq + 1) != Some(&b'=') {
+                        let expr = &src.text[eq + 1..statement_end(src, eq + 1)];
+                        ctor.assigns
+                            .push((prop.to_string(), expr.trim().to_string()));
+                    }
+                }
+            }
+            (ctor, end + 1, opaque)
+        }
+
+        /// Parameter names of a parameter list (`string p, int age = 3`).
+        fn params(list: &str) -> Vec<String> {
+            split_top(list)
+                .into_iter()
+                .map(|p| {
+                    let p = p.split('=').next().unwrap_or("");
+                    (p.rsplit(|c: char| !lex::is_ident(c as u8))
+                        .find(|s| !s.is_empty()))
+                    .unwrap_or("")
+                    .to_string()
+                })
+                .collect()
+        }
+
+        /// The primary constructor `class X(int a) : AuthorizeAttribute(p)`.
+        fn primary(header: &str, name: &str) -> Option<Ctor> {
+            let at = words(header, name).next()? + name.len();
+            let rest = header[at..].trim_start();
+            let inner = rest.strip_prefix('(')?;
+            let src = Source::new(String::new(), rest);
+            let close = src.pair(0)?;
+            let after = rest[close + 1..].trim_start();
+            let base_args = after
+                .strip_prefix(':')
+                .and_then(|list| {
+                    let list = Source::new(String::new(), list);
+                    let item = split_top(&list.text)
+                        .into_iter()
+                        .find(|i| i.contains('('))?;
+                    let (_, args) = item.split_once('(')?;
+                    Some(
+                        split_top(args.strip_suffix(')')?)
+                            .iter()
+                            .map(|a| a.to_string())
+                            .collect(),
+                    )
+                })
+                .unwrap_or_default();
+            Some(Ctor {
+                params: params(&inner[..close - 1]),
+                base_args,
+                assigns: vec![],
+            })
+        }
+    }
+
+    /// Evaluates uses of those classes: constructor arguments, properties, requirement data.
+    mod uses {
+        use super::*;
+
+        impl AuthClass {
+            /// The constructor called with `n` arguments (the implicit one for none).
+            fn ctor_for(&self, n: usize) -> Option<Ctor> {
+                let fits: Vec<&Ctor> = self.ctors.iter().filter(|k| k.params.len() == n).collect();
+                match (&self.primary, fits.as_slice()) {
+                    (Some(p), _) if p.params.len() == n => Some(p.clone()),
+                    (None, [k]) => Some((*k).clone()),
+                    (None, []) if n == 0 && self.ctors.is_empty() => Some(Ctor::default()),
+                    _ => None,
+                }
+            }
+        }
+
+        impl Ctor {
+            /// The value of expression `e` in this constructor called with `args`.
+            fn value(&self, args: &[Option<String>], e: &str) -> Option<String> {
+                match self.params.iter().position(|p| p == e.trim()) {
+                    Some(i) => args[i].clone(),
+                    None => literal(e.trim()),
+                }
+            }
+        }
+
+        impl Props {
+            fn set(&mut self, prop: &str, value: String) {
+                match prop {
+                    "Policy" => self.policy = Some(value),
+                    _ => self.roles = Some(value),
+                }
+            }
+        }
+
+        /// The framework's `AuthorizeAttribute()` / `AuthorizeAttribute(policy)`.
+        fn framework_props(args: &[Option<String>]) -> Option<Props> {
+            match args {
+                [] => Some(Props::default()),
+                [Some(p)] => Some(Props {
+                    policy: Some(p.clone()),
+                    roles: None,
+                }),
+                _ => None,
+            }
+        }
+
+        /// One use of an attribute-like type.
+        pub(in crate::ui_flow_backend) struct Use<'a> {
+            pub(in crate::ui_flow_backend) src: &'a Source,
+            pub(in crate::ui_flow_backend) at: usize,
+            /// As written, without `Attribute` (`MinAge`, `Authorize<T>`).
+            pub(in crate::ui_flow_backend) name: &'a str,
+            pub(in crate::ui_flow_backend) args: &'a str,
+            /// On a controller or action: requirement data counts from .NET 11 on.
+            pub(in crate::ui_flow_backend) mvc: bool,
+        }
+
+        impl Use<'_> {
+            fn shown(&self) -> String {
+                match self.args.trim() {
+                    "" => self.name.to_string(),
+                    a => format!("{}({a})", self.name),
+                }
+            }
+        }
+
+        type Text<'a> = &'a dyn Fn(&str) -> Option<String>;
+        /// Positional arguments and named (property, value) pairs.
+        type Split = (Vec<Option<String>>, Vec<(String, Option<String>)>);
+
+        /// The condition of a use of a project type deriving from
+        /// `AuthorizeAttribute` / implementing `IAuthorizeData` /
+        /// `IAuthorizationRequirementData` (or of the framework's own `Authorize`
+        /// in a `new` expression): `None` when it is none of these, `Some(None)`
+        /// when it adds no condition. `text` resolves argument expressions.
+        pub(in crate::ui_flow_backend) fn custom(
+            out: &mut Out,
+            u: &Use,
+            text: Text,
+        ) -> Option<Option<Condition>> {
+            let defaults = std::mem::take(&mut out.2);
+            let result = defaults.custom(out, u, text);
+            out.2 = defaults;
+            result
+        }
+
+        /// One argument of `RequireAuthorization(…)`: a policy name, or `new X(…)`
+        /// of a project authorization type (no modifier when it adds none).
+        pub(in crate::ui_flow_backend) fn argument(
+            src: &Source,
+            out: &mut Out,
+            at: usize,
+            p: &str,
+        ) -> Option<Mod> {
+            if let Some(policy) = literal(p) {
+                return Some(Mod::Auth(Condition::Policy(policy)));
+            }
+            let custom = new_expression(p).and_then(|(name, args)| {
+                let u = Use {
+                    src,
+                    at,
+                    name: &name,
+                    args: &args,
+                    mvc: false,
+                };
+                custom(out, &u, &|s| literal(s))
+            });
+            match custom {
+                Some(condition) => condition.map(Mod::Auth),
+                None => Some(Mod::Auth(out.unknown(src, at, p))),
+            }
+        }
+
+        /// `new Type(args) { Name = value }`: the type name as written and all arguments.
+        fn new_expression(p: &str) -> Option<(String, String)> {
+            let rest = p.trim().strip_prefix("new ")?.trim_start();
+            let src = Source::new(String::new(), rest);
+            let end = rest.find(['(', '{']).unwrap_or(rest.len());
+            let (mut args, mut at) = (Vec::new(), end);
+            for open in ['(', '{'] {
+                if rest[at..].starts_with(open) {
+                    let close = src.pair(at)?;
+                    args.push(rest[at + 1..close].trim());
+                    at = close + 1;
+                }
+            }
+            Some((simple(rest[..end].trim()), args.join(", ")))
+        }
+
+        /// Positional constructor arguments and named properties of `args`; none
+        /// when a constructor argument is passed by name.
+        fn split_arguments(args: &str, text: Text) -> Option<Split> {
+            let (mut positional, mut props) = (Vec::new(), Vec::new());
+            for part in split_top(args) {
+                match named_part(part) {
+                    None => positional.push(text(part)),
+                    Some((k, v)) if part[k.len()..].trim_start().starts_with('=') => {
+                        props.push((k.to_string(), text(v)));
+                    }
+                    Some(_) => return None,
+                }
+            }
+            Some((positional, props))
+        }
+
+        impl Defaults {
+            /// `Policy`/`Roles` of the class under `key` constructed with `args`;
+            /// none when unreadable.
+            fn class_props(
+                &self,
+                key: &str,
+                args: &[Option<String>],
+                depth: usize,
+            ) -> Option<Props> {
+                let Some(c) = self.classes.get(key) else {
+                    return framework_props(args);
+                };
+                if depth > MAX_DEPTH || c.ambiguous || c.opaque {
+                    return None;
+                }
+                let ctor = c.ctor_for(args.len())?;
+                let base_args: Vec<Option<String>> =
+                    ctor.base_args.iter().map(|e| ctor.value(args, e)).collect();
+                let mut props = match self.base_key(c) {
+                    Some(k) => self.class_props(&k, &base_args, depth + 1)?,
+                    None => Props::default(),
+                };
+                for (prop, expr) in &ctor.assigns {
+                    props.set(prop, ctor.value(args, expr)?);
+                }
+                Some(props)
+            }
+
+            /// The key of the base class of `c` that carries `Policy`/`Roles`.
+            fn base_key(&self, c: &AuthClass) -> Option<String> {
+                c.bases.iter().find_map(|b| match b.as_str() {
+                    "AuthorizeAttribute" => Some(b.clone()),
+                    _ => [b.clone(), format!("{b}<>")]
+                        .into_iter()
+                        .find(|k| self.classes.contains_key(k)),
+                })
+            }
+
+            /// The class a use of `name` refers to, with its key.
+            fn find(&self, name: &str) -> Option<(String, &AuthClass)> {
+                let (head, generic) = match name.split_once('<') {
+                    Some((head, _)) => (head, true),
+                    None => (name, false),
+                };
+                let keys = match generic {
+                    true => [format!("{head}Attribute<>"), format!("{head}<>")],
+                    false => [format!("{head}Attribute"), head.to_string()],
+                };
+                let found = (keys.iter()).find_map(|k| self.classes.get(k).map(|c| (k.clone(), c)));
+                found.or_else(|| {
+                    (!generic && head == "Authorize")
+                        .then(|| ("AuthorizeAttribute".to_string(), &self.framework))
+                })
+            }
+
+            fn custom(&self, out: &mut Out, u: &Use, text: Text) -> Option<Option<Condition>> {
+                let (key, class) = self.find(u.name)?;
+                let mut parts = Vec::new();
+                if class.authorize || class.data {
+                    match self.authorize_part(&key, class, u, text) {
+                        Some(c) => parts.push(c),
+                        None => return Some(Some(out.unknown(u.src, u.at, &u.shown()))),
+                    }
+                }
+                if class.filter {
+                    parts.push(out.unknown(u.src, u.at, &u.shown()));
+                }
+                if class.requirement {
+                    parts.extend(self.requirement_part(out, u));
+                }
+                Some(combine(parts, Condition::All))
+            }
+
+            /// What the `AuthorizeAttribute` / `IAuthorizeData` side of the type
+            /// demands; none when the use is not readable.
+            fn authorize_part(
+                &self,
+                key: &str,
+                class: &AuthClass,
+                u: &Use,
+                text: Text,
+            ) -> Option<Condition> {
+                let (positional, named) = split_arguments(u.args, text)?;
+                let mut props = self.class_props(key, &positional, 0)?;
+                for (k, v) in named {
+                    if matches!(k.as_str(), "Policy" | "Roles") {
+                        props.set(&k, v?);
+                    }
+                }
+                let roles: Option<Vec<Condition>> = props.roles.map(|r| {
+                    (r.split(',').map(str::trim))
+                        .filter(|r| !r.is_empty())
+                        .map(|r| Condition::Role(r.into()))
+                        .collect()
+                });
+                let items = (roles.and_then(|r| combine(r, Condition::Any)).into_iter())
+                    .chain(props.policy.map(Condition::Policy))
+                    .collect();
+                match combine(items, Condition::All) {
+                    None if class.authorize => Some(self.default_condition()),
+                    // `IAuthorizeData` without a readable `Policy`/`Roles`.
+                    found => found,
+                }
+            }
+
+            /// Requirement data counts on MVC from .NET 11 on.
+            fn requirement_part(&self, out: &mut Out, u: &Use) -> Option<Condition> {
+                if !u.mvc || self.net >= Some(11) {
+                    return Some(Condition::Custom(u.shown()));
+                }
+                let why = match self.net {
+                    Some(v) => format!("target framework is net{v}"),
+                    None => "target framework not readable".into(),
+                };
+                let message = format!(
+                    "{}: requirement data not enforced on MVC before .NET 11 ({why})",
+                    u.shown()
+                );
+                out.at(u.src, u.at, message);
+                None
+            }
+        }
+    }
+    pub(super) use uses::{Use, argument, custom};
+}
+
 /// Spring MVC controllers and Spring Security / JSR-250 annotations.
-mod spring {
+pub(crate) mod spring {
     use super::lex::{literals, named, positional};
     use super::*;
 
@@ -2085,15 +3192,340 @@ mod spring {
         ("PatchMapping", "PATCH"),
     ];
 
-    pub(super) fn scan(src: &Source, index: &Index, out: &mut Out) {
+    pub(super) fn scan(src: &Source, index: &Index, conf: &Conf, out: &mut Out) {
         each_method(src, true, |class, d| {
             if has(&class.attrs, "RestController") || has(&class.attrs, "Controller") {
-                method(src, index, out, class, d);
+                method(src, index, conf, out, class, d);
             }
         });
     }
 
     pub(super) use chain::central_rules;
+    pub(crate) use conf::Conf;
+    use conf::{Atom, Flag};
+
+    /// The conventions and method-security switches of ONE application as its
+    /// sources state them (ADR 0021): a default is a framework default and says
+    /// so in the convention's origins; code that cannot be read is a gap.
+    mod conf {
+        use super::super::lex::{named, skip_ws, words};
+        use super::super::*;
+
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub(in super::super) enum Flag {
+            On,
+            Off,
+            Unreadable,
+        }
+        impl Flag {
+            fn join(self, other: Flag) -> Flag {
+                match (self, other) {
+                    (Flag::On, _) | (_, Flag::On) => Flag::On,
+                    (Flag::Unreadable, _) | (_, Flag::Unreadable) => Flag::Unreadable,
+                    _ => Flag::Off,
+                }
+            }
+        }
+
+        /// How a name written in a security expression becomes a condition.
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub(in super::super) enum Atom {
+            /// `hasRole('A')`: the role prefix is added unless it is there.
+            Role,
+            /// `@RolesAllowed("A")`: the role prefix is always added.
+            Jsr250,
+            /// `hasAuthority('A')`, `@Secured("A")`: exact; a role when it carries
+            /// the role prefix, otherwise a permission.
+            Authority,
+            /// OAuth2 `hasScope('s')`.
+            Scope,
+        }
+
+        #[derive(Clone)]
+        struct Methods {
+            legacy: bool,
+            pre_post: Flag,
+            secured: Flag,
+            jsr250: Flag,
+        }
+
+        #[derive(Clone)]
+        pub(crate) struct Conf {
+            quarkus: bool,
+            /// `None`: set by code that is not readable.
+            role_prefix: Option<String>,
+            scope_prefix: Option<String>,
+            role_claim: Option<String>,
+            origins: Vec<ConventionOrigin>,
+            /// `None`: no enabling annotation read.
+            methods: Option<Methods>,
+            /// `AnnotationTemplateExpressionDefaults` is in the sources.
+            pub(in super::super) templates: bool,
+            /// Service layers: `@PostAuthorize` is no check before the call.
+            pub(crate) deferred_off: bool,
+        }
+
+        /// `(source, offset, arguments)` of every call of `name` in the sources.
+        fn call_args<'s>(
+            sources: &'s [Source],
+            name: &'static str,
+        ) -> Vec<(&'s Source, usize, &'s str)> {
+            (sources.iter())
+                .filter(|s| !s.rel.ends_with(".cs"))
+                .flat_map(|s| {
+                    words(&s.text, name).filter_map(move |p| {
+                        let open = skip_ws(s.bytes(), p + name.len());
+                        let close = (s.bytes().get(open) == Some(&b'('))
+                            .then(|| s.pair(open))
+                            .flatten()?;
+                        Some((s, p, &s.text[open + 1..close]))
+                    })
+                })
+                .collect()
+        }
+
+        /// What `calls` give for one setting.
+        enum Setting<'s> {
+            Unset,
+            One(String, &'s Source, usize),
+            /// A call whose argument is not a literal, or calls that disagree.
+            Bad(&'s Source, usize, String),
+        }
+
+        fn setting<'s>(index: &Index, calls: &[(&'s Source, usize, &str)]) -> Setting<'s> {
+            let mut found: Option<(String, &Source, usize)> = None;
+            for &(s, at, args) in calls {
+                let Some(v) = index.text(args.trim()) else {
+                    return Setting::Bad(s, at, format!("`{}` is not a literal", args.trim()));
+                };
+                match &found {
+                    Some((f, ..)) if *f != v => {
+                        return Setting::Bad(s, at, format!("it is set to `{f}` and to `{v}`"));
+                    }
+                    Some(_) => {}
+                    None => found = Some((v, s, at)),
+                }
+            }
+            match found {
+                Some((v, s, at)) => Setting::One(v, s, at),
+                None => Setting::Unset,
+            }
+        }
+
+        impl Conf {
+            pub(crate) fn read(
+                sources: &[Source],
+                index: &Index,
+                quarkus: bool,
+                out: &mut Out,
+            ) -> Conf {
+                let templates = (sources.iter())
+                    .any(|s| s.text.contains("AnnotationTemplateExpressionDefaults"));
+                let mut conf = Conf {
+                    quarkus,
+                    role_prefix: None,
+                    scope_prefix: None,
+                    role_claim: None,
+                    origins: vec![],
+                    methods: None,
+                    templates,
+                    deferred_off: false,
+                };
+                conf.prefixes(sources, index, out);
+                conf.method_security(sources, out);
+                conf
+            }
+
+            fn origin(&mut self, field: &str, at: Option<(&Source, usize)>, source: &str) {
+                self.origins.push(ConventionOrigin {
+                    field: field.into(),
+                    file: at.map(|(s, _)| s.rel.clone()).unwrap_or_default(),
+                    line: at.map_or(0, |(s, p)| s.line(p)),
+                    source: source.into(),
+                });
+            }
+
+            /// `GrantedAuthorityDefaults(..)`, `setAuthorityPrefix(..)` and
+            /// `setAuthoritiesClaimName(..)` with literal arguments.
+            fn prefixes(&mut self, sources: &[Source], index: &Index, out: &mut Out) {
+                if self.quarkus {
+                    self.role_prefix = Some(String::new());
+                    let note = "quarkus spring-security compatibility: role names are exact (not verified)";
+                    return self.origin("role_prefix", None, note);
+                }
+                let default = "framework default spring-security";
+                // `None`: not set; `Some(None)`: set but not readable
+                let mut one =
+                    |this: &mut Conf, field: &str, call: &'static str, what: &str| match setting(
+                        index,
+                        &call_args(sources, call),
+                    ) {
+                        Setting::Unset => None,
+                        Setting::One(v, s, at) => {
+                            this.origin(field, Some((s, at)), call);
+                            Some(Some(v))
+                        }
+                        Setting::Bad(s, at, why) => {
+                            out.at(s, at, format!("`{call}` not read ({why}): {what}."));
+                            Some(None)
+                        }
+                    };
+                let role = one(
+                    self,
+                    "role_prefix",
+                    "GrantedAuthorityDefaults",
+                    "role names are unknown here",
+                );
+                let scope = one(
+                    self,
+                    "scope_prefix",
+                    "setAuthorityPrefix",
+                    "the scope prefix is unknown",
+                );
+                let claim = one(
+                    self,
+                    "role_claim",
+                    "setAuthoritiesClaimName",
+                    "the role claim is unknown",
+                );
+                match role {
+                    None => {
+                        self.role_prefix = Some("ROLE_".into());
+                        let source = format!("{default} GrantedAuthorityDefaults");
+                        self.origin("role_prefix", None, &source);
+                    }
+                    Some(v) => self.role_prefix = v,
+                }
+                match scope {
+                    None => {
+                        self.scope_prefix = Some("SCOPE_".into());
+                        let source = format!("{default} JwtGrantedAuthoritiesConverter");
+                        self.origin("scope_prefix", None, &source);
+                    }
+                    Some(v) => self.scope_prefix = v,
+                }
+                self.role_claim = claim.flatten();
+            }
+
+            /// The switches of `@EnableMethodSecurity` (pre-post on by default) and
+            /// the legacy `@EnableGlobalMethodSecurity` (all off by default).
+            fn method_security(&mut self, sources: &[Source], out: &mut Out) {
+                for src in sources.iter().filter(|s| !s.rel.ends_with(".cs")) {
+                    for a in (decls(src, true).iter())
+                        .filter(|d| d.class)
+                        .flat_map(|d| &d.attrs)
+                    {
+                        let (legacy, on) = match a.name.as_str() {
+                            "EnableMethodSecurity" | "EnableReactiveMethodSecurity" => {
+                                (false, Flag::On)
+                            }
+                            "EnableGlobalMethodSecurity" => (true, Flag::Off),
+                            _ => continue,
+                        };
+                        let mut flag = |key: &str, default: Flag| match named(&a.args, key) {
+                            None => default,
+                            Some("true") => Flag::On,
+                            Some("false") => Flag::Off,
+                            Some(_) => {
+                                let message = format!(
+                                    "`@{}` attribute `{key}` is not a literal boolean; annotations of that family are unknown.",
+                                    a.name
+                                );
+                                out.at(src, a.at, message);
+                                Flag::Unreadable
+                            }
+                        };
+                        let one = Methods {
+                            legacy,
+                            pre_post: flag("prePostEnabled", on),
+                            secured: flag("securedEnabled", Flag::Off),
+                            jsr250: flag("jsr250Enabled", Flag::Off),
+                        };
+                        self.methods = Some(match self.methods.take() {
+                            None => one,
+                            Some(m) => Methods {
+                                legacy: m.legacy && one.legacy,
+                                pre_post: m.pre_post.join(one.pre_post),
+                                secured: m.secured.join(one.secured),
+                                jsr250: m.jsr250.join(one.jsr250),
+                            },
+                        });
+                    }
+                }
+            }
+
+            pub(in super::super) fn convention(
+                &self,
+                application: Option<String>,
+            ) -> RoleConvention {
+                RoleConvention {
+                    application,
+                    role_prefix: self.role_prefix.clone(),
+                    scope_prefix: self.scope_prefix.clone(),
+                    role_claim: self.role_claim.clone(),
+                    origins: self.origins.clone(),
+                    ..RoleConvention::default()
+                }
+            }
+
+            /// The condition of a name written in a security expression.
+            pub(in super::super) fn atom(&self, kind: Atom, name: &str) -> Condition {
+                if kind == Atom::Scope {
+                    return Condition::Policy(name.into());
+                }
+                let Some(p) = self.role_prefix.as_deref() else {
+                    return Condition::Unknown(format!("{name}: the role prefix is not readable"));
+                };
+                match kind {
+                    Atom::Role if name.starts_with(p) => Condition::Role(name.into()),
+                    // legacy JSR-250 adds the prefix only when it is missing
+                    Atom::Jsr250 if self.legacy() && name.starts_with(p) => {
+                        Condition::Role(name.into())
+                    }
+                    Atom::Role | Atom::Jsr250 => Condition::Role(format!("{p}{name}")),
+                    Atom::Authority if name.starts_with(p) => Condition::Role(name.into()),
+                    _ => Condition::Policy(name.into()),
+                }
+            }
+
+            /// Whether the annotations of `family` are enforced.
+            pub(in super::super) fn flag(&self, family: &str) -> Flag {
+                if self.deferred_off && family == "PostAuthorize" {
+                    return Flag::Off;
+                }
+                let Some(m) = &self.methods else {
+                    return if self.quarkus { Flag::On } else { Flag::Off };
+                };
+                match family {
+                    "PreAuthorize" | "PostAuthorize" => m.pre_post,
+                    "Secured" => m.secured,
+                    "jsr250" => m.jsr250,
+                    _ => Flag::On,
+                }
+            }
+
+            /// Legacy method security applies the first family with annotations.
+            pub(in super::super) fn legacy(&self) -> bool {
+                self.methods.as_ref().is_some_and(|m| m.legacy)
+            }
+
+            /// Why the annotations of `family` are not enforced, for a gap.
+            pub(in super::super) fn off(&self, family: &str) -> String {
+                if self.deferred_off && family == "PostAuthorize" {
+                    return "it is checked after the call, so it is not a check before it".into();
+                }
+                let switch = match family {
+                    "PreAuthorize" | "PostAuthorize" => "prePostEnabled",
+                    "Secured" => "securedEnabled",
+                    _ => "jsr250Enabled",
+                };
+                match self.methods {
+                    None => "method security not enabled: no `@EnableMethodSecurity` or `@EnableGlobalMethodSecurity` is read in this project (it may be XML or in a library)".into(),
+                    Some(_) => format!("method security not enabled: `{switch}` is not read as true"),
+                }
+            }
+        }
+    }
 
     /// Which scoping-name calls are rules of the authorization block.
     mod rule_calls {
@@ -2146,7 +3578,11 @@ mod spring {
                     .is_some_and(|c| src.text[open + 1..c].trim().is_empty());
                 match (call, name) {
                     (true, "and") => return false,
-                    (true, "authorizeRequests" | "authorizeHttpRequests") if empty => return true,
+                    (true, "authorizeRequests" | "authorizeHttpRequests" | "authorizeExchange")
+                        if empty =>
+                    {
+                        return true;
+                    }
                     _ => {}
                 }
                 let before = skip_ws_back(b, start);
@@ -2257,10 +3693,20 @@ mod spring {
             None
         }
 
+        /// The servlet and the WebFlux security builder.
+        pub(super) const HTTP_TYPES: [&str; 2] = ["HttpSecurity", "ServerHttpSecurity"];
+
+        /// Whether `text` mentions a security builder type.
+        pub(super) fn mentions_http(text: &str) -> bool {
+            HTTP_TYPES
+                .iter()
+                .any(|t| lex::words(text, t).next().is_some())
+        }
+
         /// Names of the `HttpSecurity` parameters (`HttpSecurity http`, `http: HttpSecurity`).
         pub(super) fn http_vars(src: &Source) -> Vec<String> {
             let mut vars = Vec::new();
-            for p in lex::words(&src.text, "HttpSecurity") {
+            for p in HTTP_TYPES.iter().flat_map(|t| lex::words(&src.text, t)) {
                 let Some(open) = enclosing_open(src, p) else {
                     continue;
                 };
@@ -2268,7 +3714,7 @@ mod spring {
                     continue;
                 };
                 for part in lex::split_top(&src.text[open + 1..close]) {
-                    if lex::words(part, "HttpSecurity").next().is_none() {
+                    if !mentions_http(part) {
                         continue;
                     }
                     let name = match part.split_once(':') {
@@ -2285,7 +3731,7 @@ mod spring {
 
         /// Whole identifiers that scope a security chain when called outside the
         /// authorization block (`ignoringAntMatchers` and the like do not).
-        pub(super) const SCOPING: [&str; 10] = [
+        pub(super) const SCOPING: [&str; 11] = [
             "antMatcher",
             "antMatchers",
             "mvcMatcher",
@@ -2296,6 +3742,7 @@ mod spring {
             "requestMatchers",
             "securityMatcher",
             "securityMatchers",
+            "pathMatchers",
         ];
         /// Kotlin scope functions and Spring configurer calls: they take or
         /// provide the `HttpSecurity` as `this`/`it`/an argument.
@@ -2316,11 +3763,13 @@ mod spring {
         pub(super) fn scoping_call(
             src: &Source,
             lambdas: &super::rule_calls::Lambdas,
+            read: &[(usize, usize)],
         ) -> Option<usize> {
             let b = src.bytes();
             (0..b.len()).find(|&s| {
                 let e = ident_end(src, s);
-                (s == 0 || !lex::is_ident(b[s - 1]))
+                !in_ranges(read, s)
+                    && (s == 0 || !lex::is_ident(b[s - 1]))
                     && SCOPING.contains(&&src.text[s..e])
                     && is_call(src, s, e)
                     && !super::rule_calls::is_rule_call(src, s, lambdas)
@@ -2341,10 +3790,10 @@ mod spring {
         fn is_declaration(src: &Source, p: usize, end: usize) -> bool {
             let b = src.bytes();
             let typed = b.get(skip_ws(b, end)) == Some(&b':')
-                && src.text[skip_ws(b, end) + 1..]
-                    .trim_start()
-                    .starts_with("HttpSecurity");
-            typed || word_before(src, skip_ws_back(b, p)) == "HttpSecurity"
+                && HTTP_TYPES
+                    .iter()
+                    .any(|t| src.text[skip_ws(b, end) + 1..].trim_start().starts_with(t));
+            typed || HTTP_TYPES.contains(&word_before(src, skip_ws_back(b, p)))
         }
 
         /// The `{ … }` of `with(http) { … }` or `http.apply { … }` (any [`SCOPE_FUNS`]).
@@ -2455,25 +3904,28 @@ mod spring {
                 .or_else(|| block_hand_off(src, inside, &blocks))
         }
 
-        /// Why the project's chain cannot be read as global, if so: several
-        /// configurations; a scoping call in any file that mentions `HttpSecurity`
-        /// (configurers, extensions, helpers); or the `HttpSecurity` handed out of
-        /// the configure method / bean of `files`.
+        /// Why the project's chain cannot be read, if so: a scoping call in any
+        /// file that mentions `HttpSecurity` (configurers, extensions, helpers)
+        /// that is not one of the `read` scopes `(file, from, to)`; or the
+        /// `HttpSecurity` handed out of the configure method / bean of `files`.
         pub(super) fn why_not_evaluated(
             sources: &[Source],
             files: &[&Source],
-            chains: usize,
+            read: &[(String, usize, usize)],
         ) -> Option<String> {
-            if chains > 1 {
-                return Some("Several security configurations".into());
-            }
             let lambdas = |s: &Source| super::chain::auth_lambdas(s);
             let at = |s: &Source, p: usize| format!("{}:{}", s.rel, s.line(p));
-            let mentions = |s: &&Source| lex::words(&s.text, "HttpSecurity").next().is_some();
+            let mentions = |s: &&Source| mentions_http(&s.text);
             let scoped = (sources.iter())
                 .filter(|s| !s.rel.ends_with(".cs"))
                 .filter(mentions)
-                .find_map(|s| scoping_call(s, &lambdas(s)).map(|p| at(s, p)));
+                .find_map(|s| {
+                    let mine: Vec<(usize, usize)> = (read.iter())
+                        .filter(|r| r.0 == s.rel)
+                        .map(|r| (r.1, r.2))
+                        .collect();
+                    scoping_call(s, &lambdas(s), &mine).map(|p| at(s, p))
+                });
             if let Some(site) = scoped {
                 return Some(format!("A scoping matcher at {site}"));
             }
@@ -2525,6 +3977,353 @@ mod spring {
         }
     }
 
+    /// Several security configurations as a sequence: each one's `@Order` and
+    /// literal scope, and which of them decides an endpoint.
+    mod sequence {
+        use super::super::lex::{named, positional, skip_ws, skip_ws_back, split_top, words};
+        use super::super::*;
+        use super::chain::{
+            CHAIN_TYPES, Hit, Rule, authorize_sites, bean, calls, conditional, is_adapter, matches,
+        };
+
+        /// One security configuration: a `SecurityFilterChain` bean method, a
+        /// legacy adapter class, or, when a file has neither but reads
+        /// authorization rules (Kotlin beans), the whole file.
+        pub(super) struct Unit<'s> {
+            pub(super) src: &'s Source,
+            pub(super) name: String,
+            /// Text range holding the unit.
+            pub(super) span: (usize, usize),
+            pub(super) adapter: bool,
+            /// `None`: the `@Order` is not readable.
+            pub(super) order: Option<i64>,
+            /// `None`: the chain takes every request.
+            pub(super) scope: Option<Rule>,
+            pub(super) rules: Vec<Rule>,
+        }
+
+        const ADAPTER_ORDER: i64 = 100;
+        const LOWEST: i64 = i32::MAX as i64;
+
+        /// Why several configurations cannot be put in sequence: Spring takes the
+        /// first by `@Order`; equal, missing-with-other-kind or unreadable orders
+        /// leave it open.
+        pub(super) fn unordered(units: &[Unit]) -> Option<String> {
+            if units.len() < 2 {
+                return None;
+            }
+            let orders: BTreeSet<Option<i64>> = units.iter().map(|u| u.order).collect();
+            let mixed = units.iter().any(|u| u.adapter) && units.iter().any(|u| !u.adapter);
+            (orders.contains(&None) || orders.len() < units.len() || mixed).then(|| {
+                "Several security configurations without a readable, distinct `@Order`".into()
+            })
+        }
+
+        /// The units of `src`: its adapters, its `SecurityFilterChain` bean methods.
+        pub(super) fn units(src: &Source) -> Vec<Unit<'_>> {
+            let all = decls(src, true);
+            let mut units: Vec<Unit> = all
+                .iter()
+                .filter(|d| d.class && is_adapter(d))
+                .map(|d| Unit {
+                    src,
+                    name: d.name.clone(),
+                    span: (d.open, d.end.max(d.open) + 1),
+                    adapter: true,
+                    order: order(&d.attrs, ADAPTER_ORDER),
+                    scope: None,
+                    rules: vec![],
+                })
+                .collect();
+            let beans = CHAIN_TYPES.iter().flat_map(|t| {
+                words(&src.text, t)
+                    .filter(|p| bean(src, *p, t.len()))
+                    .map(move |p| (p, t.len()))
+            });
+            for (p, len) in beans {
+                let b = src.bytes();
+                let name_end = super::chain_span::ident_end(src, skip_ws(b, p + len));
+                let open = skip_ws(b, name_end);
+                let close = src.pair(open).unwrap_or(open);
+                let body = src.text[close..].find(['{', ';']).map(|k| k + close);
+                let end = match body {
+                    Some(k) if b[k] == b'{' => src.pair(k).unwrap_or(k),
+                    _ => close,
+                };
+                let attrs = all.iter().find(|d| !d.class && d.open == open);
+                let name = src.text[skip_ws(b, p + len)..name_end].to_string();
+                units.push(Unit {
+                    src,
+                    name,
+                    span: (p, end + 1),
+                    adapter: false,
+                    order: order(attrs.map_or(&[][..], |d| &d.attrs[..]), LOWEST),
+                    scope: None,
+                    rules: vec![],
+                });
+            }
+            if units.is_empty() && !authorize_sites(src).is_empty() {
+                units.push(Unit {
+                    src,
+                    name: src.rel.clone(),
+                    span: (0, src.text.len()),
+                    adapter: false,
+                    order: None,
+                    scope: None,
+                    rules: vec![],
+                });
+            }
+            units
+        }
+
+        /// `@Order(n)`, `Ordered.HIGHEST_PRECEDENCE` / `LOWEST_PRECEDENCE`; `default`
+        /// without the annotation; `None` for anything else.
+        fn order(attrs: &[Attr], default: i64) -> Option<i64> {
+            let Some(a) = attrs.iter().find(|a| a.name == "Order") else {
+                return Some(default);
+            };
+            match named(&a.args, "value")
+                .or_else(|| positional(&a.args))
+                .map(str::trim)
+            {
+                None => Some(LOWEST),
+                Some("Ordered.HIGHEST_PRECEDENCE") => Some(i32::MIN as i64),
+                Some("Ordered.LOWEST_PRECEDENCE") => Some(LOWEST),
+                Some(t) => t.parse().ok(),
+            }
+        }
+
+        /// Byte offset of `part`, a slice of `src.text`.
+        fn offset(src: &Source, part: &str) -> usize {
+            part.as_ptr() as usize - src.text.as_ptr() as usize
+        }
+
+        /// A scope or rule matcher with literal paths, as a [`Rule`] without grant.
+        fn literal_matcher(
+            src: &Source,
+            index: &Index,
+            from: usize,
+            to: usize,
+            args: &str,
+        ) -> Option<Rule> {
+            let (mut methods, mut patterns) = (Vec::new(), Vec::new());
+            for part in split_top(args) {
+                match part.trim().strip_prefix("HttpMethod.") {
+                    Some(m) => methods.push(m.to_string()),
+                    None => patterns.push(index.text(part)?),
+                }
+            }
+            (!patterns.is_empty()).then(|| Rule {
+                line: src.line(from),
+                file: src.rel.clone(),
+                text: src.text[from..to].split_whitespace().collect(),
+                methods,
+                patterns: Some(patterns),
+                grant: None,
+                conditional: false,
+            })
+        }
+
+        /// The scope of the unit's chain, and the text range of the call that
+        /// gives it. Read: `securityMatcher(..)`, `antMatcher(..)`, `mvcMatcher(..)`,
+        /// `securityMatchers(m -> m.requestMatchers(..))` and the pre-6
+        /// `requestMatchers().antMatchers(..).and()`, all on the `HttpSecurity`
+        /// variable, with literal paths and outside `if`/`else`. Several scope
+        /// calls or any other form are left to the not-evaluated check.
+        pub(super) fn scope(
+            src: &Source,
+            index: &Index,
+            span: (usize, usize),
+        ) -> (Option<Rule>, Vec<(usize, usize)>) {
+            let mut found = Vec::new();
+            for var in super::chain_span::http_vars(src) {
+                for p in statement_heads(src, &var, span) {
+                    found.extend(chain_scopes(src, index, p));
+                }
+            }
+            match found.pop() {
+                Some((rule, call)) if found.is_empty() => (Some(rule), vec![call]),
+                _ => (None, vec![]),
+            }
+        }
+
+        /// Offsets in `span` where `var` starts a statement (`http.x();`,
+        /// `return http.x();`); Kotlin has no `;`, there a line break ends one.
+        fn statement_heads(src: &Source, var: &str, span: (usize, usize)) -> Vec<usize> {
+            let b = src.bytes();
+            let head = |p: usize| {
+                let before = skip_ws_back(b, p);
+                let kotlin_break = src.rel.ends_with(".kt") && src.text[before..p].contains('\n');
+                before == 0
+                    || kotlin_break
+                    || matches!(b[before - 1], b';' | b'{' | b'}')
+                    || super::chain_span::word_before(src, before) == "return"
+            };
+            (words(&src.text[span.0..span.1], var))
+                .map(|p| p + span.0)
+                .filter(|&p| b.get(skip_ws(b, p + var.len())) == Some(&b'.') && head(p))
+                .collect()
+        }
+
+        /// The scope calls of the statement chain that starts at `p`, with their text range.
+        fn chain_scopes(src: &Source, index: &Index, p: usize) -> Vec<(Rule, (usize, usize))> {
+            let chain = calls(src, p, super::chain_span::chain_end(src, p));
+            let (mut found, mut i) = (Vec::new(), 0);
+            while i < chain.len() {
+                let at = chain[i].0;
+                match scope_call(src, index, &chain[i..]) {
+                    Some((rule, to, used)) if !conditional(src, at) => {
+                        found.push((rule, (at, to)));
+                        i += used;
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            found
+        }
+
+        /// The scope call at the head of `chain`: `(rule, end offset, further calls used)`.
+        fn scope_call(
+            src: &Source,
+            index: &Index,
+            chain: &[(usize, &str, &str)],
+        ) -> Option<(Rule, usize, usize)> {
+            let (at, name, args) = chain[0];
+            let close = |a: &str| offset(src, a) + a.len() + 1;
+            match name {
+                "securityMatcher" | "antMatcher" | "mvcMatcher" => {
+                    let inner = reactive_matcher(args).unwrap_or(args);
+                    literal_matcher(src, index, at, close(args), inner).map(|r| (r, close(args), 0))
+                }
+                "securityMatchers" => {
+                    lambda_matchers(src, index, at, args).map(|r| (r, close(args), 0))
+                }
+                "requestMatchers" if args.trim().is_empty() => legacy_matchers(src, index, chain)
+                    .map(|(r, last)| (r, close(chain[last].2), last)),
+                _ => None,
+            }
+        }
+
+        /// The literal arguments of a WebFlux scope matcher,
+        /// `new PathPatternParserServerWebExchangeMatcher("/a")` or
+        /// `ServerWebExchangeMatchers.pathMatchers("/a")`; a slice of `args`.
+        fn reactive_matcher(args: &str) -> Option<&str> {
+            let t = args.trim();
+            let rest = t
+                .strip_prefix("new PathPatternParserServerWebExchangeMatcher")
+                .or_else(|| t.strip_prefix("ServerWebExchangeMatchers.pathMatchers"))?;
+            rest.strip_prefix('(')?.strip_suffix(')')
+        }
+
+        /// `securityMatchers(m -> m.requestMatchers("/a", "/b"))`.
+        fn lambda_matchers(src: &Source, index: &Index, at: usize, args: &str) -> Option<Rule> {
+            let base = offset(src, args);
+            let inner = calls(src, base + args.find("->")? + 2, base + args.len());
+            let [(_, name, a)] = inner[..] else {
+                return None;
+            };
+            if !matches!(name, "requestMatchers" | "antMatchers" | "mvcMatchers") {
+                return None;
+            }
+            literal_matcher(src, index, at, base + args.len() + 1, a)
+        }
+
+        /// `requestMatchers().antMatchers("/api/**")` of pre-6 chains: the matchers
+        /// after the empty `requestMatchers()` up to `.and()`; `(rule, index of the
+        /// last matcher call)`.
+        fn legacy_matchers(
+            src: &Source,
+            index: &Index,
+            chain: &[(usize, &str, &str)],
+        ) -> Option<(Rule, usize)> {
+            let last = chain[1..]
+                .iter()
+                .take_while(|c| matches!(c.1, "antMatchers" | "mvcMatchers"))
+                .count();
+            let [(_, _, a)] = chain[1..=last] else {
+                return None;
+            };
+            let (start, to) = (chain[0].0, offset(src, a) + a.len() + 1);
+            literal_matcher(src, index, start, to, a).map(|r| (r, last))
+        }
+
+        /// A gap per adapter class without any readable rule.
+        pub(super) fn unreadable_classes(units: &[Unit], out: &mut Out) {
+            for u in units.iter().filter(|u| u.adapter && u.rules.is_empty()) {
+                let message = format!(
+                    "Security configuration `{}` has no readable `authorizeRequests()` rules; endpoints it protects stay undeclared.",
+                    u.name
+                );
+                out.at(u.src, u.span.0, message);
+            }
+        }
+
+        #[derive(Default)]
+        pub(super) struct Applied {
+            pub(super) changed: usize,
+            /// Requests matched only partly, by `(unit, rule)`.
+            pub(super) partial: BTreeMap<(usize, usize), usize>,
+            /// Endpoints a unit's scope matches only partly, by unit.
+            pub(super) scope_partial: BTreeMap<usize, usize>,
+        }
+
+        /// Applies, per endpoint, the first chain (units in order) whose scope can
+        /// match it; a scope that matches only some of its requests decides
+        /// nothing. In that chain the first matching rule decides.
+        pub(super) fn apply(
+            units: &[Unit],
+            endpoints: &mut [EndpointAccess],
+            ignored: &BTreeSet<(String, u32)>,
+        ) -> Applied {
+            let mut done = Applied::default();
+            for e in endpoints {
+                for (u, unit) in units.iter().enumerate() {
+                    match unit.scope.as_ref().map_or(Hit::Full, |s| matches(s, e)) {
+                        Hit::No => continue,
+                        Hit::Part => *done.scope_partial.entry(u).or_default() += 1,
+                        Hit::Full => decide(u, &unit.rules, e, ignored, &mut done),
+                    }
+                    break;
+                }
+            }
+            done
+        }
+
+        fn decide(
+            u: usize,
+            rules: &[Rule],
+            e: &mut EndpointAccess,
+            ignored: &BTreeSet<(String, u32)>,
+            done: &mut Applied,
+        ) {
+            let Some((i, hit)) = (rules.iter().enumerate())
+                .map(|(i, r)| (i, matches(r, e)))
+                .find(|(_, h)| *h != Hit::No)
+            else {
+                return;
+            };
+            let rule = &rules[i];
+            match (&rule.grant, hit, rule.conditional, &rule.patterns) {
+                (Some(grant), Hit::Full, false, Some(_)) => {
+                    let before = e.access.clone();
+                    e.access = match grant {
+                        AccessState::Protected(c) => require(&e.access, c.clone()),
+                        // annotations that were not applied may protect it after all
+                        _ if ignored.contains(&(e.file.clone(), e.line)) => e.access.clone(),
+                        _ if e.access == AccessState::Undeclared => AccessState::Open,
+                        _ => e.access.clone(),
+                    };
+                    done.changed += usize::from(e.access != before);
+                }
+                (Some(_), Hit::Part, false, Some(_)) => {
+                    *done.partial.entry((u, i)).or_default() += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Central rules of a `SecurityFilterChain` (`authorizeHttpRequests` /
     /// `authorizeRequests`), applied to the project's endpoints from index
     /// `first` on.
@@ -2548,13 +4347,24 @@ mod spring {
     /// `WebSecurityConfigurerAdapter` / `ResourceServerConfigurerAdapter` is read
     /// the same way (a class without readable rules is a gap).
     ///
+    /// Several chains/adapters are a sequence by `@Order` (adapters default 100,
+    /// beans lowest precedence); the first whose scope can match an endpoint
+    /// decides it (a scope that matches only some of its requests decides
+    /// nothing). The scope is the literal `securityMatcher(..)`,
+    /// `antMatcher(..)`, `mvcMatcher(..)`, `securityMatchers(m -> m.requestMatchers(..))`
+    /// or pre-6 `requestMatchers().antMatchers(..)` that starts a statement on
+    /// the `HttpSecurity` variable outside `if`/`else`; no scope takes every
+    /// request.
+    ///
     /// Not evaluated (one note, endpoints keep their annotation access):
-    /// - several chains or adapters;
+    /// - several chains without a readable, distinct `@Order` (or adapters mixed
+    ///   with beans);
     /// - a call or method reference of `antMatcher(s)`, `mvcMatcher(s)`,
     ///   `regexMatcher(s)`, `requestMatcher(s)` or `securityMatcher(s)` outside
     ///   the authorization block (and outside `configure(WebSecurity)`) in ANY
-    ///   file that mentions `HttpSecurity` (configurers, extensions, helpers);
-    ///   declarations and `new` are no calls;
+    ///   file that mentions `HttpSecurity` (configurers, extensions, helpers)
+    ///   that is not one of the scopes above; declarations and `new` are no
+    ///   calls;
     /// - the `HttpSecurity` handed out of the configure method / bean: its
     ///   variable used other than as a receiver (`http.x`), declaration or
     ///   `with(http) { }`; `this`/`it` in `with(http)`, `http.apply/let/also/run
@@ -2581,30 +4391,35 @@ mod spring {
     mod chain {
         use super::super::lex::{skip_ws, skip_ws_back, split_top, words};
         use super::super::*;
-        use super::{prefixed_role, role, spel};
+        use super::conf::{Atom, Conf};
+        use super::sequence::{Unit, apply, scope, units, unordered, unreadable_classes};
+        use super::spel;
 
-        const MATCHERS: [&str; 4] = [
+        const MATCHERS: [&str; 6] = [
             "requestMatchers",
             "mvcMatchers",
             "antMatchers",
             "anyRequest",
+            // WebFlux
+            "pathMatchers",
+            "anyExchange",
         ];
 
-        struct Rule {
-            line: u32,
-            file: String,
-            text: String,
+        pub(super) struct Rule {
+            pub(super) line: u32,
+            pub(super) file: String,
+            pub(super) text: String,
             /// Empty: any method.
-            methods: Vec<String>,
+            pub(super) methods: Vec<String>,
             /// `None`: not readable, may match anything.
-            patterns: Option<Vec<String>>,
+            pub(super) patterns: Option<Vec<String>>,
             /// `None`: not readable.
-            grant: Option<AccessState>,
-            conditional: bool,
+            pub(super) grant: Option<AccessState>,
+            pub(super) conditional: bool,
         }
 
         #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-        enum Hit {
+        pub(super) enum Hit {
             No,
             Part,
             Full,
@@ -2613,165 +4428,137 @@ mod spring {
         pub(in super::super) fn central_rules(
             sources: &[Source],
             index: &Index,
+            conf: &Conf,
             out: &mut Out,
             first: usize,
         ) {
-            let found: Vec<(&Source, Vec<(String, usize)>)> = (sources.iter())
+            let found: Vec<&Source> = (sources.iter())
                 .filter(|s| !s.rel.ends_with(".cs"))
-                .map(|s| (s, adapters(s)))
-                .filter(|(s, a)| !a.is_empty() || s.text.contains("SecurityFilterChain"))
+                .filter(|s| {
+                    !adapters(s).is_empty()
+                        || s.text.contains("SecurityFilterChain")
+                        || s.text.contains("SecurityWebFilterChain")
+                })
                 .collect();
-            let files: Vec<&Source> = found.iter().map(|(s, _)| *s).collect();
-            let Some((home, home_adapters)) = found.first() else {
+            let mut units: Vec<Unit> = found.iter().flat_map(|s| units(s)).collect();
+            let Some(home) = units.first().map(|u| (u.src, u.span.0)) else {
                 return;
             };
-            let at = (home_adapters.first().map(|a| a.1))
-                .or_else(|| home.text.find("SecurityFilterChain"))
-                .unwrap_or(0);
-            let chains: usize = (found.iter())
-                .map(|(s, a)| {
-                    let beans = words(&s.text, "SecurityFilterChain").filter(|p| bean(s, *p));
-                    beans.count() + a.len()
-                })
-                .sum();
-            let why = super::chain_span::why_not_evaluated(sources, &files, chains);
+            let mut recognised = Vec::new();
+            for u in &mut units {
+                let (scope, spans) = scope(u.src, index, u.span);
+                u.scope = scope;
+                recognised.extend(spans.into_iter().map(|(f, t)| (u.src.rel.clone(), f, t)));
+            }
+            let why = super::chain_span::why_not_evaluated(sources, &found, &recognised)
+                .or_else(|| unordered(&units));
             if let Some(why) = why {
                 let message = format!(
                     "{why}: central rules are not evaluated; endpoints marked undeclared may be protected there."
                 );
-                return out.note(&home.rel, home.line(at), message);
+                return out.note(&home.0.rel, home.0.line(home.1), message);
             }
-            let rules: Vec<Rule> = (files.iter()).flat_map(|s| read(s, index)).collect();
-            unreadable_classes(&found, index, out);
-            rule_notes(&rules, out);
-            let (changed, partial) = apply(&rules, &mut out.0.endpoints[first..]);
-            for (i, n) in partial {
-                let r = &rules[i];
+            for u in &mut units {
+                u.rules = read(u.src, index, conf, u.span);
+            }
+            unreadable_classes(&units, out);
+            let rules: usize = units.iter().map(|u| u.rules.len()).sum();
+            for r in units.iter().flat_map(|u| &u.rules) {
+                rule_note(r, out);
+            }
+            units.sort_by_key(|u| u.order);
+            let done = apply(&units, &mut out.0.endpoints[first..], &out.1.endpoints);
+            for ((u, i), n) in done.partial {
+                let r = &units[u].rules[i];
                 let message = format!(
                     "Filter chain rule `{}` matches only some requests of {n} endpoint(s) (a path parameter or ANY method); they keep their declared access.",
                     r.text
                 );
                 out.note(&r.file, r.line, message);
             }
-            if rules.is_empty() {
+            for (u, n) in done.scope_partial {
+                let Some(s) = &units[u].scope else { continue };
+                let message = format!(
+                    "Filter chain scope `{}` matches only some requests of {n} endpoint(s) (a path parameter or ANY method); they keep their declared access.",
+                    s.text
+                );
+                out.note(&s.file, s.line, message);
+            }
+            if rules == 0 {
                 return;
             }
-            let source = if found.iter().all(|(_, a)| a.is_empty()) {
+            let source = if units.iter().all(|u| !u.adapter) {
                 "Central SecurityFilterChain"
             } else {
                 "Security configuration"
             };
             let message = format!(
-                "{source} rules evaluated: {} rule(s), access of {changed} endpoint(s) changed.",
-                rules.len()
+                "{source} rules evaluated: {rules} rule(s), access of {} endpoint(s) changed.",
+                done.changed
             );
-            out.note(&home.rel, home.line(at), message);
+            out.note(&home.0.rel, home.0.line(home.1), message);
         }
 
-        /// A gap per adapter class in a file without any readable rule.
-        fn unreadable_classes(
-            found: &[(&Source, Vec<(String, usize)>)],
-            index: &Index,
-            out: &mut Out,
-        ) {
-            for (s, classes) in found {
-                if classes.is_empty() || !read(s, index).is_empty() {
-                    continue;
-                }
-                for (name, at) in classes {
-                    let message = format!(
-                        "Security configuration `{name}` has no readable `authorizeRequests()` rules; endpoints it protects stay undeclared."
-                    );
-                    out.at(s, *at, message);
-                }
-            }
+        pub(super) fn is_adapter(d: &Decl) -> bool {
+            (d.bases.iter()).any(|b| {
+                matches!(
+                    b.as_str(),
+                    "WebSecurityConfigurerAdapter" | "ResourceServerConfigurerAdapter"
+                )
+            })
         }
 
-        /// A note per rule that is not read completely.
-        fn rule_notes(rules: &[Rule], out: &mut Out) {
-            for r in rules {
-                let why = match (&r.patterns, &r.grant) {
-                    (None, _) => "its matcher is not a literal",
-                    (_, None) => "its grant is not read",
-                    _ if r.conditional => "it is conditional (inside if/else)",
-                    _ => continue,
-                };
-                let message = format!(
-                    "Filter chain rule `{}`: {why}; endpoints it may match keep their declared access.",
-                    r.text
-                );
-                out.note(&r.file, r.line, message);
-            }
-        }
-
-        /// Applies the first matching rule to each endpoint; returns how many
-        /// changed and, per rule index, how many it matched only partly.
-        fn apply(
-            rules: &[Rule],
-            endpoints: &mut [EndpointAccess],
-        ) -> (usize, BTreeMap<usize, usize>) {
-            let (mut changed, mut partial) = (0, BTreeMap::new());
-            for e in endpoints {
-                let Some((i, hit)) = (rules.iter().enumerate())
-                    .map(|(i, r)| (i, matches(r, e)))
-                    .find(|(_, h)| *h != Hit::No)
-                else {
-                    continue;
-                };
-                let rule = &rules[i];
-                match (&rule.grant, hit, rule.conditional, &rule.patterns) {
-                    (Some(grant), Hit::Full, false, Some(_)) => {
-                        let before = e.access.clone();
-                        e.access = match grant {
-                            AccessState::Protected(c) => require(&e.access, c.clone()),
-                            _ if e.access == AccessState::Undeclared => AccessState::Open,
-                            _ => e.access.clone(),
-                        };
-                        changed += usize::from(e.access != before);
-                    }
-                    (Some(_), Hit::Part, false, Some(_)) => *partial.entry(i).or_default() += 1,
-                    _ => {}
-                }
-            }
-            (changed, partial)
+        /// A note for a rule that is not read completely.
+        fn rule_note(r: &Rule, out: &mut Out) {
+            let why = match (&r.patterns, &r.grant) {
+                (None, _) => "its matcher is not a literal",
+                (_, None) => "its grant is not read",
+                _ if r.conditional => "it is conditional (inside if/else)",
+                _ => return,
+            };
+            let message = format!(
+                "Filter chain rule `{}`: {why}; endpoints it may match keep their declared access.",
+                r.text
+            );
+            out.note(&r.file, r.line, message);
         }
 
         /// Classes extending the legacy Spring Security configurer adapters, as
         /// `(name, offset)`.
         fn adapters(src: &Source) -> Vec<(String, usize)> {
             (decls(src, true).into_iter())
-                .filter(|d| d.class)
-                .filter(|d| {
-                    (d.bases.iter()).any(|b| {
-                        matches!(
-                            b.as_str(),
-                            "WebSecurityConfigurerAdapter" | "ResourceServerConfigurerAdapter"
-                        )
-                    })
-                })
+                .filter(|d| d.class && is_adapter(d))
                 .map(|d| (d.name, d.open))
                 .collect()
         }
 
-        /// A `SecurityFilterChain name(` method declaration at `p`.
-        fn bean(src: &Source, p: usize) -> bool {
+        /// Types of a chain bean: servlet and WebFlux.
+        pub(super) const CHAIN_TYPES: [&str; 2] = ["SecurityFilterChain", "SecurityWebFilterChain"];
+
+        /// A `SecurityFilterChain name(` method declaration at `p`; `len` is the
+        /// length of the type name there.
+        pub(super) fn bean(src: &Source, p: usize, len: usize) -> bool {
             let b = src.bytes();
-            let s = skip_ws(b, p + "SecurityFilterChain".len());
+            let s = skip_ws(b, p + len);
             let e = s + b[s..].iter().take_while(|c| lex::is_ident(**c)).count();
             e > s && b.get(skip_ws(b, e)) == Some(&b'(')
         }
 
         /// The `(` of every `authorizeHttpRequests`/`authorizeRequests` call, in order.
-        fn authorize_sites(src: &Source) -> Vec<usize> {
+        pub(super) fn authorize_sites(src: &Source) -> Vec<usize> {
             let b = src.bytes();
-            let mut sites: Vec<usize> = ["authorizeHttpRequests", "authorizeRequests"]
-                .iter()
-                .flat_map(|kw| words(&src.text, kw).map(move |p| (p, kw.len())))
-                .filter_map(|(p, len)| {
-                    let open = skip_ws(b, p + len);
-                    (b.get(open) == Some(&b'(')).then_some(open)
-                })
-                .collect();
+            let mut sites: Vec<usize> = [
+                "authorizeHttpRequests",
+                "authorizeRequests",
+                "authorizeExchange",
+            ]
+            .iter()
+            .flat_map(|kw| words(&src.text, kw).map(move |p| (p, kw.len())))
+            .filter_map(|(p, len)| {
+                let open = skip_ws(b, p + len);
+                (b.get(open) == Some(&b'(')).then_some(open)
+            })
+            .collect();
             sites.sort();
             sites
         }
@@ -2816,17 +4603,20 @@ mod spring {
                 .collect()
         }
 
-        /// The rules of every `authorizeHttpRequests`/`authorizeRequests` call in `src`.
-        fn read(src: &Source, index: &Index) -> Vec<Rule> {
+        /// The rules of every `authorizeHttpRequests`/`authorizeRequests` call of
+        /// `src` that opens inside `span`.
+        fn read(src: &Source, index: &Index, conf: &Conf, span: (usize, usize)) -> Vec<Rule> {
             let mut rules = Vec::new();
             for open in authorize_sites(src) {
-                site(src, index, open, &mut rules);
+                if span.0 <= open && open < span.1 {
+                    site(src, index, conf, open, &mut rules);
+                }
             }
             rules
         }
 
         /// The rules of the `authorize…(` call whose parenthesis opens at `open`.
-        fn site(src: &Source, index: &Index, open: usize, rules: &mut Vec<Rule>) {
+        fn site(src: &Source, index: &Index, conf: &Conf, open: usize, rules: &mut Vec<Rule>) {
             let Some((from, to, lambda)) = block(src, open) else {
                 return;
             };
@@ -2851,7 +4641,7 @@ mod spring {
                     text,
                     methods,
                     patterns,
-                    grant: grant(index, name, args),
+                    grant: grant(index, conf, name, args),
                     conditional,
                 });
             }
@@ -2859,7 +4649,7 @@ mod spring {
 
         /// `(position, name, arguments)` of each `.name(args)` call in `from..to`,
         /// skipping nested brackets.
-        fn calls(src: &Source, from: usize, to: usize) -> Vec<(usize, &str, &str)> {
+        pub(super) fn calls(src: &Source, from: usize, to: usize) -> Vec<(usize, &str, &str)> {
             let b = src.bytes();
             let (mut found, mut j) = (Vec::new(), from);
             while j < to {
@@ -2891,7 +4681,7 @@ mod spring {
         }
 
         /// Whether the call at `at` sits in a block opened by `if (…)` or `else`.
-        fn conditional(src: &Source, at: usize) -> bool {
+        pub(super) fn conditional(src: &Source, at: usize) -> bool {
             let b = src.bytes();
             let Some(open) = (0..at)
                 .rev()
@@ -2916,7 +4706,7 @@ mod spring {
             args: &str,
         ) -> (usize, Vec<String>, Option<Vec<String>>) {
             match name {
-                "anyRequest" => return (at, vec![], Some(vec!["/**".into()])),
+                "anyRequest" | "anyExchange" => return (at, vec![], Some(vec!["/**".into()])),
                 // Forwards and error dispatches, never a controller request.
                 "dispatcherTypeMatchers" => return (at, vec![], Some(vec![])),
                 _ => {}
@@ -2941,11 +4731,11 @@ mod spring {
             (at, methods, patterns)
         }
 
-        fn grant(index: &Index, name: &str, args: &str) -> Option<AccessState> {
-            let roles = |make: fn(&str) -> Condition| -> Option<Condition> {
+        fn grant(index: &Index, conf: &Conf, name: &str, args: &str) -> Option<AccessState> {
+            let roles = |kind: Atom| -> Option<Condition> {
                 let names: Option<Vec<Condition>> = split_top(args)
                     .into_iter()
-                    .map(|a| index.text(a).map(|n| make(&n)))
+                    .map(|a| index.text(a).map(|n| conf.atom(kind, &n)))
                     .collect();
                 combine(names?, Condition::Any)
             };
@@ -2955,20 +4745,22 @@ mod spring {
                 "denyAll" => protected(Condition::Never),
                 "authenticated" | "fullyAuthenticated" => protected(Condition::Authenticated),
                 "anonymous" => protected(Condition::Not(Box::new(Condition::Authenticated))),
-                "hasRole" | "hasAnyRole" => roles(prefixed_role).map(AccessState::Protected),
-                "hasAuthority" | "hasAnyAuthority" => roles(role).map(AccessState::Protected),
+                "hasRole" | "hasAnyRole" => roles(Atom::Role).map(AccessState::Protected),
+                "hasAuthority" | "hasAnyAuthority" => {
+                    roles(Atom::Authority).map(AccessState::Protected)
+                }
                 "access" => {
                     let expr = index.text(args)?;
                     match expr.trim() {
                         "permitAll" | "permitAll()" => Some(AccessState::Open),
-                        _ => spel(&expr).map(AccessState::Protected),
+                        _ => spel(conf, &expr).map(AccessState::Protected),
                     }
                 }
                 _ => None,
             }
         }
 
-        fn matches(rule: &Rule, e: &EndpointAccess) -> Hit {
+        pub(super) fn matches(rule: &Rule, e: &EndpointAccess) -> Hit {
             let method = match (rule.methods.is_empty(), e.method.as_str()) {
                 (true, _) => Hit::Full,
                 (false, ANY_METHOD) => Hit::Part,
@@ -3033,7 +4825,7 @@ mod spring {
         }
     }
 
-    fn method(src: &Source, index: &Index, out: &mut Out, class: &Decl, d: &Decl) {
+    fn method(src: &Source, index: &Index, conf: &Conf, out: &mut Out, class: &Decl, d: &Decl) {
         let bases = match class.attrs.iter().find(|a| a.name == "RequestMapping") {
             Some(a) => match paths(src, out, a) {
                 Some(p) => p,
@@ -3050,19 +4842,7 @@ mod spring {
             let arity = src
                 .pair(d.open)
                 .map_or(0, |c| split_top(&src.text[d.open + 1..c]).len());
-            let up = index.inherited(class, &d.name, arity);
-            let mut levels: Vec<(&Source, &[Attr])> = vec![(src, &d.attrs)];
-            levels.extend(up.on_method.iter().map(|(s, a)| (*s, a.as_slice())));
-            levels.push((src, &class.attrs));
-            levels.extend(up.on_type.iter().map(|(s, a)| (*s, a.as_slice())));
-            let mut access = layer(index, out, &levels).unwrap_or(AccessState::Undeclared);
-            for g in &up.gaps {
-                out.at(src, d.open, g.clone());
-            }
-            for text in &up.ambiguous {
-                let unknown = out.unknown(src, d.open, text);
-                access = require(&access, unknown);
-            }
+            let (access, ignored) = declared_access(conf, index, out, (src, class, d), arity);
             let full: Vec<String> = bases
                 .iter()
                 .flat_map(|b| paths.iter().map(move |p| path(&[b, p])))
@@ -3072,12 +4852,73 @@ mod spring {
                 .flat_map(|p| methods.iter().map(move |m| (p, m)))
             {
                 out.endpoint(src, a.at, m, p.clone(), &access);
+                if ignored {
+                    out.1.endpoints.insert((src.rel.clone(), src.line(a.at)));
+                }
             }
         }
         out.link(
             first,
             handlers::of_method(src, &class.name, &d.name, d.open),
         );
+    }
+
+    /// The access the annotations of method `d` of `class` declare (own,
+    /// inherited and class level) and whether an annotation was not applied.
+    /// Shared with the WebFlux handler methods.
+    pub(crate) fn declared_access(
+        conf: &Conf,
+        index: &Index,
+        out: &mut Out,
+        (src, class, d): (&Source, &Decl, &Decl),
+        arity: usize,
+    ) -> (AccessState, bool) {
+        let up = index.inherited(class, &d.name, arity);
+        let (on_method, ambiguous) = without_conflicts(conf, class, d, &up);
+        let mut levels: Vec<(&Source, &[Attr])> = vec![(src, &d.attrs)];
+        levels.extend(on_method.iter().map(|(s, a)| (*s, a.as_slice())));
+        levels.push((src, &class.attrs));
+        levels.extend(up.on_type.iter().map(|(s, a)| (*s, a.as_slice())));
+        out.1.hit = false;
+        let mut access = layer(conf, index, out, &levels).unwrap_or(AccessState::Undeclared);
+        let ignored = std::mem::take(&mut out.1.hit);
+        for g in &up.gaps {
+            out.at(src, d.open, g.clone());
+        }
+        for text in &ambiguous {
+            let unknown = out.unknown(src, d.open, text);
+            access = require(&access, unknown);
+        }
+        (access, ignored)
+    }
+
+    /// The supertypes' method annotation levels without the families that
+    /// several of them declare while the method itself declares none (Spring
+    /// rejects that), and the ambiguous supertypes plus one text per such family.
+    fn without_conflicts<'a>(
+        conf: &Conf,
+        class: &Decl,
+        d: &Decl,
+        up: &super::index::Inherited<'a>,
+    ) -> (Vec<(&'a Source, Vec<Attr>)>, Vec<String>) {
+        let own: Vec<&str> = d.attrs.iter().filter_map(|a| family(&a.name)).collect();
+        let (mut levels, mut ambiguous) = (up.on_method.clone(), up.ambiguous.clone());
+        for f in ["PreAuthorize", "PostAuthorize", "Secured", "jsr250"] {
+            let has = |attrs: &Vec<Attr>| attrs.iter().any(|a| family(&a.name) == Some(f));
+            let several = levels.iter().filter(|(_, a)| has(a)).count() > 1;
+            if own.contains(&f) || conf.flag(f) != Flag::On || !several {
+                continue;
+            }
+            for (_, attrs) in &mut levels {
+                attrs.retain(|a| family(&a.name) != Some(f));
+            }
+            let text = format!(
+                "{f} is declared on the method of several supertypes of {}",
+                class.name
+            );
+            ambiguous.push(text);
+        }
+        (levels, ambiguous)
     }
 
     /// HTTP methods of a mapping annotation; `None` for other annotations.
@@ -3118,24 +4959,10 @@ mod spring {
         }
     }
 
-    /// The authority as written (`hasAuthority`, `@Secured`).
-    fn role(name: &str) -> Condition {
-        Condition::Role(name.into())
-    }
-
-    /// `hasRole('A')`: Spring adds the default role prefix unless present.
-    fn prefixed_role(name: &str) -> Condition {
-        role(&if name.starts_with(crate::ui_flow_backend::ROLE_PREFIX) {
-            name.to_string()
-        } else {
-            format!("{}{name}", crate::ui_flow_backend::ROLE_PREFIX)
-        })
-    }
-
     /// The security annotation family of `name`: Spring overrides per family
     /// (a method's annotation replaces the class's of the same family) and
     /// checks every family in turn.
-    pub(super) fn family(name: &str) -> Option<&'static str> {
+    pub(crate) fn family(name: &str) -> Option<&'static str> {
         Some(match name {
             "PreAuthorize" => "PreAuthorize",
             "PostAuthorize" => "PostAuthorize",
@@ -3150,13 +4977,41 @@ mod spring {
     /// Access declared by the annotation `levels`, most specific first (method,
     /// the method in supertypes, class, supertypes): per family the first level
     /// with one wins, the families are ANDed. `None` when there is none.
-    fn layer(index: &Index, out: &mut Out, levels: &[(&Source, &[Attr])]) -> Option<AccessState> {
+    fn layer(
+        conf: &Conf,
+        index: &Index,
+        out: &mut Out,
+        levels: &[(&Source, &[Attr])],
+    ) -> Option<AccessState> {
         let mut families = Families::new();
         for (src, attrs) in levels {
             let mut here = Families::new();
-            collect(src, index, out, attrs, 0, &mut here);
+            collect(
+                conf,
+                index,
+                out,
+                (src, attrs),
+                Nest {
+                    depth: 0,
+                    site: None,
+                },
+                &mut here,
+            );
             for (f, items) in here {
                 families.entry(f).or_insert(items);
+            }
+        }
+        if conf.legacy() {
+            // legacy method security: the first source with annotations (pre-post,
+            // secured, jsr250) decides alone
+            let group = |f: &str| match f {
+                "PreAuthorize" | "PostAuthorize" => 0,
+                "Secured" => 1,
+                "jsr250" => 2,
+                _ => 3,
+            };
+            if let Some(first) = families.keys().map(|f| group(f)).filter(|g| *g < 3).min() {
+                families.retain(|f, _| group(f) == first || group(f) == 3);
             }
         }
         if families.is_empty() {
@@ -3169,32 +5024,44 @@ mod spring {
         })
     }
 
-    /// Items of `attrs` by family; an unknown annotation is followed into its
-    /// declaration (meta-annotation).
+    /// Where an annotation is read: its depth below the annotated element and,
+    /// inside a meta-annotation, the use site that fills its template.
+    #[derive(Clone, Copy)]
+    struct Nest<'a> {
+        depth: usize,
+        site: Option<&'a Attr>,
+    }
+
+    /// Items of `level` (a source and its annotations) by family; an unknown
+    /// annotation is followed into its declaration (meta-annotation).
     fn collect(
-        src: &Source,
+        conf: &Conf,
         index: &Index,
         out: &mut Out,
-        attrs: &[Attr],
-        depth: usize,
+        (src, attrs): (&Source, &[Attr]),
+        nest: Nest,
         into: &mut Families,
     ) {
         for a in attrs {
             let fam = family(&a.name);
-            // `{value}` of an annotation template is filled by the use site: not read.
-            let found = if depth > 0 && fam.is_some() && a.args.contains('{') {
-                Some(Some(out.unknown(src, a.at, &a.args)))
-            } else {
-                item(src, index, out, a)
+            if fam.is_some_and(|f| !enforced(conf, out, src, a, f, into)) {
+                continue;
+            }
+            let Some(a) = filled(conf, out, src, a, nest, into) else {
+                continue;
             };
-            match found {
+            match item(conf, src, index, out, &a) {
                 Some(item) => into
                     .entry(fam.unwrap_or(&a.name).to_string())
                     .or_default()
                     .push(item),
-                None if depth < 4 => {
+                None if nest.depth < 4 => {
                     if let Some((s, d)) = index.meta(&a.name) {
-                        collect(s, index, out, &d.attrs, depth + 1, into);
+                        let inner = Nest {
+                            depth: nest.depth + 1,
+                            site: Some(&*a),
+                        };
+                        collect(conf, index, out, (s, &d.attrs), inner, into);
                     }
                 }
                 None => {}
@@ -3202,21 +5069,112 @@ mod spring {
         }
     }
 
+    /// Whether annotation `a` of `family` is enforced; a family that is off adds
+    /// nothing (a gap), one whose switch is not readable adds Unknown.
+    fn enforced(
+        conf: &Conf,
+        out: &mut Out,
+        src: &Source,
+        a: &Attr,
+        family: &str,
+        into: &mut Families,
+    ) -> bool {
+        match conf.flag(family) {
+            Flag::On => return true,
+            Flag::Off => {
+                let message = format!("`@{}` is not applied: {}.", a.name, conf.off(family));
+                out.at(src, a.at, message);
+                out.1.hit = true;
+            }
+            Flag::Unreadable => {
+                let text = format!("@{} (its method-security switch is not readable)", a.name);
+                let unknown = out.unknown(src, a.at, &text);
+                into.entry(family.to_string())
+                    .or_default()
+                    .push(Some(unknown));
+            }
+        }
+        false
+    }
+
+    /// `a`, with the `{value}` placeholders of an annotation template filled by
+    /// the use site; `None` (and an Unknown item) when they cannot be.
+    fn filled<'a>(
+        conf: &Conf,
+        out: &mut Out,
+        src: &Source,
+        a: &'a Attr,
+        nest: Nest,
+        into: &mut Families,
+    ) -> Option<std::borrow::Cow<'a, Attr>> {
+        let fam = family(&a.name);
+        if nest.depth == 0 || fam.is_none() || !a.args.contains('{') {
+            return Some(std::borrow::Cow::Borrowed(a));
+        }
+        let Some(args) = fill(conf, a, nest.site) else {
+            let unknown = out.unknown(src, a.at, &a.args);
+            into.entry(fam.unwrap_or(&a.name).to_string())
+                .or_default()
+                .push(Some(unknown));
+            return None;
+        };
+        Some(std::borrow::Cow::Owned(Attr { args, ..a.clone() }))
+    }
+
+    /// The arguments of the template annotation `a` with each `{name}` replaced by
+    /// the literal the use site gives; only with an
+    /// `AnnotationTemplateExpressionDefaults` bean, and never for a placeholder
+    /// the use site does not fill with a literal.
+    fn fill(conf: &Conf, a: &Attr, use_site: Option<&Attr>) -> Option<String> {
+        let site = use_site.filter(|_| conf.templates)?;
+        let mut text = a.args.clone();
+        for _ in 0..8 {
+            let Some(open) = text.find('{') else {
+                return Some(text);
+            };
+            let close = open + text[open..].find('}')?;
+            let key = &text[open + 1..close];
+            if key.is_empty() || !key.bytes().all(lex::is_ident) {
+                return None;
+            }
+            let raw = named(&site.args, key)
+                .or_else(|| (key == "value").then(|| positional(&site.args)).flatten())?;
+            let value = lex::literal(raw)?;
+            text.replace_range(open..=close, &value);
+        }
+        None
+    }
+
     /// One security annotation: `Some(None)` declares open access.
-    fn item(src: &Source, index: &Index, out: &mut Out, a: &Attr) -> Option<Option<Condition>> {
+    fn item(
+        conf: &Conf,
+        src: &Source,
+        index: &Index,
+        out: &mut Out,
+        a: &Attr,
+    ) -> Option<Option<Condition>> {
         let raw = named(&a.args, "value")
             .or_else(|| positional(&a.args))
             .unwrap_or("");
         match a.name.as_str() {
-            "PreAuthorize" => Some(pre_authorize(src, index, out, a, raw)),
+            "PreAuthorize" => Some(pre_authorize(conf, src, index, out, a, raw)),
             "PostAuthorize" => {
                 let message = "`@PostAuthorize` is checked after the call: its side effects have already happened.";
                 out.note(&src.rel, src.line(a.at), message.into());
-                Some(pre_authorize(src, index, out, a, raw))
+                Some(pre_authorize(conf, src, index, out, a, raw))
             }
             "Secured" | "RolesAllowed" => {
-                let roles = literals(raw)
-                    .and_then(|r| combine(r.iter().map(|x| role(x)).collect(), Condition::Any));
+                let kind = if a.name == "Secured" {
+                    Atom::Authority
+                } else {
+                    Atom::Jsr250
+                };
+                let roles = literals(raw).and_then(|r| {
+                    combine(
+                        r.iter().map(|x| conf.atom(kind, x)).collect(),
+                        Condition::Any,
+                    )
+                });
                 Some(Some(roles.unwrap_or_else(|| out.unknown(src, a.at, raw))))
             }
             "PermitAll" => Some(None),
@@ -3227,6 +5185,7 @@ mod spring {
 
     /// `None` for `permitAll()`.
     fn pre_authorize(
+        conf: &Conf,
         src: &Source,
         index: &Index,
         out: &mut Out,
@@ -3239,7 +5198,7 @@ mod spring {
         if matches!(expr.trim(), "permitAll" | "permitAll()") {
             return None;
         }
-        Some(spel(&expr).unwrap_or_else(|| out.unknown(src, a.at, &expr)))
+        Some(spel(conf, &expr).unwrap_or_else(|| out.unknown(src, a.at, &expr)))
     }
 
     #[derive(Clone, PartialEq)]
@@ -3255,8 +5214,9 @@ mod spring {
     }
 
     /// The supported subset of Spring Security SpEL; `None` for anything else.
-    fn spel(expr: &str) -> Option<Condition> {
+    fn spel(conf: &Conf, expr: &str) -> Option<Condition> {
         let mut parser = Spel {
+            conf,
             toks: tokens(expr)?,
             at: 0,
         };
@@ -3309,11 +5269,12 @@ mod spring {
         }
     }
 
-    struct Spel {
+    struct Spel<'c> {
+        conf: &'c Conf,
         toks: Vec<Tok>,
         at: usize,
     }
-    impl Spel {
+    impl Spel<'_> {
         fn eat(&mut self, tok: &Tok) -> bool {
             let hit = self.toks.get(self.at) == Some(tok);
             self.at += usize::from(hit);
@@ -3348,13 +5309,13 @@ mod spring {
                 return None;
             };
             self.at += 1;
-            let make = if matches!(name.as_str(), "hasRole" | "hasAnyRole") {
-                prefixed_role
-            } else {
-                role
+            let kind = match name.as_str() {
+                "hasRole" | "hasAnyRole" => Atom::Role,
+                "hasScope" | "hasAnyScope" => Atom::Scope,
+                _ => Atom::Authority,
             };
             let mut args = if self.eat(&Tok::Open) {
-                self.args(make)?
+                self.args(kind)?
             } else {
                 vec![]
             };
@@ -3368,7 +5329,7 @@ mod spring {
             }
         }
         /// Quoted arguments up to the closing parenthesis, as roles.
-        fn args(&mut self, make: fn(&str) -> Condition) -> Option<Vec<Condition>> {
+        fn args(&mut self, kind: Atom) -> Option<Vec<Condition>> {
             let mut args = Vec::new();
             if self.eat(&Tok::Close) {
                 return Some(args);
@@ -3377,7 +5338,7 @@ mod spring {
                 let Some(Tok::Str(s)) = self.toks.get(self.at) else {
                     return None;
                 };
-                args.push(make(s));
+                args.push(self.conf.atom(kind, s));
                 self.at += 1;
                 if self.eat(&Tok::Close) {
                     return Some(args);
@@ -4267,6 +6228,7 @@ class KController(private val repo: Repo) {
             ("owners/pom.xml", "<project/>"),
             ("owners/src/main/java/shop/OwnerController.java", SPRING),
             ("owners/src/main/java/shop/SecurityConfig.java", SECURITY),
+            ("owners/src/main/java/shop/Enable.java", ENABLE_ALL),
             ("owners/src/main/kotlin/shop/KController.kt", KOTLIN),
             (
                 "owners/src/test/java/shop/T.java",
@@ -4282,7 +6244,7 @@ class KController(private val repo: Repo) {
             &protected(Condition::Authenticated)
         );
         let admin_read = protected(Condition::All(vec![
-            Condition::Any(vec![role("SCOPE_x"), role("owner:read")]),
+            Condition::Any(vec![policy("SCOPE_x"), policy("owner:read")]),
             Condition::Authenticated,
             role("ROLE_ADMIN"),
         ]));
@@ -4294,7 +6256,7 @@ class KController(private val repo: Repo) {
                 Condition::Any(vec![
                     Condition::Not(Box::new(Condition::All(vec![
                         Condition::Authenticated,
-                        role("BLOCKED"),
+                        policy("BLOCKED"),
                     ]))),
                     role("ROLE_ADMIN"),
                 ]),
@@ -4323,7 +6285,7 @@ class KController(private val repo: Repo) {
         );
         assert_eq!(
             access(&flow, "PATCH", "/api/owners/{id}/audit"),
-            &signed_in(role("AUDITOR"))
+            &signed_in(role("ROLE_AUDITOR"))
         );
         assert_eq!(access(&flow, "GET", "/plain"), &AccessState::Undeclared);
         assert_eq!(access(&flow, "GET", "/k/a"), &protected(role("ROLE_USER")));
@@ -4382,6 +6344,23 @@ class KController(private val repo: Repo) {
         assert_eq!(flow.endpoints[0].application, None);
         assert!(!flow.complete);
         assert!(extract(&dir.path().join("missing")).endpoints.is_empty());
+    }
+
+    #[test]
+    fn spring_role_prefix_outside_every_project_is_a_gap_not_a_whole_flow_entry() {
+        let dir = project(&[(
+            "A.java",
+            "import org.springframework.web.bind.annotation.*;\n@RestController class A { @GetMapping(\"/a\") void a() {} }",
+        )]);
+        let flow = extract(dir.path());
+        assert_eq!(flow.endpoints.len(), 1);
+        assert!(
+            flow.role_conventions.is_empty(),
+            "{:?}",
+            flow.role_conventions
+        );
+        assert_eq!(notes(&flow, "Role prefix not attributed"), 1);
+        assert!(!flow.complete);
     }
 
     fn notes(flow: &UiFlow, part: &str) -> usize {
@@ -4524,7 +6503,7 @@ public sealed class AppsController : ControllerBase
              ApiPermissionOrAnonymous = \"policy:$arg|open\"\n",
         )
         .unwrap();
-        let flow = extract_with(&ExtractContext::new(dir.path(), &config));
+        let flow = extract_with(&ExtractContext::new(dir.path(), &config), None);
         assert_eq!(
             access(&flow, "GET", "/api/apps"),
             &protected(Condition::Authenticated)
@@ -4865,6 +6844,7 @@ public class ManagementResource {
             ("src/main/java/app/AuthoritiesConstants.java", AUTHORITIES),
             ("src/main/java/app/SecurityConfiguration.java", FILTER_CHAIN),
             ("src/main/java/app/AccountResource.java", RESOURCES),
+            ("src/main/java/app/Enable.java", ENABLE_ALL),
         ]);
         let flow = extract(dir.path());
         assert_eq!(access(&flow, "POST", "/api/register"), &AccessState::Open);
@@ -4931,6 +6911,7 @@ public class TicketController {
         );
         let dir = project(&[
             ("pom.xml", "<project/>"),
+            ("src/main/java/Enable.java", ENABLE_ALL),
             ("src/main/java/app/SecurityConfig.java", &config),
             ("src/main/java/app/TicketController.java", LEGACY_RESOURCES),
         ]);
@@ -5007,20 +6988,20 @@ public class TicketController {
         );
         assert_eq!(
             access(&flow, "GET", "/api/v1/admin/tickets"),
-            &protected(Condition::All(vec![role("ROLE_ADMIN"), role("server")]))
+            &protected(Condition::All(vec![role("ROLE_ADMIN"), policy("server")]))
         );
         assert_eq!(
             access(&flow, "GET", "/api/v1/internal"),
             &protected(Condition::All(vec![
                 Condition::Authenticated,
-                role("server")
+                policy("server")
             ]))
         );
         assert_eq!(
             access(&flow, "GET", "/api/v1/either"),
             &protected(Condition::All(vec![
                 Condition::Any(vec![
-                    Condition::Any(vec![role("a"), role("b")]),
+                    Condition::Any(vec![policy("a"), policy("b")]),
                     role("ROLE_ROOT")
                 ]),
                 Condition::Authenticated
@@ -5031,6 +7012,7 @@ public class TicketController {
     fn configured(files: &[(&str, &str)]) -> UiFlow {
         let mut all = vec![
             ("pom.xml", "<project/>"),
+            ("src/main/java/Enable.java", ENABLE_ALL),
             ("src/main/java/app/TicketController.java", LEGACY_RESOURCES),
         ];
         all.extend_from_slice(files);
@@ -5048,7 +7030,9 @@ public class TicketController {
     fn assert_not_evaluated(flow: &UiFlow) {
         assert_eq!(
             access(flow, "GET", "/api/v1/other"),
-            &AccessState::Undeclared
+            &AccessState::Undeclared,
+            "{:#?}",
+            flow.diagnostics
         );
         assert_eq!(notes(flow, "not evaluated"), 1, "{:#?}", flow.diagnostics);
     }
@@ -5057,19 +7041,12 @@ public class TicketController {
     fn security_matchers_scope_a_filter_chain() {
         let chain = "public class C { @Bean SecurityFilterChain api(HttpSecurity http) { http.securityMatchers(m -> m.requestMatchers(\"/api/**\")).authorizeHttpRequests(a -> a.anyRequest().authenticated()); return http.build(); } }";
         let flow = configured(&[("src/main/java/app/C.java", chain)]);
-        assert_not_evaluated(&flow);
-    }
-
-    #[test]
-    fn legacy_scoping_forms_are_not_evaluated() {
-        for scope in [
-            "http.requestMatchers().antMatchers(\"/api/**\").and().authorizeRequests().anyRequest().authenticated();",
-            "http.antMatcher(\"/api/**\").authorizeRequests().anyRequest().authenticated();",
-        ] {
-            let config = adapter(scope);
-            let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
-            assert_not_evaluated(&flow);
-        }
+        // a literal scope is read (F30); the rules apply inside it
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &protected(Condition::Authenticated)
+        );
     }
 
     fn kotlin(body: &str) -> UiFlow {
@@ -5086,12 +7063,15 @@ public class TicketController {
             "        http.authorizeRequests().antMatchers(\"/api/**\").authenticated().anyRequest().permitAll()\n        http.antMatcher(\"/api/**\")",
             "        http.authorizeRequests()\n            .antMatchers(\"/api/**\").authenticated()\n            // comment between rules\n            .anyRequest().permitAll()\n\n        http.requestMatchers().antMatchers(\"/api/**\")",
         ] {
+            // the later call scopes the chain (it is no rule); the rules end before it
             let flow = kotlin(body);
-            assert_not_evaluated(&flow);
-            assert_eq!(
-                access(&flow, "GET", "/api/v1/open/ping"),
-                &AccessState::Undeclared
-            );
+            assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+            for path in ["/api/v1/open/ping", "/api/v1/other"] {
+                assert_eq!(
+                    access(&flow, "GET", path),
+                    &protected(Condition::Authenticated)
+                );
+            }
         }
         let flow = kotlin(
             "        http.csrf().disable()\n        http.authorizeRequests()\n            .antMatchers(\"/api/v1/open/**\").permitAll()\n            .anyRequest().authenticated()\n            .and().httpBasic()",
@@ -5430,8 +7410,17 @@ public class TicketController {
                 "public class C {{ @Bean SecurityFilterChain api(HttpSecurity http) throws Exception {{ http.authorizeHttpRequests(a -> {{ {open}; ApiScope.scope(http); }}); return http.build(); }} }}"
             ),
         ];
-        for text in &java {
+        for (i, text) in java.iter().enumerate() {
             let flow = configured(&[("src/main/java/app/C.java", text)]);
+            if i < 3 {
+                // a customizer next to the chain: the scope is read, the rules apply in it
+                assert_eq!(notes(&flow, "not evaluated"), 0, "{text}");
+                assert_eq!(
+                    access(&flow, "GET", "/api/v1/open/ping"),
+                    &AccessState::Open
+                );
+                continue;
+            }
             assert_not_evaluated(&flow);
             assert_eq!(
                 access(&flow, "GET", "/api/v1/open/ping"),
@@ -5440,7 +7429,13 @@ public class TicketController {
             );
         }
         let kt = "class C : WebSecurityConfigurerAdapter(), WebSecurityCustomizer {\n    override fun configure(http: HttpSecurity) {\n        http.antMatcher(\"/api/**\")\n        http.authorizeRequests().anyRequest().authenticated()\n    }\n}\n";
-        assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", kt)]));
+        // a literal scope on the same statement chain is read (F32): rules apply inside it
+        let flow = configured(&[("src/main/java/app/C.kt", kt)]);
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &protected(Condition::Authenticated)
+        );
         // F-C: Kotlin templates that may use the variable.
         for template in [
             "\"${describe(http)}\"",
@@ -5515,18 +7510,37 @@ public class TicketController {
         assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", kt)]));
         // The lambda form of authorizeHttpRequests returns the HttpSecurity, not the rules.
         let text = "public class C { @Bean SecurityFilterChain api(HttpSecurity http) throws Exception { http.authorizeHttpRequests(a -> a.anyRequest().permitAll()).antMatcher(\"/public/**\"); return http.build(); } }";
-        assert_not_evaluated(&configured(&[("src/main/java/app/C.java", text)]));
+        // the lambda form returns the HttpSecurity: `.antMatcher(..)` scopes the chain
+        let flow = configured(&[("src/main/java/app/C.java", text)]);
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &AccessState::Undeclared
+        );
         let kt = "class C : WebSecurityConfigurerAdapter() {\n    override fun configure(http: HttpSecurity) {\n        http.authorizeRequests { a -> a.anyRequest().permitAll() }.antMatcher(\"/public/**\")\n    }\n}\n";
-        assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", kt)]));
-        // Kotlin statements separated by newlines only.
-        for x in [
-            "http.antMatcher(\"/admin/**\")",
-            "http.antMatcher(\"/api/**\")",
+        // Kotlin braces are no readable rule call: a gap, nothing applied
+        let flow = configured(&[("src/main/java/app/C.kt", kt)]);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &AccessState::Undeclared
+        );
+        assert!(!flow.complete, "{:#?}", flow.diagnostics);
+        // Kotlin statements separated by newlines only: the call scopes the chain (F32)
+        for (x, ping) in [
+            ("http.antMatcher(\"/admin/**\")", AccessState::Undeclared),
+            ("http.antMatcher(\"/api/**\")", AccessState::Open),
         ] {
             let kt = format!(
                 "class C : WebSecurityConfigurerAdapter() {{\n    override fun configure(http: HttpSecurity) {{\n        http.authorizeRequests({{ a ->\n            a.antMatchers(\"/api/v1/open/**\").permitAll()\n            a.anyRequest().authenticated()\n            {x}\n        }})\n    }}\n}}\n"
             );
-            assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", &kt)]));
+            let flow = configured(&[("src/main/java/app/C.kt", &kt)]);
+            assert_eq!(
+                notes(&flow, "not evaluated"),
+                0,
+                "{x}: {:#?}",
+                flow.diagnostics
+            );
+            assert_eq!(access(&flow, "GET", "/api/v1/open/ping"), &ping, "{x}");
         }
         // A multi-line rule chain on the lambda parameter stays evaluated.
         let text = "public class C { @Bean SecurityFilterChain api(HttpSecurity http) throws Exception { http.authorizeHttpRequests(a -> a\n  .requestMatchers(\"/api/v1/open/**\").permitAll()\n  .anyRequest().authenticated()); return http.build(); } }";
@@ -5615,9 +7629,7 @@ public class TicketController {
     fn any_matcher_call_outside_the_authorization_block_scopes_the_chain() {
         for scope in [
             "http.requestMatchers(m -> m.antMatchers(\"/api/**\")).authorizeRequests(a -> a.anyRequest().authenticated());",
-            "http.mvcMatcher(\"/api/**\").authorizeRequests().anyRequest().authenticated();",
             "http.regexMatcher(\"/api/.*\").authorizeRequests().anyRequest().authenticated();",
-            "http.requestMatchers().antMatchers(\"/api/**\").and().authorizeRequests().anyRequest().authenticated();",
         ] {
             let config = adapter(scope);
             let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
@@ -5736,6 +7748,7 @@ public class TicketController {
             ("src/main/java/app/AuthoritiesConstants.java", AUTHORITIES),
             ("src/main/java/app/SecurityConfiguration.java", &chain),
             ("src/main/java/app/AccountResource.java", RESOURCES),
+            ("src/main/java/app/Enable.java", ENABLE_ALL),
         ]);
         let flow = extract(dir.path());
         let authenticated = protected(Condition::Authenticated);
@@ -5871,10 +7884,19 @@ public class SecurityConfig {
 }
 "#;
 
-    fn spring_flow(files: &[(&str, &str)]) -> UiFlow {
+    /// A Spring project without any method-security switch.
+    fn spring_bare(files: &[(&str, &str)]) -> UiFlow {
         let mut all = vec![("pom.xml", "<project/>")];
         all.extend(files.iter().map(|(n, t)| (*n, *t)));
         extract(project(&all).path())
+    }
+
+    /// A Spring project with all method-security families enabled (a file of
+    /// the same name replaces the switches).
+    fn spring_flow(files: &[(&str, &str)]) -> UiFlow {
+        let mut all = vec![("src/main/java/Enable.java", ENABLE_ALL)];
+        all.extend_from_slice(files);
+        spring_bare(&all)
     }
 
     fn controller(body: &str) -> String {
@@ -6108,7 +8130,7 @@ g.RequireAuthorization("P");
 class A implements Api { @GetMapping("/ov") public void a() {} }"#,
             ),
         ]);
-        assert_eq!(access(&flow, "GET", "/ov"), &protected(role("ADMIN")));
+        assert_eq!(access(&flow, "GET", "/ov"), &protected(role("ROLE_ADMIN")));
         assert!(!flow.complete);
     }
 
@@ -6133,5 +8155,945 @@ class A extends Dup { @GetMapping("/dup") void a() {} }"#,
             AccessState::Protected(Condition::Unknown(_))
         ));
         assert!(!flow.complete);
+    }
+
+    // ---- wave 2a: Spring conventions, method-security switches, chain scoping ----
+
+    const ENABLE_ALL: &str = "import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;\n@EnableMethodSecurity(securedEnabled = true, jsr250Enabled = true)\nclass Enable {}\n";
+    const AUTH_CHAIN: &str = "@Configuration\npublic class SecurityConfig {\n    @Bean SecurityFilterChain chain(HttpSecurity http) throws Exception {\n        http.authorizeHttpRequests(a -> a.anyRequest().authenticated());\n        return http.build();\n    }\n}\n";
+
+    fn gaps(flow: &UiFlow, part: &str) -> usize {
+        (flow.diagnostics.iter())
+            .filter(|d| d.severity == DiagnosticSeverity::Gap && d.message.contains(part))
+            .count()
+    }
+
+    fn convention(flow: &UiFlow) -> &RoleConvention {
+        assert_eq!(
+            flow.role_conventions.len(),
+            1,
+            "{:#?}",
+            flow.role_conventions
+        );
+        &flow.role_conventions[0]
+    }
+
+    // F09: an annotation template is filled from the use site only with its bean.
+    #[test]
+    fn f09_annotation_template_needs_its_bean() {
+        let template = "@PreAuthorize(\"hasRole('{value}')\")\npublic @interface HasRole { String value(); }\n";
+        let user = controller("class A { @HasRole(\"ADMIN\") @GetMapping(\"/f09\") void a() {} }");
+        let bean = "class B { @Bean static AnnotationTemplateExpressionDefaults d() { return new AnnotationTemplateExpressionDefaults(); } }\n";
+        let with = spring_flow(&[
+            ("src/main/java/HasRole.java", template),
+            ("src/main/java/B.java", bean),
+            ("src/main/java/A.java", &user),
+        ]);
+        assert_eq!(access(&with, "GET", "/f09"), &protected(role("ROLE_ADMIN")));
+        assert!(with.complete, "{:#?}", with.diagnostics);
+        let without = spring_flow(&[
+            ("src/main/java/HasRole.java", template),
+            ("src/main/java/A.java", &user),
+        ]);
+        assert!(matches!(
+            access(&without, "GET", "/f09"),
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+        assert!(!without.complete);
+    }
+
+    // F10: two interfaces declaring the same method annotation are ambiguous.
+    #[test]
+    fn f10_two_interfaces_with_the_annotation_are_unknown() {
+        let flow = spring_flow(&[
+            (
+                "src/main/java/I1.java",
+                "interface I1 {\n    @PreAuthorize(\"hasRole('A')\")\n    void a();\n}\n",
+            ),
+            (
+                "src/main/java/I2.java",
+                "interface I2 {\n    @PreAuthorize(\"hasRole('B')\")\n    void a();\n}\n",
+            ),
+            (
+                "src/main/java/A.java",
+                &controller(
+                    "class A implements I1, I2 { @GetMapping(\"/f10\") public void a() {} }",
+                ),
+            ),
+        ]);
+        assert!(matches!(
+            access(&flow, "GET", "/f10"),
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+        assert!(!flow.complete);
+    }
+
+    // F11-F13: an annotation family that is not enabled adds nothing, with a gap.
+    #[test]
+    fn f11_no_enabling_annotation_ignores_method_security_with_a_gap() {
+        let method = controller(
+            "class A { @PreAuthorize(\"hasRole('ADMIN')\") @GetMapping(\"/f11\") void a() {} }",
+        );
+        let flow = spring_bare(&[
+            ("src/main/java/Sec.java", AUTH_CHAIN),
+            ("src/main/java/A.java", &method),
+        ]);
+        assert_eq!(
+            access(&flow, "GET", "/f11"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(gaps(&flow, "method security"), 1, "{:#?}", flow.diagnostics);
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn f12_f13_a_family_that_is_off_is_ignored_with_a_gap() {
+        let secured =
+            controller("class A { @Secured(\"ROLE_A\") @GetMapping(\"/f12\") void a() {} }");
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", AUTH_CHAIN),
+            (
+                "src/main/java/Enable.java",
+                "@EnableMethodSecurity\nclass Enable {}\n",
+            ),
+            ("src/main/java/A.java", &secured),
+        ]);
+        assert_eq!(
+            access(&flow, "GET", "/f12"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(gaps(&flow, "securedEnabled"), 1, "{:#?}", flow.diagnostics);
+        let pre = controller(
+            "class A { @PreAuthorize(\"hasRole('A')\") @GetMapping(\"/f13\") void a() {} }",
+        );
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", AUTH_CHAIN),
+            (
+                "src/main/java/Enable.java",
+                "@EnableGlobalMethodSecurity(securedEnabled = true)\nclass Enable {}\n",
+            ),
+            ("src/main/java/A.java", &pre),
+        ]);
+        assert_eq!(
+            access(&flow, "GET", "/f13"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(gaps(&flow, "prePostEnabled"), 1, "{:#?}", flow.diagnostics);
+    }
+
+    // An ignored annotation never lets a chain `permitAll` turn the endpoint Open.
+    #[test]
+    fn an_ignored_annotation_is_never_lifted_to_open() {
+        let method = controller(
+            "class A { @PreAuthorize(\"hasRole('ADMIN')\") @GetMapping(\"/x\") void a() {} }",
+        );
+        let flow = spring_bare(&[
+            ("src/main/java/Sec.java", PERMIT_CHAIN),
+            ("src/main/java/A.java", &method),
+        ]);
+        assert_eq!(access(&flow, "GET", "/x"), &AccessState::Undeclared);
+        assert!(!flow.complete);
+    }
+
+    // A switch that is not a literal boolean is unreadable: Unknown, not off and not on.
+    #[test]
+    fn an_unreadable_switch_makes_the_family_unknown() {
+        let method = controller("class A { @Secured(\"ROLE_A\") @GetMapping(\"/x\") void a() {} }");
+        let flow = spring_flow(&[
+            (
+                "src/main/java/Enable.java",
+                "@EnableMethodSecurity(securedEnabled = FLAGS.SECURED)\nclass Enable {}\n",
+            ),
+            ("src/main/java/A.java", &method),
+        ]);
+        assert!(matches!(
+            access(&flow, "GET", "/x"),
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+        assert!(!flow.complete);
+    }
+
+    // F14: the legacy annotation applies the first family with a hit.
+    #[test]
+    fn f14_legacy_method_security_uses_the_first_family() {
+        let method = controller(
+            "@PreAuthorize(\"hasRole('A')\")\nclass A { @Secured(\"ROLE_B\") @GetMapping(\"/f14\") void a() {} }",
+        );
+        let flow = spring_flow(&[
+            (
+                "src/main/java/Enable.java",
+                "@EnableGlobalMethodSecurity(prePostEnabled = true, securedEnabled = true)\nclass Enable {}\n",
+            ),
+            ("src/main/java/A.java", &method),
+        ]);
+        assert_eq!(access(&flow, "GET", "/f14"), &protected(role("ROLE_A")));
+        assert!(flow.complete, "{:#?}", flow.diagnostics);
+    }
+
+    // F15, F18: an authority is an exact name; a role gets the prefix.
+    #[test]
+    fn f15_f18_authorities_are_not_roles() {
+        let flow = spring_flow(&[(
+            "src/main/java/A.java",
+            &controller(
+                r#"class A {
+    @PreAuthorize("hasAuthority('ADMIN')") @GetMapping("/auth") void a() {}
+    @PreAuthorize("hasRole('ADMIN')") @GetMapping("/role") void b() {}
+    @PreAuthorize("hasAuthority('ROLE_ADMIN')") @GetMapping("/stored") void c() {}
+    @Secured("ADMIN") @GetMapping("/f18") void d() {}
+}"#,
+            ),
+        )]);
+        assert_eq!(access(&flow, "GET", "/auth"), &protected(policy("ADMIN")));
+        assert_eq!(
+            access(&flow, "GET", "/role"),
+            &protected(role("ROLE_ADMIN"))
+        );
+        assert_eq!(
+            access(&flow, "GET", "/stored"),
+            &protected(role("ROLE_ADMIN"))
+        );
+        assert_eq!(access(&flow, "GET", "/f18"), &protected(policy("ADMIN")));
+    }
+
+    // F16: the prefix of a `GrantedAuthorityDefaults` bean is read.
+    #[test]
+    fn f16_granted_authority_defaults_set_the_role_prefix() {
+        let beans = "class B { @Bean GrantedAuthorityDefaults d() { return new GrantedAuthorityDefaults(\"\"); } }\n";
+        let flow = spring_flow(&[
+            ("src/main/java/B.java", beans),
+            (
+                "src/main/java/A.java",
+                &controller(
+                    r#"class A {
+    @PreAuthorize("hasRole('ADMIN')") @GetMapping("/r") void a() {}
+    @PreAuthorize("hasAuthority('ADMIN')") @GetMapping("/a") void b() {}
+}"#,
+                ),
+            ),
+        ]);
+        assert_eq!(access(&flow, "GET", "/r"), &protected(role("ADMIN")));
+        assert_eq!(access(&flow, "GET", "/a"), access(&flow, "GET", "/r"));
+        let c = convention(&flow);
+        assert_eq!(c.role_prefix.as_deref(), Some(""));
+        assert!(
+            c.origins
+                .iter()
+                .any(|o| o.field == "role_prefix" && o.file.ends_with("B.java") && o.line == 1)
+        );
+    }
+
+    // A prefix that is not a literal is not guessed: role conditions are Unknown.
+    #[test]
+    fn an_unreadable_role_prefix_makes_role_names_unknown() {
+        let beans = "class B { @Bean GrantedAuthorityDefaults d() { return new GrantedAuthorityDefaults(PREFIX); } }\n";
+        let flow = spring_flow(&[
+            ("src/main/java/B.java", beans),
+            (
+                "src/main/java/A.java",
+                &controller(
+                    "class A { @PreAuthorize(\"hasRole('ADMIN')\") @GetMapping(\"/r\") void a() {} }",
+                ),
+            ),
+        ]);
+        assert!(matches!(
+            access(&flow, "GET", "/r"),
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+        assert!(!flow.complete);
+        assert_eq!(convention(&flow).role_prefix, None);
+    }
+
+    // F17: JSR-250 adds the prefix, it does not strip it.
+    #[test]
+    fn f17_roles_allowed_adds_the_prefix() {
+        let flow = spring_flow(&[(
+            "src/main/java/A.java",
+            &controller(
+                r#"class A {
+    @RolesAllowed("ROLE_ADMIN") @GetMapping("/f17") void a() {}
+    @RolesAllowed("ADMIN") @GetMapping("/plain") void b() {}
+}"#,
+            ),
+        )]);
+        assert_eq!(
+            access(&flow, "GET", "/f17"),
+            &protected(role("ROLE_ROLE_ADMIN"))
+        );
+        assert_eq!(
+            access(&flow, "GET", "/plain"),
+            &protected(role("ROLE_ADMIN"))
+        );
+    }
+
+    // F41: scopes keep their name; the scope prefix is the framework default.
+    #[test]
+    fn f41_scope_authorities_and_the_default_scope_prefix() {
+        let flow = spring_flow(&[(
+            "src/main/java/A.java",
+            &controller(
+                "class A { @PreAuthorize(\"hasAuthority('SCOPE_read')\") @GetMapping(\"/f41\") void a() {} }",
+            ),
+        )]);
+        assert_eq!(
+            access(&flow, "GET", "/f41"),
+            &protected(policy("SCOPE_read"))
+        );
+        let c = convention(&flow);
+        assert_eq!(c.scope_prefix.as_deref(), Some("SCOPE_"));
+        assert!(
+            c.origins
+                .iter()
+                .any(|o| o.field == "scope_prefix" && o.source.contains("framework default"))
+        );
+    }
+
+    // F42: a JwtGrantedAuthoritiesConverter gives the scope prefix and the claim.
+    #[test]
+    fn f42_jwt_converter_gives_scope_prefix_and_claim() {
+        let conv = "class J { JwtGrantedAuthoritiesConverter c() { var c = new JwtGrantedAuthoritiesConverter(); c.setAuthorityPrefix(\"ROLE_\"); c.setAuthoritiesClaimName(\"roles\"); return c; } }\n";
+        let flow = spring_flow(&[
+            ("src/main/java/J.java", conv),
+            (
+                "src/main/java/A.java",
+                &controller(
+                    "class A { @PreAuthorize(\"hasRole('admin')\") @GetMapping(\"/f42\") void a() {} }",
+                ),
+            ),
+        ]);
+        assert_eq!(access(&flow, "GET", "/f42"), &protected(role("ROLE_admin")));
+        let c = convention(&flow);
+        assert_eq!(c.role_claim.as_deref(), Some("roles"));
+        assert_eq!(c.scope_prefix.as_deref(), Some("ROLE_"));
+    }
+
+    // Quarkus Spring compatibility: role names are exact, nothing is stripped or added.
+    #[test]
+    fn quarkus_spring_controllers_keep_role_names_exact() {
+        let flow = extract(
+            project(&[
+                (
+                    "pom.xml",
+                    "<project><dependencies><dependency><artifactId>quarkus-spring-security</artifactId></dependency></dependencies></project>",
+                ),
+                (
+                    "src/main/java/A.java",
+                    r#"import org.springframework.web.bind.annotation.GetMapping;
+@RestController
+class A {
+    @Secured("admin") @GetMapping("/s") void a() {}
+    @PreAuthorize("hasRole('admin')") @GetMapping("/p") void b() {}
+}"#,
+                ),
+            ])
+            .path(),
+        );
+        assert_eq!(access(&flow, "GET", "/s"), &protected(role("admin")));
+        assert_eq!(access(&flow, "GET", "/p"), &protected(role("admin")));
+        assert_eq!(convention(&flow).role_prefix.as_deref(), Some(""));
+        assert!(flow.complete, "{:#?}", flow.diagnostics);
+    }
+
+    const SCOPED_ENDPOINTS: &str = "@RestController class E {\n    @GetMapping(\"/api/x\") void a() {}\n    @GetMapping(\"/web\") void b() {}\n}\n";
+
+    // F30: ordered chains; the first chain whose scope matches decides.
+    #[test]
+    fn f30_two_chains_apply_by_order_and_scope() {
+        let chains = r#"@Configuration
+class Sec {
+    @Bean @Order(1)
+    SecurityFilterChain api(HttpSecurity http) throws Exception {
+        http.securityMatcher("/api/**").authorizeHttpRequests(a -> a.anyRequest().hasRole("ADMIN"));
+        return http.build();
+    }
+    @Bean
+    SecurityFilterChain web(HttpSecurity http) throws Exception {
+        http.authorizeHttpRequests(a -> a.anyRequest().authenticated());
+        return http.build();
+    }
+}
+"#;
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", chains),
+            ("src/main/java/E.java", SCOPED_ENDPOINTS),
+        ]);
+        assert_eq!(
+            access(&flow, "GET", "/api/x"),
+            &protected(role("ROLE_ADMIN"))
+        );
+        assert_eq!(
+            access(&flow, "GET", "/web"),
+            &protected(Condition::Authenticated)
+        );
+        assert!(flow.complete, "{:#?}", flow.diagnostics);
+    }
+
+    // Chains whose order is equal or unreadable cannot be put in sequence.
+    #[test]
+    fn chains_without_a_readable_distinct_order_are_not_evaluated() {
+        let chains = |first: &str| {
+            format!(
+                "@Configuration\nclass Sec {{\n    @Bean {first}\n    SecurityFilterChain api(HttpSecurity http) throws Exception {{\n        http.securityMatcher(\"/api/**\").authorizeHttpRequests(a -> a.anyRequest().hasRole(\"ADMIN\"));\n        return http.build();\n    }}\n    @Bean\n    SecurityFilterChain web(HttpSecurity http) throws Exception {{\n        http.authorizeHttpRequests(a -> a.anyRequest().authenticated());\n        return http.build();\n    }}\n}}\n"
+            )
+        };
+        for first in ["", "@Order(ORDER)"] {
+            let flow = spring_flow(&[
+                ("src/main/java/Sec.java", &chains(first)),
+                ("src/main/java/E.java", SCOPED_ENDPOINTS),
+            ]);
+            assert_eq!(access(&flow, "GET", "/api/x"), &AccessState::Undeclared);
+            assert_eq!(
+                notes(&flow, "not evaluated"),
+                1,
+                "{first}: {:#?}",
+                flow.diagnostics
+            );
+        }
+    }
+
+    // F31: one scoped chain leaves what is outside its scope undeclared.
+    #[test]
+    fn f31_a_scoped_chain_does_not_protect_outside_its_scope() {
+        let chain = "@Configuration\nclass Sec {\n    @Bean SecurityFilterChain api(HttpSecurity http) throws Exception {\n        http.securityMatcher(\"/api/**\").authorizeHttpRequests(a -> a.anyRequest().authenticated());\n        return http.build();\n    }\n}\n";
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", chain),
+            ("src/main/java/E.java", SCOPED_ENDPOINTS),
+        ]);
+        assert_eq!(access(&flow, "GET", "/web"), &AccessState::Undeclared);
+        assert_eq!(
+            access(&flow, "GET", "/api/x"),
+            &protected(Condition::Authenticated)
+        );
+    }
+
+    // F32: the pre-6 `requestMatchers().antMatchers(..)` scope of an adapter.
+    #[test]
+    fn f32_legacy_request_matchers_scope_an_adapter() {
+        let config = adapter(
+            "http.requestMatchers().antMatchers(\"/api/**\").and().authorizeRequests().anyRequest().authenticated();",
+        );
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", &config),
+            ("src/main/java/E.java", SCOPED_ENDPOINTS),
+        ]);
+        assert_eq!(access(&flow, "GET", "/web"), &AccessState::Undeclared);
+        assert_eq!(
+            access(&flow, "GET", "/api/x"),
+            &protected(Condition::Authenticated)
+        );
+        let antm = adapter(
+            "http.antMatcher(\"/api/**\").authorizeRequests().anyRequest().authenticated();",
+        );
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", &antm),
+            ("src/main/java/E.java", SCOPED_ENDPOINTS),
+        ]);
+        assert_eq!(access(&flow, "GET", "/web"), &AccessState::Undeclared);
+        assert_eq!(
+            access(&flow, "GET", "/api/x"),
+            &protected(Condition::Authenticated)
+        );
+    }
+
+    // A scope that matches only some requests of an endpoint decides nothing.
+    #[test]
+    fn a_partial_scope_match_keeps_the_declared_access() {
+        let chain = "@Configuration\nclass Sec {\n    @Bean SecurityFilterChain api(HttpSecurity http) throws Exception {\n        http.securityMatcher(\"/api/{id:\\\\d+}\").authorizeHttpRequests(a -> a.anyRequest().permitAll());\n        return http.build();\n    }\n}\n";
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", chain),
+            (
+                "src/main/java/E.java",
+                "@RestController class E { @GetMapping(\"/api/me\") void a() {} }\n",
+            ),
+        ]);
+        assert_eq!(access(&flow, "GET", "/api/me"), &AccessState::Undeclared);
+    }
+
+    // Legacy `@EnableGlobalMethodSecurity(jsr250Enabled)` adds the role prefix only when missing.
+    #[test]
+    fn legacy_jsr250_adds_the_role_prefix_only_when_missing() {
+        let flow = spring_flow(&[
+            (
+                "src/main/java/Enable.java",
+                "@EnableGlobalMethodSecurity(jsr250Enabled = true)\nclass Enable {}\n",
+            ),
+            (
+                "src/main/java/A.java",
+                &controller(
+                    r#"class A {
+    @RolesAllowed("ROLE_ADMIN") @GetMapping("/a") void a() {}
+    @RolesAllowed("ADMIN") @GetMapping("/b") void b() {}
+}"#,
+                ),
+            ),
+        ]);
+        assert_eq!(access(&flow, "GET", "/a"), &protected(role("ROLE_ADMIN")));
+        assert_eq!(access(&flow, "GET", "/b"), &protected(role("ROLE_ADMIN")));
+    }
+
+    // ---- Wave 2b: ASP.NET defaults, inheritance, custom attributes ----
+
+    fn tfm(version: &str) -> String {
+        format!(
+            "<Project><PropertyGroup><TargetFramework>{version}</TargetFramework></PropertyGroup></Project>"
+        )
+    }
+
+    fn web(csproj: &str, files: &[(&str, &str)]) -> UiFlow {
+        let named: Vec<(String, &str)> = std::iter::once(("Web/Web.csproj".to_string(), csproj))
+            .chain(files.iter().map(|(p, t)| (format!("Web/{p}"), *t)))
+            .collect();
+        let refs: Vec<(&str, &str)> = named.iter().map(|(p, t)| (p.as_str(), *t)).collect();
+        extract(project(&refs).path())
+    }
+
+    fn startup(body: &str) -> String {
+        format!("builder.Services.AddAuthorization(o => {{ {body} }});\n")
+    }
+
+    const CTRL: &str = r#"
+[ApiController]
+[Route("api/c")]
+public class CController : ControllerBase
+{
+    [HttpGet("bare")][Authorize] public IActionResult Bare() => Ok();
+    [HttpGet("roles")][Authorize(Roles = "X")] public IActionResult Roles() => Ok();
+    [HttpGet("pol")][Authorize("P")] public IActionResult Pol() => Ok();
+    [HttpGet("anon")][AllowAnonymous] public IActionResult Anon() => Ok();
+    [HttpGet("none")] public IActionResult None() => Ok();
+}
+"#;
+
+    fn with_program(program: &str) -> UiFlow {
+        web(&tfm("net10.0"), &[("Program.cs", program), ("C.cs", CTRL)])
+    }
+
+    const AUTH_BUILDER: &str =
+        "new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build()";
+
+    // A.6 #1, #8
+    #[test]
+    fn w2b_no_defaults_bare_authorize_is_authenticated_and_unmarked_is_undeclared() {
+        let flow = with_program("");
+        assert_eq!(
+            access(&flow, "GET", "/api/c/bare"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/c/none"),
+            &AccessState::Undeclared
+        );
+    }
+
+    // A.6 #2
+    #[test]
+    fn w2b_replaced_default_policy_applies_to_bare_authorize_only() {
+        let flow = with_program(&startup(
+            r#"o.DefaultPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().RequireRole("Staff").Build();"#,
+        ));
+        let all = Condition::All(vec![Condition::Authenticated, role("Staff")]);
+        assert_eq!(access(&flow, "GET", "/api/c/bare"), &protected(all));
+        assert_eq!(access(&flow, "GET", "/api/c/roles"), &protected(role("X")));
+        assert_eq!(
+            access(&flow, "GET", "/api/c/none"),
+            &AccessState::Undeclared
+        );
+    }
+
+    // A.6 #3
+    #[test]
+    fn w2b_unreadable_default_policy_is_unknown_with_a_gap() {
+        let flow = with_program(&startup("o.DefaultPolicy = Build(config);"));
+        assert_eq!(
+            access(&flow, "GET", "/api/c/bare"),
+            &protected(Condition::Unknown("DefaultPolicy".into()))
+        );
+        assert_eq!(access(&flow, "GET", "/api/c/roles"), &protected(role("X")));
+        assert!(gaps(&flow, "DefaultPolicy") >= 1, "{:#?}", flow.diagnostics);
+    }
+
+    // A.6 #4
+    #[test]
+    fn w2b_fallback_policy_covers_unmarked_actions_only() {
+        let flow = with_program(&startup(&format!("o.FallbackPolicy = {AUTH_BUILDER};")));
+        assert_eq!(
+            access(&flow, "GET", "/api/c/none"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(access(&flow, "GET", "/api/c/anon"), &AccessState::Open);
+        assert_eq!(access(&flow, "GET", "/api/c/pol"), &protected(policy("P")));
+    }
+
+    // A.6 #5
+    #[test]
+    fn w2b_set_fallback_policy_with_a_local_variable() {
+        let flow = with_program(&format!(
+            "var requireAuthPolicy = {AUTH_BUILDER};\nbuilder.Services.AddAuthorizationBuilder().SetFallbackPolicy(requireAuthPolicy);\n"
+        ));
+        assert_eq!(
+            access(&flow, "GET", "/api/c/none"),
+            &protected(Condition::Authenticated)
+        );
+    }
+
+    // A.6 #6
+    #[test]
+    fn w2b_fallback_equal_to_the_default_policy() {
+        let flow = with_program(&startup("o.FallbackPolicy = o.DefaultPolicy;"));
+        assert_eq!(
+            access(&flow, "GET", "/api/c/none"),
+            &protected(Condition::Authenticated)
+        );
+        let flow = with_program(&startup(
+            "o.DefaultPolicy = new AuthorizationPolicyBuilder().RequireRole(\"R\").Build(); o.FallbackPolicy = o.DefaultPolicy;",
+        ));
+        assert_eq!(access(&flow, "GET", "/api/c/none"), &protected(role("R")));
+    }
+
+    // A.6 #7
+    #[test]
+    fn w2b_conditional_fallback_is_unknown_with_a_gap() {
+        let flow = with_program(&startup(&format!(
+            "if (env.IsProduction()) o.FallbackPolicy = {AUTH_BUILDER};"
+        )));
+        assert_eq!(
+            access(&flow, "GET", "/api/c/none"),
+            &protected(Condition::Unknown("FallbackPolicy".into()))
+        );
+        assert_eq!(access(&flow, "GET", "/api/c/anon"), &AccessState::Open);
+        assert!(
+            gaps(&flow, "FallbackPolicy") >= 1,
+            "{:#?}",
+            flow.diagnostics
+        );
+        // Two assignments are as unreadable as a conditional one.
+        let flow = with_program(&startup(&format!(
+            "o.FallbackPolicy = {AUTH_BUILDER}; o.FallbackPolicy = {AUTH_BUILDER};"
+        )));
+        assert_eq!(
+            access(&flow, "GET", "/api/c/none"),
+            &protected(Condition::Unknown("FallbackPolicy".into()))
+        );
+    }
+
+    // C.6 #16: the fallback reaches minimal endpoints too.
+    #[test]
+    fn w2b_fallback_reaches_minimal_endpoints() {
+        let flow = with_program(&format!(
+            "{}app.MapGet(\"/m\", () => 1);\napp.MapGet(\"/a\", () => 1).AllowAnonymous();\napp.MapGet(\"/p\", () => 1).RequireAuthorization(\"P\");\napp.MapGet(\"/b\", () => 1).RequireAuthorization();\n",
+            startup(&format!(
+                "o.FallbackPolicy = {AUTH_BUILDER}; o.DefaultPolicy = new AuthorizationPolicyBuilder().RequireRole(\"R\").Build();"
+            ))
+        ));
+        assert_eq!(
+            access(&flow, "GET", "/m"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(access(&flow, "GET", "/a"), &AccessState::Open);
+        assert_eq!(access(&flow, "GET", "/p"), &protected(policy("P")));
+        // A bare RequireAuthorization() is the (replaced) default policy.
+        assert_eq!(access(&flow, "GET", "/b"), &protected(role("R")));
+    }
+
+    // A.6 #16: names containing Authorize derive nothing.
+    #[test]
+    fn w2b_unknown_attributes_named_authorize_derive_nothing() {
+        let flow = web(
+            &tfm("net10.0"),
+            &[(
+                "C.cs",
+                r#"
+[Route("n")]
+public class NController : ControllerBase
+{
+    [HttpGet("a")][AuthorizeForScopes("x")] public IActionResult A() => Ok();
+    [HttpGet("b")][AuthorizationHeader] public IActionResult B() => Ok();
+    [HttpGet("c")][MyAuthorize] public IActionResult C() => Ok();
+}
+"#,
+            )],
+        );
+        for p in ["/n/a", "/n/b", "/n/c"] {
+            assert_eq!(access(&flow, "GET", p), &AccessState::Undeclared, "{p}");
+        }
+    }
+
+    const MY_AUTH: &str = r#"
+public class MyAuthorizeAttribute : AuthorizeAttribute
+{
+    public MyAuthorizeAttribute(string p) : base(p) {}
+}
+public class ComputedAttribute : AuthorizeAttribute
+{
+    public ComputedAttribute(string p) { Policy = Prefix + p; }
+}
+public class RolesAttribute : AuthorizeAttribute
+{
+    public RolesAttribute() { Roles = "A,B"; }
+}
+public class SubAttribute : MyAuthorizeAttribute
+{
+    public SubAttribute() : base("sub") {}
+}
+[Route("m")]
+public class MController : ControllerBase
+{
+    [HttpGet("a")][MyAuthorize("x")] public IActionResult A() => Ok();
+    [HttpGet("b")][Computed("x")] public IActionResult B() => Ok();
+    [HttpGet("c")][Roles] public IActionResult C() => Ok();
+    [HttpGet("d")][Sub] public IActionResult D() => Ok();
+    [HttpGet("e")][Authorize("P")][MyAuthorize("x")] public IActionResult E() => Ok();
+}
+"#;
+
+    // A.6 #17
+    #[test]
+    fn w2b_authorize_subclasses_read_constructor_arguments() {
+        let flow = web(&tfm("net10.0"), &[("C.cs", MY_AUTH)]);
+        assert_eq!(access(&flow, "GET", "/m/a"), &protected(policy("x")));
+        assert_eq!(
+            access(&flow, "GET", "/m/b"),
+            &protected(Condition::Unknown("Computed(\"x\")".into()))
+        );
+        assert!(gaps(&flow, "Computed") >= 1, "{:#?}", flow.diagnostics);
+        assert_eq!(
+            access(&flow, "GET", "/m/c"),
+            &protected(Condition::Any(vec![role("A"), role("B")]))
+        );
+        assert_eq!(access(&flow, "GET", "/m/d"), &protected(policy("sub")));
+        assert_eq!(
+            access(&flow, "GET", "/m/e"),
+            &protected(Condition::All(vec![policy("P"), policy("x")]))
+        );
+    }
+
+    const MIN_AGE: &str = r#"
+public class MinAgeAttribute(int a) : AuthorizeAttribute, IAuthorizationRequirement, IAuthorizationRequirementData
+{
+}
+[Route("g")]
+public class GController : ControllerBase
+{
+    [HttpGet("a")][MinAge(21)] public IActionResult A() => Ok();
+}
+"#;
+
+    // A.6 #18
+    #[test]
+    fn w2b_requirement_data_attribute_on_minimal_and_mvc() {
+        let all = Condition::All(vec![
+            Condition::Authenticated,
+            Condition::Custom("MinAge(21)".into()),
+        ]);
+        let program =
+            "app.MapGet(\"/m\", () => 1).RequireAuthorization(new MinAgeAttribute(21));\n";
+        let flow = web(
+            &tfm("net10.0"),
+            &[("C.cs", MIN_AGE), ("Program.cs", program)],
+        );
+        assert_eq!(access(&flow, "GET", "/m"), &protected(all.clone()));
+        // MVC before .NET 11: only the AuthorizeAttribute part, with a gap.
+        assert_eq!(
+            access(&flow, "GET", "/g/a"),
+            &protected(Condition::Authenticated)
+        );
+        assert!(
+            gaps(&flow, "before .NET 11") >= 1,
+            "{:#?}",
+            flow.diagnostics
+        );
+        let flow = web(&tfm("net11.0"), &[("C.cs", MIN_AGE)]);
+        assert_eq!(access(&flow, "GET", "/g/a"), &protected(all));
+    }
+
+    // A.6 #19
+    #[test]
+    fn w2b_generic_authorize_attribute_is_a_project_type() {
+        let generic = "public class AuthorizeAttribute<TRequirement> : AuthorizeAttribute, IAuthorizationRequirementData {}\n";
+        let ctrl = r#"
+[Route("t")]
+public class TController : ControllerBase
+{
+    [HttpGet("a")][Authorize<MemberRequirement>] public IActionResult A() => Ok();
+}
+"#;
+        let decl = format!("{generic}{ctrl}");
+        let all = Condition::All(vec![
+            Condition::Authenticated,
+            Condition::Custom("Authorize<MemberRequirement>".into()),
+        ]);
+        let flow = web(&tfm("net11.0"), &[("C.cs", &decl)]);
+        assert_eq!(access(&flow, "GET", "/t/a"), &protected(all.clone()));
+        let program = "app.MapGroup(\"/q\").RequireAuthorization(new AuthorizeAttribute<MemberRequirement>()).MapGet(\"/x\", () => 1);\n";
+        let flow = web(&tfm("net10.0"), &[("C.cs", &decl), ("Program.cs", program)]);
+        assert_eq!(access(&flow, "GET", "/q/x"), &protected(all));
+        // Without the generic declaration in the scan nothing is derived.
+        let flow = web(&tfm("net11.0"), &[("C.cs", ctrl)]);
+        assert_eq!(access(&flow, "GET", "/t/a"), &AccessState::Undeclared);
+    }
+
+    // B.6 #1
+    #[test]
+    fn w2b_authorize_on_an_abstract_base_applies_to_derived_actions() {
+        let flow = web(
+            &tfm("net10.0"),
+            &[(
+                "C.cs",
+                r#"
+[Authorize(Roles = "Admin")]
+public abstract class BaseCtl : ControllerBase {}
+[ApiController]
+[Route("api/[controller]")]
+public class OrdersController : BaseCtl
+{
+    [HttpGet] public IActionResult A() => Ok();
+    [HttpGet("c")][AllowAnonymous] public IActionResult C() => Ok();
+}
+"#,
+            )],
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/Orders"),
+            &protected(role("Admin"))
+        );
+        assert_eq!(access(&flow, "GET", "/api/Orders/c"), &AccessState::Open);
+        assert_eq!(flow.endpoints.len(), 2, "{:#?}", flow.endpoints);
+    }
+
+    // B.6 #2
+    #[test]
+    fn w2b_controller_base_makes_a_controller_without_the_suffix() {
+        let flow = web(
+            &tfm("net10.0"),
+            &[(
+                "C.cs",
+                "[Route(\"plain\")]\npublic class Plain : ControllerBase { [HttpGet] public IActionResult G() => Ok(); }\n",
+            )],
+        );
+        assert_eq!(access(&flow, "GET", "/plain"), &AccessState::Undeclared);
+    }
+
+    // B.6 #3
+    #[test]
+    fn w2b_actions_of_a_generic_abstract_base_belong_to_the_derived_controller() {
+        let flow = web(
+            &tfm("net10.0"),
+            &[(
+                "C.cs",
+                r#"
+[Route("api/base")]
+public abstract class CrudController<T> : ControllerBase
+{
+    [HttpGet] public IActionResult List() => Ok();
+}
+[Authorize]
+[Route("api/users")]
+public class UsersController : CrudController<User> {}
+"#,
+            )],
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/users"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(flow.endpoints.len(), 1, "{:#?}", flow.endpoints);
+    }
+
+    // B.6 #4
+    #[test]
+    fn w2b_global_authorize_filter_applies_to_mvc_actions_only() {
+        let program = format!(
+            "builder.Services.AddControllers(c => c.Filters.Add(new AuthorizeFilter({AUTH_BUILDER})));\napp.MapGet(\"/m\", () => 1);\n"
+        );
+        let flow = with_program(&program);
+        assert_eq!(
+            access(&flow, "GET", "/api/c/none"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/c/roles"),
+            &protected(Condition::All(vec![Condition::Authenticated, role("X")]))
+        );
+        assert_eq!(access(&flow, "GET", "/api/c/anon"), &AccessState::Open);
+        assert_eq!(access(&flow, "GET", "/m"), &AccessState::Undeclared);
+        // A filter whose policy is unreadable protects with Unknown.
+        let flow = with_program(
+            "builder.Services.AddControllers(c => c.Filters.Add(new AuthorizeFilter(Make())));\n",
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/c/none"),
+            &protected(Condition::Unknown("Make()".into()))
+        );
+        assert!(gaps(&flow, "Make()") >= 1, "{:#?}", flow.diagnostics);
+    }
+
+    // B.6 #5
+    #[test]
+    fn w2b_map_controllers_convention_reaches_actions() {
+        let flow = with_program("app.MapControllers().RequireAuthorization(\"Api\");\n");
+        assert_eq!(
+            access(&flow, "GET", "/api/c/none"),
+            &protected(policy("Api"))
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/c/roles"),
+            &protected(Condition::All(vec![role("X"), policy("Api")]))
+        );
+        assert_eq!(access(&flow, "GET", "/api/c/anon"), &AccessState::Open);
+        // The convention is not a minimal endpoint.
+        assert_eq!(flow.endpoints.len(), 5, "{:#?}", flow.endpoints);
+        let flow = with_program("app.MapControllers().AllowAnonymous();\n");
+        assert_eq!(access(&flow, "GET", "/api/c/roles"), &AccessState::Open);
+        // Two MapControllers calls that differ are unreadable, never open.
+        let flow = with_program(
+            "app.MapControllers().RequireAuthorization(\"A\");\napp.MapControllers();\n",
+        );
+        assert!(matches!(
+            access(&flow, "GET", "/api/c/none"),
+            AccessState::Protected(Condition::Unknown(_))
+        ));
+    }
+
+    // A.6 #17 pitfall: an AuthorizeAttribute that is also a filter decides in code.
+    #[test]
+    fn w2b_authorize_attribute_that_is_also_a_filter_adds_unknown() {
+        let flow = web(
+            &tfm("net10.0"),
+            &[(
+                "C.cs",
+                r#"
+public class ApiPermissionAttribute : AuthorizeAttribute, IAsyncActionFilter
+{
+    public ApiPermissionAttribute(string id) { }
+}
+[Route("p")]
+public class PController : ControllerBase
+{
+    [HttpGet("a")][ApiPermission("x")] public IActionResult A() => Ok();
+}
+"#,
+            )],
+        );
+        assert_eq!(
+            access(&flow, "GET", "/p/a"),
+            &protected(Condition::All(vec![
+                Condition::Authenticated,
+                Condition::Unknown("ApiPermission(\"x\")".into())
+            ]))
+        );
+        assert!(gaps(&flow, "ApiPermission") >= 1, "{:#?}", flow.diagnostics);
+    }
+
+    // Classes that are no controller never produce base-class notes.
+    #[test]
+    fn w2b_non_controllers_emit_no_ambiguity_notes() {
+        let flow = web(
+            &tfm("net10.0"),
+            &[(
+                "C.cs",
+                "class Twin {}\nnamespace B { class Twin {} }\nclass Leaf : Twin {}\n",
+            )],
+        );
+        assert_eq!(notes(&flow, "ambiguous"), 0, "{:#?}", flow.diagnostics);
     }
 }

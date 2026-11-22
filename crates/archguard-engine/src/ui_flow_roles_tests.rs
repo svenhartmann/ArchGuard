@@ -136,13 +136,16 @@ fn aspnet_policies_role_constants_seeding_and_enums() {
     );
     let notes = notes(&flow);
     for expected in [
-        "Note src/Infrastructure/DependencyInjection.cs:14 Policy requirement not readable: RequireAssertion",
-        "Note src/Infrastructure/DependencyInjection.cs:15 Policy name not readable: name",
-        "Note src/Infrastructure/Seeder.cs:7 Seeded role name not readable: name",
+        "Gap src/Infrastructure/DependencyInjection.cs:14 Policy requirement not readable: RequireAssertion",
+        "Gap src/Infrastructure/DependencyInjection.cs:15 Policy name not readable: name",
+        "Gap src/Infrastructure/Seeder.cs:7 Seeded role name not readable: name",
     ] {
         assert!(notes.contains(expected), "{expected} in\n{notes}");
     }
-    assert!(flow.complete, "notes leave the flow complete");
+    assert!(
+        !flow.complete,
+        "unreadable declarations make the flow incomplete"
+    );
 }
 
 const AUTHORITIES_JAVA: &str = "package x.security;\n\npublic final class AuthoritiesConstants {\n\n    public static final String ADMIN = \"ROLE_ADMIN\";\n\n    public static final String USER = \"ROLE_USER\";\n\n    private AuthoritiesConstants() {}\n}\n";
@@ -185,16 +188,14 @@ fn spring_constants_hierarchy_and_kotlin_objects() {
             "ROLE_ADMIN role src/main/java/x/AuthoritiesConstants.java:5 []".into(),
             format!("ROLE_ADMIN role {sec}:4 [\"ROLE_STAFF\"]"),
             "ROLE_AUDITOR role src/main/java/x/Perms.java:2 []".into(),
-            "ROLE_EDITOR role src/main/kotlin/x/Roles.kt:2 []".into(),
             format!("ROLE_STAFF role {sec}:4 [\"ROLE_USER\"]"),
-            "ROLE_USER role src/main/java/x/AuthoritiesConstants.java:7 []".into(),
         ],
         "{}",
         notes(&flow)
     );
     assert!(
         notes(&flow).contains(&format!(
-            "{sec}:7 Role hierarchy not readable: hierarchyText"
+            "Gap {sec}:7 Role hierarchy not readable: hierarchyText"
         )),
         "{}",
         notes(&flow)
@@ -242,21 +243,187 @@ fn frontend_enums_and_const_objects_used_in_code() {
     );
 }
 
+fn cs_policies(body: &str) -> UiFlow {
+    let text = format!("class S {{ void C(O o) {{\n{body}\n}} }}");
+    extract(project(&[("S.cs", text.as_str())]).path())
+}
+
 #[test]
-fn permission_ids_are_permission_defs_and_wildcards_cover() {
+fn require_role_arguments_are_roles_not_comma_lists() {
+    let flow = cs_policies(
+        r#"o.AddPolicy("P", p => p.RequireRole("A,B"));
+o.AddPolicy("Q", p => p.RequireRole("A", "B"));
+o.AddPolicy("R", p => p.RequireRole("A").RequireRole("B"));"#,
+    );
+    let role = |n: &str| Condition::Role(n.into());
+    assert_eq!(policy(&flow, "P"), &role("A,B"));
+    assert_eq!(
+        policy(&flow, "Q"),
+        &Condition::Any(vec![role("A"), role("B")])
+    );
+    assert_eq!(
+        policy(&flow, "R"),
+        &Condition::All(vec![role("A"), role("B")])
+    );
+}
+
+#[test]
+fn statement_lambda_and_requirements_add() {
+    let flow = cs_policies(
+        r#"o.AddPolicy("P", p => { p.RequireRole("A"); p.RequireClaim("scope", "x", "y"); });
+o.AddPolicy("M", p => p.Requirements.Add(new MinimumAgeRequirement(21)));"#,
+    );
+    assert_eq!(
+        policy(&flow, "P"),
+        &Condition::All(vec![
+            Condition::Role("A".into()),
+            Condition::Custom("claim scope = x|y".into())
+        ])
+    );
+    assert_eq!(
+        policy(&flow, "M"),
+        &Condition::Custom("MinimumAgeRequirement(21)".into())
+    );
+}
+
+#[test]
+fn unreadable_policy_parts_are_gaps() {
+    let flow =
+        cs_policies(r#"o.AddPolicy("P", p => p.RequireAssertion(c => c.User.IsInRole("A")));"#);
+    assert_eq!(
+        policy(&flow, "P"),
+        &Condition::Unknown("RequireAssertion".into())
+    );
+    assert!(
+        notes(&flow).starts_with("Gap S.cs:2 Policy requirement not readable"),
+        "{}",
+        notes(&flow)
+    );
+    assert!(!flow.complete);
+}
+
+#[test]
+fn no_catalog_from_class_names() {
+    let dir = project(&[
+        (
+            "Roles.cs",
+            "public static class Roles { public const string Unused = \"Unused\"; public const string Used = \"Used\"; }",
+        ),
+        (
+            "PermissionIds.cs",
+            "public static class PermissionIds { public const string X = \"a.b\"; }",
+        ),
+        (
+            "C.cs",
+            "class C { [Authorize(Roles = Roles.Used)] void A() {} }",
+        ),
+        (
+            "AuthoritiesConstants.java",
+            "class AuthoritiesConstants { static final String ADMIN = \"ROLE_ADMIN\"; }",
+        ),
+    ]);
+    assert_eq!(roles(&extract(dir.path())), ["Used role Roles.cs:1 []"]);
+}
+
+#[test]
+fn aspnet_convention_is_read_per_application() {
+    let dir = project(&[
+        ("Web/Web.csproj", "<Project/>"),
+        (
+            "Web/Startup.cs",
+            "class S {\n void C(O o) { o.AddPolicy(\"RequireAdminRole\", p => p.RequireRole(\"Admin\")); }\n void T() { var t = new TokenValidationParameters { RoleClaimType = \"roles\" }; }\n}",
+        ),
+        ("Other/Other.csproj", "<Project/>"),
+        (
+            "Other/P.cs",
+            "class P { void C(O o) { o.AddPolicy(\"Q\", p => p.RequireRole(\"x\")); } }",
+        ),
+    ]);
+    let flow = extract(dir.path());
+    let web = flow.convention(Some("Web"));
+    assert_eq!(web.policy_case, archguard_core::NameCase::Insensitive);
+    assert_eq!(web.role_case, archguard_core::NameCase::Exact);
+    assert_eq!(web.role_claim.as_deref(), Some("roles"));
+    let claim = web
+        .origins
+        .iter()
+        .find(|o| o.field == "role_claim")
+        .unwrap();
+    assert_eq!((claim.file.as_str(), claim.line), ("Web/Startup.cs", 3));
+    let other = (flow.role_conventions.iter())
+        .find(|c| c.application.as_deref() == Some("Other"))
+        .unwrap();
+    assert_eq!(other.role_claim, None);
+    let origin = (other.origins.iter())
+        .find(|o| o.field == "role_claim")
+        .unwrap();
+    assert_eq!(origin.source, "not read (exact match)");
+    assert!(
+        flow.role_conventions
+            .iter()
+            .all(|c| c.application.is_some())
+    );
+}
+
+#[test]
+fn convention_read_outside_every_project_is_a_gap_not_a_whole_flow_entry() {
     let dir = project(&[(
-        "backend/src/Shared/PermissionIds.cs",
-        "public static class PermissionIds\n{\n    public const string All = \"squidex.*\";\n    public const string AppContents = \"squidex.apps.{app}.contents.*\";\n    public const string AppContentsRead = \"squidex.apps.{app}.contents.read\";\n}\n",
+        "S.cs",
+        "class S { void T() { var t = new TokenValidationParameters { RoleClaimType = \"roles\" }; } }",
     )]);
+    let flow = extract(dir.path());
+    assert!(
+        flow.role_conventions.is_empty(),
+        "{:?}",
+        flow.role_conventions
+    );
+    assert!(
+        notes(&flow).contains("Gap S.cs:1 Role claim type"),
+        "{}",
+        notes(&flow)
+    );
+    assert!(!flow.complete);
+}
+
+#[test]
+fn spring_role_hierarchy_builder_and_authority_target() {
+    let dir = project(&[
+        ("api/pom.xml", "<project/>"),
+        (
+            "api/src/Sec.java",
+            "class Sec {\n  Object a() { return RoleHierarchyImpl.withDefaultRolePrefix().role(\"ADMIN\").implies(\"STAFF\").role(\"STAFF\").implies(\"USER\").build(); }\n  Object b() { return RoleHierarchyImpl.fromHierarchy(\"ROLE_ADMIN > permission:read\"); }\n}",
+        ),
+    ]);
+    let flow = extract(dir.path());
+    let includes = |name: &str| -> Vec<Vec<String>> {
+        (flow.roles.iter().filter(|r| r.name == name))
+            .map(|r| r.includes.clone())
+            .collect()
+    };
+    assert_eq!(
+        includes("ROLE_ADMIN"),
+        [
+            vec!["ROLE_STAFF".to_string()],
+            vec!["permission:read".to_string()]
+        ]
+    );
+    assert_eq!(includes("ROLE_STAFF"), [vec!["ROLE_USER".to_string()]]);
+    assert!(flow.roles.iter().all(|r| r.name != "permission:read"));
+    let c = flow.convention(Some("api"));
+    assert_eq!(c.role_prefix.as_deref(), Some("ROLE_"));
+    assert_eq!(c.origins[0].line, 2);
+}
+
+// F44: a right-hand side without the role prefix is a permission, never a role def.
+#[test]
+fn role_hierarchy_text_may_include_a_permission() {
+    let java = "class H { RoleHierarchy a() { return RoleHierarchyImpl.fromHierarchy(\"ROLE_ADMIN > permission:read\"); } }\n";
+    let dir = project(&[("src/main/java/H.java", java)]);
     let flow = extract(dir.path());
     assert_eq!(
         roles(&flow),
-        [
-            "squidex.* permission backend/src/Shared/PermissionIds.cs:3 []",
-            "squidex.apps.{app}.contents.* permission backend/src/Shared/PermissionIds.cs:4 []",
-            "squidex.apps.{app}.contents.read permission backend/src/Shared/PermissionIds.cs:5 []",
-        ]
+        ["ROLE_ADMIN role src/main/java/H.java:1 [\"permission:read\"]"],
+        "{}",
+        notes(&flow)
     );
-    let resolved = resolve_assignment(&flow, &holding("squidex.*"));
-    assert_eq!(resolved.roles.len(), 3, "{resolved:?}");
 }

@@ -341,10 +341,11 @@ pub(super) fn open_scope(s: &mut ArchitectureState, kind: Kind, scope: Option<us
 /// analysis but the arc42 text of the project `dir`.
 #[cfg(test)]
 pub(super) fn fixture_state(dir: Option<&Path>) -> ArchitectureState {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/py-layers")
-        .canonicalize()
-        .expect("fixture");
+    // One copy per test process: the state keeps its root, and the analysis
+    // cache must not land in the source tree.
+    static COPY: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let copy = COPY.get_or_init(|| crate::config_editor::tests::fixture("py-layers"));
+    let root = copy.path().canonicalize().expect("fixture");
     let loaded = archguard_engine::load_config(None, &root).expect("config");
     let run = archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
         .expect("analysis");

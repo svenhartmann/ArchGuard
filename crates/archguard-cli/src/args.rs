@@ -409,6 +409,20 @@ pub(crate) enum Command {
         #[arg(long)]
         fail_on_found: bool,
     },
+    /// Access chain per endpoint: screens, endpoint check, service and data checks.
+    ///
+    /// The effective condition is the endpoint's ANDed with every enforced
+    /// service layer; path-only and hint layers are shown, never counted.
+    AccessLayers {
+        #[arg(value_name = "PFAD")]
+        path: Option<PathBuf>,
+        /// One row per endpoint (default) or per screen/endpoint pair.
+        #[arg(long, value_enum, default_value = "endpoint")]
+        from: AccessFrom,
+        /// Keep only endpoints protected below the endpoint, not by it.
+        #[arg(long, value_enum)]
+        only: Option<AccessOnly>,
+    },
     /// UI screens, navigations and permissions against backend endpoints (ADR 0021).
     ///
     /// A backend in another repository joins with `[views] backends =
@@ -818,6 +832,7 @@ impl Command {
                 // `query` only opens the database file — no project root.
                 DbAction::Query { .. } => None,
             },
+            Command::AccessLayers { path, .. } => path.as_deref(),
             Command::UiFlow { path, action, .. } => action
                 .as_ref()
                 .map_or(path.as_deref(), |action| action.path()),
@@ -892,4 +907,17 @@ fn format_label_documents(format: Format) -> &'static str {
         Format::Markdown => "markdown",
         _ => unreachable!("labelled by format_label"),
     }
+}
+
+/// `access-layers --from`: one row per endpoint or per screen/endpoint pair.
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub(crate) enum AccessFrom {
+    Endpoint,
+    Screen,
+}
+
+/// `access-layers --only`.
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub(crate) enum AccessOnly {
+    ServiceGuarded,
 }

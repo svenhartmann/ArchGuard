@@ -1,14 +1,15 @@
 //! Role and permission catalog of the UI flow (ADR 0021): the roles,
 //! permissions and policies a project defines, read by fixed rules and never
 //! guessed. Every def records the file and line it was read from; what is not
-//! a literal or a readable constant becomes a `note` diagnostic.
+//! a literal or a readable constant becomes a `gap` diagnostic.
 //!
 //! - Constants: `const string X = "v"` / `nameof(X)` (C#), `static final String`
-//!   (Java), `const val` (Kotlin), keyed by their innermost class.
-//!   Classes named `Roles`, `RoleNames`, `AuthoritiesConstants` give role defs,
-//!   `Permissions`, `PermissionIds`, `PermissionNames` permission defs (Squidex
-//!   ids such as `squidex.apps.{app}.contents.*` cover each other by
-//!   `PermissionFormat::Dotted`; no role is assigned permissions here).
+//!   (Java), `const val` (Kotlin), keyed by their innermost class. A constant is
+//!   a role only where it is used (below); no class name makes a catalog.
+//! - Conventions are read per application (nearest build-file project), never
+//!   for the whole flow: ASP.NET policy names ignore case, `RoleClaimType`
+//!   gives `role_claim` (none read = exact); `RoleHierarchyImpl.withDefaultRolePrefix()`
+//!   gives Spring's `role_prefix`. Read outside every project it is a gap.
 //! - ASP.NET: `AddPolicy(name, …)` (also on `AddAuthorizationBuilder()`) and
 //!   `DefaultPolicy`/`FallbackPolicy = new AuthorizationPolicyBuilder()…` give
 //!   policy defs: `RequireAuthenticatedUser` = signed in, `RequireRole(a, b)` =
@@ -24,19 +25,18 @@
 //! - TypeScript: `enum` or `const … = {…}` named `Authority`, `Role`, `Roles`
 //!   (roles) or `Permission`, `Permissions` (permissions); a member is a def only
 //!   when `Name.MEMBER` is used in a `.ts` or `.html` file. Names are kept as written.
-use crate::extract_ctx::{ExtractContext, read_text, walk, with_root_config};
+use crate::extract_ctx::{ExtractContext, ancestors, dir_name, read_text, walk, with_root_config};
 use crate::services::support::test_path;
 use archguard_core::{
-    Condition, ConventionOrigin, DiagnosticSeverity, PermissionFormat, PolicyDef, RoleConvention,
-    RoleDef, RoleKind, UiFlow, UiFlowDiagnostic,
+    Condition, ConventionOrigin, DiagnosticSeverity, NameCase, PermissionFormat, PolicyDef,
+    RoleConvention, RoleDef, RoleKind, UiFlow, UiFlowDiagnostic,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 const MAX_BYTES: u64 = 1024 * 1024;
 const MAX_FILES: usize = 40_000;
-const ROLE_CLASSES: [&str; 3] = ["Roles", "RoleNames", "AuthoritiesConstants"];
-const PERMISSION_CLASSES: [&str; 3] = ["Permissions", "PermissionIds", "PermissionNames"];
+const BUILD_FILES: [&str; 3] = ["pom.xml", "build.gradle", "build.gradle.kts"];
 const TS_ROLES: [&str; 3] = ["Authority", "Role", "Roles"];
 const TS_PERMISSIONS: [&str; 2] = ["Permission", "Permissions"];
 const SPRING_SITES: [&str; 8] = [
@@ -66,16 +66,25 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     }
     for src in &sources {
         match src.lang {
-            Lang::CSharp => aspnet(src, &consts, &mut out),
+            Lang::CSharp => {
+                let before = out.roles.len() + out.policies.len();
+                aspnet(src, &consts, &mut out);
+                if let (Some(app), true) = (&src.app, out.roles.len() + out.policies.len() > before)
+                {
+                    out.aspnet_apps.insert(app.clone());
+                }
+            }
             Lang::Jvm => spring(src, &consts, &mut out),
             Lang::Ts => frontend(src, &used, &mut out),
             Lang::Html => {}
         }
     }
-    out.class_defs(&consts);
+    out.aspnet_defaults();
     let mut flow = UiFlow {
         roles: out.roles,
         policies: out.policies,
+        role_conventions: out.conventions.into_values().collect(),
+        complete: out.notes.is_empty(),
         diagnostics: out.notes,
         ..UiFlow::default()
     };
@@ -118,9 +127,11 @@ struct Source {
     /// Comments blanked (HTML kept as is).
     text: String,
     lines: Vec<usize>,
+    /// The build-file project the file lies in; none outside every project.
+    app: Option<String>,
 }
 impl Source {
-    fn new(rel: String, lang: Lang, raw: &str) -> Self {
+    fn new(rel: String, lang: Lang, raw: &str, app: Option<String>) -> Self {
         let text = if lang == Lang::Html {
             raw.to_string()
         } else {
@@ -134,6 +145,7 @@ impl Source {
             lang,
             text,
             lines,
+            app,
         }
     }
     fn line(&self, at: usize) -> u32 {
@@ -152,7 +164,7 @@ fn read_sources(root: &Path, out: &mut Out) -> Vec<Source> {
     let walk = match walk(root) {
         Ok(walk) => walk,
         Err(e) => {
-            out.note(".", 0, format!("Discovery settings not read: {e}"));
+            out.gap(".", 0, format!("Discovery settings not read: {e}"));
             return vec![];
         }
     };
@@ -163,13 +175,23 @@ fn read_sources(root: &Path, out: &mut Out) -> Vec<Source> {
         Some("html") => Some(Lang::Html),
         _ => None,
     };
+    let projects: BTreeSet<&str> = (walk.files.iter())
+        .map(|f| f.rsplit_once('/').unwrap_or(("", f)))
+        .filter(|(_, name)| name.ends_with(".csproj") || BUILD_FILES.contains(name))
+        .map(|(dir, _)| dir)
+        .collect();
+    let app_of =
+        |rel: &str| (ancestors(rel).find(|d| projects.contains(d))).map(|d| dir_name(root, d));
+    let apps: BTreeMap<String, Option<String>> = (walk.files.iter())
+        .map(|f| (f.clone(), app_of(f)))
+        .collect();
     let mut files: Vec<(String, Lang)> = (walk.files.into_iter())
         .filter(|rel| !test_path(rel))
         .filter_map(|rel| lang(&rel).map(|l| (rel, l)))
         .collect();
     files.sort_by(|a, b| a.0.cmp(&b.0));
     if files.len() > MAX_FILES {
-        out.note(
+        out.gap(
             ".",
             0,
             format!("More than {MAX_FILES} source files; the rest were not read for roles."),
@@ -179,8 +201,11 @@ fn read_sources(root: &Path, out: &mut Out) -> Vec<Source> {
     let mut sources = Vec::new();
     for (rel, lang) in files {
         match read_text(root, &rel, MAX_BYTES) {
-            Ok(text) => sources.push(Source::new(rel, lang, &text)),
-            Err(e) => out.note(
+            Ok(text) => {
+                let app = apps.get(&rel).cloned().flatten();
+                sources.push(Source::new(rel, lang, &text, app));
+            }
+            Err(e) => out.gap(
                 &rel,
                 0,
                 format!("Source file not read for roles (limit 1 MiB): {e}"),
@@ -194,15 +219,20 @@ fn read_sources(root: &Path, out: &mut Out) -> Vec<Source> {
 struct Out {
     roles: Vec<RoleDef>,
     policies: Vec<PolicyDef>,
+    /// Gaps: recognised, but not readable.
     notes: Vec<UiFlowDiagnostic>,
+    /// Conventions read per application; never a whole-flow entry.
+    conventions: BTreeMap<String, RoleConvention>,
+    /// Applications with ASP.NET authorization declarations.
+    aspnet_apps: BTreeSet<String>,
 }
 impl Out {
-    fn note(&mut self, file: &str, line: u32, message: String) {
+    fn gap(&mut self, file: &str, line: u32, message: String) {
         self.notes.push(UiFlowDiagnostic {
             file: file.into(),
             line,
             message,
-            severity: DiagnosticSeverity::Note,
+            severity: DiagnosticSeverity::Gap,
         });
     }
     fn role(&mut self, kind: RoleKind, name: &str, decl: &Decl, includes: Vec<String>) {
@@ -226,18 +256,43 @@ impl Out {
             source: src.source().into(),
         });
     }
-    /// Every constant of a role or permission class.
-    fn class_defs(&mut self, consts: &Consts) {
-        for ((class, _), decls) in &consts.values {
-            let kind = if ROLE_CLASSES.contains(&class.as_str()) {
-                RoleKind::Role
-            } else if PERMISSION_CLASSES.contains(&class.as_str()) {
-                RoleKind::Permission
-            } else {
-                continue;
+    fn app_convention(&mut self, app: &str) -> &mut RoleConvention {
+        (self.conventions.entry(app.to_string())).or_insert_with(|| RoleConvention {
+            application: Some(app.to_string()),
+            ..RoleConvention::default()
+        })
+    }
+    /// The convention of `src`'s application for something read at `line`;
+    /// outside every project there is none, so the reading is a gap.
+    fn convention_of(
+        &mut self,
+        src: &Source,
+        line: u32,
+        what: &str,
+    ) -> Option<&mut RoleConvention> {
+        let Some(app) = src.app.as_deref() else {
+            let message = format!("{what} not attributed: outside every build-file project");
+            self.gap(&src.rel, line, message);
+            return None;
+        };
+        Some(self.app_convention(app))
+    }
+    /// ASP.NET defaults of every application with declarations: policy names
+    /// ignore case, role names do not; a claim type not read stays exact.
+    fn aspnet_defaults(&mut self) {
+        for app in std::mem::take(&mut self.aspnet_apps) {
+            let c = self.app_convention(&app);
+            c.policy_case = NameCase::Insensitive;
+            let origin = |field: &str, source: &str| ConventionOrigin {
+                field: field.into(),
+                file: String::new(),
+                line: 0,
+                source: source.into(),
             };
-            for d in decls {
-                self.role(kind, &d.value, d, vec![]);
+            let policy = "framework default aspnetcore authorization (policy names ignore case)";
+            c.origins.push(origin("policy_case", policy));
+            if c.role_claim.is_none() {
+                (c.origins).push(origin("role_claim", "not read (exact match)"));
             }
         }
     }
@@ -390,7 +445,12 @@ fn aspnet(src: &Source, consts: &Consts, out: &mut Out) {
     let spans = add_policies(src, consts, out);
     builder_policies(src, consts, out, &spans);
     let text = src.text.as_str();
-    let required = lex::calls(text, "RequireRole").into_iter().map(|(_, a)| a);
+    // each RequireRole argument is one role name, not a comma list
+    let required = lex::calls(text, "RequireRole")
+        .into_iter()
+        .flat_map(|(_, a)| lex::split_top(a, b','))
+        .filter_map(|a| consts.resolve(a))
+        .filter_map(|(name, decl)| Some((name, decl?)));
     let authorize = lex::calls(text, "Authorize")
         .into_iter()
         .filter_map(|(_, args)| {
@@ -399,15 +459,55 @@ fn aspnet(src: &Source, consts: &Consts, out: &mut Out) {
                 (key.trim() == "Roles").then_some(value)
             })
         });
-    let lists = (required.flat_map(|a| lex::split_top(a, b','))).chain(authorize);
-    let declared: Vec<(String, Decl)> = lists
+    let listed = authorize
         .flat_map(|list| role_names(consts, list).unwrap_or_default())
-        .filter_map(|(name, decl)| Some((name, decl?)))
-        .collect();
+        .filter_map(|(name, decl)| Some((name, decl?)));
+    let declared: Vec<(String, Decl)> = required.chain(listed).collect();
     for (name, d) in declared {
         out.role(RoleKind::Role, &name, &d, vec![]);
     }
     seeded_roles(src, consts, out);
+    role_claim_type(src, consts, out);
+}
+
+/// `RoleClaimType = "roles"` (token validation or identity options): the
+/// application's role claim.
+fn role_claim_type(src: &Source, consts: &Consts, out: &mut Out) {
+    for at in lex::find_words(&src.text, "RoleClaimType") {
+        let rest = src.text[at + "RoleClaimType".len()..].trim_start();
+        let Some(value) = rest.strip_prefix('=').filter(|v| !v.starts_with('=')) else {
+            continue;
+        };
+        let line = src.line(at);
+        let raw = lex::value(value);
+        let Some((claim, _)) = consts.resolve(raw) else {
+            out.gap(
+                &src.rel,
+                line,
+                format!("Role claim type not readable: {raw}"),
+            );
+            continue;
+        };
+        let Some(app) = src.app.clone() else {
+            let message = "Role claim type not attributed: outside every build-file project";
+            out.gap(&src.rel, line, message.into());
+            continue;
+        };
+        out.aspnet_apps.insert(app.clone());
+        let conv = out.app_convention(&app);
+        if conv.role_claim.as_ref().is_some_and(|c| *c != claim) {
+            let message = format!("Role claim type read twice with different values: {claim}");
+            out.gap(&src.rel, line, message);
+            continue;
+        }
+        conv.role_claim = Some(claim);
+        conv.origins.push(ConventionOrigin {
+            field: "role_claim".into(),
+            file: src.rel.clone(),
+            line,
+            source: "RoleClaimType".into(),
+        });
+    }
 }
 
 /// `AddPolicy(name, …)` defs; returns the spans of their arguments.
@@ -421,7 +521,7 @@ fn add_policies(src: &Source, consts: &Consts, out: &mut Out) -> Vec<(usize, usi
         let line = src.line(at);
         let Some((name, _)) = parts.first().and_then(|p| consts.resolve(p)) else {
             let raw = parts.first().copied().unwrap_or("").trim();
-            out.note(&src.rel, line, format!("Policy name not readable: {raw}"));
+            out.gap(&src.rel, line, format!("Policy name not readable: {raw}"));
             continue;
         };
         let rest = parts.get(1..).map(|p| p.join(",")).unwrap_or_default();
@@ -457,7 +557,7 @@ fn seeded_roles(src: &Source, consts: &Consts, out: &mut Out) {
         let here = Decl::at(src, src.line(at));
         match consts.resolve(arg) {
             Some((name, _)) => out.role(RoleKind::Role, &name, &here, vec![]),
-            None => out.note(
+            None => out.gap(
                 &src.rel,
                 here.line,
                 format!("Seeded role name not readable: {}", arg.trim()),
@@ -486,19 +586,27 @@ fn requirements(src: &Source, line: u32, text: &str, consts: &Consts, out: &mut 
             }
             other => {
                 let message = format!("Policy requirement not readable: {other}");
-                out.note(&src.rel, line, message);
+                out.gap(&src.rel, line, message);
                 Condition::Unknown(other.into())
             }
         });
     }
+    // `Requirements.Add(new X(1))`: a custom requirement, named as written.
+    for (_, arg) in lex::calls(text, "Requirements.Add") {
+        let arg = arg.trim();
+        all.push(Condition::Custom(
+            arg.strip_prefix("new ").unwrap_or(arg).trim().to_string(),
+        ));
+    }
     if all.is_empty() {
-        out.note(&src.rel, line, "Policy has no readable requirement".into());
+        out.gap(&src.rel, line, "Policy has no readable requirement".into());
         return Condition::Unknown("no requirement read".into());
     }
     one_or(all, Condition::All)
 }
 
-/// `RequireRole(a, b)`: any of the roles; an unreadable one is unknown.
+/// `RequireRole(a, b)`: any of the roles, each argument ONE role (a comma is
+/// part of the name); an unreadable one is unknown.
 fn required_roles(
     src: &Source,
     line: u32,
@@ -508,10 +616,11 @@ fn required_roles(
 ) -> Condition {
     let mut any = Vec::new();
     for part in parts {
-        match role_names(consts, part) {
-            Ok(names) => any.extend(names.into_iter().map(|(n, _)| Condition::Role(n))),
-            Err(raw) => {
-                out.note(&src.rel, line, format!("Policy role not readable: {raw}"));
+        match consts.resolve(part) {
+            Some((name, _)) => any.push(Condition::Role(name)),
+            None => {
+                let raw = part.trim().to_string();
+                out.gap(&src.rel, line, format!("Policy role not readable: {raw}"));
                 any.push(Condition::Unknown(raw));
             }
         }
@@ -540,6 +649,93 @@ fn spring(src: &Source, consts: &Consts, out: &mut Out) {
             hierarchy(src, src.line(at), args, consts, out);
         }
     }
+    for (name, at, args) in builder_starts(&src.text) {
+        hierarchy_builder(src, (name, at, args), consts, out);
+    }
+}
+
+/// `RoleHierarchyImpl.withDefaultRolePrefix()` / `.withRolePrefix("X")` sites.
+fn builder_starts(text: &str) -> Vec<(&'static str, usize, &str)> {
+    let mut found = Vec::new();
+    for name in ["withDefaultRolePrefix", "withRolePrefix"] {
+        let needle = format!("RoleHierarchyImpl.{name}");
+        for (at, args) in lex::calls(text, &needle) {
+            found.push((name, at, args));
+        }
+    }
+    found
+}
+
+/// `….role("ADMIN").implies("STAFF")…`: the builder's roles carry its prefix
+/// (the runtime authority, as `fromHierarchy` names them); the prefix is the
+/// application's `role_prefix`.
+fn hierarchy_builder(
+    src: &Source,
+    (kind, at, args): (&str, usize, &str),
+    consts: &Consts,
+    out: &mut Out,
+) {
+    let line = src.line(at);
+    let prefix = match (kind, consts.resolve(args)) {
+        ("withDefaultRolePrefix", _) => Some("ROLE_".to_string()),
+        (_, Some((p, _))) => Some(p),
+        _ => None,
+    };
+    let Some(prefix) = prefix else {
+        let message = format!("Role hierarchy prefix not readable: {}", args.trim());
+        out.gap(&src.rel, line, message);
+        return;
+    };
+    if let Some(conv) = out.convention_of(src, line, "Role prefix") {
+        if conv.role_prefix.as_ref().is_some_and(|p| *p != prefix) {
+            let message = format!("Role prefix read twice with different values: {prefix}");
+            out.gap(&src.rel, line, message);
+            return;
+        }
+        conv.role_prefix = Some(prefix.clone());
+        conv.origins.push(ConventionOrigin {
+            field: "role_prefix".into(),
+            file: src.rel.clone(),
+            line,
+            source: format!("RoleHierarchyImpl.{kind}"),
+        });
+    }
+    let text = &src.text[at..];
+    let end = text.find(';').unwrap_or(text.len());
+    let chain = &text[..end];
+    let mut steps: Vec<(usize, &str, &str)> = ["role", "implies"]
+        .into_iter()
+        .flat_map(|n| {
+            lex::calls(chain, n)
+                .into_iter()
+                .map(move |(i, a)| (i, n, a))
+        })
+        .collect();
+    steps.sort_by_key(|s| s.0);
+    let here = Decl::at(src, line);
+    let (mut current, mut includes): (Option<String>, Vec<String>) = (None, vec![]);
+    let flush = |role: Option<String>, includes: &mut Vec<String>, out: &mut Out| {
+        if let (Some(role), false) = (role, includes.is_empty()) {
+            out.role(RoleKind::Role, &role, &here, std::mem::take(includes));
+        }
+    };
+    for (_, name, args) in steps {
+        let names: Option<Vec<String>> = (lex::split_top(args, b',').into_iter())
+            .map(|a| consts.resolve(a).map(|(v, _)| format!("{prefix}{v}")))
+            .collect();
+        let Some(names) = names else {
+            let message = format!("Role hierarchy not readable: {}", args.trim());
+            out.gap(&src.rel, line, message);
+            continue;
+        };
+        if name == "role" {
+            flush(current.take(), &mut includes, out);
+            current = names.into_iter().next();
+        } else {
+            includes.extend(names);
+        }
+    }
+    flush(current, &mut includes, out);
 }
 
 /// `ROLE_ADMIN > ROLE_STAFF\nROLE_STAFF > ROLE_USER`: each `a > b` makes `a` include `b`.
@@ -549,7 +745,7 @@ fn hierarchy(src: &Source, line: u32, args: &str, consts: &Consts, out: &mut Out
         .collect();
     let Some(pieces) = pieces else {
         let message = format!("Role hierarchy not readable: {}", args.trim());
-        out.note(&src.rel, line, message);
+        out.gap(&src.rel, line, message);
         return;
     };
     let here = Decl::at(src, line);
@@ -598,7 +794,7 @@ fn frontend(src: &Source, used: &BTreeSet<(String, String)>, out: &mut Out) {
             let line = src.line(at);
             match lex::literal(value) {
                 Some(v) => out.role(kind, &v, &Decl::at(src, line), vec![]),
-                None => out.note(
+                None => out.gap(
                     &src.rel,
                     line,
                     format!("{name}.{key} is not a string literal: {}", value.trim()),
@@ -858,6 +1054,27 @@ mod lex {
     pub(super) fn nameof(s: &str) -> Option<&str> {
         let inner = call_arg(s, "nameof")?;
         is_path(inner).then(|| inner.rsplit('.').next().unwrap_or(inner))
+    }
+
+    /// The value expression at the start of `s`: up to a top-level `,` `;` `}`
+    /// or line end, outside strings and brackets.
+    pub(super) fn value(s: &str) -> &str {
+        let b = s.as_bytes();
+        let (mut j, mut depth) = (0, 0);
+        while j < b.len() {
+            if let Some(end) = quote_end(b, j) {
+                j = end;
+                continue;
+            }
+            match b[j] {
+                b'(' | b'[' => depth += 1,
+                b')' | b']' => depth -= 1,
+                b',' | b';' | b'}' | b'\n' if depth <= 0 => break,
+                _ => {}
+            }
+            j += 1;
+        }
+        s[..j].trim()
     }
 
     /// Dotted identifiers (`A`, `A.B.C`).

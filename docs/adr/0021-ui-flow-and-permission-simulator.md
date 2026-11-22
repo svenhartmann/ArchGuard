@@ -547,3 +547,38 @@ before):
 Open: no extractor emits a convention except the dotted one, and policy atoms
 are still switches (only `policy_case` applies to them); the fixed `ROLE_`
 handling in the desktop and CLI goes with change (c).
+
+### 2026-11-22: waves 1, 2 and 4 and the service level
+
+Summary of the extractor work since the first extractors (facts from the merge
+history `2875e9fe..cff184dd`):
+
+- Wave 1 (P0 fixes, merged with the UI flow model): Laravel, Spring, Blazor,
+  NestJS, Django and FastAPI.
+- Wave 2 (P1 fixes): Django/DRF (mixin order, `method_decorator`, model
+  permissions), Svelte (`error()` guards, hooks `handle`/`sequence`), Angular
+  (`canLoad`, `mapToCanActivate`), NestJS (passport subclasses, composites),
+  Vue/Nuxt (meta counts only through a reading guard), React (wrapper and Next
+  middleware bodies), Express (`express-jwt` `unless`, passport), FastAPI
+  (Security scopes, Starlette `@requires`), Spring (conventions, method-security
+  switches, chain scoping), XAML (guards only from `[views.access]`), Laravel
+  (`verified`/`signed`, Sanctum abilities, model-qualified policies), Rust UIs
+  (Tauri capabilities and ACL, Leptos, Dioxus/Yew) and ASP.NET (default and
+  fallback policy, `AuthorizeFilter`, inherited actions); roles (per-application
+  conventions, catalog from use) and Blazor (project attribute bases, transitive).
+  A guard an extractor cannot read stays `Unknown` with a gap instead of being
+  dropped or guessed.
+- Wave 4, new backend extractors (endpoints and their access): Flask, Go (gin,
+  chi, echo, gorilla, `net/http`, casbin, oathkeeper), Phoenix (routes,
+  pipelines, `live_session` hooks; also screens), Rails (routes, callbacks,
+  authorization), Spring WebFlux (`RouterFunction` routes and the reactive
+  security chain), Quarkus / Jakarta REST (HTTP permissions, security
+  annotations, defaults) and Micronaut (`@Secured`, JSR-250, `intercept-url-map`,
+  default deny).
+- Service level (`ui_flow_service`, Java and Kotlin only): the checks below an
+  endpoint's handler become `ServiceLayer`s on the flow. A check is `Enforced`
+  (ANDed into the effective access) only when the handler calls the checked
+  method directly and unconditionally on another bean; an early return,
+  conditional or indirect call, or differing implementations give `PathOnly`;
+  self-invocation, `private`/`final` methods and similar give `Hint`. Service
+  layers can only add `Protected` conditions, never open an endpoint.

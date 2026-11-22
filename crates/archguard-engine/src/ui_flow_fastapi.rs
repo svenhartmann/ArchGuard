@@ -34,7 +34,7 @@
 //!   transitively, cycle-safe); otherwise it is no access (`get_db`). No body
 //!   is read: `if not user.is_superuser: raise …` stays inside `custom(f)`;
 //! - `Security(f, scopes=[…])` unlisted: `f` as above (`custom(f)` at least)
-//!   and every scope as a `role` atom, all required (FastAPI hands the
+//!   and every scope as a `policy` atom (D2), all required (FastAPI hands the
 //!   dependency every scope as required);
 //! - not found in the project, or a factory call `f(…)` not listed: no access,
 //!   with a note.
@@ -44,6 +44,10 @@
 //! included subtree is skipped), an included router not found, a router with
 //! endpoints that no `FastAPI` app includes (its paths start at its own
 //! prefix), a `$arg` meaning or scope list without readable arguments.
+//! Starlette `@requires("a", ["b"])` on a handler (resolved to
+//! `starlette.authentication`): every scope as a `policy` atom, all required;
+//! non-literal scopes give `unknown` and a gap. `AuthenticationMiddleware` alone
+//! gives no access. Starlette `Route(…)` tables are not read.
 //! Not read: `add_api_route`, `mount` of sub-applications, websockets,
 //! `Depends()` without argument (class dependencies), routers built in loops.
 //!
@@ -105,7 +109,7 @@ fn note(out: &mut Vec<UiFlowDiagnostic>, file: &str, line: u32, message: impl In
 }
 
 /// All of `items`, nested `all` flattened, sorted and deduplicated.
-fn all(items: Vec<Condition>) -> Condition {
+pub(crate) fn all(items: Vec<Condition>) -> Condition {
     let mut flat = Vec::new();
     for c in items {
         match c {
@@ -309,6 +313,10 @@ mod model {
     pub(super) enum Kind {
         Depends,
         Security,
+        /// Starlette `@requires(scopes)` on the handler; scopes in `scopes`.
+        Requires,
+        /// Any other decorator on a routed handler: not read, so unknown (ADR 0021).
+        Unread,
         /// A parameter annotation that may be an `Annotated` alias.
         Annotation,
         /// `dependencies=NAME`: a variable (or expression) holding the list.
@@ -444,12 +452,54 @@ mod model {
                 return;
             }
             let deps = params(src, file, open);
+            let mut own: Vec<Dep> = deps.iter().map(Dep::copy).collect();
+            own.extend(
+                decorators
+                    .iter()
+                    .filter_map(|&d| self.requires(src, file, d)),
+            );
+            // No decorator is assumed inert (FastAPI/Starlette document none that
+            // is); an empty allowlist keeps an explicit `open` from winning next to one.
+            if decorators.iter().any(|&d| is_route(src, d)) {
+                for &d in decorators {
+                    if !is_route(src, d) && self.requires(src, file, d).is_none() {
+                        let dep = Dep::new(file, d - 1, Kind::Unread, dotted(&src.b, d).0);
+                        own.push(dep);
+                    }
+                }
+            }
             for &d in decorators {
-                self.route(src, file, d, &name, &deps);
+                self.route(src, file, d, &name, &own);
             }
             if indent == 0 {
                 self.defs.insert(name, Def::Func(deps));
             }
+        }
+
+        /// `@requires(…)` resolved to `starlette.authentication`; the scopes
+        /// are the literal first argument (a string or a list of strings).
+        fn requires(&self, src: &Src, file: usize, at: usize) -> Option<Dep> {
+            let (name, j) = dotted(&src.b, at);
+            let first = name.split('.').next()?;
+            let imp = self.imports.get(first)?;
+            let direct = imp.module == "starlette.authentication"
+                && name == "requires"
+                && imp.name.as_deref() == Some("requires");
+            let attr = name.matches('.').count() == 1
+                && name.ends_with(".requires")
+                && ((imp.name.is_none() && imp.module == "starlette.authentication")
+                    || (imp.name.as_deref() == Some("authentication")
+                        && imp.module == "starlette"));
+            let open = skip_sp(&src.b, j);
+            if !(direct || attr) || src.b.get(open) != Some(&b'(') {
+                return None;
+            }
+            let mut dep = Dep::new(file, at - 1, Kind::Requires, "requires".into());
+            dep.scopes = src.first(&src.split(open)).and_then(|a| {
+                src.strings(a)
+                    .or_else(|| src.literal(a.0, a.1).map(|s| vec![s]))
+            });
+            Some(dep)
         }
 
         fn route(&mut self, src: &Src, file: usize, at: usize, func: &str, own: &[Dep]) {
@@ -569,6 +619,14 @@ mod model {
     }
 
     /// `name = rhs` or `name: T = rhs` at `at`: the name and the rhs range.
+    /// `@router.get(…)`-style decorator that [`Facts::route`] turns into a route.
+    fn is_route(src: &Src, at: usize) -> bool {
+        let (name, j) = dotted(&src.b, at);
+        let method = name.rsplit_once('.').map_or("", |(_, m)| m);
+        src.b.get(skip_sp(&src.b, j)) == Some(&b'(')
+            && (METHODS.contains(&method) || method == "api_route")
+    }
+
     fn assignment(src: &Src, at: usize) -> Option<(String, (usize, usize))> {
         let (name, j) = dotted(&src.b, at);
         let end = src.stmt_end(at);
@@ -1071,6 +1129,9 @@ mod access {
                     }
                 };
             }
+            if matches!(d.kind, Kind::Requires | Kind::Unread) {
+                return self.requires(d);
+            }
             let name = d.target.rsplit('.').next().unwrap_or("").to_string();
             if d.target.is_empty() {
                 return Meaning::None;
@@ -1087,10 +1148,24 @@ mod access {
                 _ => Condition::Custom(name.clone()),
             }];
             match &d.scopes {
-                Some(scopes) => conds.extend(scopes.iter().map(|s| Condition::Role(s.clone()))),
+                Some(scopes) => conds.extend(scopes.iter().map(|s| Condition::Policy(s.clone()))),
                 None => conds.push(self.unknown(d, &name, "its scopes are not a literal list")),
             }
             Meaning::Cond(all(conds))
+        }
+
+        /// `@requires(…)` scopes, or an unread decorator (unknown).
+        fn requires(&mut self, d: &Dep) -> Meaning {
+            if d.kind == Kind::Unread {
+                let why = "a decorator on a routed handler is not read";
+                return Meaning::Cond(self.unknown(d, &d.target, why));
+            }
+            Meaning::Cond(match d.scopes.as_deref() {
+                Some(s) if !s.is_empty() => {
+                    all(s.iter().map(|x| Condition::Policy(x.clone())).collect())
+                }
+                _ => self.unknown(d, "requires", "its scopes are not literal"),
+            })
         }
 
         fn unlisted(&mut self, d: &Dep, name: &str) -> Meaning {
@@ -1441,6 +1516,10 @@ mod tests {
         Condition::Role(n.into())
     }
 
+    fn policy(n: &str) -> Condition {
+        Condition::Policy(n.into())
+    }
+
     fn all(items: Vec<Condition>) -> AccessState {
         AccessState::Protected(Condition::All(items))
     }
@@ -1652,8 +1731,8 @@ mod tests {
         let flow = run(SCOPES, "");
         let me = all(vec![
             Condition::Authenticated,
-            role("items"),
-            role("me"),
+            policy("items"),
+            policy("me"),
             custom("current_user"),
         ]);
         assert_eq!(
@@ -1685,6 +1764,47 @@ mod tests {
                 any("me", "items")
             ]
         );
+    }
+
+    const REQ: &str = "from fastapi import FastAPI\n\
+         from starlette.authentication import requires, AuthenticationMiddleware\n\
+         from starlette.middleware import Middleware\n\
+         app = FastAPI(middleware=[Middleware(AuthenticationMiddleware, backend=B())])\n";
+
+    #[test]
+    fn py36_13_starlette_requires_is_all_scopes_as_policies() {
+        let flow = run(
+            &[(
+                "main.py",
+                &format!(
+                    "{REQ}@app.get('/d')\n@requires(['authenticated', 'admin'])\n\
+                     async def dash(request):\n    pass\n\
+                     @app.get('/s')\n@requires('staff', redirect='login')\n\
+                     async def s(request):\n    pass\n\
+                     SC = ['x']\n@app.get('/u')\n@requires(SC)\nasync def u(request):\n    pass\n\
+                     @app.get('/n')\nasync def n(request):\n    pass\n"
+                ),
+            )],
+            "",
+        );
+        assert_eq!(
+            eps(&flow),
+            vec![
+                ep(
+                    "GET",
+                    "/d",
+                    all(vec![policy("admin"), policy("authenticated")])
+                ),
+                ep("GET", "/n", AccessState::Undeclared),
+                ep("GET", "/s", AccessState::Protected(policy("staff"))),
+                ep(
+                    "GET",
+                    "/u",
+                    AccessState::Protected(Condition::Unknown("requires".into()))
+                ),
+            ]
+        );
+        assert_eq!(gaps(&flow).len(), 1);
     }
 
     #[test]
@@ -1760,6 +1880,35 @@ mod tests {
             )
         );
         assert!(!flow.complete);
+    }
+
+    #[test]
+    fn unread_decorator_is_unknown_and_beats_an_open_dependency() {
+        let flow = one(
+            "from app.auth import login_required\n@app.get('/x')\n@login_required\n\
+             def x(a=Depends(public)):\n    pass\n",
+            "public = \"open\"\n",
+        );
+        assert_eq!(
+            only(&flow),
+            (
+                AccessState::Protected(Condition::Unknown("login_required".into())),
+                vec![DiagnosticSeverity::Gap]
+            )
+        );
+        // A non-route decorator on a function without a route stays silent.
+        let flow = one("@app.on_event('startup')\ndef s():\n    pass\n", "");
+        assert!(flow.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn starlette_authentication_module_attribute_is_requires() {
+        let flow = one(
+            "from starlette import authentication\n@app.get('/x')\n\
+             @authentication.requires('x')\ndef x():\n    pass\n",
+            "",
+        );
+        assert_eq!(only(&flow), (AccessState::Protected(policy("x")), vec![]));
     }
 
     #[test]

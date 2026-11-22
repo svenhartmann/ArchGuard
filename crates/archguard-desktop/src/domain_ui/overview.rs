@@ -35,6 +35,8 @@ pub struct ModBox {
     pub y: f32,
     pub w: f32,
     pub h: f32,
+    /// The stub of relations to models outside the sources (`Relation::external`).
+    pub external: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -170,6 +172,7 @@ fn overview(model: &DomainModel, pairs: &[(usize, usize)], hubs: Vec<Hub>) -> Sc
                 y,
                 w: BOX_W,
                 h: BOX_H,
+                external: false,
             }
         })
         .collect();
@@ -192,6 +195,24 @@ fn overview(model: &DomainModel, pairs: &[(usize, usize)], hubs: Vec<Hub>) -> Sc
         links,
         hubs,
     }
+}
+
+/// The stub for relations from the module's entities to models outside the
+/// sources, placed after `n` stubs in the row at `y`.
+fn external_stub(model: &DomainModel, inside: &BTreeSet<&str>, n: usize, y: f32) -> Option<ModBox> {
+    let count = (model.relations.iter())
+        .filter(|r| r.external && inside.contains(r.from.as_str()))
+        .count();
+    (count > 0).then(|| ModBox {
+        module: usize::MAX,
+        title: format!("\u{2192} external ({count})"),
+        sub: String::new(),
+        x: PAD + n as f32 * (STUB_W + 16.0),
+        y,
+        w: STUB_W,
+        h: STUB_H,
+        external: true,
+    })
 }
 
 fn of_module(model: &DomainModel, module: &str, pairs: &[(usize, usize)], hubs: Vec<Hub>) -> Scene {
@@ -231,7 +252,7 @@ fn of_module(model: &DomainModel, module: &str, pairs: &[(usize, usize)], hubs: 
     stubs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     // One row below the bands.
     let y = d.height;
-    let boxes: Vec<ModBox> = (stubs.iter().enumerate())
+    let mut boxes: Vec<ModBox> = (stubs.iter().enumerate())
         .map(|(k, &(m, n))| ModBox {
             module: m,
             title: format!("\u{2192} {} ({n})", names[m]),
@@ -240,8 +261,10 @@ fn of_module(model: &DomainModel, module: &str, pairs: &[(usize, usize)], hubs: 
             y,
             w: STUB_W,
             h: STUB_H,
+            external: false,
         })
         .collect();
+    boxes.extend(external_stub(model, &inside, boxes.len(), y));
     if !boxes.is_empty() {
         d.width = d.width.max(PAD + boxes.len() as f32 * (STUB_W + 16.0));
         d.height = y + STUB_H + PAD;
@@ -423,5 +446,17 @@ mod tests {
         assert!(s.boxes.is_empty() && s.hubs.is_empty());
         assert_eq!(s.diagram.cards, plain.cards);
         assert_eq!(s.diagram.bands, plain.bands);
+    }
+
+    #[test]
+    fn module_view_counts_external_relations_in_one_stub() {
+        let mut m = netbox();
+        let mut r = rel("Prefix", "django.contrib.auth.User");
+        r.external = true;
+        m.relations.push(r);
+        let s = scene(&m, Some("ipam"));
+        let stubs: Vec<&str> = s.boxes.iter().map(|b| b.title.as_str()).collect();
+        assert_eq!(stubs, ["\u{2192} dcim (2)", "\u{2192} external (1)"]);
+        assert!(s.boxes[1].external && !s.boxes[0].external);
     }
 }

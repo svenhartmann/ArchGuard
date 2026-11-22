@@ -594,3 +594,6 @@ msgstr "UI-Screens, Navigationen und Berechtigungen gegen Backend-Endpunkte."
 
 msgid "Domain entities, state machines, use cases and events."
 msgstr "Domänen-Entitäten, Zustandsautomaten, Use Cases und Events."
+
+msgid "Access chain per endpoint: screens, endpoint check, service and data checks."
+msgstr "Zugriffskette je Endpunkt: Screens, Endpunkt-Prüfung, Service- und Daten-Prüfungen."

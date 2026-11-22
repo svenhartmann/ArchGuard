@@ -127,6 +127,9 @@ msgstr "hat viele"
 msgid "references"
 msgstr "verweist auf"
 
+msgid "→ {{target}} (external)"
+msgstr "→ {{target}} (extern)"
+
 msgid "publishes"
 msgstr "veröffentlicht"
 

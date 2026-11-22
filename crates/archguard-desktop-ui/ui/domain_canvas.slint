@@ -225,7 +225,9 @@ export component EntityCanvas inherits Rectangle {
                 width: b.w * 1px * root.zoom;
                 height: b.h * 1px * root.zoom;
                 border-radius: 8px * root.zoom;
-                background: mt.has-hover ? Theme.panel-2 : Theme.panel;
+                background: mt.has-hover && b.module >= 0 ? Theme.panel-2 : Theme.panel;
+                accessible-role: text;
+                accessible-label: b.title;
                 border-width: 1.8px;
                 border-color: Theme.package-border;
                 VerticalLayout {
@@ -235,7 +237,7 @@ export component EntityCanvas inherits Rectangle {
                     Text { text: b.title; color: Theme.text; font-size: max(7px, 13px * root.zoom); font-weight: Theme.weight-strong; overflow: elide; }
                     if b.sub != "": Text { text: b.sub; color: Theme.muted; font-size: max(6px, 10.5px * root.zoom); overflow: elide; }
                 }
-                mt := TouchArea { mouse-cursor: pointer; clicked => { root.open-module(b.module); } }
+                mt := TouchArea { enabled: b.module >= 0; mouse-cursor: b.module >= 0 ? MouseCursor.pointer : MouseCursor.default; clicked => { root.open-module(b.module); } }
             }
             for c in root.cards: EntityCard {
                 card: c;
