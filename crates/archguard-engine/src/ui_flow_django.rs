@@ -694,7 +694,7 @@ mod access {
     /// Decorators that perform no access check; every other unread one is unknown (D1).
     /// Django: https://docs.djangoproject.com/en/stable/topics/http/decorators/ and
     /// https://docs.djangoproject.com/en/stable/ref/csrf/ ; DRF: https://www.django-rest-framework.org/api-guide/views/
-    const NO_ACCESS_CHECK: [&str; 12] = [
+    const NO_ACCESS_CHECK: [&str; 13] = [
         "csrf_exempt",
         "csrf_protect",
         "cache_page",
@@ -707,6 +707,8 @@ mod access {
         "schema",
         "condition",
         "etag",
+        // drf-spectacular documentation: https://drf-spectacular.readthedocs.io/en/latest/customization.html
+        "extend_schema",
     ];
     /// DRF `IsAdminUser` and `staff_member_required`: a signed-in staff user.
     fn staff() -> Condition {
@@ -834,6 +836,7 @@ mod access {
                     "django.views.decorators.",
                     "django.utils.decorators.",
                     "rest_framework.decorators.",
+                    "drf_spectacular.utils.",
                 ]
                 .iter()
                 .any(|m| path.starts_with(m))
@@ -1143,7 +1146,7 @@ mod access {
             let unknown = || {
                 if let Some(&Sym::Def(f, d)) = mro.first() {
                     let message = format!(
-                        "`{name}` needs the view's model; its `queryset` is not readable, so the permission is unknown."
+                        "`{name}` needs the view's model; its `queryset` model or app label is not readable, so the permission is unknown."
                     );
                     self.finding(f, self.pys[f].defs[d].line, true, message);
                 }
@@ -1209,11 +1212,16 @@ mod access {
                 let rel = format!("{}/apps.py", dirs[..=n].join("/"));
                 self.by_rel.get(&rel).copied()
             });
-            Some(apps.and_then(|f| self.config_label(f)).unwrap_or(package))
+            match apps.map(|f| self.config_label(f)) {
+                Some(Err(())) => None,
+                Some(Ok(Some(label))) => Some(label),
+                _ => Some(package),
+            }
         }
 
-        /// `label`, else the last part of `name`, of the first `AppConfig` of `apps.py`.
-        fn config_label(&self, f: usize) -> Option<String> {
+        /// `label`, else the last part of `name`, of the first `AppConfig` of
+        /// `apps.py`; `Err` when a `label` is written but not as a plain string.
+        fn config_label(&self, f: usize) -> Result<Option<String>, ()> {
             let p = &self.pys[f];
             let configs = (0..p.defs.len()).filter(|&d| {
                 let def = &p.defs[d];
@@ -1224,11 +1232,15 @@ mod access {
                         .any(|x| x.trim().rsplit('.').next() == Some("AppConfig"))
             });
             let attr = |d: usize, n: &str| py::string_value(p.class_attr(d, n)?.0);
-            configs.into_iter().find_map(|d| {
-                attr(d, "label").or_else(|| {
-                    attr(d, "name").map(|n| n.rsplit('.').next().unwrap_or(&n).to_string())
-                })
-            })
+            for d in configs {
+                if p.class_attr(d, "label").is_some() {
+                    return attr(d, "label").map(Some).ok_or(());
+                }
+                if let Some(n) = attr(d, "name") {
+                    return Ok(Some(n.rsplit('.').next().unwrap_or(&n).to_string()));
+                }
+            }
+            Ok(None)
         }
     }
 
@@ -2090,9 +2102,10 @@ mod views {
             fx.decl.extend(outer.decl);
             let methods = fx.methods.clone();
             if let (true, Some((pf, at))) = (fx.api_view, fx.perms_above) {
-                let message =
-                    "`@permission_classes` above `@api_view` is ignored by DRF; it must sit below.";
-                self.finding(pf, self.pys[pf].line(at), false, message.into());
+                // DRF: "These must come after (below) the `@api_view` decorator."
+                // https://www.django-rest-framework.org/api-guide/views/#api-policy-decorators
+                let message = "`@permission_classes` above `@api_view` is ignored by DRF and gives no protection; it must sit below.";
+                self.finding(pf, self.pys[pf].line(at), true, message.into());
             }
             if fx.api_view {
                 let eps = (methods.iter().flatten())
@@ -4156,10 +4169,11 @@ class VS(viewsets.ViewSet):
             "    path('a/', views.above),\n    path('b/', views.below),",
         );
         assert_eq!(endpoint(&flow, "GET", "/a/"), AccessState::Undeclared);
+        // DRF ignores it: a gap on that endpoint, never a protection.
         assert!(has_diag(
             &flow,
-            DiagnosticSeverity::Note,
-            "permission_classes"
+            DiagnosticSeverity::Gap,
+            "`@permission_classes` above `@api_view`"
         ));
         assert_eq!(
             endpoint(&flow, "GET", "/b/"),
@@ -4202,6 +4216,70 @@ class VS(viewsets.ViewSet):
         assert_eq!(
             endpoint(&flow, "GET", "/p/"),
             protected(Condition::Authenticated)
+        );
+    }
+
+    #[test]
+    fn unreadable_appconfig_label_is_a_gap_not_the_name() {
+        let model = "class Post:\n    pass\n";
+        let apps = "from django.apps import AppConfig\nclass C(AppConfig):\n    name = 'store.shop'\n    label = LABEL\n";
+        let extra = [
+            ("m/blog/__init__.py", ""),
+            ("m/blog/models.py", model),
+            ("m/blog/apps.py", apps),
+        ];
+        let unknown = Condition::Unknown("DjangoModelPermissions".into());
+        assert_eq!(
+            post_policy(&extra),
+            Condition::All(vec![Condition::Authenticated, unknown])
+        );
+    }
+
+    const SPECTACULAR: &str = "from rest_framework.decorators import api_view, permission_classes, action\nfrom rest_framework.permissions import AllowAny, IsAdminUser\nfrom rest_framework.views import APIView\nfrom rest_framework import viewsets\nfrom drf_spectacular.utils import extend_schema\n\n@extend_schema(responses=None)\n@api_view(['GET'])\n@permission_classes([AllowAny])\ndef doc(request):\n    pass\n\nclass V(APIView):\n    permission_classes = [IsAdminUser]\n    @extend_schema(responses=None)\n    def get(self, request):\n        pass\n\nclass VS(viewsets.ViewSet):\n    permission_classes = [AllowAny]\n    @extend_schema(responses=None)\n    @action(detail=False, methods=['post'], url_path='go', permission_classes=[IsAdminUser])\n    def run(self, request):\n        pass\n\n    @action(detail=True)\n    def plain(self, request, pk=None):\n        pass\n";
+
+    #[test]
+    fn extend_schema_from_drf_spectacular_is_documentation_only() {
+        let flow = mini(
+            SPECTACULAR,
+            "    path('d/', views.doc),\n    path('v/', views.V.as_view()),",
+        );
+        assert_eq!(endpoint(&flow, "GET", "/d/"), AccessState::Open);
+        assert_eq!(
+            endpoint(&flow, "GET", "/v/"),
+            protected(Condition::All(vec![
+                Condition::Authenticated,
+                Condition::Custom("is_staff".into())
+            ]))
+        );
+        assert!(
+            !has_diag(&flow, DiagnosticSeverity::Gap, "extend_schema"),
+            "{:#?}",
+            flow.diagnostics
+        );
+    }
+
+    #[test]
+    fn project_extend_schema_is_not_allowlisted_by_name() {
+        let views = "from rest_framework.decorators import api_view, permission_classes\nfrom rest_framework.permissions import AllowAny\n\ndef extend_schema(**kw):\n    return lambda f: f\n\n@extend_schema(responses=None)\n@api_view(['GET'])\n@permission_classes([AllowAny])\ndef mine(request):\n    pass\n";
+        let flow = mini(views, "    path('m/', views.mine),");
+        let unknown = Condition::Unknown("extend_schema".into());
+        assert_eq!(endpoint(&flow, "GET", "/m/"), protected(unknown));
+    }
+
+    #[test]
+    fn action_is_a_route_with_its_own_permissions_next_to_extend_schema() {
+        let urls = "from django.urls import include, path\nfrom rest_framework.routers import DefaultRouter\nfrom . import views\nrouter = DefaultRouter()\nrouter.register('vs', views.VS, basename='vs')\nurlpatterns = [path('', include(router.urls))]\n";
+        let flow = mini_with(SPECTACULAR, "", "", &[("m/m/urls.py", urls)]);
+        let staff = protected(Condition::All(vec![
+            Condition::Authenticated,
+            Condition::Custom("is_staff".into()),
+        ]));
+        assert_eq!(endpoint(&flow, "POST", "/vs/go/"), staff);
+        assert_eq!(endpoint(&flow, "GET", "/vs/:pk/plain/"), AccessState::Open);
+        assert!(
+            !has_diag(&flow, DiagnosticSeverity::Gap, "extend_schema"),
+            "{:#?}",
+            flow.diagnostics
         );
     }
 }
