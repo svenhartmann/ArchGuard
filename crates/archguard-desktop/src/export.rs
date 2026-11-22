@@ -209,7 +209,8 @@ mod tests {
     /// project without arc42 text, else that text with its own words.
     #[test]
     fn arc42_matches_the_cli_document() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/ts-cyclic");
+        let fixture = crate::config_editor::tests::fixture("ts-cyclic");
+        let root = fixture.path().to_path_buf();
         let loaded = archguard_engine::load_config(None, &root).expect("config");
         let run =
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)

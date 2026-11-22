@@ -114,16 +114,13 @@ pub(super) fn wire() {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
 
     use super::super::state::build_from;
     use super::*;
 
     fn state() -> ArchitectureState {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/py-layers")
-            .canonicalize()
-            .expect("fixture");
+        let fixture = crate::config_editor::tests::fixture("py-layers");
+        let root = fixture.path().canonicalize().expect("fixture");
         let loaded = archguard_engine::load_config(None, &root).expect("config");
         let run =
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)

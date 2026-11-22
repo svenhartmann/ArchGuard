@@ -21,7 +21,7 @@ pub mod preview;
 mod provenance;
 mod save;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod toml_path;
 mod validate;
 mod value;

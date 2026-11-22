@@ -351,12 +351,8 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    fn fixture(name: &str) -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures")
-            .join(name)
-            .canonicalize()
-            .expect("fixture")
+    fn fixture(name: &str) -> tempfile::TempDir {
+        crate::config_editor::tests::fixture(name)
     }
 
     fn state(root: &Path) -> CallsState {
@@ -368,7 +364,7 @@ mod tests {
     /// package "app", the one with the most connections, opens.
     #[test]
     fn build_opens_the_busiest_package_of_a_real_project() {
-        let s = state(&fixture("py-layers"));
+        let s = state(fixture("py-layers").path());
         assert_eq!(s.idx.a.calls.len(), 14);
         assert_eq!(s.filter.package.as_deref(), Some("app"));
         let v = &s.view;

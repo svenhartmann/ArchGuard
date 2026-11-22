@@ -625,7 +625,6 @@ fn each(blocks: &[Block]) -> Vec<Option<String>> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
 
     use super::super::inline::{Mark, Span};
     use super::*;
@@ -688,9 +687,9 @@ Ende.
     /// asking for own text: the editor offers an empty paragraph there.
     #[test]
     fn exported_chapters_write_back_unchanged() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        for project in ["fixtures/py-layers", "examples/service-shop"] {
-            let dir = root.join(project).canonicalize().expect("project");
+        for project in ["py-layers", "../examples/service-shop"] {
+            let copy = crate::config_editor::tests::fixture(project);
+            let dir = copy.path().canonicalize().expect("project");
             let loaded = archguard_engine::load_config(None, &dir).expect("config");
             let run =
                 archguard_engine::analyze_run_quiet(&dir, &loaded, archguard_engine::Level::Module)

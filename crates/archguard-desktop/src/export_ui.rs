@@ -371,14 +371,14 @@ pub(crate) fn start_dir(home: Option<&std::path::Path>) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use crate::context::Analysis;
-    use std::path::Path;
     use std::sync::Arc;
 
     /// The arc42 export runs the engine's full arc42 analysis; it is a job
     /// a worker thread runs, not work on the UI thread.
     #[test]
     fn the_arc42_export_runs_on_a_worker_thread() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/ts-cyclic");
+        let fixture = crate::config_editor::tests::fixture("ts-cyclic");
+        let root = fixture.path().to_path_buf();
         let loaded = archguard_engine::load_config(None, &root).expect("config");
         let run =
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
