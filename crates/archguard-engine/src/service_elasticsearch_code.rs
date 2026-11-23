@@ -50,36 +50,41 @@ const READ: [&str; 9] = [
 ];
 
 /// A call that names an index: the text that opens it, how many leading arguments
-/// are not names, whether every later argument is one (Java varargs), and whether
-/// the call's own identifier counts for the access.
+/// are not names, whether every later argument is one (Java varargs), whether the
+/// call's own identifier counts for the access, and whether a non-literal argument
+/// is always a name. Otherwise it is one only inside a builder or lambda, since
+/// `client.index(request)` and `es.Index(doc, ...)` pass a request or a document.
 struct Call {
     needle: &'static str,
     ext: &'static str,
     skip: usize,
     many: bool,
     own: bool,
+    always: bool,
 }
 
-const fn call(needle: &'static str, ext: &'static str, skip: usize, many: bool, own: bool) -> Call {
+const fn call(needle: &'static str, ext: &'static str, skip: usize, flags: [bool; 3]) -> Call {
     Call {
         needle,
         ext,
         skip,
-        many,
-        own,
+        many: flags[0],
+        own: flags[1],
+        always: flags[2],
     }
 }
 
-const CALLS: [Call; 6] = [
-    call(".index(", "java", 0, true, false),
-    call("new IndexRequest(", "java", 0, false, true),
-    call(".Index(", "cs", 0, false, false),
-    call("IndexMany(", "cs", 1, false, true),
-    call("new IndexName(", "cs", 0, false, true),
-    call(".DefaultIndex(", "cs", 0, false, false),
+const CALLS: [Call; 7] = [
+    call(".index(", "java", 0, [true, false, false]),
+    call("new IndexRequest(", "java", 0, [false, true, true]),
+    call("IndexCoordinates.of(", "java", 0, [false, false, true]),
+    call(".Index(", "cs", 0, [false, false, false]),
+    call("IndexMany(", "cs", 1, [false, true, true]),
+    call("new IndexName(", "cs", 0, [false, true, true]),
+    call(".DefaultIndex(", "cs", 0, [false, false, true]),
 ];
 /// Arguments matched by their own call; the outer call ignores them.
-const NESTED: [&str; 2] = ["Indices.Index(", "new IndexName("];
+const NESTED: [&str; 3] = ["Indices.Index(", "new IndexName(", "IndexCoordinates.of("];
 
 /// One mention; `name` is `None` when the argument is not a literal.
 struct Mention {
@@ -207,7 +212,7 @@ fn statement_start(text: &str, at: usize) -> usize {
 /// A C# `Index(` that takes a name is a naming call, not the write operation.
 fn access(window: &str) -> &'static str {
     let mut window = window.to_owned();
-    for name in ["\"", NESTED[0], NESTED[1]] {
+    for name in std::iter::once("\"").chain(NESTED) {
         window = window.replace(&format!("Index({name}"), &format!("({name}"));
     }
     let tokens = window.split(|c: char| !(c.is_alphanumeric() || c == '_'));
@@ -224,14 +229,11 @@ fn access(window: &str) -> &'static str {
 }
 
 /// The index names of one call: `Some(name)` for a literal, `None` for a gap.
-/// Lambdas, nested name calls and `client.index(request)` are not names.
+/// Lambdas, nested name calls and request or document arguments are not names.
 fn names(c: &Call, text: &str, at: usize, open: usize) -> Vec<Option<String>> {
-    let receiver = text[..at]
-        .rsplit(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-        .next();
-    if receiver.is_some_and(|r| r.to_ascii_lowercase().contains("client")) {
-        return Vec::new();
-    }
+    let window = &text[statement_start(text, at)..at];
+    let builder = ["->", "=>", "Builder"].iter().any(|k| window.contains(k));
+    let gaps = c.always || builder || window.ends_with("Indices");
     let mut args = split_args(&text[open..]);
     args.drain(..c.skip.min(args.len()));
     if !c.many {
@@ -247,6 +249,7 @@ fn names(c: &Call, text: &str, at: usize, open: usize) -> Vec<Option<String>> {
             None => out.extend(name(arg)),
         }
     }
+    out.retain(|n| gaps || n.is_some());
     out
 }
 

@@ -61,7 +61,9 @@ fn fixture_lists_java_and_csharp_indices_with_access() {
         ])
     );
     assert_eq!(gaps(&report), 0);
-    assert!(report.complete);
+    // Terraform files in the shared fixture have intended gaps; the code reader has none.
+    let own = |f: &str| f.starts_with("java-writer/") || f.starts_with("dotnet-reader/");
+    assert!(!report.diagnostics.iter().any(|d| own(&d.file)));
     let first = report
         .elasticsearch
         .usages
@@ -106,4 +108,32 @@ fn non_literals_are_gaps_and_tests_and_foreign_files_do_not_count() {
     assert_eq!(usages(&report, "api"), pairs(&[("fine", "read")]));
     assert_eq!(gaps(&report), 2);
     assert!(!report.complete);
+}
+
+#[test]
+fn operation_arguments_are_neither_usages_nor_gaps() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(
+        root,
+        "compose.yaml",
+        "services:\n  api:\n    build: ./api\n",
+    );
+    put(
+        root,
+        "api/Es.cs",
+        "using Nest;\nclass E { void f() {\n  _es.Index(doc, i => i.Index(\"c3\"));\n} }\n",
+    );
+    put(
+        root,
+        "api/Es.java",
+        "import org.elasticsearch.client.Client;\nclass J { void f() {\n  elastic.index(req);\n  ops.index(query, IndexCoordinates.of(\"p2\"));\n} }\n",
+    );
+    let report = analyze_services(root).unwrap();
+    assert_eq!(
+        usages(&report, "api"),
+        pairs(&[("c3", "write"), ("p2", "unknown")])
+    );
+    assert_eq!(gaps(&report), 0);
+    assert!(report.complete);
 }
