@@ -120,12 +120,9 @@ are code, but no analyzer measures them.
     themselves; other non-literals give a diagnostic with a count. The analyzer
     reports a fingerprint of all `.painless` and `.tf` files (outside
     `.terraform/`) in `semantic_fingerprints`, so a changed script invalidates
-    the memo. Counting rule `ast-decisions-v1`: the base is 1, plus 1 for each
-    `if` (also `else if`), `for`, `while`, `do`, `case`, `catch`, `&&`, `||`,
-    ternary `?:`, null-safe `?.` and Elvis `?:`. Strings, comments and regex
-    literals are not scanned. Nesting is the maximum depth of control blocks.
-    Unbalanced braces give no measurement. The rule lives in the module
-    documentation of the counter; this ADR names it.
+    the memo. The counting rule `ast-decisions-v1` for Painless is listed only in the
+    module documentation of the counter,
+    [`painless.rs`](../../crates/archguard-extract/src/painless.rs).
 11. **Answers to the open questions.**
     - Q1: constants with a literal value in the same service are resolved
       (decision 6).
@@ -169,3 +166,6 @@ are code, but no analyzer measures them.
 ## History
 
 - **2026-11-23:** Proposed and accepted.
+- **2026-11-23:** Decision 10 no longer lists the counting rules; the module
+  documentation of `painless.rs` is their only place (the `while` of a do-while
+  does not count again).
