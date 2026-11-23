@@ -75,6 +75,17 @@ class T(unittest.TestCase):
         self.assertIn("{'enforced': 1, 'hint': 1}", out.getvalue())
         self.assertEqual(run(base, bad), 1)
 
+    def test_protected_endpoint_gaining_an_enforced_layer_counts_as_changed(self):
+        ep = {"method": "GET", "path": "/a", "file": "F", "line": 1, "access": {"protected": COND}}
+        layer = {"endpoint_file": "F", "endpoint_line": 1, "endpoint_method": "GET", "endpoint_path": "/a",
+                 "how": "enforced", "state": {"protected": {"role": "B"}}}
+        base = flow(extra={"endpoints": [ep]})
+        head = flow(extra={"endpoints": [ep], "service_layers": [layer]})
+        out = io.StringIO()
+        self.assertEqual(run(base, head, out), 0)
+        self.assertIn("effective condition changed on 1 endpoint(s)", out.getvalue())
+        self.assertIn("GET /a:", out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

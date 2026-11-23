@@ -208,6 +208,13 @@ def access_moves(base, head):
 RANK = {"open": 0, "undeclared": 1, "protected": 2, "unrecognised": 1}
 
 
+def _cond(v):
+    """The condition of a protected value as canonical text, else None."""
+    if _state(v, "undeclared") != "protected":
+        return None
+    return json.dumps(v["protected"] if isinstance(v, dict) and "protected" in v else v, sort_keys=True)
+
+
 def service_summary(flow):
     """(layers by kind, {endpoint key: (endpoint state, effective state)}). Effective = the endpoint's state ANDed with every enforced
     layer: protected if one is protected, open if one is open (the model must never produce that), else the endpoint's own state."""
@@ -221,7 +228,9 @@ def service_summary(flow):
         own = _state(e.get("access"), "undeclared")
         states = {_state(l.get("state"), "undeclared") for l in mine if l["how"] == "enforced"}
         eff_state = "open" if "open" in states else "protected" if "protected" in states else own
-        eff[(e.get("application") or "", e["method"], e["path"], e.get("file"), e.get("line"))] = (own, eff_state)
+        parts = {_cond(e.get("access"))} | {_cond(l.get("state")) for l in mine if l["how"] == "enforced" and _state(l.get("state"), "undeclared") == "protected"}
+        full = " AND ".join(sorted(parts - {None})) or own
+        eff[(e.get("application") or "", e["method"], e["path"], e.get("file"), e.get("line"))] = (own, eff_state, full)
     return kinds, eff
 
 
@@ -232,9 +241,10 @@ def service_report(base, head):
         hk, he = service_summary(head[app])
         bk, be = service_summary(base[app]) if app in base else (collections.Counter(), {})
         lines.append(f"{app}: service layers (endpoints) {dict(sorted(bk.items()))} -> {dict(sorted(hk.items()))}")
-        changed = sum(1 for k, v in he.items() if k in be and be[k][1] != v[1])
-        lines.append(f"{app}: effective condition changed on {changed} endpoint(s)")
-        weaker += [(app, k) for k, (own, eff) in sorted(he.items()) if RANK[eff] < RANK[own]]
+        changed = [(k, be[k][2], v[2]) for k, v in sorted(he.items()) if k in be and be[k][2] != v[2]]
+        lines.append(f"{app}: effective condition changed on {len(changed)} endpoint(s)")
+        lines += [f"  {k[1]} {k[2]}: {was} -> {now}" for k, was, now in changed[:10]]
+        weaker += [(app, k) for k, (own, eff, _) in sorted(he.items()) if RANK[eff] < RANK[own]]
     return lines, weaker
 
 
