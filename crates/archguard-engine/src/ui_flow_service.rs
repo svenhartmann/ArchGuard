@@ -686,7 +686,8 @@ impl<'a> World<'a> {
         ))
     }
 
-    /// A gap when the method has annotations in the source but no declaration was matched.
+    /// A gap when the method has annotations in the source but no declaration was
+    /// matched. Defensive: reachable only through the `decl_of` fallback.
     fn unread_annotations(&self, msrc: &Source, decl: &Decl, m: &CallMethod) -> Option<Gap> {
         let head = head_at(msrc, m.line, &m.name)?;
         let lost = decl.attrs.is_empty() && head.contains('@');
