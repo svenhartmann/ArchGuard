@@ -568,9 +568,15 @@ pub fn evaluate_condition(condition: &Condition, assignment: &Assignment) -> Out
         Condition::Never => Outcome::Denied,
         Condition::Role(name) => {
             let conv = &assignment.convention;
-            let unsure = ["role_prefix", "role_case", "permissions"]
-                .iter()
-                .any(|f| conv.conflicts.iter().any(|c| c == f));
+            let unsure = [
+                "role_prefix",
+                "scope_prefix",
+                "role_claim",
+                "role_case",
+                "permissions",
+            ]
+            .iter()
+            .any(|f| conv.conflicts.iter().any(|c| c == f));
             if unsure {
                 // the check depends on an unread value: only what the user entered counts
                 return match assignment.held.contains(name) {

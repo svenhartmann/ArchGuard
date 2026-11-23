@@ -778,3 +778,34 @@ fn a_case_clash_makes_role_checks_unknown() {
     assert_eq!(check(&flow, "ADMIN", "admin"), Outcome::Unknown);
     assert_eq!(check(&flow, "admin", "admin"), Outcome::Allowed);
 }
+
+// W6e: a scope_prefix or role_claim clash makes a role check Unknown too, unless the name is held literally.
+#[test]
+fn a_scope_prefix_or_role_claim_clash_makes_a_role_check_unknown() {
+    for field in ["scope_prefix", "role_claim"] {
+        let entry = |v: &str, line: u32| {
+            let mut c = app("api");
+            match field {
+                "scope_prefix" => c.scope_prefix = Some(v.into()),
+                _ => c.role_claim = Some(v.into()),
+            }
+            with_origin(c, field, &format!("read {line}"))
+        };
+        let merged = merge_ui_flows(flow_of(vec![entry("a", 1)]), flow_of(vec![entry("b", 2)]));
+        assert!(
+            (merged.convention(Some("api")).conflicts.iter()).any(|c| c == field),
+            "{field}"
+        );
+        let check = |held: &str| {
+            let a = Assignment {
+                roles: [held.to_string()].into(),
+                held: [held.to_string()].into(),
+                ..Assignment::default()
+            };
+            let a = resolve_assignment_for(&merged, Some("api"), &a);
+            evaluate_condition(&Condition::Role("R".into()), &a)
+        };
+        assert_eq!(check("R"), Outcome::Allowed, "{field}");
+        assert_eq!(check("Q"), Outcome::Unknown, "{field}");
+    }
+}

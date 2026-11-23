@@ -468,8 +468,9 @@ mod attributes {
 
     /// Simple names of project classes that derive from `AuthorizeAttribute` or
     /// implement `IAuthorizeData`, following project base classes transitively.
-    /// A chain that leaves the scanned files through an `...Attribute` base, or
-    /// exceeds the depth bound, is included too: unknown, never "not authorize".
+    /// A chain that leaves the scanned files through any unresolved base (except
+    /// the plain `Attribute`), or exceeds the depth bound, is included too:
+    /// unknown, never "not authorize".
     pub(super) fn derived_attributes(root: &Path, files: &Files) -> BTreeSet<String> {
         let mut bases: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for rel in files.cs.iter().chain(&files.code_behind) {

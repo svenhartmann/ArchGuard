@@ -179,7 +179,81 @@ mod sig {
             }
         }
         parts.push(&text[from..]);
-        parts.into_iter().map(param_type).collect()
+        parts
+            .into_iter()
+            .map(|p| param_type(p).map(|t| qualify(src, &t)))
+            .collect()
+    }
+
+    /// Names that need no import in Java or Kotlin (never qualified).
+    const IMPLICIT: &[&str] = &[
+        "String",
+        "Object",
+        "Any",
+        "Unit",
+        "List",
+        "Map",
+        "Set",
+        "Collection",
+        "Iterable",
+        "Number",
+        "CharSequence",
+        "Array",
+        "Nothing",
+        "Throwable",
+        "Void",
+        "Class",
+        "Enum",
+        "Comparable",
+        "Iterator",
+        "Runnable",
+    ];
+
+    /// `Dto` -> `x.Dto` by the file's explicit import, else its package; left
+    /// plain when a wildcard import could supply it (`same_type` then reports
+    /// the package as unknown).
+    fn qualify(src: &Source, ty: &str) -> String {
+        let base = ty.trim_end_matches("[]");
+        let dims = &ty[base.len()..];
+        if base.contains('.')
+            || !base.starts_with(|c: char| c.is_ascii_uppercase())
+            || IMPLICIT.contains(&canon(base).as_str())
+            || is_primitive(&canon(base))
+        {
+            return ty.to_string();
+        }
+        let (mut package, mut wildcard) = (None, false);
+        for line in src.text.lines() {
+            let l = line.trim().trim_end_matches(';').trim();
+            if let Some(p) = l.strip_prefix("package ") {
+                package = Some(p.trim());
+            } else if let Some(i) = l.strip_prefix("import ") {
+                let i = i.trim();
+                if i.ends_with(".*") {
+                    wildcard = true;
+                } else if i.rsplit('.').next() == Some(base) {
+                    return format!("{i}{dims}");
+                }
+            }
+        }
+        match package {
+            Some(p) if !wildcard => format!("{p}.{base}{dims}"),
+            _ => ty.to_string(),
+        }
+    }
+
+    /// `x.Dto[]` -> `Dto[]`.
+    fn unq(t: &str) -> String {
+        let base = t.trim_end_matches("[]");
+        let dims = &t[base.len()..];
+        format!("{}{dims}", base.rsplit('.').next().unwrap_or(base))
+    }
+
+    fn is_primitive(w: &str) -> bool {
+        [
+            "int", "long", "short", "byte", "char", "boolean", "float", "double",
+        ]
+        .contains(&w.trim_end_matches("[]"))
     }
 
     /// `final @A String name`, `name: String = x` -> `String`; generics and
@@ -270,8 +344,8 @@ mod sig {
         let words: Vec<&str> = (out.split_whitespace())
             .filter(|w| !matches!(*w, "final" | "vararg"))
             .collect();
-        let ty = words.join("").rsplit('.').next()?.to_string();
-        (!ty.is_empty()).then_some(ty)
+        let ty = words.join("");
+        (!ty.is_empty() && !ty.ends_with('.')).then_some(ty)
     }
 
     #[derive(PartialEq)]
@@ -310,6 +384,27 @@ mod sig {
         format!("{word}{}", "[]".repeat(dims + extra))
     }
 
+    /// Whether two types that match by name are surely the same: package
+    /// known and equal, and not a boxed type against its primitive.
+    fn same_type(x: &str, y: &str) -> bool {
+        let (ux, uy) = (unq(x), unq(y));
+        let other_package = x.len() > ux.len() && y.len() > uy.len() && x != y;
+        // a capitalised name with no known package may come from a wildcard import
+        let unknown = |t: &str| {
+            let base = unq(t);
+            let base = base.trim_end_matches("[]");
+            !t.contains('.')
+                && base.starts_with(|c: char| c.is_ascii_uppercase())
+                && !IMPLICIT.contains(&canon(base).as_str())
+                && !is_primitive(&canon(base))
+        };
+        !(unknown(x) || unknown(y) || other_package) && (ux == uy || !is_primitive(&canon(&ux)))
+    }
+
+    fn is_plain(t: &str) -> bool {
+        (unq(t).chars()).all(|c| c.is_alphanumeric() || matches!(c, '_' | '[' | ']'))
+    }
+
     /// Whether two parameter lists are the same overload. A type variable
     /// (`T`) or an unreadable list may stand for anything: `Maybe`.
     pub(super) fn fits(a: &Sig, b: &Sig, overriding: bool, vars: &[String]) -> Fit {
@@ -321,23 +416,20 @@ mod sig {
             return if overriding { Fit::Maybe } else { Fit::No };
         }
         let var = |t: &str| {
-            let word = t.trim_end_matches("[]");
+            let word = t.trim_end_matches("[]").rsplit('.').next().unwrap_or(t);
             (word.len() <= 2 && word.starts_with(|c: char| c.is_ascii_uppercase()))
                 || vars.iter().any(|v| v == word)
         };
         let mut maybe = false;
         for (x, y) in a.iter().zip(b) {
-            if canon(x) == canon(y) {
+            if canon(&unq(x)) == canon(&unq(y)) {
+                maybe |= !same_type(x, y);
                 continue;
             }
             // A definite difference only between plain type names, and never
             // for a method marked as an override (an alias or an unreadable
             // spelling may hide the match).
-            let plain = |t: &str| {
-                t.chars()
-                    .all(|c| c.is_alphanumeric() || matches!(c, '_' | '[' | ']'))
-            };
-            if !(var(x) || var(y)) && plain(x) && plain(y) && !overriding {
+            if !(var(x) || var(y)) && is_plain(x) && is_plain(y) && !overriding {
                 return Fit::No;
             }
             maybe = true;
@@ -359,7 +451,7 @@ mod sig {
     /// The declaration head before the parameter list at `open`: modifiers,
     /// annotations, type parameters, return type and name. It starts after
     /// the last `;`, `{` or `}` outside parentheses and literals.
-    fn head_of(src: &Source, open: usize) -> &str {
+    pub(crate) fn head_of(src: &Source, open: usize) -> &str {
         let text = &src.text[..open];
         let (mut from, mut depth, mut it) = (0, 0u32, text.char_indices());
         while let Some((i, c)) = it.next() {
@@ -496,6 +588,19 @@ mod sig {
         }
         out
     }
+}
+pub(crate) use sig::head_of;
+
+/// The declaration head before `name(` in the method starting at `line` (the
+/// call model may give the first annotation's line): annotations and modifiers
+/// up to the previous `;`, `{` or `}`, on however many lines.
+pub(crate) fn head_at(src: &Source, line: u32, name: &str) -> Option<String> {
+    let from: usize = (src.text.split_inclusive('\n'))
+        .take((line as usize).checked_sub(1)?)
+        .map(str::len)
+        .sum();
+    let at = from + src.text[from..].find(&format!("{name}("))?;
+    Some(head_of(src, at + name.len()).to_string())
 }
 use sig::{Fit, Sig, class_vars, declared, fits, overrides, sig_of, vars_of};
 
@@ -1891,6 +1996,67 @@ mod tests {
             "C implements Api",
             "@Secured(\"ROLE_X\") public String h(Foo a) { return \"\"; }",
         );
+        no_open_and_a_gap(&run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]));
+    }
+    #[test]
+    fn same_simple_type_name_from_other_packages_is_no_definite_match() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/i\") @Secured(\"isAnonymous()\") String i(Dto a);",
+        )
+        .replace("package a;", "package a;\nimport x.Dto;");
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Secured(\"ROLE_X\") public String i(Dto a) { return \"\"; }",
+        )
+        .replace("package a;", "package a;\nimport y.Dto;");
+        no_open_and_a_gap(&run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]));
+    }
+
+    #[test]
+    fn boxed_and_primitive_are_no_definite_match() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/i\") @Secured(\"isAnonymous()\") String i(long a);",
+        );
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Secured(\"ROLE_X\") public String i(Long a) { return \"\"; }",
+        );
+        no_open_and_a_gap(&run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]));
+    }
+
+    #[test]
+    fn kotlin_override_on_the_previous_line_is_still_an_override_guard() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/u\") @Secured(\"isAnonymous()\") String u(Base a);",
+        );
+        let ctl = format!(
+            "{KT_HEAD}@Controller(\"/c\") class C : Api {{\n  @Secured(\"ROLE_X\")\n  override // see {{x}}; y\n  fun u(a: Dto): String = \"\"\n}}\n"
+        );
+        no_open_and_a_gap(&run(SEC, &[("src/Api.java", &api), ("src/C.kt", &ctl)]));
+    }
+
+    #[test]
+    fn wildcard_imported_type_is_not_a_definite_match_for_a_qualified_one() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/i\") @Secured(\"isAnonymous()\") String i(Dto a);",
+        )
+        .replace("package a;", "package a;\nimport x.*;");
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Secured(\"ROLE_X\") public String i(Dto a) { return \"\"; }",
+        )
+        .replace("package a;", "package a;\nimport y.Dto;");
         no_open_and_a_gap(&run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]));
     }
 }
