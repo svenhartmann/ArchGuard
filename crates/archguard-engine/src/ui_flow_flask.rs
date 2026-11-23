@@ -41,11 +41,11 @@
 //! itself does not. A `LOGIN_DISABLED` setting is a gap.
 //! Not read: Flask-RESTful/-RESTX/-Smorest routes, `app.url_map`, route
 //! decorators on class methods other than a `MethodView`.
-use crate::ui_flow_fastapi::all;
 use archguard_core::{
     AccessMeaning, AccessState, Action, Call, Condition, DiagnosticSeverity, EndpointAccess,
     Origin, Screen, ScreenKind, Target, Transition, UiFlow, UiFlowDiagnostic,
 };
+use archguard_flow_common::extract_ctx::all;
 use archguard_flow_common::extract_ctx::{
     ExtractContext, ancestors, cap, dir_name, finish, gap, read_text, walk,
 };

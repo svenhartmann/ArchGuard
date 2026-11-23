@@ -61,7 +61,7 @@ use archguard_core::{
     UiFlowDiagnostic,
 };
 use archguard_flow_common::extract_ctx::{
-    ExtractContext, ancestors, cap, dir_name, finish, gap, read_text, walk, with_root_config,
+    ExtractContext, all, ancestors, cap, dir_name, finish, gap, read_text, walk, with_root_config,
 };
 use archguard_flow_common::support::test_path;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -108,24 +108,6 @@ fn note(out: &mut Vec<UiFlowDiagnostic>, file: &str, line: u32, message: impl In
         message: message.into(),
         severity: DiagnosticSeverity::Note,
     });
-}
-
-/// All of `items`, nested `all` flattened, sorted and deduplicated.
-pub(crate) fn all(items: Vec<Condition>) -> Condition {
-    let mut flat = Vec::new();
-    for c in items {
-        match c {
-            Condition::All(inner) => flat.extend(inner),
-            c => flat.push(c),
-        }
-    }
-    flat.sort();
-    flat.dedup();
-    if flat.len() == 1 {
-        flat.remove(0)
-    } else {
-        Condition::All(flat)
-    }
 }
 
 /// FastAPI's view of one Python source on top of `lang_python`: the masked

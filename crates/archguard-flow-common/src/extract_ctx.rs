@@ -320,3 +320,21 @@ pub fn dir_name(root: &Path, dir: &str) -> String {
             .unwrap_or_default(),
     }
 }
+
+/// All of `items`, nested `all` flattened, sorted and deduplicated.
+pub fn all(items: Vec<Condition>) -> Condition {
+    let mut flat = Vec::new();
+    for c in items {
+        match c {
+            Condition::All(inner) => flat.extend(inner),
+            c => flat.push(c),
+        }
+    }
+    flat.sort();
+    flat.dedup();
+    if flat.len() == 1 {
+        flat.remove(0)
+    } else {
+        Condition::All(flat)
+    }
+}

@@ -268,8 +268,12 @@ impl Extractor {
             let text = archguard_flow_common::lang_java::mask(&raw);
             let imports = decls::imports(&text);
             let kotlin = rel.ends_with(".kt");
-            let project =
-                crate::domain_csharp::code::project_of(root, &rel, &BUILD_FILES, &mut projects);
+            let project = archguard_flow_common::lang_code::project_of(
+                root,
+                &rel,
+                &BUILD_FILES,
+                &mut projects,
+            );
             self.files.push(Src {
                 rel,
                 text,
@@ -1977,10 +1981,10 @@ mod rich {
     //!   the payload is the last argument, `new X(…)` or a local variable assigned
     //!   one. A computed payload or a Kotlin constructor call adds nothing.
     use super::*;
-    use crate::domain_csharp::code::{
+    use archguard_core::domain_model::{DomainRule, IntegrationEvent, Publisher, Validation};
+    use archguard_flow_common::lang_code::{
         Code, assigned_news, condition, created_at, message, raw, split_args, top_news,
     };
-    use archguard_core::domain_model::{DomainRule, IntegrationEvent, Publisher, Validation};
 
     const BEAN_VALIDATION: [&str; 22] = [
         "NotNull",

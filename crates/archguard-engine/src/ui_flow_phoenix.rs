@@ -180,7 +180,7 @@ fn fold(effs: Vec<Eff>) -> AccessState {
         })
         .collect();
     if !conds.is_empty() {
-        AccessState::Protected(crate::ui_flow_fastapi::all(conds))
+        AccessState::Protected(archguard_flow_common::extract_ctx::all(conds))
     } else if effs.contains(&Eff::Open) {
         AccessState::Open
     } else {

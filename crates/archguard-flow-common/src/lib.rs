@@ -6,6 +6,7 @@ pub mod extract_ctx;
 #[cfg(test)]
 mod extract_ctx_tests;
 pub mod lang_blank;
+pub mod lang_code;
 pub mod lang_csharp;
 pub mod lang_java;
 pub mod lang_markup;
