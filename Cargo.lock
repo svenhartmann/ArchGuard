@@ -368,6 +368,7 @@ dependencies = [
  "archguard-analysis",
  "archguard-core",
  "archguard-extract",
+ "archguard-flow-backend",
  "archguard-flow-clike",
  "archguard-flow-common",
  "archguard-report",
@@ -403,6 +404,18 @@ dependencies = [
  "ignore",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "archguard-flow-backend"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-flow-clike",
+ "archguard-flow-common",
+ "roxmltree",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

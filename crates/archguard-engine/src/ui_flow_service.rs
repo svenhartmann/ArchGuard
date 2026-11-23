@@ -37,10 +37,10 @@ use archguard_core::{
     EndpointAccess, MethodCall, ServiceHow, ServiceKind, ServiceLayer, UiFlow, UiFlowDiagnostic,
 };
 
-use crate::ui_flow_backend::spring::{Conf, declared_access, family};
-use crate::ui_flow_backend::{Index, Out, Project, read_projects};
 use crate::ui_flow_micronaut::head_at;
 use archguard_extract::{Lang, strip_root};
+use archguard_flow_backend::ui_flow_backend::spring::{Conf, declared_access, family};
+use archguard_flow_backend::ui_flow_backend::{Index, Out, Project, read_projects};
 use archguard_flow_clike::decl::{Attr, Decl, class_header, decls};
 use archguard_flow_clike::lex::{literals, named, positional, split_top};
 use archguard_flow_clike::quarkus_build::quarkus_build;

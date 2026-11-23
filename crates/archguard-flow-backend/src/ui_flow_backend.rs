@@ -179,7 +179,7 @@ mod projects {
 
     /// Application name and source files by project directory; unreadable files
     /// become diagnostics.
-    pub(crate) fn read_projects(root: &Path, out: &mut Out) -> BTreeMap<String, Project> {
+    pub fn read_projects(root: &Path, out: &mut Out) -> BTreeMap<String, Project> {
         read_all(root, out).0
     }
 
@@ -224,7 +224,7 @@ mod projects {
 
     /// The owning application of a project directory, its sources, and whether
     /// its build file depends on the Quarkus Spring compatibility extensions.
-    pub(crate) type Project = (Option<String>, Vec<Source>, bool);
+    pub type Project = (Option<String>, Vec<Source>, bool);
 
     /// Whether a build file of project directory `dir` names a Quarkus Spring
     /// compatibility extension (`quarkus-spring-web`, `quarkus-spring-security`).
@@ -283,7 +283,7 @@ mod projects {
     }
 }
 use projects::read_all;
-pub(crate) use projects::{Project, read_projects};
+pub use projects::{Project, read_projects};
 
 /// The lowest major version of the project's `<TargetFramework(s)>` (`net10.0`
 /// is 10, `netcoreapp3.1` 3, `net48` 4); none without a `.csproj` or when a
@@ -327,18 +327,18 @@ struct Ignored {
     endpoints: BTreeSet<(String, u32)>,
 }
 
-pub(crate) struct Out(UiFlow, Ignored, aspnet::Defaults);
+pub struct Out(UiFlow, Ignored, aspnet::Defaults);
 impl Out {
     /// An empty run, for readers that only want what the shared annotation
     /// reader reports about one element.
-    pub(crate) fn scratch() -> Out {
+    pub fn scratch() -> Out {
         Out(
             UiFlow::default(),
             Ignored::default(),
             aspnet::Defaults::default(),
         )
     }
-    pub(crate) fn diagnostics(&self) -> &[UiFlowDiagnostic] {
+    pub fn diagnostics(&self) -> &[UiFlowDiagnostic] {
         &self.0.diagnostics
     }
     /// A diagnostic for something not read literally: the flow is incomplete.
@@ -485,7 +485,7 @@ mod index {
         pub ambiguous: Vec<String>,
     }
 
-    pub(crate) struct Index<'a> {
+    pub struct Index<'a> {
         access: BTreeMap<String, AccessMeaning>,
         /// `Class.Member` → the initializer texts found for it.
         constants: HashMap<String, BTreeSet<String>>,
@@ -499,7 +499,7 @@ mod index {
     }
 
     impl<'a> Index<'a> {
-        pub(crate) fn new(
+        pub fn new(
             sources: impl Iterator<Item = &'a Source>,
             access: BTreeMap<String, AccessMeaning>,
         ) -> Self {
@@ -690,7 +690,7 @@ mod index {
         }
 
         /// The one declaration of annotation type `name`, for meta-annotations.
-        pub(crate) fn meta(&self, name: &str) -> Option<(&'a Source, &Decl)> {
+        pub fn meta(&self, name: &str) -> Option<(&'a Source, &Decl)> {
             match self.interfaces.get(name)?.as_slice() {
                 [(s, d)] => Some((*s, d)),
                 _ => None,
@@ -754,7 +754,7 @@ mod index {
         }
 
         /// The class or interface `name` declared in `src`.
-        pub(crate) fn type_in(&self, src: &Source, name: &str) -> Option<&Decl> {
+        pub fn type_in(&self, src: &Source, name: &str) -> Option<&Decl> {
             [&self.classes, &self.interfaces]
                 .into_iter()
                 .filter_map(|m| m.get(name))
@@ -764,7 +764,7 @@ mod index {
         }
 
         /// The annotated methods of `class` declared in `src`.
-        pub(crate) fn methods_in(&self, src: &Source, class: &str) -> Vec<&Decl> {
+        pub fn methods_in(&self, src: &Source, class: &str) -> Vec<&Decl> {
             (self.methods.get(class).into_iter().flatten())
                 .filter(|(s, _)| std::ptr::eq(*s, src))
                 .map(|(_, d)| d)
@@ -1075,7 +1075,7 @@ mod index {
     }
     use resolve::{interface_constants, static_qualified};
 }
-pub(crate) use index::Index;
+pub use index::Index;
 
 /// ASP.NET Core controllers: attribute routes, else the project's
 /// conventional routes ([`conventional`]). A class without its own `[Route]`
@@ -3070,7 +3070,7 @@ mod aspnet {
 }
 
 /// Spring MVC controllers and Spring Security / JSR-250 annotations.
-pub(crate) mod spring {
+pub mod spring {
     use super::lex::{literals, named, positional};
     use super::*;
 
@@ -3301,7 +3301,7 @@ pub(crate) mod spring {
     }
 
     pub(super) use chain_apps::{Apps, central};
-    pub(crate) use conf::Conf;
+    pub use conf::Conf;
     use conf::{Atom, Flag};
 
     /// The conventions and method-security switches of ONE application as its
@@ -3353,7 +3353,7 @@ pub(crate) mod spring {
         pub(in super::super) type ConfKey = (bool, Option<String>, Option<String>, Option<String>);
 
         #[derive(Clone)]
-        pub(crate) struct Conf {
+        pub struct Conf {
             quarkus: bool,
             /// `None`: set by code that is not readable.
             role_prefix: Option<String>,
@@ -3365,7 +3365,7 @@ pub(crate) mod spring {
             /// `AnnotationTemplateExpressionDefaults` is in the sources.
             pub(in super::super) templates: bool,
             /// Service layers: `@PostAuthorize` is no check before the call.
-            pub(crate) deferred_off: bool,
+            pub deferred_off: bool,
         }
 
         /// `(source, offset, arguments)` of every call of `name` in the sources.
@@ -3425,12 +3425,7 @@ pub(crate) mod spring {
                 )
             }
 
-            pub(crate) fn read(
-                sources: &[Source],
-                index: &Index,
-                quarkus: bool,
-                out: &mut Out,
-            ) -> Conf {
+            pub fn read(sources: &[Source], index: &Index, quarkus: bool, out: &mut Out) -> Conf {
                 let templates = (sources.iter())
                     .any(|s| s.text.contains("AnnotationTemplateExpressionDefaults"));
                 let mut conf = Conf {
@@ -5335,7 +5330,7 @@ pub(crate) mod spring {
     /// The access the annotations of method `d` of `class` declare (own,
     /// inherited and class level) and whether an annotation was not applied.
     /// Shared with the WebFlux handler methods.
-    pub(crate) fn declared_access(
+    pub fn declared_access(
         conf: &Conf,
         index: &Index,
         out: &mut Out,
@@ -5449,7 +5444,7 @@ pub(crate) mod spring {
     /// The security annotation family of `name`: Spring overrides per family
     /// (a method's annotation replaces the class's of the same family) and
     /// checks every family in turn.
-    pub(crate) fn family(name: &str) -> Option<&'static str> {
+    pub fn family(name: &str) -> Option<&'static str> {
         Some(match name {
             "PreAuthorize" => "PreAuthorize",
             "PostAuthorize" => "PostAuthorize",

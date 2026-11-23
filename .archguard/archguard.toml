@@ -62,9 +62,14 @@ contains = ["archguard-flow-clike", "archguard-flow-clike/**"]
 may_depend_on = ["core", "extract", "flow-common"]
 
 [[layers]]
+name = "flow-backend"
+contains = ["archguard-flow-backend", "archguard-flow-backend/**"]
+may_depend_on = ["core", "flow-common", "flow-clike"]
+
+[[layers]]
 name = "engine"
 contains = ["archguard-engine", "archguard-engine/**"]
-may_depend_on = ["core", "extract", "flow-common", "flow-clike", "analysis", "report", "store"]
+may_depend_on = ["core", "extract", "flow-common", "flow-clike", "flow-backend", "analysis", "report", "store"]
 
 [[layers]]
 name = "mcp"
