@@ -68,7 +68,6 @@ mod shell;
 mod shell_ui;
 #[cfg(feature = "snapshot")]
 mod snapshot;
-mod stale_sources;
 mod start_ui;
 mod state;
 mod status;

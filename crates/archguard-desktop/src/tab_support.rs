@@ -197,7 +197,6 @@ pub(crate) enum Start {
 
 /// Decide for the active document, marking it pending when building starts.
 pub(crate) fn start<T: TabState>() -> Start {
-    crate::stale_sources::forget_stale_sources();
     if documents::with_active_state(|_: &mut T| ()).is_some() {
         return Start::Ready;
     }
@@ -707,37 +706,6 @@ mod tests {
         assert_eq!(*Shared::<u32>::active().get_or_init(|| 3), 2, "same slot");
         documents::with_store(|s| s.activate(0));
         assert_eq!(*Shared::<u32>::active().get_or_init(|| 1), 1);
-    }
-
-    /// A changed source file drops the shared flow: the next tab recomputes it.
-    #[test]
-    fn a_changed_source_file_recomputes_the_flow() {
-        let dir = tempfile::tempdir().unwrap();
-        documents::with_store(|s| {
-            *s = documents::Store::default();
-            s.open(dir.path());
-        });
-        let runs = std::cell::Cell::new(0);
-        let flow = || {
-            let f = Flow {
-                root: dir.path().into(),
-                slot: Shared::active(),
-            };
-            f.get_with(|_| {
-                runs.set(runs.get() + 1);
-                Err("flow".into())
-            });
-        };
-        flow();
-        crate::stale_sources::forget_stale_sources();
-        flow();
-        assert_eq!(runs.get(), 1, "nothing changed: kept");
-        let file = std::fs::File::create(dir.path().join("A.java")).unwrap();
-        file.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(60))
-            .unwrap();
-        crate::stale_sources::forget_stale_sources();
-        flow();
-        assert_eq!(runs.get(), 2, "a newer source file: recomputed");
     }
 
     #[test]
