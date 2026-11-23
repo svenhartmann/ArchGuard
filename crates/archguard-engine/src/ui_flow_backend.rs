@@ -420,6 +420,42 @@ pub(crate) struct Source {
     lines: Vec<usize>,
 }
 impl Source {
+    /// Whether the header starting at `i` and ending at line end `end` goes on
+    /// below: the line holds only modifier keywords (`final`, `public`), or
+    /// only a return type that a name and `(` follow.
+    fn header_goes_on(&self, i: usize, end: usize) -> bool {
+        const MODS: [&str; 17] = [
+            "public",
+            "private",
+            "protected",
+            "internal",
+            "static",
+            "final",
+            "abstract",
+            "open",
+            "override",
+            "synchronized",
+            "native",
+            "default",
+            "sealed",
+            "virtual",
+            "async",
+            "partial",
+            "suspend",
+        ];
+        let line = &self.text[i..end];
+        let rest = (line.split_whitespace().filter(|_| true)).collect::<Vec<_>>();
+        let rest = rest.iter().skip_while(|w| MODS.contains(w)).count();
+        let type_only = (rest == 1 || (rest > 1 && line.contains('<')))
+            && line
+                .chars()
+                .all(|c| c.is_alphanumeric() || " _.<>,[]?".contains(c));
+        let name_next = (self.text[end..].trim_start().split_once('(')).is_some_and(|(n, _)| {
+            !n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || c == '_')
+        });
+        self.bytes().get(end) == Some(&b'\n') && (rest == 0 || (type_only && name_next))
+    }
+
     pub(crate) fn new(rel: String, raw: &str) -> Self {
         let text = lex::strip_comments(raw);
         let b = text.as_bytes();
@@ -608,7 +644,10 @@ pub(crate) fn decls(src: &Source, annotations: bool) -> Vec<Decl> {
             }
             _ => {
                 let end = header_end(src, i);
-                out.extend(declaration(src, i, end, std::mem::take(&mut pending)));
+                let goes_on = src.header_goes_on(i, end);
+                if !(goes_on && !pending.is_empty()) {
+                    out.extend(declaration(src, i, end, std::mem::take(&mut pending)));
+                }
                 end + 1
             }
         };
@@ -11242,5 +11281,45 @@ public class PController : ControllerBase
             )],
         );
         assert_eq!(notes(&flow, "ambiguous"), 0, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn annotations_survive_a_modifier_only_header_line() {
+        for text in [
+            "class C {\n  @PreAuthorize(\"x\") final\n  String run() { return \"\"; }\n}\n",
+            "class C {\n  @GetMapping(\"/a\") public\n  String a() { return \"\"; }\n}\n",
+            "class C {\n  @GetMapping(\"/a\")\n  public\n  String a() { return \"\"; }\n}\n",
+        ] {
+            let src = Source::new("C.java".into(), text);
+            let m: Vec<_> = decls(&src, true).into_iter().filter(|d| !d.class).collect();
+            assert_eq!(m.len(), 1, "{text}");
+            assert_eq!(m[0].attrs.len(), 1, "{text}");
+        }
+    }
+
+    #[test]
+    fn annotations_of_a_kotlin_property_do_not_reach_the_next_function() {
+        for text in [
+            "class C {\n  @get:PermitAll\n  val x: String = \"\"\n  @Get(\"/b\") fun b(): String = \"\"\n}\n",
+            "class C {\n  @Inject lateinit var s: S\n  @Get(\"/b\") fun b(): String = \"\"\n}\n",
+        ] {
+            let src = Source::new("C.kt".into(), text);
+            let m: Vec<_> = decls(&src, true)
+                .into_iter()
+                .filter(|d| d.name == "b")
+                .collect();
+            assert_eq!(m.len(), 1, "{text}");
+            assert_eq!(m[0].attrs.len(), 1, "{text}");
+        }
+    }
+
+    #[test]
+    fn annotations_survive_a_return_type_on_its_own_line() {
+        let text = "class Ctl {\n  @GetMapping(\"/a\")\n  @PreAuthorize(\"hasRole('B')\")\n  String\n  a() { return \"\"; }\n  @GetMapping(\"/b\")\n  Map<String, List<X>>\n  b() { return null; }\n}\n";
+        let src = Source::new("C.java".into(), text);
+        let m: Vec<_> = decls(&src, true).into_iter().filter(|d| !d.class).collect();
+        assert_eq!(m.len(), 2);
+        assert_eq!(m[0].attrs.len(), 2);
+        assert_eq!(m[1].attrs.len(), 1);
     }
 }

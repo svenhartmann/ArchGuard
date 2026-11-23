@@ -721,3 +721,97 @@ fn an_ejb_jar_applies_only_to_the_beans_of_its_own_module() {
         flow.service_layers
     );
 }
+
+#[test]
+fn aspectj_may_not_weave_an_interface_method_annotation() {
+    let api = "package app;\nimport org.springframework.security.access.prepost.*;\ninterface Api {\n  @PreAuthorize(\"hasRole('B')\") default String run() { return \"x\"; }\n  @PreAuthorize(\"hasRole('B')\") String other();\n}\n";
+    let svc = "package app;\nimport org.springframework.stereotype.Service;\n@Service\nclass Svc implements Api {\n  public String other() { return \"\"; }\n}\n";
+    for call in ["svc.run()", "svc.other()"] {
+        let ctl = ctl(&format!("return {call};"), "").replace("private Svc svc", "private Api svc");
+        let Some(flow) = run(
+            SPRING_POM,
+            &[
+                ("Conf.java", ENABLE_ASPECTJ),
+                ("Ctl.java", &ctl),
+                ("Api.java", api),
+                ("Svc.java", svc),
+            ],
+        ) else {
+            return;
+        };
+        let l = layers(&flow);
+        assert!(
+            l.iter().all(|l| l.0 != ServiceHow::Enforced),
+            "{call}: {l:?}"
+        );
+        if call == "svc.run()" {
+            assert_eq!(l[0].0, ServiceHow::Hint, "{call}: {l:?}");
+            assert!(
+                (flow.diagnostics.iter()).any(|d| d.message.contains("interface")),
+                "{:#?}",
+                flow.diagnostics
+            );
+        }
+    }
+}
+
+#[test]
+fn modifiers_on_the_line_before_the_method_still_count() {
+    let split = svc(
+        "@Service",
+        "@PreAuthorize(\"hasRole('B')\")\n  final String run() { return \"x\"; }",
+    );
+    let Some(flow) = run(
+        SPRING_POM,
+        &[
+            ("Conf.java", ENABLE),
+            ("Ctl.java", &ctl("return svc.run();", "")),
+            ("Svc.java", &split),
+        ],
+    ) else {
+        return;
+    };
+    let l = layers(&flow);
+    assert_eq!(l[0].0, ServiceHow::Hint, "{l:?}");
+}
+
+#[test]
+fn annotations_before_a_modifier_only_line_are_read() {
+    let split = svc(
+        "@Service",
+        "@PreAuthorize(\"hasRole('B')\") final\n  String run() { return \"x\"; }",
+    );
+    let Some(flow) = run(
+        SPRING_POM,
+        &[
+            ("Conf.java", ENABLE),
+            ("Ctl.java", &ctl("return svc.run();", "")),
+            ("Svc.java", &split),
+        ],
+    ) else {
+        return;
+    };
+    let l = layers(&flow);
+    assert_eq!(l[0].0, ServiceHow::Hint, "{l:?}");
+}
+
+#[test]
+fn a_class_missing_from_the_call_model_leaves_a_gap() {
+    super::ui_flow_service::DROPPED.with(|d| *d.borrow_mut() = vec!["app.Svc".into()]);
+    let Some(flow) = run(
+        SPRING_POM,
+        &[
+            ("Conf.java", ENABLE),
+            ("Ctl.java", &ctl("return svc.run();", "")),
+            ("Svc.java", &svc("@Service", PRE_B)),
+        ],
+    ) else {
+        return;
+    };
+    super::ui_flow_service::DROPPED.with(|d| d.borrow_mut().clear());
+    assert!(
+        (flow.diagnostics.iter()).any(|d| d.message.contains("missing from the call model")),
+        "{:#?}",
+        flow.diagnostics
+    );
+}

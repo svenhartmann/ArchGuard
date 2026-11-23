@@ -43,6 +43,7 @@ use crate::ui_flow_backend::spring::{Conf, declared_access, family};
 use crate::ui_flow_backend::{
     Attr, Decl, Index, Out, Project, Source, class_header, decls, quarkus_build, read_projects,
 };
+use crate::ui_flow_micronaut::head_at;
 use archguard_extract::{Lang, strip_root};
 use ejb::Decision;
 
@@ -139,7 +140,12 @@ pub(crate) fn apply(ctx: &ExtractContext, flow: &mut UiFlow) {
     if !has_signs(&projects) && !descriptor {
         return;
     }
-    let analysis = jvm_calls(ctx, &projects);
+    #[allow(unused_mut)] // tests drop classes from it
+    let mut analysis = jvm_calls(ctx, &projects);
+    #[cfg(test)]
+    analysis
+        .classes
+        .retain(|c| !DROPPED.with(|d| d.borrow().contains(&c.name)));
     if analysis.methods.is_empty() {
         flow.diagnostics.push(not_read(&analysis));
         return;
@@ -168,6 +174,12 @@ pub(crate) fn apply(ctx: &ExtractContext, flow: &mut UiFlow) {
     flow.service_layers.dedup();
     flow.diagnostics.sort();
     flow.diagnostics.dedup();
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Class names the tests take out of the call model (a library class).
+    pub(crate) static DROPPED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The Java call model, plus Kotlin's when the project has Kotlin sources. Not
@@ -412,6 +424,13 @@ impl<'a> World<'a> {
         let mut queue = self.direct(handler, src, &mut seen);
         while let Some((call, always, depth, via)) = queue.pop_front() {
             let Some(reached) = self.reach(call) else {
+                // a library class: its checks are never read
+                let message = format!(
+                    "Check of `{}.{}` not read: the class is missing from the call model (a library class or one the analysis did not read), so a check there is unknown.",
+                    call.to_class.as_deref().map_or("?", simple),
+                    call.target_label
+                );
+                self.gaps.push((call.file.clone(), call.line, message));
                 continue;
             };
             let same = call.to_class.as_deref() == Some(handler.class_id.as_str());
@@ -582,6 +601,7 @@ impl<'a> World<'a> {
             return None;
         };
         let decl = self.decl_of(msrc, &mclass, m);
+        self.gaps.extend(self.unread_annotations(msrc, &decl, m));
         let dir = (self.dir_of.get(src.rel.as_str())).copied();
         let dir = dir.unwrap_or_default();
         let bean = bean_of(src, &class, &self.index);
@@ -622,7 +642,7 @@ impl<'a> World<'a> {
                 .flatten();
             match (why, advice) {
                 (why, Some(Advice::Aspectj)) => {
-                    if let Some(not) = not_woven(&site, msrc) {
+                    if let Some(not) = not_woven(&site, msrc, &mut self.gaps) {
                         verdict.how = ServiceHow::Hint;
                         verdict.note = join(&verdict.note, not);
                     } else if let Some(why) = why {
@@ -664,6 +684,18 @@ impl<'a> World<'a> {
             ds,
             self.index.type_in(ds, simple(&dc.name))?.clone(),
         ))
+    }
+
+    /// A gap when the method has annotations in the source but no declaration was
+    /// matched. Defensive: reachable only through the `decl_of` fallback.
+    fn unread_annotations(&self, msrc: &Source, decl: &Decl, m: &CallMethod) -> Option<Gap> {
+        let head = head_at(msrc, m.line, &m.name)?;
+        let lost = decl.attrs.is_empty() && head.contains('@');
+        let message = format!(
+            "Check of `{}` not read: its annotations could not be matched to the call model, so a check there is unknown.",
+            m.name
+        );
+        lost.then(|| (msrc.rel.clone(), m.line, message))
     }
 
     /// The annotated declaration of `m` in `mclass`, else an empty one.
@@ -996,20 +1028,19 @@ fn bean_of(src: &Source, class: &Decl, index: &Index) -> Bean {
 /// aspects of spring-security-aspects match a method-level `@PreAuthorize` or
 /// `@Secured` of the implementing class, and a class-level `@Secured` on a
 /// public method; interface annotations are never woven.
-fn not_woven(site: &Site, msrc: &Source) -> Option<&'static str> {
+fn not_woven(site: &Site, msrc: &Source, gaps: &mut Vec<Gap>) -> Option<&'static str> {
     let on =
         |attrs: &[Attr], names: &[&str]| attrs.iter().any(|a| names.contains(&a.name.as_str()));
+    // an interface method (also a default one) may not be woven
+    if site.mclass.flag {
+        let why = "`mode = ASPECTJ` is not known to weave a method declared on an interface; this check may not run";
+        gaps.push((msrc.rel.clone(), site.m.line, why.to_string()));
+        return Some(why);
+    }
     if on(&site.decl.attrs, &["PreAuthorize", "Secured"]) {
         return None;
     }
-    let line = msrc
-        .text
-        .lines()
-        .nth((site.m.line as usize).saturating_sub(1))?;
-    let before = line
-        .split(&format!("{}(", site.m.name))
-        .next()
-        .unwrap_or("");
+    let before = &head_at(msrc, site.m.line, &site.m.name)?;
     let public = if msrc.rel.ends_with(".kt") {
         !before
             .split_whitespace()
@@ -1030,8 +1061,7 @@ fn unadvisable(src: &Source, class: &Decl, m: &CallMethod) -> Option<&'static st
     if src.rel.ends_with(".kt") {
         return None;
     }
-    let line = src.text.lines().nth((m.line as usize).saturating_sub(1))?;
-    let before = line.split(&format!("{}(", m.name)).next().unwrap_or("");
+    let before = &head_at(src, m.line, &m.name)?;
     let has = |text: &str, w: &str| text.split_whitespace().any(|x| x == w);
     if has(before, "private") {
         return Some("the method is private, so the proxy cannot advise it");
