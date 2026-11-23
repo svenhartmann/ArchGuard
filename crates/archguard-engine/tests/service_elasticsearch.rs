@@ -127,3 +127,59 @@ fn unreadable_processor_lists_are_gaps() {
         .count();
     assert_eq!(gaps, 2, "{:#?}", r.diagnostics);
 }
+
+#[test]
+fn kibana_data_views_read_title_patterns() {
+    let r = fixture();
+    let v = find(&r, "data_view", "orders-view");
+    assert_eq!(v.address, "elasticstack_kibana_data_view.orders");
+    assert_eq!(v.patterns, ["orders-*", "orders-archive-*"]);
+    assert!(find(&r, "data_view", "logs-view").patterns.is_empty());
+}
+
+#[test]
+fn kibana_alerting_rules_read_params_index() {
+    let r = fixture();
+    let q = find(&r, "alerting_rule", "orders-alert");
+    assert_eq!(q.patterns, ["orders-*", "orders-archive-*"]);
+    assert!(q.evidence[0].description.contains(".es-query"));
+    let j = find(&r, "alerting_rule", "orders-json-alert");
+    assert_eq!(j.patterns, ["orders-logs-*"]);
+    assert!(
+        j.evidence[0]
+            .description
+            .contains("logs.alert.document.count")
+    );
+    assert!(
+        find(&r, "alerting_rule", "orders-dynamic-alert")
+            .patterns
+            .is_empty()
+    );
+}
+
+#[test]
+fn kibana_gaps_and_saved_objects_note() {
+    let r = fixture();
+    let in_kibana = |needle: &str| {
+        r.diagnostics
+            .iter()
+            .filter(|d| d.file == "kibana.tf" && d.message.contains(needle))
+            .count()
+    };
+    assert_eq!(in_kibana("not a literal"), 2, "{:#?}", r.diagnostics);
+    assert_eq!(in_kibana("saved objects are not analyzed"), 1);
+    assert!(
+        r.diagnostics
+            .iter()
+            .filter(|d| d.message.contains("saved objects are not analyzed"))
+            .all(|d| d
+                .message
+                .contains("elasticstack_kibana_import_saved_objects.dashboards"))
+    );
+    assert!(
+        r.elasticsearch
+            .artifacts
+            .iter()
+            .all(|a| !a.address.contains("import_saved_objects"))
+    );
+}
