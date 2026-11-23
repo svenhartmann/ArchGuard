@@ -109,7 +109,8 @@ pub(crate) fn extract_with(ctx: &ExtractContext, hook: Option<RouteHook>) -> UiF
         let message = format!("Configuration not read; [views.access] not applied: {e}");
         out.note(".", 0, message);
     }
-    let (projects, pages) = read_all(ctx.root, &mut out);
+    let (projects, pages, build_dirs) = read_all(ctx.root, &mut out);
+    let mut apps = spring::Apps::new(ctx.root, &build_dirs);
     let access = ctx.config.views.access.clone();
     let index = Index::new(projects.values().flat_map(|(_, s, _)| s), access);
     for (dir, (application, sources, quarkus)) in &projects {
@@ -136,7 +137,7 @@ pub(crate) fn extract_with(ctx: &ExtractContext, hook: Option<RouteHook>) -> UiF
             application.as_deref(),
             &mut out,
         );
-        spring::central_rules(sources, &index, &conf, &mut out, first);
+        spring::central(dir, &projects, &mut apps, (&index, &conf), &mut out, first);
         for e in &mut out.0.endpoints[first..] {
             e.application = application.clone();
         }
@@ -176,11 +177,15 @@ mod projects {
         read_all(root, out).0
     }
 
+    /// Projects, Razor `.cshtml` files and build-file directories.
+    pub(super) type Read = (
+        BTreeMap<String, Project>,
+        BTreeMap<String, Vec<Source>>,
+        BTreeSet<String>,
+    );
+
     /// [`read_projects`] plus the Razor `.cshtml` files by project directory.
-    pub(super) fn read_all(
-        root: &Path,
-        out: &mut Out,
-    ) -> (BTreeMap<String, Project>, BTreeMap<String, Vec<Source>>) {
+    pub(super) fn read_all(root: &Path, out: &mut Out) -> Read {
         let (projects, files, cshtml) = discover(root, out);
         let mut pages: BTreeMap<String, Vec<Source>> = BTreeMap::new();
         for rel in cshtml {
@@ -208,7 +213,7 @@ mod projects {
                 Err(e) => out.diag(&rel, 0, format!("Source file not read (limit 1 MiB): {e}")),
             }
         }
-        (by_project, pages)
+        (by_project, pages, projects)
     }
 
     pub(crate) fn quarkus_build(root: &Path, dir: &str) -> bool {
@@ -1388,10 +1393,20 @@ mod index {
         out
     }
 
+    /// `(string-typed, `String[]`)` of the tokens between `final`/`const` and
+    /// `=`; an array is kept as `Class.X[]`, apart from the scalars.
+    fn head_kind(head: &str) -> (bool, bool) {
+        let tokens: Vec<&str> = (head.split_whitespace())
+            .map(|t| t.trim_end_matches(':'))
+            .collect();
+        let typed = (tokens.iter()).any(|t| matches!(*t, "string" | "String" | "String[]" | "val"));
+        (typed, tokens.contains(&"String[]"))
+    }
+
     /// `(Class.Member, initializer)` of each string constant in `src`.
     fn constants(src: &Source, decls: &[Decl]) -> Vec<(String, String)> {
-        const NOT_NAMES: [&str; 7] = [
-            "static", "string", "String", "val", "final", "readonly", "new",
+        const NOT_NAMES: [&str; 8] = [
+            "static", "string", "String", "String[]", "val", "final", "readonly", "new",
         ];
         let mut found = Vec::new();
         for kw in ["const", "final"] {
@@ -1401,8 +1416,7 @@ mod index {
                     continue;
                 };
                 let head = &src.text[from..eq];
-                let typed = (head.split_whitespace())
-                    .any(|t| matches!(t.trim_end_matches(':'), "string" | "String" | "val"));
+                let (typed, array) = head_kind(head);
                 let name = (head.split_whitespace().map(|t| t.trim_end_matches(':')))
                     .find(|t| !NOT_NAMES.contains(t));
                 let class = (decls.iter())
@@ -1424,7 +1438,7 @@ mod index {
                     minimal::statement_end(src, eq + 1)
                 };
                 found.push((
-                    format!("{}.{name}", class.name),
+                    format!("{}.{name}{}", class.name, ["", "[]"][usize::from(array)]),
                     static_qualified(src, src.text[eq + 1..end].trim()),
                 ));
             }
@@ -1449,6 +1463,28 @@ mod index {
                     Some(class.rsplit('.').next()?.to_string())
                 }));
                 self.text_at(&self.qualify(raw, &owners), 0)
+            }
+
+            /// [`Self::text_in`], or the elements of a `String[]` constant of the
+            /// scan (`{ A + "/x", B }`); `None` when any part is not readable.
+            pub(crate) fn texts_in(
+                &self,
+                src: &Source,
+                owner: &str,
+                raw: &str,
+            ) -> Option<Vec<String>> {
+                if let Some(one) = self.text_in(src, owner, raw) {
+                    return Some(vec![one]);
+                }
+                let mut parts = raw.trim().rsplit('.');
+                let (member, class) = (parts.next()?, parts.next().unwrap_or(owner));
+                let inits = self.constants.get(&format!("{class}.{member}[]"))?;
+                let init = (inits.len() == 1).then(|| inits.first())??;
+                let body = init.trim().strip_prefix('{')?.strip_suffix('}')?;
+                (split_top(body).into_iter())
+                    .filter(|p| !p.trim().is_empty())
+                    .map(|p| self.text_in(src, class, p))
+                    .collect()
             }
 
             /// `raw` with each plain name that is a constant of one of `owners`
@@ -3804,7 +3840,7 @@ pub(crate) mod spring {
         }
     }
 
-    pub(super) use chain::central_rules;
+    pub(super) use chain_apps::{Apps, central};
     pub(crate) use conf::Conf;
     use conf::{Atom, Flag};
 
@@ -3852,6 +3888,9 @@ pub(crate) mod spring {
             secured: Flag,
             jsr250: Flag,
         }
+
+        /// What of a project's conventions the chain rules are read with.
+        pub(in super::super) type ConfKey = (bool, Option<String>, Option<String>, Option<String>);
 
         #[derive(Clone)]
         pub(crate) struct Conf {
@@ -3917,6 +3956,15 @@ pub(crate) mod spring {
         }
 
         impl Conf {
+            pub(in super::super) fn key(&self) -> ConfKey {
+                (
+                    self.quarkus,
+                    self.role_prefix.clone(),
+                    self.scope_prefix.clone(),
+                    self.role_claim.clone(),
+                )
+            }
+
             pub(crate) fn read(
                 sources: &[Source],
                 index: &Index,
@@ -4238,6 +4286,125 @@ pub(crate) mod spring {
     }
 
     /// Where a call chain ends in the source text.
+    /// Why the chains of a project are not fully read.
+    mod chain_why {
+        use super::super::lex::{skip_ws, skip_ws_back};
+        use super::super::*;
+        use super::chain_span::{
+            HTTP_TYPES, enclosing_open, hand_off, mentions_http, scoping_call, word_before,
+        };
+
+        /// `Class.method` of the helpers `static void method(HttpSecurity h)` of
+        /// the scan whose body only calls `h.addFilter…(…)`: handing the
+        /// `HttpSecurity` to them cannot change scope or rules. A name declared
+        /// twice counts only when every declaration is such a helper.
+        pub(super) fn filter_helpers(sources: &[&Source]) -> BTreeSet<String> {
+            let (mut good, mut bad) = (BTreeSet::new(), BTreeSet::new());
+            for src in sources.iter().copied().filter(|s| s.rel.ends_with(".java")) {
+                let classes: Vec<Decl> = decls(src, true).into_iter().filter(|d| d.class).collect();
+                for p in HTTP_TYPES.iter().flat_map(|t| lex::words(&src.text, t)) {
+                    match helper_at(src, &classes, p) {
+                        Some((key, true)) => good.insert(key),
+                        Some((key, false)) => bad.insert(key),
+                        None => continue,
+                    };
+                }
+            }
+            good.difference(&bad).cloned().collect()
+        }
+
+        /// The method declared around the `HttpSecurity` parameter type at `p`,
+        /// if its only parameter is that: `("Class.method", only adds filters)`.
+        fn helper_at(src: &Source, classes: &[Decl], p: usize) -> Option<(String, bool)> {
+            let b = src.bytes();
+            let open = enclosing_open(src, p)?;
+            let close = src.pair(open)?;
+            let params = lex::split_top(&src.text[open + 1..close]);
+            let [param] = &params[..] else { return None };
+            let from = close + 1 + src.text[close + 1..].find('{')?;
+            let (var, to) = (param.split_whitespace().last()?, src.pair(from)?);
+            // between `)` and `{` only `throws X` is a method declaration
+            let gap = src.text[close + 1..from].trim();
+            let class = (classes.iter())
+                .filter(|c| c.open < open && open < c.end)
+                .max_by_key(|c| c.open)?;
+            if !(gap.is_empty() || gap.starts_with("throws")) {
+                return None;
+            }
+            let key = format!("{}.{}", class.name, word_before(src, skip_ws_back(b, open)));
+            let only_filters = lex::words(&src.text[from..to], var).all(|q| {
+                let at = skip_ws(b, from + q + var.len());
+                src.text[at..].starts_with(".addFilter")
+            });
+            Some((key, only_filters))
+        }
+
+        /// What keeps the chains from being read, project wide.
+        pub(super) struct Why {
+            /// A scoping call in a file that holds no chain (configurers,
+            /// extensions, helpers) that is not one of the `read` scopes
+            /// `(file, from, to)`: it may scope any chain.
+            pub(super) project: Option<String>,
+            helpers: BTreeSet<String>,
+        }
+
+        fn site(src: &Source, p: usize) -> String {
+            format!("{}:{}", src.rel, src.line(p))
+        }
+
+        fn scoping_site(src: &Source, read: &[(usize, usize)]) -> Option<String> {
+            let lambdas = super::chain::auth_lambdas(src);
+            scoping_call(src, &lambdas, read)
+                .map(|p| format!("A scoping matcher at {}", site(src, p)))
+        }
+
+        pub(super) fn why_not_evaluated(
+            sources: &[&Source],
+            files: &[&Source],
+            read: &[(String, usize, usize)],
+        ) -> Why {
+            let in_files = |s: &Source| files.iter().any(|f| f.rel == s.rel);
+            let project = (sources.iter().copied())
+                .filter(|s| !s.rel.ends_with(".cs") && mentions_http(&s.text) && !in_files(s))
+                .find_map(|s| scoping_site(s, &ranges_of(read, &s.rel)));
+            Why {
+                project,
+                helpers: filter_helpers(sources),
+            }
+        }
+
+        fn ranges_of(read: &[(String, usize, usize)], rel: &str) -> Vec<(usize, usize)> {
+            (read.iter())
+                .filter(|r| r.0 == rel)
+                .map(|r| (r.1, r.2))
+                .collect()
+        }
+
+        impl Why {
+            /// Why the chain of `src` in `own` is not fully read, and whether its
+            /// scope is lost: a scoping call that is not one of the `read` scopes
+            /// (lost), or the `HttpSecurity` handed out (code unknown). The
+            /// `others` (the file's other chains) are not looked at.
+            pub(super) fn unit(
+                &self,
+                src: &Source,
+                others: &[(usize, usize)],
+                read: &[(String, usize, usize)],
+            ) -> Option<(String, bool)> {
+                let mut skip = ranges_of(read, &src.rel);
+                skip.extend_from_slice(others);
+                if let Some(why) = scoping_site(src, &skip) {
+                    return Some((why, true));
+                }
+                let at = hand_off(src, others, &self.helpers)?;
+                Some((
+                    format!("Code at {} hands the HttpSecurity out", site(src, at)),
+                    false,
+                ))
+            }
+        }
+    }
+
     mod chain_span {
         use super::super::lex::{skip_ws, skip_ws_back};
         use super::super::*;
@@ -4453,7 +4620,12 @@ pub(crate) mod spring {
         /// An occurrence of the `HttpSecurity` variable that is not a receiver, a
         /// declaration or the `with(http) { }` scope: it is passed, aliased or cast.
         /// Occurrences in string literals (`"http://…"`) are no uses.
-        fn var_hand_off(src: &Source, inside: &[(usize, usize)], vars: &[String]) -> Option<usize> {
+        fn var_hand_off(
+            src: &Source,
+            inside: &[(usize, usize)],
+            vars: &[String],
+            helpers: &BTreeSet<String>,
+        ) -> Option<usize> {
             let strings = literal_spans(src);
             vars.iter().find_map(|var| {
                 lex::words(&src.text, var).find(|&p| {
@@ -4463,8 +4635,30 @@ pub(crate) mod spring {
                         && !is_declaration(src, p, end)
                         && !is_receiver(src, end)
                         && scope_block(src, p, end).is_none()
+                        && !is_filter_helper_arg(src, p, end, helpers)
                 })
             })
+        }
+
+        /// `Class.method(http)` where `Class.method` is in `helpers`.
+        fn is_filter_helper_arg(
+            src: &Source,
+            p: usize,
+            end: usize,
+            helpers: &BTreeSet<String>,
+        ) -> bool {
+            let b = src.bytes();
+            let Some(open) = enclosing_open(src, p) else {
+                return false;
+            };
+            let sole = src
+                .pair(open)
+                .is_some_and(|c| skip_ws(b, open + 1) == p && skip_ws(b, end) == c);
+            let name_end = skip_ws_back(b, open);
+            let name = word_before(src, name_end);
+            let dot = skip_ws_back(b, name_end - name.len());
+            let class = word_before(src, skip_ws_back(b, dot.saturating_sub(1)));
+            sole && dot > 0 && b[dot - 1] == b'.' && helpers.contains(&format!("{class}.{name}"))
         }
 
         /// A `.apply(…)`, `.with(…)`, `.also(…)`, `.let(…)` or `.run(…)` call with
@@ -4497,46 +4691,19 @@ pub(crate) mod spring {
 
         /// Offset where the `HttpSecurity` leaves the configure method / bean
         /// outside `inside`, so rules elsewhere cannot be seen.
-        fn hand_off(src: &Source, inside: &[(usize, usize)]) -> Option<usize> {
+        pub(super) fn hand_off(
+            src: &Source,
+            inside: &[(usize, usize)],
+            helpers: &BTreeSet<String>,
+        ) -> Option<usize> {
             let vars = http_vars(src);
             let blocks: Vec<(usize, usize)> = (vars.iter())
                 .flat_map(|v| lex::words(&src.text, v).map(move |p| (p, v.len())))
                 .filter_map(|(p, len)| scope_block(src, p, p + len))
                 .collect();
-            var_hand_off(src, inside, &vars)
+            var_hand_off(src, inside, &vars, helpers)
                 .or_else(|| call_hand_off(src, inside))
                 .or_else(|| block_hand_off(src, inside, &blocks))
-        }
-
-        /// Why the project's chain cannot be read, if so: a scoping call in any
-        /// file that mentions `HttpSecurity` (configurers, extensions, helpers)
-        /// that is not one of the `read` scopes `(file, from, to)`; or the
-        /// `HttpSecurity` handed out of the configure method / bean of `files`.
-        pub(super) fn why_not_evaluated(
-            sources: &[Source],
-            files: &[&Source],
-            read: &[(String, usize, usize)],
-        ) -> Option<String> {
-            let lambdas = |s: &Source| super::chain::auth_lambdas(s);
-            let at = |s: &Source, p: usize| format!("{}:{}", s.rel, s.line(p));
-            let mentions = |s: &&Source| mentions_http(&s.text);
-            let scoped = (sources.iter())
-                .filter(|s| !s.rel.ends_with(".cs"))
-                .filter(mentions)
-                .find_map(|s| {
-                    let mine: Vec<(usize, usize)> = (read.iter())
-                        .filter(|r| r.0 == s.rel)
-                        .map(|r| (r.1, r.2))
-                        .collect();
-                    scoping_call(s, &lambdas(s), &mine).map(|p| at(s, p))
-                });
-            if let Some(site) = scoped {
-                return Some(format!("A scoping matcher at {site}"));
-            }
-            let handed = files
-                .iter()
-                .find_map(|s| hand_off(s, &[]).map(|p| at(s, p)));
-            handed.map(|site| format!("Code at {site} hands the HttpSecurity out"))
         }
 
         /// End of the call chain starting at `from`: the `;`, or (Kotlin has none) a
@@ -4603,24 +4770,36 @@ pub(crate) mod spring {
             pub(super) order: Option<i64>,
             /// `None`: the chain takes every request.
             pub(super) scope: Option<Rule>,
+            /// Why code outside the readable text may change this chain.
+            pub(super) opaque: Option<String>,
             pub(super) rules: Vec<Rule>,
+        }
+
+        impl Unit<'_> {
+            /// Takes any request, as far as is known: no readable scope, and
+            /// code that may have set one.
+            fn barrier(&self) -> bool {
+                self.opaque.is_some() && self.scope.is_none()
+            }
         }
 
         const ADAPTER_ORDER: i64 = 100;
         const LOWEST: i64 = i32::MAX as i64;
 
-        /// Why several configurations cannot be put in sequence: Spring takes the
-        /// first by `@Order`; equal, missing-with-other-kind or unreadable orders
-        /// leave it open.
-        pub(super) fn unordered(units: &[Unit]) -> Option<String> {
-            if units.len() < 2 {
-                return None;
-            }
+        pub(super) const UNORDERED: &str =
+            "Several security configurations without a readable, distinct `@Order`";
+
+        /// Adapters next to chain beans: their order to each other is not read.
+        pub(super) fn mixed(units: &[Unit]) -> bool {
+            units.iter().any(|u| u.adapter) && units.iter().any(|u| !u.adapter)
+        }
+
+        /// Whether several configurations leave Spring's choice open: equal or
+        /// unreadable orders. Only requests that two of them may match are
+        /// affected (see [`apply`]).
+        pub(super) fn ties(units: &[Unit]) -> bool {
             let orders: BTreeSet<Option<i64>> = units.iter().map(|u| u.order).collect();
-            let mixed = units.iter().any(|u| u.adapter) && units.iter().any(|u| !u.adapter);
-            (orders.contains(&None) || orders.len() < units.len() || mixed).then(|| {
-                "Several security configurations without a readable, distinct `@Order`".into()
-            })
+            units.len() > 1 && (orders.contains(&None) || orders.len() < units.len())
         }
 
         /// The units of `src`: its adapters, its `SecurityFilterChain` bean methods.
@@ -4636,6 +4815,7 @@ pub(crate) mod spring {
                     adapter: true,
                     order: order(&d.attrs, ADAPTER_ORDER),
                     scope: None,
+                    opaque: None,
                     rules: vec![],
                 })
                 .collect();
@@ -4663,6 +4843,7 @@ pub(crate) mod spring {
                     adapter: false,
                     order: order(attrs.map_or(&[][..], |d| &d.attrs[..]), LOWEST),
                     scope: None,
+                    opaque: None,
                     rules: vec![],
                 });
             }
@@ -4674,6 +4855,7 @@ pub(crate) mod spring {
                     adapter: false,
                     order: None,
                     scope: None,
+                    opaque: None,
                     rules: vec![],
                 });
             }
@@ -4711,10 +4893,14 @@ pub(crate) mod spring {
             args: &str,
         ) -> Option<Rule> {
             let (mut methods, mut patterns) = (Vec::new(), Vec::new());
+            let owner = (decls(src, true).into_iter())
+                .filter(|d| d.class && d.open < from && from < d.end)
+                .max_by_key(|d| d.open)
+                .map_or_else(String::new, |d| d.name);
             for part in split_top(args) {
                 match part.trim().strip_prefix("HttpMethod.") {
                     Some(m) => methods.push(m.to_string()),
-                    None => patterns.push(index.text(part)?),
+                    None => patterns.extend(index.texts_in(src, &owner, part)?),
                 }
             }
             (!patterns.is_empty()).then(|| Rule {
@@ -4872,6 +5058,61 @@ pub(crate) mod spring {
             pub(super) scope_partial: BTreeMap<usize, usize>,
         }
 
+        /// A chain that is not fully read is opaque: a lost scope makes it take
+        /// any request, otherwise the readable scope and rules stand with an
+        /// unknown part added.
+        pub(super) fn mark_opaque(
+            units: &mut [Unit],
+            why: &super::chain_why::Why,
+            recognised: &[(String, usize, usize)],
+            out: &mut Out,
+        ) {
+            let spans: Vec<(String, (usize, usize))> =
+                units.iter().map(|u| (u.src.rel.clone(), u.span)).collect();
+            for u in units {
+                let others: Vec<(usize, usize)> = (spans.iter())
+                    .filter(|(rel, span)| *rel == u.src.rel && *span != u.span)
+                    .map(|(_, span)| *span)
+                    .collect();
+                let Some((why, lost)) = why.unit(u.src, &others, recognised) else {
+                    continue;
+                };
+                u.opaque = Some(why.clone());
+                u.scope = u.scope.take().filter(|_| !lost);
+                if u.scope.is_some() {
+                    let message = format!(
+                        "{why}: the rules read apply to the endpoints in the scope read, with an unknown part added."
+                    );
+                    out.at(u.src, u.span.0, message);
+                } else {
+                    let message = format!(
+                        "{why}: central rules are not evaluated; endpoints marked undeclared may be protected there."
+                    );
+                    out.note(&u.src.rel, u.src.line(u.span.0), message);
+                }
+            }
+        }
+
+        /// Notes for rules and scopes that matched only some requests.
+        pub(super) fn partial_notes(units: &[Unit], done: &Applied, out: &mut Out) {
+            for (&(u, i), &n) in &done.partial {
+                let r = &units[u].rules[i];
+                let message = format!(
+                    "Filter chain rule `{}` matches only some requests of {n} endpoint(s) (a path parameter or ANY method); they keep their declared access.",
+                    r.text
+                );
+                out.note(&r.file, r.line, message);
+            }
+            for (&u, &n) in &done.scope_partial {
+                let Some(s) = &units[u].scope else { continue };
+                let message = format!(
+                    "Filter chain scope `{}` matches only some requests of {n} endpoint(s) (a path parameter or ANY method); they keep their declared access.",
+                    s.text
+                );
+                out.note(&s.file, s.line, message);
+            }
+        }
+
         /// Applies, per endpoint, the first chain (units in order) whose scope can
         /// match it; a scope that matches only some of its requests decides
         /// nothing. In that chain the first matching rule decides.
@@ -4882,19 +5123,73 @@ pub(crate) mod spring {
         ) -> Applied {
             let mut done = Applied::default();
             for e in endpoints {
-                for (u, unit) in units.iter().enumerate() {
-                    match unit.scope.as_ref().map_or(Hit::Full, |s| matches(s, e)) {
-                        Hit::No => continue,
-                        Hit::Part => *done.scope_partial.entry(u).or_default() += 1,
-                        Hit::Full => decide(u, &unit.rules, e, ignored, &mut done),
+                let hits: Vec<Hit> = (units.iter())
+                    .map(|unit| match &unit.scope {
+                        // may take any request: decides nothing, shadows the rest
+                        None if unit.barrier() => Hit::Part,
+                        // code outside the text may have widened the scope
+                        Some(s) if unit.opaque.is_some() => matches(s, e).max(Hit::Part),
+                        s => s.as_ref().map_or(Hit::Full, |s| matches(s, e)),
+                    })
+                    .collect();
+                // a chain of unreadable order may come before any other
+                if (units.iter().zip(&hits)).any(|(u, h)| u.order.is_none() && *h != Hit::No) {
+                    continue;
+                }
+                let mut from = 0;
+                while from < units.len() {
+                    let to = (from..units.len())
+                        .find(|&k| units[k].order != units[from].order)
+                        .unwrap_or(units.len());
+                    let live: Vec<usize> = (from..to).filter(|&k| hits[k] != Hit::No).collect();
+                    match live[..] {
+                        [] => from = to,
+                        // alone at its order: it decides
+                        [u] if hits[u] == Hit::Full => {
+                            decide(u, &units[u], e, ignored, &mut done);
+                            break;
+                        }
+                        [u] => {
+                            unknown_or_partial(u, &units[u], e, &mut done);
+                            break;
+                        }
+                        // equal order, both may match: Spring's choice is not read
+                        _ => break,
                     }
-                    break;
                 }
             }
             done
         }
 
+        /// An endpoint a chain may match only in part, or, if code outside the
+        /// readable text may have widened its scope, may match at all.
+        fn unknown_or_partial(u: usize, unit: &Unit, e: &mut EndpointAccess, done: &mut Applied) {
+            match (&unit.opaque, unit.barrier()) {
+                (Some(why), false) => {
+                    e.access = require(&e.access, Condition::Unknown(why.clone()))
+                }
+                (_, false) => *done.scope_partial.entry(u).or_default() += 1,
+                _ => {}
+            }
+        }
+
+        /// The unit's rules for `e`; in a chain that code outside the readable
+        /// text may change, what they decide is only part of the requirement.
         fn decide(
+            u: usize,
+            unit: &Unit,
+            e: &mut EndpointAccess,
+            ignored: &BTreeSet<(String, u32)>,
+            done: &mut Applied,
+        ) {
+            let before = e.access.clone();
+            decide_rules(u, &unit.rules, e, ignored, done);
+            if let (Some(why), true) = (&unit.opaque, e.access != before) {
+                e.access = require(&e.access, Condition::Unknown(why.clone()));
+            }
+        }
+
+        fn decide_rules(
             u: usize,
             rules: &[Rule],
             e: &mut EndpointAccess,
@@ -4924,6 +5219,89 @@ pub(crate) mod spring {
                     *done.partial.entry((u, i)).or_default() += 1;
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// The central rules of a project in the applications that include it.
+    mod chain_apps {
+        use super::super::*;
+        use super::chain::{Prepared, central_rules, prepare, run};
+        use super::conf::{Conf, ConfKey};
+
+        /// The module graph and the chains of each application, read once: by
+        /// its set of modules.
+        pub(in super::super) struct Apps<'s> {
+            modules: crate::ui_flow_apps::Modules,
+            cache: HashMap<(BTreeSet<String>, ConfKey), Option<Prepared<'s>>>,
+        }
+
+        impl Apps<'_> {
+            pub(in super::super) fn new(root: &Path, build_dirs: &BTreeSet<String>) -> Self {
+                Apps {
+                    modules: crate::ui_flow_apps::Modules::read(root, build_dirs.iter()),
+                    cache: HashMap::new(),
+                }
+            }
+        }
+
+        /// The Spring central rules for the endpoints of project `dir` from `first`
+        /// on: the project's own chains, or, when applications include it, the chains
+        /// of each of them (see [`ui_flow_apps`](crate::ui_flow_apps)). An endpoint
+        /// takes the access all applications agree on; otherwise it keeps its
+        /// declared access.
+        pub(in super::super) fn central<'s>(
+            dir: &str,
+            projects: &'s BTreeMap<String, Project>,
+            known: &mut Apps<'s>,
+            (index, conf): (&Index, &Conf),
+            out: &mut Out,
+            first: usize,
+        ) {
+            let apps = known.modules.applications(dir);
+            if apps.is_empty() || out.0.endpoints.len() == first {
+                let own: Vec<&Source> = projects.get(dir).map_or(vec![], |p| p.1.iter().collect());
+                return central_rules(&own, index, conf, out, first);
+            }
+            let before: Vec<EndpointAccess> = out.0.endpoints[first..].to_vec();
+            let (mut results, mut notes) = (Vec::new(), Vec::new());
+            for app in &apps {
+                let prepared = known
+                    .cache
+                    .entry((app.clone(), conf.key()))
+                    .or_insert_with(|| {
+                        let all: Vec<&Source> = (app.iter().filter_map(|d| projects.get(d)))
+                            .flat_map(|p| p.1.iter())
+                            .collect();
+                        prepare(&all, index, conf, out)
+                    });
+                out.0.endpoints[first..].clone_from_slice(&before);
+                let mark = out.0.diagnostics.len();
+                if let Some(p) = prepared {
+                    run(p, out, first);
+                }
+                notes.push(out.0.diagnostics.split_off(mark));
+                let access = out.0.endpoints[first..].iter().map(|e| e.access.clone());
+                results.push(access.collect::<Vec<_>>());
+            }
+            let mut disagree = 0;
+            for (i, e) in out.0.endpoints[first..].iter_mut().enumerate() {
+                let same = results.iter().all(|r| r[i] == results[0][i]);
+                disagree += usize::from(!same);
+                e.access = match same {
+                    true => results[0][i].clone(),
+                    false => before[i].access.clone(),
+                };
+            }
+            // a change that is undone is not reported
+            let undone = |m: &str| disagree > 0 && m.contains("endpoint(s) changed");
+            (out.0.diagnostics).extend(notes.into_iter().flatten().filter(|d| !undone(&d.message)));
+            if let (true, Some(e)) = (disagree > 0, before.first()) {
+                let message = format!(
+                    "{} applications include this project and apply different central rules to {disagree} endpoint(s); they keep their declared access.",
+                    apps.len()
+                );
+                out.note(&e.file, e.line, message);
             }
         }
     }
@@ -4996,7 +5374,10 @@ pub(crate) mod spring {
         use super::super::lex::{skip_ws, skip_ws_back, split_top, words};
         use super::super::*;
         use super::conf::{Atom, Conf};
-        use super::sequence::{Unit, apply, scope, units, unordered, unreadable_classes};
+        use super::sequence::{
+            UNORDERED, Unit, apply, mark_opaque, mixed, partial_notes, scope, ties, units,
+            unreadable_classes,
+        };
         use super::spel;
 
         const MATCHERS: [&str; 6] = [
@@ -5029,14 +5410,35 @@ pub(crate) mod spring {
             Full,
         }
 
+        /// The chains of a set of sources, read once: what does not depend on the
+        /// endpoints they are applied to.
+        pub(in super::super) struct Prepared<'s> {
+            units: Vec<Unit<'s>>,
+            home: (&'s Source, usize),
+            rules: usize,
+        }
+
         pub(in super::super) fn central_rules(
-            sources: &[Source],
+            sources: &[&Source],
             index: &Index,
             conf: &Conf,
             out: &mut Out,
             first: usize,
         ) {
-            let found: Vec<&Source> = (sources.iter())
+            if let Some(p) = prepare(sources, index, conf, out) {
+                run(&p, out, first);
+            }
+        }
+
+        /// Reads the chains of `sources`; `None` (with a note) when they cannot be
+        /// put in sequence at all, or there are none.
+        pub(in super::super) fn prepare<'s>(
+            sources: &[&'s Source],
+            index: &Index,
+            conf: &Conf,
+            out: &mut Out,
+        ) -> Option<Prepared<'s>> {
+            let found: Vec<&Source> = (sources.iter().copied())
                 .filter(|s| !s.rel.ends_with(".cs"))
                 .filter(|s| {
                     !adapters(s).is_empty()
@@ -5045,22 +5447,31 @@ pub(crate) mod spring {
                 })
                 .collect();
             let mut units: Vec<Unit> = found.iter().flat_map(|s| units(s)).collect();
-            let Some(home) = units.first().map(|u| (u.src, u.span.0)) else {
-                return;
-            };
+            let home = units.first().map(|u| (u.src, u.span.0))?;
             let mut recognised = Vec::new();
             for u in &mut units {
                 let (scope, spans) = scope(u.src, index, u.span);
                 u.scope = scope;
                 recognised.extend(spans.into_iter().map(|(f, t)| (u.src.rel.clone(), f, t)));
             }
-            let why = super::chain_span::why_not_evaluated(sources, &found, &recognised)
-                .or_else(|| unordered(&units));
-            if let Some(why) = why {
+            let why = super::chain_why::why_not_evaluated(sources, &found, &recognised);
+            let abort = why
+                .project
+                .clone()
+                .or_else(|| mixed(&units).then(|| UNORDERED.into()));
+            if let Some(why) = abort {
                 let message = format!(
                     "{why}: central rules are not evaluated; endpoints marked undeclared may be protected there."
                 );
-                return out.note(&home.0.rel, home.0.line(home.1), message);
+                out.note(&home.0.rel, home.0.line(home.1), message);
+                return None;
+            }
+            mark_opaque(&mut units, &why, &recognised, out);
+            if ties(&units) {
+                let message = format!(
+                    "{UNORDERED}: central rules are not evaluated for requests that two of them may match; endpoints marked undeclared may be protected there."
+                );
+                out.note(&home.0.rel, home.0.line(home.1), message);
             }
             for u in &mut units {
                 u.rules = read(u.src, index, conf, u.span);
@@ -5071,24 +5482,15 @@ pub(crate) mod spring {
                 rule_note(r, out);
             }
             units.sort_by_key(|u| u.order);
-            let done = apply(&units, &mut out.0.endpoints[first..], &out.1.endpoints);
-            for ((u, i), n) in done.partial {
-                let r = &units[u].rules[i];
-                let message = format!(
-                    "Filter chain rule `{}` matches only some requests of {n} endpoint(s) (a path parameter or ANY method); they keep their declared access.",
-                    r.text
-                );
-                out.note(&r.file, r.line, message);
-            }
-            for (u, n) in done.scope_partial {
-                let Some(s) = &units[u].scope else { continue };
-                let message = format!(
-                    "Filter chain scope `{}` matches only some requests of {n} endpoint(s) (a path parameter or ANY method); they keep their declared access.",
-                    s.text
-                );
-                out.note(&s.file, s.line, message);
-            }
-            if rules == 0 {
+            Some(Prepared { units, home, rules })
+        }
+
+        /// Applies the prepared chains to the endpoints from `first` on.
+        pub(in super::super) fn run(p: &Prepared, out: &mut Out, first: usize) {
+            let (units, home) = (&p.units, p.home);
+            let done = apply(units, &mut out.0.endpoints[first..], &out.1.endpoints);
+            partial_notes(units, &done, out);
+            if p.rules == 0 {
                 return;
             }
             let source = if units.iter().all(|u| !u.adapter) {
@@ -5097,8 +5499,8 @@ pub(crate) mod spring {
                 "Security configuration"
             };
             let message = format!(
-                "{source} rules evaluated: {rules} rule(s), access of {} endpoint(s) changed.",
-                done.changed
+                "{source} rules evaluated: {} rule(s), access of {} endpoint(s) changed.",
+                p.rules, done.changed
             );
             out.note(&home.0.rel, home.0.line(home.1), message);
         }
@@ -10270,6 +10672,275 @@ class Sec {
             access(&flow, "GET", "/api/x"),
             &protected(Condition::Authenticated)
         );
+    }
+
+    // Several chains as hawkbit declares them: constant and array matchers,
+    // a helper that only adds filters, a chain that is customised by code that
+    // is not read, and two chains of equal order.
+    #[test]
+    fn central_chains_with_constant_matchers_apply_by_order() {
+        let api = "public class Api { public static final String V1 = \"/v1\"; public static final String REST = \"/rest\"; }\n";
+        let chains = r#"@Configuration
+class Sec {
+    static final String[] MATCHERS = { Api.V1 + "/**" };
+    static final String DL = Api.V1 + "/dl/*";
+
+    @Bean @Order(301)
+    SecurityFilterChain device(HttpSecurity http) throws Exception {
+        http.securityMatcher(MATCHERS).authorizeHttpRequests(a -> a.anyRequest().hasRole("DEVICE"));
+        Mdc.addFilter(http);
+        return http.build();
+    }
+    @Bean @Order(300)
+    SecurityFilterChain download(HttpSecurity http) throws Exception {
+        http.securityMatcher(DL).authorizeHttpRequests(a -> a.anyRequest().authenticated());
+        Mdc.addFilter(http);
+        return http.build();
+    }
+    @Bean @Order(350)
+    SecurityFilterChain rest(HttpSecurity http, Customizer<HttpSecurity> custom) throws Exception {
+        http.securityMatcher(Api.REST + "/**").authorizeHttpRequests(a -> a.anyRequest().authenticated());
+        custom.customize(http);
+        return http.build();
+    }
+    @Bean
+    SecurityFilterChain ui(HttpSecurity http) throws Exception {
+        http.authorizeHttpRequests(a -> a.requestMatchers("/img/*").permitAll());
+        return http.with(Vaadin.vaadin(), c -> {});
+    }
+    @Bean
+    SecurityFilterChain mcp(HttpSecurity http) throws Exception {
+        http.securityMatcher("/mcp/**").authorizeHttpRequests(a -> a.anyRequest().permitAll());
+        return http.build();
+    }
+}
+"#;
+        let mdc = "class Mdc { static void addFilter(final HttpSecurity h) { h.addFilterBefore(new F(), X.class); } }\n";
+        let endpoints = "@RestController class E {\n    @GetMapping(\"/v1/dl/x\") void a() {}\n    @GetMapping(\"/v1/other\") void b() {}\n    @GetMapping(\"/rest/y\") void c() {}\n    @GetMapping(\"/mcp/z\") void d() {}\n    @GetMapping(\"/web\") void e() {}\n}\n";
+        let flow = spring_flow(&[
+            ("src/main/java/Api.java", api),
+            ("src/main/java/Sec.java", chains),
+            ("src/main/java/Mdc.java", mdc),
+            ("src/main/java/E.java", endpoints),
+        ]);
+        let diag = format!("{:#?}", flow.diagnostics);
+        assert_eq!(
+            access(&flow, "GET", "/v1/dl/x"),
+            &protected(Condition::Authenticated),
+            "{diag}"
+        );
+        assert_eq!(
+            access(&flow, "GET", "/v1/other"),
+            &protected(role("ROLE_DEVICE")),
+            "{diag}"
+        );
+        // customised by code that is not read: the rule plus an unknown part
+        assert!(
+            matches!(
+                access(&flow, "GET", "/rest/y"),
+                AccessState::Protected(Condition::All(v))
+                    if v.contains(&Condition::Authenticated)
+                        && v.iter().any(|c| matches!(c, Condition::Unknown(_)))
+            ),
+            "{diag}"
+        );
+        // reaching the customised chain: its code may have widened its scope, so
+        // these are unknown, never Open
+        for path in ["/mcp/z", "/web"] {
+            assert!(
+                matches!(
+                    access(&flow, "GET", path),
+                    AccessState::Protected(Condition::Unknown(_))
+                ),
+                "{path} {diag}"
+            );
+        }
+        assert!(!flow.complete, "{diag}");
+    }
+
+    // Anything the chain code does not show stays undeclared, never open.
+    #[test]
+    fn unreadable_chain_code_never_opens_an_endpoint() {
+        let endpoints = "@RestController class E {\n    @GetMapping(\"/v1/x\") void a() {}\n}\n";
+        let mdc = "class Mdc { static void touch(HttpSecurity h) { h.authorizeHttpRequests(a -> a.anyRequest().permitAll()); } }\n";
+        for (scope, rule, extra) in [
+            (
+                "http.securityMatcher(\"/v1/**\")",
+                "a.anyRequest().permitAll()",
+                "Mdc.touch(http);",
+            ),
+            (
+                "http.securityMatcher(MATCHERS)",
+                "a.anyRequest().permitAll()",
+                "",
+            ),
+            (
+                "http.securityMatcher(computed())",
+                "a.anyRequest().permitAll()",
+                "",
+            ),
+        ] {
+            let chains = format!(
+                "@Configuration\nclass Sec {{\n    static final String[] MATCHERS = {{ Api.V1 + \"/**\", Other.X }};\n    @Bean\n    SecurityFilterChain c(HttpSecurity http) throws Exception {{\n        {scope}.authorizeHttpRequests(a -> {rule});\n        {extra}\n        return http.build();\n    }}\n}}\n"
+            );
+            let flow = spring_flow(&[
+                (
+                    "src/main/java/Api.java",
+                    "public class Api { public static final String V1 = \"/v1\"; }\n",
+                ),
+                ("src/main/java/Sec.java", &chains),
+                ("src/main/java/Mdc.java", mdc),
+                ("src/main/java/E.java", endpoints),
+            ]);
+            let got = access(&flow, "GET", "/v1/x");
+            assert_ne!(
+                got,
+                &AccessState::Open,
+                "{scope} {extra}: {:#?}",
+                flow.diagnostics
+            );
+        }
+    }
+
+    // A chain in a module that depends on the controllers' module applies to
+    // them in the application made of both; another application without it
+    // makes the endpoints keep their declared access.
+    #[test]
+    fn a_chain_in_a_dependent_module_protects_the_controllers_of_its_application() {
+        let pom = |name: &str, dep: &str| {
+            let deps = match dep {
+                "" => String::new(),
+                d => format!(
+                    "<dependencies><dependency><artifactId>{d}</artifactId></dependency></dependencies>"
+                ),
+            };
+            format!("<project><artifactId>{name}</artifactId>{deps}</project>")
+        };
+        let chain = "@Configuration\nclass Sec {\n    @Bean SecurityFilterChain api(HttpSecurity http) throws Exception {\n        http.securityMatcher(\"/api/**\").authorizeHttpRequests(a -> a.anyRequest().authenticated());\n        return http.build();\n    }\n}\n";
+        let (web, sec, app, other) = (
+            pom("web", ""),
+            pom("sec", "web"),
+            pom("app", "sec"),
+            pom("other", "web"),
+        );
+        let mut files = vec![
+            ("pom.xml", "<project/>"),
+            ("web/pom.xml", &web[..]),
+            ("web/src/main/java/Enable.java", ENABLE_ALL),
+            ("web/src/main/java/E.java", SCOPED_ENDPOINTS),
+            ("sec/pom.xml", &sec[..]),
+            ("sec/src/main/java/Sec.java", chain),
+            ("app/pom.xml", &app[..]),
+        ];
+        let flow = extract(project(&files).path());
+        let diag = format!("{:#?}", flow.diagnostics);
+        assert_eq!(
+            access(&flow, "GET", "/api/x"),
+            &protected(Condition::Authenticated),
+            "{diag}"
+        );
+        assert_eq!(
+            access(&flow, "GET", "/web"),
+            &AccessState::Undeclared,
+            "{diag}"
+        );
+        // a second application includes the controllers without the chain
+        files.push(("other/pom.xml", &other[..]));
+        let flow = extract(project(&files).path());
+        let diag = format!("{:#?}", flow.diagnostics);
+        assert_eq!(
+            access(&flow, "GET", "/api/x"),
+            &AccessState::Undeclared,
+            "{diag}"
+        );
+        assert_eq!(
+            notes(&flow, "applications include this project"),
+            1,
+            "{diag}"
+        );
+        // the undone change is not reported (guard: written with the cache)
+        assert_eq!(notes(&flow, "access of 1 endpoint(s) changed"), 0, "{diag}");
+    }
+
+    // Code outside the scan that gets the HttpSecurity may widen the scope it
+    // is read with: endpoints outside the readable scope are unknown, so a
+    // later chain's permitAll never opens them.
+    #[test]
+    fn a_hand_off_out_of_the_scan_keeps_a_later_permit_all_from_opening() {
+        let chains = r#"@Configuration
+class Sec {
+    @Bean @Order(1)
+    SecurityFilterChain a(HttpSecurity http) throws Exception {
+        http.securityMatcher("/a/**").authorizeHttpRequests(x -> x.anyRequest().authenticated());
+        External.widen(http);
+        return http.build();
+    }
+    @Bean @Order(2)
+    SecurityFilterChain b(HttpSecurity http) throws Exception {
+        http.authorizeHttpRequests(x -> x.anyRequest().permitAll());
+        return http.build();
+    }
+}
+"#;
+        let endpoints = "@RestController class E {\n    @GetMapping(\"/a/x\") void a() {}\n    @GetMapping(\"/b/y\") void b() {}\n}\n";
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", chains),
+            ("src/main/java/E.java", endpoints),
+        ]);
+        let diag = format!("{:#?}", flow.diagnostics);
+        let unknown = |m: &str, p: &str| matches!(access(&flow, m, p), AccessState::Protected(c) if format!("{c:?}").contains("Unknown"));
+        assert!(unknown("GET", "/a/x"), "{diag}");
+        assert!(
+            unknown("GET", "/b/y"),
+            "{:?} {diag}",
+            access(&flow, "GET", "/b/y")
+        );
+        assert!(!flow.complete, "{diag}");
+    }
+
+    // The role prefix is read per project: a project whose prefix is not
+    // readable stays unknown whichever project of the application is read first.
+    #[test]
+    fn a_shared_application_reads_the_chain_with_each_projects_role_prefix() {
+        let pom = |name: &str, deps: &[&str]| {
+            let d: String = deps
+                .iter()
+                .map(|d| format!("<dependency><artifactId>{d}</artifactId></dependency>"))
+                .collect();
+            format!(
+                "<project><artifactId>{name}</artifactId><dependencies>{d}</dependencies></project>"
+            )
+        };
+        let chain = "@Configuration\nclass Sec {\n    @Bean SecurityFilterChain c(HttpSecurity http) throws Exception {\n        http.authorizeHttpRequests(a -> a.anyRequest().hasRole(\"ADMIN\"));\n        return http.build();\n    }\n}\n";
+        let ctl = "@RestController class E {\n    @GetMapping(\"/x\") void a() {}\n}\n";
+        let bad = "class B { @Bean GrantedAuthorityDefaults d() { return new GrantedAuthorityDefaults(prefix()); } }\n";
+        for (first, second) in [("web-a", "web-b"), ("web-b", "web-a")] {
+            let (app, sec) = (pom("app", &["sec", first, second]), pom("sec", &[]));
+            let (pa, pb) = (pom(first, &[]), pom(second, &[]));
+            let files = [
+                ("pom.xml", "<project/>"),
+                ("app/pom.xml", &app[..]),
+                ("sec/pom.xml", &sec[..]),
+                ("sec/src/main/java/Sec.java", chain),
+                (&format!("{first}/pom.xml")[..], &pa[..]),
+                (&format!("{first}/src/main/java/E.java")[..], ctl),
+                (&format!("{second}/pom.xml")[..], &pb[..]),
+                (&format!("{second}/src/main/java/E.java")[..], ctl),
+                ("web-b/src/main/java/B.java", bad),
+            ];
+            let flow = extract(project(&files).path());
+            let of = |app: &str| {
+                (flow.endpoints.iter())
+                    .find(|e| e.application.as_deref() == Some(app))
+                    .map(|e| e.access.clone())
+            };
+            assert_eq!(of("web-a"), Some(protected(role("ROLE_ADMIN"))), "{first}");
+            assert!(
+                matches!(of("web-b"), Some(AccessState::Protected(c)) if format!("{c:?}").contains("Unknown")),
+                "{first}: {:?}",
+                of("web-b")
+            );
+        }
     }
 
     // F32: the pre-6 `requestMatchers().antMatchers(..)` scope of an adapter.

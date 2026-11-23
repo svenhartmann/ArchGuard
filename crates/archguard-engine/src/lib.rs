@@ -145,6 +145,7 @@ mod test_evidence;
 mod trace_sequences;
 mod typescript_calls;
 pub mod ui_flow;
+mod ui_flow_apps;
 pub mod ui_flow_angular;
 pub mod ui_flow_backend;
 pub mod ui_flow_blazor;
