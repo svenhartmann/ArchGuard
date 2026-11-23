@@ -419,6 +419,42 @@ pub(crate) struct Source {
     lines: Vec<usize>,
 }
 impl Source {
+    /// Whether the header starting at `i` and ending at line end `end` goes on
+    /// below: the line holds only modifier keywords (`final`, `public`), or
+    /// only a return type that a name and `(` follow.
+    fn header_goes_on(&self, i: usize, end: usize) -> bool {
+        const MODS: [&str; 17] = [
+            "public",
+            "private",
+            "protected",
+            "internal",
+            "static",
+            "final",
+            "abstract",
+            "open",
+            "override",
+            "synchronized",
+            "native",
+            "default",
+            "sealed",
+            "virtual",
+            "async",
+            "partial",
+            "suspend",
+        ];
+        let line = &self.text[i..end];
+        let rest = (line.split_whitespace().filter(|_| true)).collect::<Vec<_>>();
+        let rest = rest.iter().skip_while(|w| MODS.contains(w)).count();
+        let type_only = (rest == 1 || (rest > 1 && line.contains('<')))
+            && line
+                .chars()
+                .all(|c| c.is_alphanumeric() || " _.<>,[]?".contains(c));
+        let name_next = (self.text[end..].trim_start().split_once('(')).is_some_and(|(n, _)| {
+            !n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || c == '_')
+        });
+        self.bytes().get(end) == Some(&b'\n') && (rest == 0 || (type_only && name_next))
+    }
+
     pub(crate) fn new(rel: String, raw: &str) -> Self {
         let text = lex::strip_comments(raw);
         let b = text.as_bytes();
@@ -607,28 +643,7 @@ pub(crate) fn decls(src: &Source, annotations: bool) -> Vec<Decl> {
             }
             _ => {
                 let end = header_end(src, i);
-                // only modifiers on this line (`final`, `public`): the header goes on below
-                const MODS: [&str; 17] = [
-                    "public",
-                    "private",
-                    "protected",
-                    "internal",
-                    "static",
-                    "final",
-                    "abstract",
-                    "open",
-                    "override",
-                    "synchronized",
-                    "native",
-                    "default",
-                    "sealed",
-                    "virtual",
-                    "async",
-                    "partial",
-                    "suspend",
-                ];
-                let words = src.text[i..end].split_whitespace().collect::<Vec<_>>();
-                let goes_on = b.get(end) == Some(&b'\n') && words.iter().all(|w| MODS.contains(w));
+                let goes_on = src.header_goes_on(i, end);
                 if !(goes_on && !pending.is_empty()) {
                     out.extend(declaration(src, i, end, std::mem::take(&mut pending)));
                 }
@@ -10580,5 +10595,15 @@ public class PController : ControllerBase
             assert_eq!(m.len(), 1, "{text}");
             assert_eq!(m[0].attrs.len(), 1, "{text}");
         }
+    }
+
+    #[test]
+    fn annotations_survive_a_return_type_on_its_own_line() {
+        let text = "class Ctl {\n  @GetMapping(\"/a\")\n  @PreAuthorize(\"hasRole('B')\")\n  String\n  a() { return \"\"; }\n  @GetMapping(\"/b\")\n  Map<String, List<X>>\n  b() { return null; }\n}\n";
+        let src = Source::new("C.java".into(), text);
+        let m: Vec<_> = decls(&src, true).into_iter().filter(|d| !d.class).collect();
+        assert_eq!(m.len(), 2);
+        assert_eq!(m[0].attrs.len(), 2);
+        assert_eq!(m[1].attrs.len(), 1);
     }
 }
