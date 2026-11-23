@@ -27,6 +27,8 @@ mod export_ui;
 #[cfg(test)]
 mod fields_check;
 mod file_ui;
+#[cfg(test)]
+mod flow_share_check;
 mod follow;
 mod follow_ui;
 mod format;

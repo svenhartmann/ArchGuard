@@ -458,4 +458,28 @@ mod tests {
         let result: Result<(), String> = guarded(|| Err("no config".into()));
         assert_eq!(result, Err("no config".to_string()));
     }
+
+    /// Guard: "Analyze again" (a second landed analysis) drops the shared flow, so Screens, Domain
+    /// and Access recompute it from the changed sources; there is no separate staleness check.
+    #[test]
+    fn a_new_analysis_drops_the_shared_flow() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (id, _) = with_store(|s| s.open(dir.path()));
+        let runs = std::cell::Cell::new(0);
+        let flow = || {
+            let slot = Shared::<Arc<Result<archguard_engine::core::UiFlow, String>>>::active();
+            slot.get_or_init(|| {
+                runs.set(runs.get() + 1);
+                Arc::new(Err("flow".into()))
+            });
+        };
+        for _ in 0..2 {
+            let run = Run::start(id);
+            let analysis = analyze(dir.path(), &Shared::new()).expect("analysis");
+            assert_eq!(Run::land(id, run, Ok(analysis)), Some(true));
+            flow();
+            flow();
+        }
+        assert_eq!(runs.get(), 2, "once per analysis");
+    }
 }
