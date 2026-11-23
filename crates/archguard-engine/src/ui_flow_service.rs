@@ -40,13 +40,18 @@ use archguard_core::{
 use archguard_extract::{Lang, strip_root};
 use archguard_flow_backend::ui_flow_backend::spring::{Conf, declared_access, family};
 use archguard_flow_backend::ui_flow_backend::{Index, Out, Project, read_projects};
-use archguard_flow_clike::decl::{Attr, Decl, Dialect, class_header, decls};
+use archguard_flow_clike::decl::{Attr, Decl, class_header};
 use archguard_flow_clike::lex::{literals, named, positional, split_top};
 use archguard_flow_clike::quarkus_build::quarkus_build;
 use archguard_flow_clike::source::Source;
 use archguard_flow_common::extract_ctx::{ExtractContext, walk};
 use archguard_flow_jvm::ui_flow_micronaut::head_at;
 use ejb::Decision;
+
+mod apps;
+#[cfg(test)]
+pub(crate) use apps::failed_scopes;
+use apps::{Advice, Gap};
 
 /// Words that make a source file worth a call analysis.
 const SIGNS: [&str; 14] = [
@@ -152,6 +157,7 @@ pub(crate) fn apply(ctx: &ExtractContext, flow: &mut UiFlow) {
         return;
     }
     let mut world = World::new(ctx, &projects, &analysis, &mut scratch);
+    world.gaps.extend(apps::failed_scopes(&analysis));
     let mut layers = Vec::new();
     for e in flow.endpoints.iter().filter(|e| handled(e)) {
         let site = flow.handler_site(e).map(|s| (s.file.as_str(), s.line));
@@ -202,10 +208,11 @@ struct World<'a> {
     index: Index<'a>,
     sources: HashMap<String, &'a Source>,
     dir_of: HashMap<&'a str, &'a str>,
-    confs: HashMap<&'a str, Conf>,
+    /// By project dir: what each application that includes it reads (else its own).
+    apps: HashMap<&'a str, Vec<apps::AppConf<'a>>>,
+    /// The project dir of the endpoint being read.
+    from_dir: &'a str,
     jars: ejb::Jars,
-    /// How method-security advice is applied, by project dir.
-    advice: HashMap<&'a str, Advice>,
     analysis: &'a CallAnalysis,
     classes: HashMap<&'a str, &'a CallClass>,
     methods: HashMap<&'a str, &'a CallMethod>,
@@ -216,52 +223,6 @@ struct World<'a> {
     subtypes: HashMap<&'a str, Vec<&'a str>>,
     gaps: Vec<Gap>,
 }
-
-/// How `@EnableMethodSecurity(mode = ...)` applies the advice.
-#[derive(Clone)]
-enum Advice {
-    Proxy,
-    Aspectj,
-    /// `mode` is not a literal `PROXY` or `ASPECTJ`.
-    Unreadable(Gap),
-}
-
-fn advice_of(srcs: &[Source]) -> Advice {
-    let (mut aspectj, mut proxy) = (false, false);
-    for src in srcs.iter().filter(|s| !s.rel.ends_with(".cs")) {
-        for a in (decls(src, Dialect::jvm(src)).iter())
-            .filter(|d| d.class)
-            .flat_map(|d| &d.attrs)
-            .filter(|a| {
-                matches!(
-                    a.name.as_str(),
-                    "EnableMethodSecurity" | "EnableGlobalMethodSecurity"
-                )
-            })
-        {
-            match named(&a.args, "mode").map(|v| v.trim().rsplit('.').next().unwrap_or("")) {
-                None | Some("PROXY") => proxy = true,
-                Some("ASPECTJ") => aspectj = true,
-                Some(_) => {
-                    let message = format!(
-                        "`@{}` attribute `mode` is not readable, so whether self-invocation is advised is unknown: {}",
-                        a.name, a.args
-                    );
-                    return Advice::Unreadable((src.rel.clone(), src.line(a.at), message));
-                }
-            }
-        }
-    }
-    // one proxy-mode annotation next to an AspectJ one: assume the weaker
-    if aspectj && !proxy {
-        Advice::Aspectj
-    } else {
-        Advice::Proxy
-    }
-}
-
-/// `(file, line, message)` of something read but not readable.
-type Gap = (String, u32, String);
 
 /// What one reached method says.
 #[derive(Clone, PartialEq, Eq)]
@@ -348,18 +309,13 @@ impl<'a> World<'a> {
             projects.values().flat_map(|p| &p.1),
             ctx.config.views.access.clone(),
         );
-        let mut confs = HashMap::new();
         let mut dir_of = HashMap::new();
         // The call model names files relative to the source roots.
         let roots = &ctx.config.project.source_roots;
         let mut sources: HashMap<String, &Source> = HashMap::new();
         let mut twice = BTreeSet::new();
-        let mut advice = HashMap::new();
-        for (dir, (_, srcs, quarkus)) in projects {
-            advice.insert(dir.as_str(), advice_of(srcs));
-            let mut conf = Conf::read(srcs, &index, *quarkus, scratch);
-            conf.deferred_off = true;
-            confs.insert(dir.as_str(), conf);
+        let apps = apps::read_apps(ctx, projects, &index, scratch);
+        for (dir, (_, srcs, _)) in projects {
             for s in srcs {
                 dir_of.insert(s.rel.as_str(), dir.as_str());
                 let key = strip_root(&s.rel, roots);
@@ -382,9 +338,9 @@ impl<'a> World<'a> {
             index,
             sources,
             dir_of,
-            confs,
+            apps,
+            from_dir: "",
             jars,
-            advice,
             classes: (analysis.classes.iter())
                 .map(|c| (c.id.as_str(), c))
                 .collect(),
@@ -420,9 +376,17 @@ impl<'a> World<'a> {
         let Some(src) = self.sources.get(&handler.file).copied() else {
             return vec![];
         };
+        self.from_dir = self
+            .dir_of
+            .get(src.rel.as_str())
+            .copied()
+            .unwrap_or_default();
         let mut found: Vec<Verdict> = Vec::new();
         let mut seen: BTreeSet<&str> = BTreeSet::new();
         let mut queue = self.direct(handler, src, &mut seen);
+        let carrying = carriers(self);
+        let gaps = apps::unresolved_gaps(&self.calls, &carrying, &[(src, handler)]);
+        self.gaps.extend(gaps);
         while let Some((call, always, depth, via)) = queue.pop_front() {
             let Some(reached) = self.reach(call) else {
                 // a library class: its checks are never read
@@ -442,6 +406,11 @@ impl<'a> World<'a> {
             found.extend(verdicts);
             if depth + 1 < DEPTH {
                 self.hops(&reached, depth, &mut seen, &mut queue);
+                let run: Vec<_> = (reached.impls.iter())
+                    .filter_map(|(c, m)| Some((self.source_of(c)?, *m)))
+                    .collect();
+                let gaps = apps::unresolved_gaps(&self.calls, &carrying, &run);
+                self.gaps.extend(gaps);
             }
         }
         found.into_iter().map(|v| layer_of(e, v)).collect()
@@ -639,7 +608,7 @@ impl<'a> World<'a> {
                 unadvisable(src, &class, m)
             };
             let advice = (bean == Bean::Spring)
-                .then(|| self.advice.get(dir).cloned())
+                .then(|| apps::advice_for(&self.apps_of(dir)))
                 .flatten();
             match (why, advice) {
                 (why, Some(Advice::Aspectj)) => {
@@ -719,18 +688,47 @@ impl<'a> World<'a> {
             })
     }
 
+    /// What the applications of `dir` read: those that also include the module
+    /// of the endpoint being read, else all of them.
+    fn apps_of(&self, dir: &str) -> Vec<&apps::AppConf<'a>> {
+        let all = self.apps.get(dir).into_iter().flatten();
+        let both: Vec<_> = all
+            .clone()
+            .filter(|a| a.modules.contains(&self.from_dir))
+            .collect();
+        if both.is_empty() { all.collect() } else { both }
+    }
+
     /// Spring method security through the reader of the controllers.
     fn spring(&self, site: &Site, gaps: &mut Vec<Gap>) -> Option<Read> {
-        let conf = self.confs.get(site.dir)?.clone();
+        let confs: Vec<&Conf> = self
+            .apps_of(site.dir)
+            .into_iter()
+            .map(|a| &a.conf)
+            .collect();
+        if confs.is_empty() {
+            return None;
+        }
         let mut scratch = Out::scratch();
         let arity = arity_of(&site.m.signature);
-        let (state, ignored) = declared_access(
-            &conf,
-            &self.index,
-            &mut scratch,
-            (site.msrc, site.mclass, site.decl),
-            arity,
-        );
+        let mut reads: Vec<(AccessState, bool)> = Vec::new();
+        for conf in confs {
+            reads.push(declared_access(
+                conf,
+                &self.index,
+                &mut scratch,
+                (site.msrc, site.mclass, site.decl),
+                arity,
+            ));
+        }
+        let (state, ignored) = reads.first().cloned()?;
+        let differ = reads.iter().any(|r| *r != (state.clone(), ignored));
+        // applications that read the switch differently: unknown, so no check
+        let (state, ignored) = if differ {
+            (AccessState::Undeclared, true)
+        } else {
+            (state, ignored)
+        };
         let mut soft = Vec::new();
         for d in scratch.diagnostics() {
             if d.message.contains("not readable") {
@@ -740,6 +738,11 @@ impl<'a> World<'a> {
             }
         }
         let mut how = ServiceHow::Enforced;
+        if differ {
+            let why = "the applications that include this module differ in whether method security is enabled";
+            gaps.push((site.msrc.rel.clone(), site.m.line, why.into()));
+            soft.push(why.into());
+        }
         let deferred: Vec<&str> = (site.decl.attrs.iter().chain(&site.class.attrs))
             .map(|a| a.name.as_str())
             .filter(|n| DEFERRED.contains(n))
@@ -1074,6 +1077,22 @@ fn unadvisable(src: &Source, class: &Decl, m: &CallMethod) -> Option<&'static st
 }
 
 /// The simple name of a class id (`proj::pkg.Outer$Inner` is `Inner`).
+/// Classes that can carry a check: a bean, or one whose source names a security annotation.
+fn carriers<'a>(world: &World<'a>) -> BTreeSet<&'a str> {
+    let carries = |c: &archguard_core::CallClass| {
+        let Some(src) = world.source_of(c) else {
+            return false;
+        };
+        let bean = (world.index.type_in(src, simple(&c.name)))
+            .is_some_and(|d| bean_of(src, d, &world.index) != Bean::None);
+        bean || SIGNS.iter().any(|w| src.text.contains(w))
+    };
+    (world.classes.values())
+        .filter(|c| carries(c))
+        .map(|c| simple(&c.name))
+        .collect()
+}
+
 fn simple(id: &str) -> &str {
     let tail = id.rsplit("::").next().unwrap_or(id);
     tail.rsplit(['.', '$']).next().unwrap_or(tail)

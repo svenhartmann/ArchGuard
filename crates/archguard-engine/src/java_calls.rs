@@ -232,32 +232,38 @@ fn hash_part(hash: &mut Sha256, value: &[u8]) {
 fn prepare_scopes(root: &Path, config: &Config) -> Result<Vec<(String, Input)>, String> {
     let root = root.canonicalize().map_err(|e| e.to_string())?;
     let files = crate::pipeline::walk_files(&root, config).map_err(|e| e.to_string())?;
-    let Some(projects) = shared_class_projects(&files, config) else {
+    let Some(groups) = conflict_free_groups(&files, config) else {
         return Ok(vec![(
             String::new(),
             prepare_sources(&root, config, &files)?,
         )]);
     };
     let mut scopes = Vec::new();
-    for project in projects {
+    for group in groups {
         let own: Vec<_> = files
             .iter()
-            .filter(|f| f.project == project)
+            .filter(|f| group.contains(&f.project))
             .cloned()
             .collect();
-        scopes.push((project.clone(), prepare_sources(&root, config, &own)?));
+        let name = group.first().cloned().unwrap_or_default();
+        scopes.push((name, prepare_sources(&root, config, &own)?));
     }
     Ok(scopes)
 }
 
-/// The projects of the Java sources when two of them declare a class of
-/// the same qualified name, else `None`.
-/// shortcut: such projects compile apart, so calls between them are not
-/// resolved; upgrade to per-project classpaths once a repository needs both.
-fn shared_class_projects(
+/// The projects of the Java sources in groups that each compile together,
+/// when two projects declare a class of the same qualified name (javac
+/// rejects that as a duplicate), else `None`. A project joins the first group
+/// holding none of its twins, so modules that merely depend on each other
+/// stay together and their calls resolve; only the twin modules (alternative
+/// implementations) end up in different groups.
+/// shortcut: calls between two groups are not resolved (they stay `unresolved`,
+/// which the service reader reports as a gap); upgrade to per-application
+/// groups once a repository needs the twin modules and their callers resolved.
+fn conflict_free_groups(
     files: &[archguard_extract::SourceFile],
     config: &Config,
-) -> Option<BTreeSet<String>> {
+) -> Option<Vec<Vec<String>>> {
     let mut owners: std::collections::BTreeMap<String, BTreeSet<&str>> = Default::default();
     for file in files.iter().filter(|f| f.lang == Lang::Java) {
         let Ok(content) = fs::read_to_string(&file.path) else {
@@ -272,13 +278,25 @@ fn shared_class_projects(
             .or_default()
             .insert(&file.project);
     }
-    owners.values().any(|projects| projects.len() > 1).then(|| {
-        files
-            .iter()
-            .filter(|f| f.lang == Lang::Java)
-            .map(|f| f.project.clone())
-            .collect()
-    })
+    let twins = |a: &str, b: &str| owners.values().any(|p| p.contains(a) && p.contains(b));
+    if !owners.values().any(|projects| projects.len() > 1) {
+        return None;
+    }
+    let all: BTreeSet<&String> = (files.iter())
+        .filter(|f| f.lang == Lang::Java)
+        .map(|f| &f.project)
+        .collect();
+    let mut groups: Vec<Vec<String>> = Vec::new();
+    for project in all {
+        match groups
+            .iter_mut()
+            .find(|g| !g.iter().any(|m| twins(m, project)))
+        {
+            Some(group) => group.push(project.clone()),
+            None => groups.push(vec![project.clone()]),
+        }
+    }
+    Some(groups)
 }
 
 #[cfg(test)]
@@ -699,6 +717,90 @@ mod tests {
         );
         let ids: BTreeSet<&str> = result.classes.iter().map(|c| c.id.as_str()).collect();
         assert_eq!(ids.len(), result.classes.len(), "one identity per class");
+    }
+
+    /// Two alternative modules declare the same class, a third module calls
+    /// a class of the first: the call is still resolved to its target.
+    #[test]
+    fn a_duplicate_in_two_modules_does_not_cut_calls_between_the_others() {
+        let root = tempfile::tempdir().unwrap();
+        let write = |path: &str, text: &str| {
+            let file = root.path().join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, text).unwrap();
+        };
+        for p in ["a", "b", "c"] {
+            write(&format!("{p}/pom.xml"), "<project/>");
+        }
+        for p in ["a", "b"] {
+            write(
+                &format!("{p}/src/main/java/de/x/Log.java"),
+                "package de.x;\npublic class Log {}\n",
+            );
+        }
+        write(
+            "a/src/main/java/de/x/Svc.java",
+            "package de.x;\npublic interface Svc { void run(); }\n",
+        );
+        write(
+            "c/src/main/java/de/y/Ctl.java",
+            "package de.y;\nimport de.x.Svc;\npublic class Ctl { Svc svc; void go() { svc.run(); } }\n",
+        );
+        let result = analyze_java_calls(root.path(), &Config::default());
+        let resolved: Vec<_> = (result.calls.iter())
+            .filter(|c| c.target_label.ends_with("run()"))
+            .map(|c| c.resolution.as_str())
+            .collect();
+        assert_eq!(resolved, ["project"], "{:?}", result.diagnostics);
+    }
+
+    /// A project without its dependency jars reports thousands of compiler
+    /// errors; calls in files without an error must still resolve.
+    #[test]
+    fn many_errors_elsewhere_do_not_unresolve_a_clean_call() {
+        let root = tempfile::tempdir().unwrap();
+        let java = root.path().join("src/main/java/de/x");
+        fs::create_dir_all(&java).unwrap();
+        let fields: String = (0..12_000).map(|i| format!("Nope{i} f{i};\n")).collect();
+        fs::write(
+            java.join("Bad.java"),
+            format!("package de.x;\nclass Bad {{\n{fields}}}\n"),
+        )
+        .unwrap();
+        fs::write(
+            java.join("Ok.java"),
+            "package de.x;\npublic class Ok { void a() { b(); } void b() {} }\n",
+        )
+        .unwrap();
+        let result = analyze_java_calls(root.path(), &Config::default());
+        let resolved: Vec<_> = (result.calls.iter())
+            .filter(|c| c.code == "b()")
+            .map(|c| c.resolution.as_str())
+            .collect();
+        assert_eq!(resolved, ["project"], "{:?}", result.diagnostics);
+    }
+
+    /// A project that declares a newer Java release than the installed JDK
+    /// supports (syncope: 25 on a JDK 23) is still analysed, with a diagnostic.
+    #[test]
+    fn a_release_newer_than_the_jdk_falls_back_to_the_jdk_release() {
+        let root = tempfile::tempdir().unwrap();
+        let java = root.path().join("src/main/java/de/x");
+        fs::create_dir_all(&java).unwrap();
+        fs::write(
+            java.join("Ok.java"),
+            "package de.x;\npublic class Ok { void a() { b(); } void b() {} }\n",
+        )
+        .unwrap();
+        let mut config = Config::default();
+        config.semantic.java.release = Some(99);
+        let result = analyze_java_calls(root.path(), &config);
+        assert_ne!(result.status, "unavailable", "{:?}", result.diagnostics);
+        assert!(
+            (result.diagnostics.iter()).any(|d| d.contains("release 99")),
+            "{:?}",
+            result.diagnostics
+        );
     }
 
     #[test]

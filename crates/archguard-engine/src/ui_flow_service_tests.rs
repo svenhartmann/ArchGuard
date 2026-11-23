@@ -815,3 +815,97 @@ fn a_class_missing_from_the_call_model_leaves_a_gap() {
         flow.diagnostics
     );
 }
+
+/// A call on a project bean that the compiler could not resolve (its argument
+/// does not compile) must not vanish: its check is unknown.
+#[test]
+fn an_unresolved_call_on_a_project_bean_leaves_a_gap() {
+    let Some(flow) = run(
+        SPRING_POM,
+        &[
+            ("Conf.java", ENABLE),
+            (
+                "Ctl.java",
+                &ctl("String s = \"x\"; s.trim(); return svc.run(Missing.X);", ""),
+            ),
+            (
+                "Svc.java",
+                &svc("@Service", &PRE_B.replace("run()", "run(Object o)")),
+            ),
+        ],
+    ) else {
+        return;
+    };
+    let gaps: Vec<_> = (flow.diagnostics.iter())
+        .filter(|d| d.message.contains("not resolved"))
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(gaps.len(), 1, "{:#?}", flow.diagnostics);
+    assert!(gaps[0].contains("svc.run"), "{gaps:?}");
+}
+
+/// One failed part of the call model is a gap while the others stay read.
+#[test]
+fn a_failed_part_of_the_call_model_is_a_gap() {
+    let analyzer = |status: &str| archguard_core::CallAnalyzer {
+        language: "java".into(),
+        backend: "javac".into(),
+        status: status.into(),
+        files: 7,
+        version: None,
+        project: None,
+        diagnostics: vec!["boom".into()],
+    };
+    let analysis = archguard_core::CallAnalysis {
+        analyzers: vec![analyzer("ready"), analyzer("unavailable")],
+        ..Default::default()
+    };
+    let gaps = super::ui_flow_service::failed_scopes(&analysis);
+    assert_eq!(gaps.len(), 1, "{gaps:?}");
+    assert!(gaps[0].2.contains("7 Java file(s)") && gaps[0].2.contains("boom"));
+}
+
+fn pom(artifact: &str, deps: &[&str]) -> String {
+    let deps: String = (deps.iter())
+        .map(|d| format!("<dependency><artifactId>{d}</artifactId></dependency>"))
+        .collect();
+    format!(
+        "<project><artifactId>{artifact}</artifactId><dependencies>{deps}</dependencies></project>"
+    )
+}
+
+/// The interface with the check, the controller and the switch live in
+/// three modules of one application (hawkbit): the check still applies.
+#[test]
+fn a_check_and_its_switch_in_other_modules_of_the_application_are_read() {
+    let api = "package app;\nimport org.springframework.security.access.prepost.*;\npublic interface Api {\n  @PreAuthorize(\"hasRole('B')\") String run();\n}\n";
+    let svc = "package app;\nimport org.springframework.stereotype.Service;\n@Service\nclass Svc implements Api {\n  public String run() { return \"\"; }\n}\n";
+    let ctl = ctl("return svc.run();", "").replace("private Svc svc", "private Api svc");
+    let m = "../../../../";
+    let poms = [
+        pom("api", &[]),
+        pom("core", &["api", "base"]),
+        pom("base", &[]),
+        pom("web", &["api"]),
+        pom("top", &["web", "core"]),
+    ];
+    let files = [
+        (format!("{m}api/pom.xml"), poms[0].as_str()),
+        (format!("{m}api/src/main/java/app/Api.java"), api),
+        (format!("{m}core/pom.xml"), poms[1].as_str()),
+        (format!("{m}base/pom.xml"), poms[2].as_str()),
+        (format!("{m}base/src/main/java/app/Conf.java"), ENABLE),
+        (format!("{m}core/src/main/java/app/Svc.java"), svc),
+        (format!("{m}web/pom.xml"), poms[3].as_str()),
+        (format!("{m}web/src/main/java/app/Ctl.java"), ctl.as_str()),
+        (format!("{m}top/pom.xml"), poms[4].as_str()),
+    ];
+    let borrowed: Vec<(&str, &str)> = files.iter().map(|(n, t)| (n.as_str(), *t)).collect();
+    let Some(flow) = run(SPRING_POM, &borrowed) else {
+        return;
+    };
+    let l = layers(&flow);
+    assert_eq!(l.len(), 1, "{:#?}", flow.diagnostics);
+    assert_eq!(l[0].0, ServiceHow::Enforced, "{l:?}");
+    assert_eq!(flow.effective_access(endpoint(&flow)), role("ROLE_B"));
+}
