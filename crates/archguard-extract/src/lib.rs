@@ -20,6 +20,7 @@ mod ident;
 pub mod java;
 pub mod kotlin;
 mod lex;
+pub mod painless;
 pub mod php;
 pub mod php_structure;
 pub mod py;
