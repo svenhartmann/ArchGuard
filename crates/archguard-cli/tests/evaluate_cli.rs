@@ -28,6 +28,8 @@ fn fixture() -> (TempDir, PathBuf) {
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/ts-cyclic"),
         &root,
     );
+    // An ignored local cache in the source fixture must not leak into the copy.
+    let _ = fs::remove_dir_all(root.join(".archguard"));
     (dir, root)
 }
 
