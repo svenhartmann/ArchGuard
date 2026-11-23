@@ -440,3 +440,8 @@ Both are opt-in in `[views] conventions`.
   failing, never baselined. Known limit: calls the extractors do not read at
   all are not counted as unresolved; `base_href()` takes one base for the
   whole repository.
+
+### 2026-11-23: crate locations
+
+The readers moved out of `archguard-engine` into `archguard-flow-*` crates (pure move, no behaviour
+change): the domain readers live in `archguard-flow-jvm` (Java), `-dotnet` (C#), `-python` and `-node` (TypeScript), on `archguard-flow-common` (`lang_*`, `lang_code`) and `archguard-flow-clike`. Module names are unchanged; the engine keeps the registry (`ui_flow`, `domain_model`).

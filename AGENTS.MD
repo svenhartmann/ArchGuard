@@ -39,6 +39,8 @@ blocks `git merge` of commits without an Opus review approval.
   - `cargo fmt --all -- --check`
   - `cargo clippy --workspace --all-targets --locked -- -D warnings`
   - `cargo test --workspace --locked`
+  - Inner loop while working on one reader: `cargo test -p archguard-flow-<family>` (`common`, `clike`,
+    `backend`, `jvm`, `dotnet`, `python`, `web`, `node`, `server`, `rust`); the gate above still runs the workspace.
   - `python3 -m unittest discover -s scripts/checks -p 'test_*.py'`
 - Review also checks: golden files byte-identical, no weakened or skipped tests,
   no new archguard findings against `main`.
