@@ -34,6 +34,104 @@ pub struct ServiceTopology {
     /// service's source or the client code it imports.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resilience: Vec<ServiceResilience>,
+    /// Elasticsearch artifacts, index usages and findings read statically.
+    #[serde(default, skip_serializing_if = "ElasticsearchModel::is_empty")]
+    pub elasticsearch: ElasticsearchModel,
+}
+
+/// Static Elasticsearch view: declared artifacts, which services use which
+/// index, and the findings derived from comparing the two.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ElasticsearchModel {
+    pub artifacts: Vec<SearchArtifact>,
+    pub usages: Vec<SearchIndexUsage>,
+    pub findings: Vec<SearchFinding>,
+}
+
+impl ElasticsearchModel {
+    pub fn is_empty(&self) -> bool {
+        self.artifacts.is_empty() && self.usages.is_empty() && self.findings.is_empty()
+    }
+}
+
+/// A declared Elasticsearch object. `kind` is one of `index`, `alias`,
+/// `index_template`, `component_template`, `ilm_policy`, `ingest_pipeline`,
+/// `transform`, `watch`, `enrich_policy`, `snapshot_lifecycle`,
+/// `stored_script`, `search_template`, `data_view`, `alerting_rule`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchArtifact {
+    pub kind: String,
+    pub name: Option<String>,
+    pub address: String,
+    pub scope: String,
+    pub patterns: Vec<String>,
+    pub references: Vec<SearchReference>,
+    pub evidence: Vec<ServiceEvidence>,
+}
+
+/// Target kind and name an artifact points at, e.g. `ingest_pipeline`/`p1`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchReference {
+    pub kind: String,
+    pub name: String,
+}
+
+/// A service's use of an index; `access` is `write`, `read` or `unknown`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchIndexUsage {
+    pub service: String,
+    pub index: String,
+    pub access: String,
+    pub evidence: Vec<ServiceEvidence>,
+}
+
+/// `kind` is `undeclared_pipeline`, `undeclared_index`, `shared_write_index`,
+/// `uncovered_pattern` or `alert_undeclared_index`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchFinding {
+    pub kind: String,
+    pub subject: String,
+    pub services: Vec<String>,
+    pub evidence: Vec<ServiceEvidence>,
+}
+
+#[cfg(test)]
+mod elasticsearch_tests {
+    use super::*;
+
+    #[test]
+    fn default_topology_omits_elasticsearch_and_filled_model_round_trips() {
+        let t = ServiceTopology::default();
+        assert!(!serde_json::to_string(&t).unwrap().contains("elasticsearch"));
+        let mut t = t;
+        t.elasticsearch.artifacts.push(SearchArtifact {
+            kind: "index_template".into(),
+            name: Some("t1".into()),
+            address: "es_index_template.t1".into(),
+            scope: "infra".into(),
+            patterns: vec!["logs-*".into()],
+            references: vec![SearchReference {
+                kind: "ingest_pipeline".into(),
+                name: "p1".into(),
+            }],
+            evidence: vec![],
+        });
+        t.elasticsearch.usages.push(SearchIndexUsage {
+            service: "api".into(),
+            index: "logs-a".into(),
+            access: "write".into(),
+            evidence: vec![],
+        });
+        t.elasticsearch.findings.push(SearchFinding {
+            kind: "undeclared_index".into(),
+            subject: "logs-a".into(),
+            services: vec!["api".into()],
+            evidence: vec![],
+        });
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(json.contains("elasticsearch"));
+        assert_eq!(serde_json::from_str::<ServiceTopology>(&json).unwrap(), t);
+    }
 }
 
 /// One HTTP route of a service, read from its source.
