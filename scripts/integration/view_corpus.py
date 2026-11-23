@@ -205,6 +205,39 @@ def access_moves(base, head):
     return counts, moves, sorted(set(bad))
 
 
+RANK = {"open": 0, "undeclared": 1, "protected": 2, "unrecognised": 1}
+
+
+def service_summary(flow):
+    """(layers by kind, {endpoint key: (endpoint state, effective state)}). Effective = the endpoint's state ANDed with every enforced
+    layer: protected if one is protected, open if one is open (the model must never produce that), else the endpoint's own state."""
+    layers = collections.defaultdict(list)
+    for l in flow.get("service_layers", []):
+        layers[(l["endpoint_file"], l["endpoint_line"], l["endpoint_method"], l["endpoint_path"])].append(l)
+    kinds, eff = collections.Counter(), {}
+    for e in flow.get("endpoints", []):
+        mine = layers.get((e.get("file"), e.get("line"), e["method"], e["path"]), [])
+        kinds.update({l["how"] for l in mine})
+        own = _state(e.get("access"), "undeclared")
+        states = {_state(l.get("state"), "undeclared") for l in mine if l["how"] == "enforced"}
+        eff_state = "open" if "open" in states else "protected" if "protected" in states else own
+        eff[(e.get("application") or "", e["method"], e["path"], e.get("file"), e.get("line"))] = (own, eff_state)
+    return kinds, eff
+
+
+def service_report(base, head):
+    """(info lines, weaker): effective state weaker than the endpoint's own access (impossible), per app."""
+    lines, weaker = [], []
+    for app in sorted(head):
+        hk, he = service_summary(head[app])
+        bk, be = service_summary(base[app]) if app in base else (collections.Counter(), {})
+        lines.append(f"{app}: service layers (endpoints) {dict(sorted(bk.items()))} -> {dict(sorted(hk.items()))}")
+        changed = sum(1 for k, v in he.items() if k in be and be[k][1] != v[1])
+        lines.append(f"{app}: effective condition changed on {changed} endpoint(s)")
+        weaker += [(app, k) for k, (own, eff) in sorted(he.items()) if RANK[eff] < RANK[own]]
+    return lines, weaker
+
+
 def cmd_access_diff(a):
     counts, moves, bad = access_moves(_load_flows(a.base), _load_flows(a.head))
     for app, kinds in counts.items():
@@ -215,8 +248,12 @@ def cmd_access_diff(a):
         print(f"TOWARDS OPEN {app} {kind} {ident} (base {was} -> head {now})")
     for app, kind, ident, n in bad:
         print(f"UNRECOGNISED access value {app} {kind} {ident} (x{n})")
-    print(f"{len(moves)} element(s) moved towards Open, {len(bad)} unrecognised")
-    sys.exit(2 if bad else 1 if moves else 0)  # 2 = cannot trust the result
+    info, weaker = service_report(_load_flows(a.base), _load_flows(a.head))
+    print(*info, sep="\n")
+    for app, key in weaker:
+        print(f"WEAKER EFFECTIVE {app} {key}")
+    print(f"{len(moves)} element(s) moved towards Open, {len(bad)} unrecognised, {len(weaker)} effective weaker than endpoint")
+    sys.exit(2 if bad else 1 if moves or weaker else 0)  # 2 = cannot trust the result
 
 
 def cmd_table(a):

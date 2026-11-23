@@ -38,7 +38,7 @@ use archguard_core::{
 };
 
 use archguard_extract::{Lang, strip_root};
-use archguard_flow_backend::ui_flow_backend::spring::{Conf, declared_access, family};
+use archguard_flow_backend::ui_flow_backend::spring::family;
 use archguard_flow_backend::ui_flow_backend::{Index, Out, Project, read_projects};
 use archguard_flow_clike::decl::{Attr, Decl, class_header};
 use archguard_flow_clike::lex::{literals, named, positional, split_top};
@@ -210,6 +210,10 @@ struct World<'a> {
     dir_of: HashMap<&'a str, &'a str>,
     /// By project dir: what each application that includes it reads (else its own).
     apps: HashMap<&'a str, Vec<apps::AppConf<'a>>>,
+    /// Classes that can carry a check (see [`carriers`]).
+    carriers: BTreeSet<&'a str>,
+    /// Class names declared in more than one module (alternative implementations).
+    twins: BTreeSet<&'a str>,
     /// The project dir of the endpoint being read.
     from_dir: &'a str,
     jars: ejb::Jars,
@@ -340,6 +344,8 @@ impl<'a> World<'a> {
             dir_of,
             apps,
             from_dir: "",
+            carriers: BTreeSet::new(),
+            twins: BTreeSet::new(),
             jars,
             classes: (analysis.classes.iter())
                 .map(|c| (c.id.as_str(), c))
@@ -366,6 +372,13 @@ impl<'a> World<'a> {
                 (world.subtypes.entry(sup.as_str()).or_default()).push(c.id.as_str());
             }
         }
+        world.carriers = carriers(&world);
+        let mut seen = BTreeSet::new();
+        for c in &analysis.classes {
+            if !seen.insert(c.name.as_str()) {
+                world.twins.insert(c.name.as_str());
+            }
+        }
         world
     }
 
@@ -384,8 +397,7 @@ impl<'a> World<'a> {
         let mut found: Vec<Verdict> = Vec::new();
         let mut seen: BTreeSet<&str> = BTreeSet::new();
         let mut queue = self.direct(handler, src, &mut seen);
-        let carrying = carriers(self);
-        let gaps = apps::unresolved_gaps(&self.calls, &carrying, &[(src, handler)]);
+        let gaps = apps::unresolved_gaps(&self.calls, &self.carriers, &[(src, handler)]);
         self.gaps.extend(gaps);
         while let Some((call, always, depth, via)) = queue.pop_front() {
             let Some(reached) = self.reach(call) else {
@@ -398,6 +410,22 @@ impl<'a> World<'a> {
                 self.gaps.push((call.file.clone(), call.line, message));
                 continue;
             };
+            let twin = (reached.impls.iter().map(|(c, _)| *c))
+                .chain([reached.declared])
+                .find(|c| {
+                    self.twins.contains(c.name.as_str())
+                        && apps::crosses((&self.sources, &self.dir_of), call, c)
+                });
+            if let Some(c) = twin {
+                let message = format!(
+                    "Check of `{}.{}` not read: the class `{}` is declared in more than one module, so which one the call runs is unknown.",
+                    simple(&c.name),
+                    call.target_label,
+                    c.name
+                );
+                self.gaps.push((call.file.clone(), call.line, message));
+                continue;
+            }
             let same = call.to_class.as_deref() == Some(handler.class_id.as_str());
             let mut verdicts = self.verdicts(&reached, same);
             for v in &mut verdicts {
@@ -409,7 +437,7 @@ impl<'a> World<'a> {
                 let run: Vec<_> = (reached.impls.iter())
                     .filter_map(|(c, m)| Some((self.source_of(c)?, *m)))
                     .collect();
-                let gaps = apps::unresolved_gaps(&self.calls, &carrying, &run);
+                let gaps = apps::unresolved_gaps(&self.calls, &self.carriers, &run);
                 self.gaps.extend(gaps);
             }
         }
@@ -688,47 +716,26 @@ impl<'a> World<'a> {
             })
     }
 
-    /// What the applications of `dir` read: those that also include the module
-    /// of the endpoint being read, else all of them.
+    /// What the applications of `dir` read that also include the module of the
+    /// endpoint being read; empty when there is none.
     fn apps_of(&self, dir: &str) -> Vec<&apps::AppConf<'a>> {
-        let all = self.apps.get(dir).into_iter().flatten();
-        let both: Vec<_> = all
-            .clone()
+        (self.apps.get(dir).into_iter().flatten())
             .filter(|a| a.modules.contains(&self.from_dir))
-            .collect();
-        if both.is_empty() { all.collect() } else { both }
+            .collect()
     }
 
     /// Spring method security through the reader of the controllers.
     fn spring(&self, site: &Site, gaps: &mut Vec<Gap>) -> Option<Read> {
-        let confs: Vec<&Conf> = self
-            .apps_of(site.dir)
-            .into_iter()
-            .map(|a| &a.conf)
-            .collect();
-        if confs.is_empty() {
-            return None;
-        }
         let mut scratch = Out::scratch();
         let arity = arity_of(&site.m.signature);
-        let mut reads: Vec<(AccessState, bool)> = Vec::new();
-        for conf in confs {
-            reads.push(declared_access(
-                conf,
-                &self.index,
-                &mut scratch,
-                (site.msrc, site.mclass, site.decl),
-                arity,
-            ));
-        }
-        let (state, ignored) = reads.first().cloned()?;
-        let differ = reads.iter().any(|r| *r != (state.clone(), ignored));
-        // applications that read the switch differently: unknown, so no check
-        let (state, ignored) = if differ {
-            (AccessState::Undeclared, true)
-        } else {
-            (state, ignored)
-        };
+        let own: Vec<_> = self.apps.get(site.dir).into_iter().flatten().collect();
+        let at = (site.msrc, site.mclass, site.decl);
+        let (state, ignored, differ) = apps::read_state(
+            (&self.apps_of(site.dir), &own),
+            (&self.index, &mut scratch),
+            at,
+            arity,
+        )?;
         let mut soft = Vec::new();
         for d in scratch.diagnostics() {
             if d.message.contains("not readable") {
@@ -738,8 +745,7 @@ impl<'a> World<'a> {
             }
         }
         let mut how = ServiceHow::Enforced;
-        if differ {
-            let why = "the applications that include this module differ in whether method security is enabled";
+        if let Some(why) = differ {
             gaps.push((site.msrc.rel.clone(), site.m.line, why.into()));
             soft.push(why.into());
         }

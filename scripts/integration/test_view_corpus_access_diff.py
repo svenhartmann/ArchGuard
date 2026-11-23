@@ -63,6 +63,18 @@ class T(unittest.TestCase):
         self.assertEqual(run(base, head), 1)
         self.assertEqual(run(base, base), 0)
 
+    def test_enforced_open_layer_makes_the_effective_condition_weaker(self):
+        layer = lambda how, state: {"endpoint_file": "F", "endpoint_line": 1, "endpoint_method": "GET", "endpoint_path": "/a",
+                                    "how": how, "state": state}
+        ep = {"method": "GET", "path": "/a", "file": "F", "line": 1, "access": {"protected": COND}}
+        base = flow(extra={"endpoints": [ep]})
+        ok = flow(extra={"endpoints": [ep], "service_layers": [layer("enforced", {"protected": COND}), layer("hint", "open")]})
+        bad = flow(extra={"endpoints": [ep], "service_layers": [layer("enforced", "open")]})
+        out = io.StringIO()
+        self.assertEqual(run(base, ok, out), 0)
+        self.assertIn("{'enforced': 1, 'hint': 1}", out.getvalue())
+        self.assertEqual(run(base, bad), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

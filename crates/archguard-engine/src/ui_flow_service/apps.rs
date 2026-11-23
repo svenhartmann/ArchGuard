@@ -3,13 +3,13 @@
 //! the gaps for calls the compiler could not resolve.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use archguard_core::{CallAnalysis, CallMethod, MethodCall};
-use archguard_flow_backend::ui_flow_backend::spring::Conf;
+use archguard_core::{AccessState, CallAnalysis, CallClass, CallMethod, MethodCall};
+use archguard_flow_backend::ui_flow_backend::spring::{Conf, declared_access};
 use archguard_flow_backend::ui_flow_backend::{Index, Out, Project, applications_of};
 use archguard_flow_clike::source::Source;
 use archguard_flow_common::extract_ctx::ExtractContext;
 
-use archguard_flow_clike::decl::{Dialect, decls};
+use archguard_flow_clike::decl::{Decl, Dialect, decls};
 use archguard_flow_clike::lex::named;
 
 /// `(file, line, message)` of something read but not readable.
@@ -194,4 +194,47 @@ pub(super) fn unresolved_gaps(
         }
     }
     gaps
+}
+
+/// Whether `call` is made from another module than the one declaring `class`.
+pub(super) fn crosses(
+    (sources, dir_of): (&HashMap<String, &Source>, &HashMap<&str, &str>),
+    call: &MethodCall,
+    class: &CallClass,
+) -> bool {
+    let dir = |file: &str| dir_of.get(sources.get(file)?.rel.as_str()).copied();
+    dir(&call.file) != dir(&class.file) || dir(&class.file).is_none()
+}
+
+/// What the applications read of a method's check: `(state, ignored, why unknown)`.
+/// The shared applications (those that include the endpoint's module) must
+/// agree; with none, or when they differ, the check is unknown and `why` says so.
+pub(super) fn read_state(
+    (shared, own): (&[&AppConf], &[&AppConf]),
+    (index, scratch): (&Index, &mut Out),
+    at: (&Source, &Decl, &Decl),
+    arity: usize,
+) -> Option<(AccessState, bool, Option<&'static str>)> {
+    let unshared = shared.is_empty();
+    let reads: Vec<_> = (if unshared { own } else { shared })
+        .iter()
+        .map(|a| declared_access(&a.conf, index, scratch, at, arity))
+        .collect();
+    let (state, ignored) = reads.first().cloned()?;
+    let why = if unshared {
+        Some(
+            "no application includes both the endpoint's module and this module, so whether method security is enabled for the call is unknown",
+        )
+    } else if reads.iter().any(|r| *r != (state.clone(), ignored)) {
+        Some(
+            "the applications that include this module differ in whether method security is enabled",
+        )
+    } else {
+        None
+    };
+    // unknown: no check
+    Some(match why {
+        Some(_) => (AccessState::Undeclared, true, why),
+        None => (state, ignored, None),
+    })
 }

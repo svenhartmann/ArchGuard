@@ -909,3 +909,96 @@ fn a_check_and_its_switch_in_other_modules_of_the_application_are_read() {
     assert_eq!(l[0].0, ServiceHow::Enforced, "{l:?}");
     assert_eq!(flow.effective_access(endpoint(&flow)), role("ROLE_B"));
 }
+
+const API: &str = "package app;\nimport org.springframework.security.access.prepost.*;\npublic interface Api {\n  @PreAuthorize(\"hasRole('B')\") String run();\n}\n";
+const IMPL: &str = "package app;\nimport org.springframework.stereotype.Service;\n@Service\nclass Impl implements Api {\n  public String run() { return \"\"; }\n}\n";
+
+/// Modules `(name, pom deps, [(file, text)])` placed beside the project root.
+type Module<'a> = (&'a str, &'a [&'a str], Vec<(&'a str, &'a str)>);
+
+fn modules(mods: &[Module]) -> Option<UiFlow> {
+    let mut files: Vec<(String, String)> = Vec::new();
+    for (name, deps, list) in mods {
+        files.push((format!("../../../../{name}/pom.xml"), pom(name, deps)));
+        for (p, t) in list {
+            let path = format!("../../../../{name}/src/main/java/app/{p}");
+            files.push((path, t.to_string()));
+        }
+    }
+    let borrowed: Vec<(&str, &str)> = (files.iter())
+        .map(|(n, t)| (n.as_str(), t.as_str()))
+        .collect();
+    run(SPRING_POM, &borrowed)
+}
+
+fn gap_with(flow: &UiFlow, word: &str) -> bool {
+    (flow.diagnostics.iter())
+        .any(|d| d.severity == archguard_core::DiagnosticSeverity::Gap && d.message.contains(word))
+}
+
+/// Two modules declare `app.Svc`; the caller depends on the unchecked one and
+/// must never be shown the checked twin's annotation.
+#[test]
+fn a_call_to_a_class_declared_in_two_modules_is_a_gap_not_a_check() {
+    let twin = |check: &str| {
+        format!(
+            "package app;\nimport org.springframework.stereotype.Service;\nimport org.springframework.security.access.prepost.*;\n@Service\npublic class Svc {{\n  {check} public String run() {{ return \"\"; }}\n}}\n"
+        )
+    };
+    let (a, b) = (twin("@PreAuthorize(\"hasRole('B')\")"), twin(""));
+    let Some(flow) = modules(&[
+        ("a", &[], vec![("Svc.java", &a), ("Conf.java", ENABLE)]),
+        ("b", &[], vec![("Svc.java", &b), ("Conf.java", ENABLE)]),
+        (
+            "c",
+            &["b"],
+            vec![("Ctl.java", &ctl("return svc.run();", ""))],
+        ),
+    ]) else {
+        return;
+    };
+    assert!(layers(&flow).is_empty(), "{:#?}", flow.service_layers);
+    assert!(
+        gap_with(&flow, "more than one module"),
+        "{:#?}",
+        flow.diagnostics
+    );
+}
+
+/// No application holds both the endpoint's module and the service's module.
+#[test]
+fn a_service_outside_every_application_of_the_endpoint_is_a_hint_and_a_gap() {
+    let ctl = ctl("return svc.run();", "").replace("private Svc svc", "private Api svc");
+    let Some(flow) = modules(&[
+        ("api", &[], vec![("Api.java", API)]),
+        ("base", &[], vec![("Conf.java", ENABLE)]),
+        ("core", &["api", "base"], vec![("Impl.java", IMPL)]),
+        ("web", &["api"], vec![("Ctl.java", &ctl)]),
+    ]) else {
+        return;
+    };
+    let l = layers(&flow);
+    assert_eq!(l.len(), 1, "{:#?}", flow.diagnostics);
+    assert_eq!(l[0].0, ServiceHow::Hint, "{l:?}");
+    assert!(gap_with(&flow, "application"), "{:#?}", flow.diagnostics);
+}
+
+/// Two applications include endpoint and service but only one enables method security.
+#[test]
+fn applications_that_disagree_on_method_security_give_a_hint_and_a_gap() {
+    let ctl = ctl("return svc.run();", "").replace("private Svc svc", "private Api svc");
+    let Some(flow) = modules(&[
+        ("api", &[], vec![("Api.java", API)]),
+        ("base", &[], vec![("Conf.java", ENABLE)]),
+        ("core", &["api"], vec![("Impl.java", IMPL)]),
+        ("web", &["api", "core"], vec![("Ctl.java", &ctl)]),
+        ("top1", &["web", "base"], vec![]),
+        ("top2", &["web"], vec![]),
+    ]) else {
+        return;
+    };
+    let l = layers(&flow);
+    assert_eq!(l.len(), 1, "{:#?}", flow.diagnostics);
+    assert_eq!(l[0].0, ServiceHow::Hint, "{l:?}");
+    assert!(gap_with(&flow, "differ"), "{:#?}", flow.diagnostics);
+}
