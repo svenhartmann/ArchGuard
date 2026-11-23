@@ -117,7 +117,7 @@ fn kind_label(kind: ServiceDependencyKind) -> &'static str {
     }
 }
 
-/// Datastore usages and shared datastores; informational, never a gate.
+/// Datastores, then Elasticsearch lines; informational, never a gate.
 fn print_datastores_and_search(topology: &archguard_engine::core::ServiceTopology) {
     print_datastores(&topology.datastores);
     for line in elasticsearch_lines(&topology.elasticsearch) {
@@ -125,6 +125,7 @@ fn print_datastores_and_search(topology: &archguard_engine::core::ServiceTopolog
     }
 }
 
+/// Datastore usages and shared datastores; informational, never a gate.
 fn print_datastores(datastores: &ServiceDatastores) {
     if datastores.nodes.is_empty() {
         return;
