@@ -37,7 +37,7 @@ use crate::extract_ctx::{
     ExtractContext, ancestors, dir_name, finish, gap, read_text, walk, with_root_config,
 };
 use crate::services::support::test_path;
-use crate::ui_flow_backend::lex::{literal, literals, named, positional, split_top};
+use crate::ui_flow_backend::lex::{self, literal, literals, named, positional, split_top};
 use crate::ui_flow_backend::{
     Attr, Decl, Source, class_header, decls, each_method, jdk_type, names_interface, quarkus_build,
 };
@@ -318,7 +318,11 @@ mod discover {
             .flat_map(|(_, _, t)| interface_names(t))
             .collect();
         (texts.iter())
-            .filter(|(_, _, t)| t.contains("ws.rs") || ifaces.iter().any(|n| t.contains(n)))
+            .filter(|(_, _, t)| {
+                t.contains("ws.rs")
+                    || t.contains("setServiceBeans")
+                    || ifaces.iter().any(|n| t.contains(n))
+            })
             .map(|(d, _, _)| *d)
             .collect()
     }
@@ -1227,6 +1231,8 @@ struct Target {
     /// An implementation in a project without a REST server: whether and how
     /// it is registered is configuration this scan does not read.
     unregistered: bool,
+    /// Registered by a CXF `setServiceBeans` whose providers/interceptors are not evaluated.
+    chain: bool,
 }
 
 type Proto = (Option<String>, bool, bool, Props);
@@ -1296,6 +1302,7 @@ fn emit(srcs: Vec<Src>, protos: Vec<Proto>, out: &mut Out) {
         by_name: Default::default(),
         by_base: Default::default(),
         implementors: Default::default(),
+        registered: Default::default(),
     };
     let mut world = world;
     for (i, (_, c)) in world.classes.iter().enumerate() {
@@ -1304,6 +1311,7 @@ fn emit(srcs: Vec<Src>, protos: Vec<Proto>, out: &mut Out) {
             world.by_base.entry(b.clone()).or_default().push(i);
         }
     }
+    world.registered = world.cxf_registrations();
     let world = world;
     let mut announced = BTreeSet::new();
     let first = out.0.endpoints.len();
@@ -1325,6 +1333,57 @@ fn emit(srcs: Vec<Src>, protos: Vec<Proto>, out: &mut Out) {
     });
 }
 
+/// One `recv.setServiceBeans(args)` at `at`: whether `recv` gets no
+/// provider/interceptor/filter/handler/feature, and the type names of `args`
+/// (`new T(`, or the declared `T t` / `List<T> t` of a name in it).
+fn registration(src: &Source, at: usize) -> Option<(bool, Vec<&str>)> {
+    let (text, b) = (&src.text, src.text.as_bytes());
+    let open = at + "setServiceBeans".len();
+    let close = src.pair(open).filter(|_| b.get(open) == Some(&b'('))?;
+    let (rs, re) = lex::ident_before(b, at.saturating_sub(1));
+    let recv = &text[rs..re];
+    let setter = |p: usize| {
+        let m = &text[p + recv.len() + 1..];
+        let m = &m[..m.find(|c: char| !c.is_alphanumeric()).unwrap_or(m.len())];
+        let named = ["Provider", "Interceptor", "Filter", "Handler", "Feature"];
+        (m.starts_with("set") || m.starts_with("add")) && named.iter().any(|n| m.contains(n))
+    };
+    let clean = !recv.is_empty()
+        && !text
+            .match_indices(&format!("{recv}."))
+            .any(|(p, _)| setter(p));
+    let toks: Vec<&str> = (text[open + 1..close]
+        .split(|c: char| !(c.is_alphanumeric() || c == '_')))
+    .filter(|t| !t.is_empty())
+    .collect();
+    let mut types = Vec::new();
+    for (k, t) in toks.iter().enumerate() {
+        if *t == "new" {
+            types.extend(toks.get(k + 1));
+        } else if t.starts_with(|c: char| c.is_lowercase()) {
+            let decl = lex::words(&text[..at], t).last();
+            types.extend(decl.and_then(|d| declared_type(src, d)));
+        }
+    }
+    Some((clean, types))
+}
+
+/// The type of the name declared at `d`: `T t` or `List<T> t`.
+fn declared_type(src: &Source, d: usize) -> Option<&str> {
+    let (text, b) = (&src.text, src.text.as_bytes());
+    let k = lex::skip_ws_back(b, d);
+    let ty = if k > 0 && b[k - 1] == b'>' {
+        let lt = text[..k].rfind('<')?;
+        text[lt + 1..k - 1]
+            .rsplit(|c: char| !c.is_alphanumeric())
+            .next()?
+    } else {
+        let (a, z) = lex::ident_before(b, k);
+        &text[a..z]
+    };
+    ty.starts_with(|c: char| c.is_uppercase()).then_some(ty)
+}
+
 /// Everything the scan found, to place each resource method.
 struct World<'a> {
     srcs: &'a [Src],
@@ -1343,6 +1402,9 @@ struct World<'a> {
     by_base: HashMap<String, Vec<usize>>,
     /// The implementing classes of an interface (source, class key), by `classes` index.
     implementors: std::cell::RefCell<HashMap<(usize, usize), Vec<usize>>>,
+    /// `classes` index of a class registered by `setServiceBeans` -> whether
+    /// that server sets no providers/interceptors/filters (nothing unread).
+    registered: HashMap<usize, bool>,
 }
 
 /// The class and method path parts; a gap when one is not a literal.
@@ -1428,6 +1490,7 @@ impl World<'_> {
                 key: Some((m.si, class.open)),
                 implementation: false,
                 unregistered: false,
+                chain: false,
             }];
         }
         let (file, line) = (route.file.as_str(), route.line);
@@ -1464,11 +1527,10 @@ impl World<'_> {
             self.implementors.borrow_mut().insert(key, found.clone());
             found
         });
-        let candidates: Vec<&(usize, Decl)> = found.iter().map(|i| &self.classes[*i]).collect();
-        let serving = |c: &&(usize, Decl)| self.ctxs[self.srcs[c.0].proj].serves;
-        let (served, rest): (Vec<_>, Vec<_>) = candidates.into_iter().partition(serving);
+        let (served, rest): (Vec<usize>, Vec<usize>) =
+            found.iter().copied().partition(|i| self.serving(*i));
         let unregistered = served.is_empty();
-        let impls = if unregistered { rest } else { served };
+        let impls: Vec<usize> = if unregistered { rest } else { served };
         if impls.is_empty() {
             let message = format!(
                 "No serving implementation of `{}` in the scan; it is not listed as an endpoint",
@@ -1478,15 +1540,51 @@ impl World<'_> {
             return vec![]; // nothing serves it: a client-side declaration
         }
         (impls.into_iter())
-            .map(|(isi, ic)| Target {
-                si: *isi,
-                class: ic.clone(),
-                attrs: self.own_attrs(*isi, ic, &method.name),
-                key: Some((*isi, ic.open)),
-                implementation: true,
-                unregistered,
-            })
+            .map(|i| self.impl_target(i, &method.name, unregistered))
             .collect()
+    }
+
+    /// Whether class `i` is served: its project has a REST server, or a CXF
+    /// registration without unread providers ties it to one.
+    fn serving(&self, i: usize) -> bool {
+        self.ctxs[self.srcs[self.classes[i].0].proj].serves
+            || self.registered.get(&i) == Some(&true)
+    }
+
+    fn impl_target(&self, i: usize, method: &str, unregistered: bool) -> Target {
+        let (isi, ic) = &self.classes[i];
+        Target {
+            si: *isi,
+            class: ic.clone(),
+            attrs: self.own_attrs(*isi, ic, method),
+            key: Some((*isi, ic.open)),
+            implementation: true,
+            unregistered,
+            chain: self.registered.get(&i) == Some(&false),
+        }
+    }
+
+    /// Classes tied to a CXF server by `x.setServiceBeans(args)` in a Java
+    /// source: the types named by the argument, with everything below them.
+    /// The value says whether `x` is left without any provider/interceptor.
+    /// Spring XML `<jaxrs:server>` is not read; such classes stay unregistered.
+    fn cxf_registrations(&self) -> HashMap<usize, bool> {
+        let mut found: HashMap<usize, bool> = HashMap::new();
+        for s in self.srcs {
+            for at in lex::words(&s.src.text, "setServiceBeans") {
+                let Some((clean, types)) = registration(&s.src, at) else {
+                    continue;
+                };
+                for i in types.iter().filter_map(|t| self.by_name.get(*t)).flatten() {
+                    let ty = &self.classes[*i].1.name;
+                    let api = &self.srcs[self.classes[*i].0].src.text;
+                    for j in self.subtypes(ty, api).into_iter().chain([*i]) {
+                        *found.entry(j).or_insert(true) &= clean;
+                    }
+                }
+            }
+        }
+        found
     }
 
     /// The classes and interfaces (indices into `classes`) below interface
@@ -1653,10 +1751,17 @@ impl World<'_> {
             (route.file.clone(), route.line)
         };
         let layer = if t.unregistered {
-            let why = format!(
-                "`{}` is not registered where a REST server is configured; its registration is not read",
-                tclass.name
-            );
+            let why = if t.chain {
+                format!(
+                    "`{}` is registered by `setServiceBeans` of a server with providers/interceptors that are not evaluated",
+                    tclass.name
+                )
+            } else {
+                format!(
+                    "`{}` is not registered where a REST server is configured; its registration is not read",
+                    tclass.name
+                )
+            };
             out.gap(
                 &file,
                 line,
@@ -1966,6 +2071,57 @@ mod tests {
         assert_eq!(
             e.access,
             Protected(Condition::All(vec![Condition::Authenticated, role("u")]))
+        );
+    }
+
+    // W6a: a CXF registration (`setServiceBeans`) ties the implementation to a server.
+    fn cxf(chain: &str, annotated: bool) -> UiFlow {
+        let api = "import jakarta.ws.rs.*;\n@Path(\"/api/x\") public interface XApi extends JAXRSService { @GET String g(); }\n";
+        let ann = if annotated {
+            "@jakarta.annotation.security.PermitAll "
+        } else {
+            ""
+        };
+        let imp = format!(
+            "public class XImpl implements XApi {{ {ann}public String g() {{ return \"\"; }} }}\n"
+        );
+        let ctx = format!(
+            "class Ctx {{ @Bean Server c(final List<JAXRSService> services) {{ var s = new SpringJAXRSServerFactoryBean(); s.setServiceBeans(services.stream().map(Object.class::cast).toList());{chain} return s.create(); }} }}\n"
+        );
+        run(&[
+            ("api/pom.xml", "<project/>"),
+            ("api/src/main/java/XApi.java", api),
+            (
+                "api/src/main/java/JAXRSService.java",
+                "public interface JAXRSService {}\n",
+            ),
+            ("core/pom.xml", "<project/>"),
+            ("core/src/main/java/XImpl.java", &imp),
+            ("core/src/main/java/Ctx.java", &ctx),
+        ])
+    }
+
+    #[test]
+    fn cxf_registration_without_chain_reads_the_implementation() {
+        let f = cxf("", false);
+        let e = f.endpoints.iter().find(|e| e.path == "/api/x").unwrap();
+        assert_eq!(e.access, Undeclared);
+        assert!(
+            !f.diagnostics
+                .iter()
+                .any(|d| d.message.contains("not registered"))
+        );
+    }
+
+    #[test]
+    fn cxf_registration_with_providers_stays_unknown_and_says_why() {
+        let f = cxf(" s.setProviders(List.of(filter));", true);
+        let e = f.endpoints.iter().find(|e| e.path == "/api/x").unwrap();
+        assert!(matches!(e.access, Protected(Condition::Unknown(_))));
+        assert!(
+            f.diagnostics
+                .iter()
+                .any(|d| d.message.contains("setServiceBeans"))
         );
     }
 
