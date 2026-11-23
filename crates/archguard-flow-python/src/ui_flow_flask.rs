@@ -74,7 +74,7 @@ const EXEMPT: [&str; 6] = [
 
 type Key = (usize, String);
 
-/// [`crate::ui_flow::extract_all`]'s entry: endpoints of every Flask app below the root.
+/// `crate::ui_flow::extract_all`'s entry: endpoints of every Flask app below the root.
 pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     let mut flow = UiFlow::default();
     let walked = match walk(ctx.root) {

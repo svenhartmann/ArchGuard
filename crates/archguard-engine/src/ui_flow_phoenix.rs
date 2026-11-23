@@ -79,7 +79,7 @@ const VERBS: [&str; 8] = [
     "get", "post", "put", "patch", "delete", "head", "options", "connect",
 ];
 
-/// [`crate::ui_flow::extract_all`]'s entry: routes of every Phoenix router below the root.
+/// `crate::ui_flow::extract_all`'s entry: routes of every Phoenix router below the root.
 pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     let mut flow = UiFlow::default();
     let walked = match walk(ctx.root) {

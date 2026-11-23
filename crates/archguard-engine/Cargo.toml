@@ -28,6 +28,7 @@ archguard-flow-backend = { path = "../archguard-flow-backend" }
 archguard-flow-clike = { path = "../archguard-flow-clike" }
 archguard-flow-jvm = { path = "../archguard-flow-jvm" }
 archguard-flow-dotnet = { path = "../archguard-flow-dotnet" }
+archguard-flow-python = { path = "../archguard-flow-python" }
 archguard-flow-common = { path = "../archguard-flow-common" }
 archguard-report = { path = "../archguard-report" }
 archguard-store = { path = "../archguard-store" }

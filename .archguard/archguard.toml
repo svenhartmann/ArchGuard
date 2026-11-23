@@ -77,9 +77,14 @@ contains = ["archguard-flow-dotnet", "archguard-flow-dotnet/**"]
 may_depend_on = ["core", "flow-common", "flow-clike"]
 
 [[layers]]
+name = "flow-python"
+contains = ["archguard-flow-python", "archguard-flow-python/**"]
+may_depend_on = ["core", "flow-common"]
+
+[[layers]]
 name = "engine"
 contains = ["archguard-engine", "archguard-engine/**"]
-may_depend_on = ["flow-dotnet", "flow-jvm", "core", "extract", "flow-common", "flow-clike", "flow-backend", "analysis", "report", "store"]
+may_depend_on = ["flow-python", "flow-dotnet", "flow-jvm", "core", "extract", "flow-common", "flow-clike", "flow-backend", "analysis", "report", "store"]
 
 [[layers]]
 name = "mcp"
