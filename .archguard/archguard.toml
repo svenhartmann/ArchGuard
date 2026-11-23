@@ -52,9 +52,59 @@ contains = ["archguard-store", "archguard-store/**"]
 may_depend_on = ["core"]
 
 [[layers]]
+name = "flow-common"
+contains = ["archguard-flow-common", "archguard-flow-common/**"]
+may_depend_on = ["core", "extract"]
+
+[[layers]]
+name = "flow-clike"
+contains = ["archguard-flow-clike", "archguard-flow-clike/**"]
+may_depend_on = ["flow-common"]
+
+[[layers]]
+name = "flow-backend"
+contains = ["archguard-flow-backend", "archguard-flow-backend/**"]
+may_depend_on = ["core", "flow-common", "flow-clike"]
+
+[[layers]]
+name = "flow-jvm"
+contains = ["archguard-flow-jvm", "archguard-flow-jvm/**"]
+may_depend_on = ["core", "flow-common", "flow-clike"]
+
+[[layers]]
+name = "flow-dotnet"
+contains = ["archguard-flow-dotnet", "archguard-flow-dotnet/**"]
+may_depend_on = ["core", "flow-common", "flow-clike"]
+
+[[layers]]
+name = "flow-python"
+contains = ["archguard-flow-python", "archguard-flow-python/**"]
+may_depend_on = ["core", "flow-common"]
+
+[[layers]]
+name = "flow-web"
+contains = ["archguard-flow-web", "archguard-flow-web/**"]
+may_depend_on = ["core", "flow-common"]
+
+[[layers]]
+name = "flow-node"
+contains = ["archguard-flow-node", "archguard-flow-node/**"]
+may_depend_on = ["core", "flow-common"]
+
+[[layers]]
+name = "flow-server"
+contains = ["archguard-flow-server", "archguard-flow-server/**"]
+may_depend_on = ["core", "extract", "flow-common"]
+
+[[layers]]
+name = "flow-rust"
+contains = ["archguard-flow-rust", "archguard-flow-rust/**"]
+may_depend_on = ["core", "flow-common"]
+
+[[layers]]
 name = "engine"
 contains = ["archguard-engine", "archguard-engine/**"]
-may_depend_on = ["core", "extract", "analysis", "report", "store"]
+may_depend_on = ["flow-rust", "flow-server", "flow-node", "flow-web", "flow-python", "flow-dotnet", "flow-jvm", "core", "extract", "flow-common", "flow-clike", "flow-backend", "analysis", "report", "store"]
 
 [[layers]]
 name = "mcp"

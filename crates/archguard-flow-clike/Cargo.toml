@@ -1,0 +1,9 @@
+[package]
+name = "archguard-flow-clike"
+description = "L2: the Java/Kotlin/C# source kernel of the UI-flow and domain readers (ADR 0021, 0022): sources, declarations, lexing, handler sends."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+archguard-flow-common = { path = "../archguard-flow-common" }

@@ -4,8 +4,8 @@
 use super::service_datastore_settings as datastores;
 use super::service_deployments::{Deployment, Env, add, endpoint_key, project_for, read};
 use super::service_terraform_hcl::{References, attr, block, get, http, labels, literal, object};
-use super::support::{Discovery, diagnostic, relative};
 use archguard_core::{Service, ServiceDependencyKind as Kind, ServiceEvidence, ServiceTopology};
+use archguard_flow_common::support::{Discovery, diagnostic, relative};
 use hcl_edit::expr::Expression;
 use hcl_edit::structure::{Block, Body};
 use hcl_edit::visit::Visit;

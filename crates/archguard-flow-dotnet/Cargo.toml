@@ -1,0 +1,14 @@
+[package]
+name = "archguard-flow-dotnet"
+description = "L2: the C# readers: Blazor and XAML UI-flow (ADR 0021) and the C# domain model (ADR 0022)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+archguard-core = { path = "../archguard-core" }
+archguard-flow-common = { path = "../archguard-flow-common" }
+archguard-flow-clike = { path = "../archguard-flow-clike" }
+
+[dev-dependencies]
+tempfile = "3.27.0"

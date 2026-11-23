@@ -1,0 +1,16 @@
+[package]
+name = "archguard-flow-backend"
+description = "L2: the Spring and ASP.NET UI-flow driver (ADR 0021): one pass over .cs/.java/.kt files, plus WebFlux functional routes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+archguard-core = { path = "../archguard-core" }
+archguard-flow-common = { path = "../archguard-flow-common" }
+archguard-flow-clike = { path = "../archguard-flow-clike" }
+roxmltree = "0.21.1"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+toml = "1.1.8"

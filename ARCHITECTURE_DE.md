@@ -77,6 +77,10 @@ graph TD
     end
     subgraph L2["Schicht 2 — Orchestrierung"]
         ENG["archguard-engine"]
+        FLOWS["archguard-flow-jvm · -dotnet · -python<br/>-web · -node · -server · -rust"]
+        BCK["archguard-flow-backend"]
+        CLK["archguard-flow-clike"]
+        COM["archguard-flow-common"]
     end
     subgraph L1["Schicht 1 — Fachlogik"]
         EXT["archguard-extract"]
@@ -93,6 +97,16 @@ graph TD
     MCP --> ENG
     DESK --> ENG
     ENG --> EXT
+    ENG --> FLOWS
+    ENG --> BCK
+    ENG --> CLK
+    ENG --> COM
+    FLOWS --> COM
+    FLOWS --> CLK
+    BCK --> CLK
+    BCK --> COM
+    CLK --> COM
+    COM --> EXT
     ENG --> ANA
     ENG --> REP
     ENG --> STO
@@ -186,7 +200,11 @@ archguard/
 │   ├── archguard-analysis/       # L1: SCC, Zyklen, Metriken, Layer-Regeln, Cut-Vorschläge, Baseline
 │   ├── archguard-report/         # L1: Formatter (json, text, mermaid, dot, graphml, sarif)
 │   ├── archguard-store/          # L1: Graph-DB-Spiegel (openCypher), Query-Guard
-│   ├── archguard-engine/         # L2: Config laden, Pipeline orchestrieren, Graph-Cache
+│   ├── archguard-flow-common/    # L2: Reader-Unterbau: Extract-Kontext, Dateisuche, No-Follow-Lesen, Text-Lexer
+│   ├── archguard-flow-clike/     # L2: Java/Kotlin/C#-Kern: Quellen, Deklarationen, Lexing, Handler-Sends
+│   ├── archguard-flow-backend/   # L2: Spring- und ASP.NET-UI-Flow-Treiber, WebFlux
+│   ├── archguard-flow-{jvm,dotnet,python,web,node,server,rust}/  # L2: Framework-Reader je Sprachfamilie
+│   ├── archguard-engine/         # L2: Config laden, Pipeline orchestrieren, Graph-Cache, Reader-Registry
 │   ├── archguard-mcp/            # L3: MCP-Server (stdio), Tool-Registrierung
 │   ├── archguard-cli/            # L3: Binary `archguard`, clap-Kommandos
 │   └── archguard-desktop/        # L3: native Desktop-App (Slint)
@@ -201,6 +219,10 @@ archguard/
 | `archguard-analysis` | SCC, begrenzte Zyklen-Aufzählung, Fan-in/out, Instabilität, Layer-Check, **Layer-Ableitung (Ranking + Namensaffinität)**, Cut-Scoring, Baseline-Diff | `petgraph` |
 | `archguard-report` | Serialisierung der `Report`-Typen in alle Ausgabeformate | `serde_json` |
 | `archguard-store` | `LadybugStore`-DB-Spiegel + read-only openCypher-Queries, Query-Sanitizer | `lbug = "=0.22.1"` (LadybugDB, nur hinter Cargo-Feature `db`) |
+| `archguard-flow-common` | Extract-Kontext, Dateisuche, No-Follow-Lesen, Text-Lexer (`lang_*`) der UI-Flow- und Domain-Reader | `ignore`, `toml`, `rustix` |
+| `archguard-flow-clike` | Quellmodell, Deklarationen, Rohtext-Lexing und Handler-Sends für Java, Kotlin und C# | nur flow-common |
+| `archguard-flow-backend` | Spring- und ASP.NET-Treiber (ein Durchlauf über `.cs`/`.java`/`.kt`), WebFlux-Routen | `roxmltree` |
+| `archguard-flow-jvm`, `-dotnet`, `-python`, `-web`, `-node`, `-server`, `-rust` | Je eine Reader-Familie (ADR 0021, 0022); kein Reader-Crate hängt von einem anderen ab | `serde`, `serde_yaml_ng`, `serde_json` nach Bedarf |
 | `archguard-engine` | `analyze(path, config) -> Report`, Config-Parsing **+ Auflösung deklariert/abgeleitet/Default** (Kap. 11), Caching, DB-Sync | `toml` |
 | `archguard-mcp` | MCP-Tools, JSON-Schemas, Pagination-Guard | `rmcp` (offizielles MCP-Rust-SDK), `tokio` (nur hier), `schemars` |
 | `archguard-cli` | Argument-Parsing, Exit-Codes, Formatauswahl | `clap`, `anyhow` |
@@ -569,7 +591,7 @@ Vorschläge.
 
 ## 12. Sicherungen der eigenen Architektur
 
-1. **Cargo-Metadaten-Allowlist:** `scripts/checks/check_architecture.py` prüft die neun Workspace-Crates und sämtliche Manifest-Abhängigkeiten gegen Kap. 3.2 — auch Build-, Dev-, optionale und Target-Einträge. Aktuell sind dreizehn Kanten erlaubt und vorhanden. Cargo allein verhindert keine unerlaubte azyklische Schichtkante.
+1. **Cargo-Metadaten-Allowlist:** `scripts/checks/check_architecture.py` prüft die einundzwanzig Workspace-Crates und sämtliche Manifest-Abhängigkeiten gegen Kap. 3.2 — auch Build-, Dev-, optionale und Target-Einträge. Aktuell sind neunundvierzig Kanten erlaubt und vorhanden. Cargo allein verhindert keine unerlaubte azyklische Schichtkante.
 2. **Dependency Sink:** Gemeinsame Typen liegen in `archguard-core`. Die L1-Crates (`extract`, `analysis`, `report`, `store`) haben keine Abhängigkeiten untereinander; ein Typ, den mehrere L1-Crates brauchen, gehört nach `archguard-core`.
 3. **Quellscan in CI:** `archguard check .` läuft zusätzlich mit eigener `archguard.toml`. Er löst Importe zwischen den Workspace-Crates auf, aber nur die im gescannten Quellcode ohne Tests genutzten; die Manifest-Allowlist prüft zusätzlich deklarierte Build-, Dev-, optionale und zielspezifische Abhängigkeiten, deshalb ersetzt der Scan sie nicht.
 

@@ -1,8 +1,8 @@
 //! Finds GraphQL documents (ADR 0014): schema files and `gql`/`graphql`
 //! tagged templates in TS/JS, each with the service whose scope holds it.
 use crate::graphql::{self, Document};
-use crate::services::support::{Discovery, owners, relative, test_path};
 use archguard_core::ServiceTopology;
+use archguard_flow_common::support::{Discovery, owners, relative, test_path};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 

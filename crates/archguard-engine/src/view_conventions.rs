@@ -39,7 +39,7 @@ use archguard_core::{
     AccessState, Call, Config, Finding, Target, UiFlow, UiFlowFindingKind, ui_flow_findings,
 };
 
-use crate::extract_ctx::{ExtractContext, domain_sources};
+use archguard_flow_common::extract_ctx::{ExtractContext, domain_sources};
 use csharp::{
     RAISE_FUNCTION, blank, constructions, event_types, line, member_assignments, passed_to_raise,
     raise_arguments,

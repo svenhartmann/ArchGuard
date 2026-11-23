@@ -368,6 +368,16 @@ dependencies = [
  "archguard-analysis",
  "archguard-core",
  "archguard-extract",
+ "archguard-flow-backend",
+ "archguard-flow-clike",
+ "archguard-flow-common",
+ "archguard-flow-dotnet",
+ "archguard-flow-jvm",
+ "archguard-flow-node",
+ "archguard-flow-python",
+ "archguard-flow-rust",
+ "archguard-flow-server",
+ "archguard-flow-web",
  "archguard-report",
  "archguard-store",
  "globset",
@@ -401,6 +411,113 @@ dependencies = [
  "ignore",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "archguard-flow-backend"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-flow-clike",
+ "archguard-flow-common",
+ "roxmltree",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "archguard-flow-clike"
+version = "0.3.5"
+dependencies = [
+ "archguard-flow-common",
+]
+
+[[package]]
+name = "archguard-flow-common"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-extract",
+ "ignore",
+ "rustix 1.1.6",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "archguard-flow-dotnet"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-flow-clike",
+ "archguard-flow-common",
+ "tempfile",
+]
+
+[[package]]
+name = "archguard-flow-jvm"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-flow-clike",
+ "archguard-flow-common",
+ "serde",
+ "serde_yaml_ng",
+ "tempfile",
+]
+
+[[package]]
+name = "archguard-flow-node"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-flow-common",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "archguard-flow-python"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-flow-common",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "archguard-flow-rust"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-flow-common",
+ "serde_json",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "archguard-flow-server"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-extract",
+ "archguard-flow-common",
+ "serde_yaml_ng",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "archguard-flow-web"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-flow-common",
+ "serde_json",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

@@ -77,6 +77,10 @@ graph TD
     end
     subgraph L2["Layer 2 — Orchestration"]
         ENG["archguard-engine"]
+        FLOWS["archguard-flow-jvm · -dotnet · -python<br/>-web · -node · -server · -rust"]
+        BCK["archguard-flow-backend"]
+        CLK["archguard-flow-clike"]
+        COM["archguard-flow-common"]
     end
     subgraph L1["Layer 1 — Domain logic"]
         EXT["archguard-extract"]
@@ -98,6 +102,16 @@ graph TD
     DESK --> UPD
     DESK --> DUI
     ENG --> EXT
+    ENG --> FLOWS
+    ENG --> BCK
+    ENG --> CLK
+    ENG --> COM
+    FLOWS --> COM
+    FLOWS --> CLK
+    BCK --> CLK
+    BCK --> COM
+    CLK --> COM
+    COM --> EXT
     ENG --> ANA
     ENG --> REP
     ENG --> STO
@@ -109,7 +123,8 @@ graph TD
 ```
 
 Every edge leads from a higher to a lower layer. Layer 1 has no internal edges.
-The sixteen edges are the complete allowlist in `scripts/checks/check_architecture.py`
+The allowlist in `scripts/checks/check_architecture.py` is the complete list of edges (the diagram draws
+the seven reader crates `archguard-flow-*` that sit above `-clike` and `-common` as one node)
 (Section 12). `archguard-mcp` is a library; the `archguard` binary starts the MCP
 server through the `archguard mcp` subcommand.
 
@@ -191,7 +206,11 @@ archguard/
 │   ├── archguard-report/         # L1: Formatter (json, text, mermaid, dot, graphml, sarif)
 │   ├── archguard-store/          # L1: Graph DB mirror (openCypher), query guard
 │   ├── archguard-update/         # L1: self-update from GitHub releases (CLI and desktop)
-│   ├── archguard-engine/         # L2: load config, orchestrate pipeline, graph cache
+│   ├── archguard-flow-common/    # L2: reader substrate: extract context, discovery, no-follow reads, text lexers
+│   ├── archguard-flow-clike/     # L2: Java/Kotlin/C# kernel: sources, declarations, lexing, handler sends
+│   ├── archguard-flow-backend/   # L2: Spring and ASP.NET UI-flow driver, WebFlux
+│   ├── archguard-flow-{jvm,dotnet,python,web,node,server,rust}/  # L2: framework readers per language family
+│   ├── archguard-engine/         # L2: load config, orchestrate pipeline, graph cache, reader registry
 │   ├── archguard-mcp/            # L3: MCP server (stdio), tool registration
 │   ├── archguard-cli/            # L3: Binary `archguard`, clap commands
 │   └── archguard-desktop/        # L3: native desktop app (Slint)
@@ -207,6 +226,10 @@ archguard/
 | `archguard-report` | Serialize `Report` types into all output formats | `serde_json` |
 | `archguard-store` | `LadybugStore` DB mirror, read-only openCypher queries, query sanitizer | `lbug = "=0.22.1"` (LadybugDB, only with Cargo feature `db`) |
 | `archguard-update` | Latest-release lookup, version compare, size-limited download, `SHA256SUMS` check; CLI binary install and desktop package install (AppImage, `.app` from `.dmg`, `.msi`) | `ureq`, `sha2`, `tar`, `flate2`, `zip`, `self-replace` |
+| `archguard-flow-common` | Extract context, file discovery, no-follow reads, text lexers (`lang_*`) shared by the UI-flow and domain readers | `ignore`, `toml`, `rustix` |
+| `archguard-flow-clike` | Source model, declarations, raw-text lexing and handler sends for Java, Kotlin and C# | none beyond flow-common |
+| `archguard-flow-backend` | Spring and ASP.NET driver (one pass over `.cs`/`.java`/`.kt`), WebFlux routes | `roxmltree` |
+| `archguard-flow-jvm`, `-dotnet`, `-python`, `-web`, `-node`, `-server`, `-rust` | One reader family each (ADR 0021, 0022); no reader crate depends on another | `serde`, `serde_yaml_ng`, `serde_json` as needed |
 | `archguard-engine` | `analyze(path, config) -> Report`, config parsing **and declared/derived/default resolution** (Section 11), caching, DB sync | `toml` |
 | `archguard-mcp` | MCP tools, JSON schemas, pagination guard | `rmcp` (official MCP Rust SDK), `tokio` (only here), `schemars` |
 | `archguard-cli` | Argument parsing, exit codes, format selection | `clap`, `anyhow` |
@@ -598,7 +621,7 @@ commented-out suggestions.
 
 ## 12. Safeguards for ArchGuard's architecture
 
-1. **Cargo metadata allowlist:** `scripts/checks/check_architecture.py` checks the eleven workspace crates and every manifest dependency against Section 3.2, including build, dev, optional and target-specific entries. Sixteen edges are currently allowed and present. Cargo alone does not prevent forbidden acyclic layer edges.
+1. **Cargo metadata allowlist:** `scripts/checks/check_architecture.py` checks the twenty-one workspace crates and every manifest dependency against Section 3.2, including build, dev, optional and target-specific entries. Forty-nine edges are currently allowed and present. Cargo alone does not prevent forbidden acyclic layer edges.
 2. **Dependency sink:** shared types live in `archguard-core`. L1 crates (`extract`, `analysis`, `report`, `store`) have no dependencies on one another; a type needed by several L1 crates belongs in `archguard-core`.
 3. **CI source scan:** `archguard check .` additionally runs with ArchGuard's own `archguard.toml`. It resolves imports between the workspace crates, but only those used in scanned non-test source; the manifest allowlist also covers declared build, dev, optional and target-specific dependencies, so the scan does not replace it.
 

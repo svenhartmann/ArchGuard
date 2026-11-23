@@ -33,7 +33,7 @@ use archguard_core::{
 };
 use serde::Serialize;
 
-use crate::ui_flow_backend::simple_type;
+use archguard_flow_clike::handlers::simple_type;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Chain<'a> {

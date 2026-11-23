@@ -1,0 +1,15 @@
+[package]
+name = "archguard-flow-web"
+description = "L2: the browser-frontend readers: Angular, React, Vue and Svelte UI-flow (ADR 0021)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+archguard-core = { path = "../archguard-core" }
+archguard-flow-common = { path = "../archguard-flow-common" }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+toml = "1.1.8"

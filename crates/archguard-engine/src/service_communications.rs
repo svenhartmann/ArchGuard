@@ -1,10 +1,10 @@
 //! Bounded, non-executing reader for literal Aspire/.NET communication patterns.
 //! These are static candidates, not traces. Dynamic expressions stay unknown.
-use super::support::{diagnostic, relative};
 use archguard_core::{
     Service, ServiceDependency, ServiceDependencyKind as Kind, ServiceEvidence, ServiceProject,
     ServiceTopology,
 };
+use archguard_flow_common::support::{diagnostic, relative};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -223,7 +223,7 @@ fn collect(
             continue;
         }
         if ty.is_dir() {
-            if !super::support::excluded(&entry.file_name().to_string_lossy())
+            if !archguard_flow_common::support::excluded(&entry.file_name().to_string_lossy())
                 && !matches!(
                     entry.file_name().to_str(),
                     Some("bin" | "obj" | "node_modules")

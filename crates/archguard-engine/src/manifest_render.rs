@@ -9,8 +9,8 @@
 //! A kustomization that names a remote, missing or out-of-root location is not run,
 //! because kustomize would try to fetch it. The rendered YAML goes through the
 //! plain-manifest reader, which drops Secrets unread.
-use super::support::{diagnostic, relative};
 use archguard_core::ServiceTopology;
+use archguard_flow_common::support::{diagnostic, relative};
 use serde_yaml_ng::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

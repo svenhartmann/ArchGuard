@@ -1,0 +1,18 @@
+[package]
+name = "archguard-flow-common"
+description = "L2: shared substrate of the UI-flow and domain readers (ADR 0021, 0022): extract context, file discovery, text lexers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ignore = "0.4.33"
+toml = "1.1.8"
+archguard-core = { path = "../archguard-core" }
+archguard-extract = { path = "../archguard-extract" }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.5", features = ["fs"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

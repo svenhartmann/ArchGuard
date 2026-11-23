@@ -97,31 +97,8 @@ mod swift_sources;
 #[cfg(test)]
 mod arc42_file_tests;
 pub mod domain_chain;
-pub mod domain_csharp;
-pub mod domain_java;
 pub mod domain_model;
-pub mod domain_python;
-pub mod domain_typescript;
-pub mod extract_ctx;
-#[cfg(test)]
-mod extract_ctx_tests;
-mod lang_blank;
-mod lang_csharp;
-mod lang_java;
-mod lang_markup;
-mod lang_php;
-mod lang_pyscan;
-mod lang_python;
-mod lang_rust;
-#[cfg(test)]
-mod lang_tests;
-mod lang_text;
-mod lang_ts;
-mod lang_ts_decl;
-mod lang_ts_imports;
-mod lang_ts_http;
-#[cfg(test)]
-mod lang_ts_tests;
+pub use archguard_flow_common::extract_ctx;
 #[cfg(test)]
 mod manifest_render_tests;
 #[cfg(test)]
@@ -145,20 +122,6 @@ mod test_evidence;
 mod trace_sequences;
 mod typescript_calls;
 pub mod ui_flow;
-mod ui_flow_apps;
-pub mod ui_flow_angular;
-pub mod ui_flow_backend;
-pub mod ui_flow_blazor;
-pub mod ui_flow_django;
-pub mod ui_flow_express;
-pub mod ui_flow_fastapi;
-pub mod ui_flow_flask;
-pub mod ui_flow_laravel;
-pub mod ui_flow_nestjs;
-pub mod ui_flow_phoenix;
-pub mod ui_flow_rails;
-pub mod ui_flow_quarkus;
-pub mod ui_flow_react;
 pub mod ui_flow_replay;
 pub mod ui_flow_roles;
 pub mod ui_flow_service;
@@ -166,14 +129,6 @@ pub mod ui_flow_service;
 mod ui_flow_roles_tests;
 #[cfg(test)]
 mod ui_flow_service_tests;
-pub mod ui_flow_go;
-pub mod ui_flow_micronaut;
-pub mod ui_flow_rust;
-pub mod ui_flow_slint;
-pub mod ui_flow_svelte;
-pub mod ui_flow_vue;
-pub mod ui_flow_webflux;
-pub mod ui_flow_xaml;
 pub mod view_conventions;
 mod workspace;
 mod workspace_sources;

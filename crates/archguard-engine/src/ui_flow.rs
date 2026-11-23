@@ -2,7 +2,7 @@
 //! without an extractor.
 use std::path::Path;
 
-use crate::extract_ctx::{
+use archguard_flow_common::extract_ctx::{
     ExtractContext, config_file_in, found_root_config, gap, with_root_config,
 };
 
@@ -255,26 +255,26 @@ fn refusal(dir: &Path, allowed: &Path, root: &Path) -> Option<Refusal> {
 
 fn extract_all(ctx: &ExtractContext) -> UiFlow {
     let extractors = [
-        crate::ui_flow_blazor::extract_with,
-        crate::ui_flow_angular::extract_with,
-        crate::ui_flow_webflux::extract_with,
-        crate::ui_flow_react::extract_with,
-        crate::ui_flow_xaml::extract_with,
-        crate::ui_flow_vue::extract_with,
-        crate::ui_flow_slint::extract_with,
-        crate::ui_flow_nestjs::extract_with,
-        crate::ui_flow_express::extract_with,
-        crate::ui_flow_svelte::extract_with,
-        crate::ui_flow_django::extract_with,
-        crate::ui_flow_fastapi::extract_with,
-        crate::ui_flow_flask::extract_with,
-        crate::ui_flow_laravel::extract_with,
-        crate::ui_flow_phoenix::extract_with,
-        crate::ui_flow_rails::extract_with,
-        crate::ui_flow_rust::extract_with,
-        crate::ui_flow_go::extract_with,
-        crate::ui_flow_quarkus::extract_with,
-        crate::ui_flow_micronaut::extract_with,
+        archguard_flow_dotnet::ui_flow_blazor::extract_with,
+        archguard_flow_web::ui_flow_angular::extract_with,
+        archguard_flow_backend::ui_flow_webflux::extract_with,
+        archguard_flow_web::ui_flow_react::extract_with,
+        archguard_flow_dotnet::ui_flow_xaml::extract_with,
+        archguard_flow_web::ui_flow_vue::extract_with,
+        archguard_flow_rust::ui_flow_slint::extract_with,
+        archguard_flow_node::ui_flow_nestjs::extract_with,
+        archguard_flow_node::ui_flow_express::extract_with,
+        archguard_flow_web::ui_flow_svelte::extract_with,
+        archguard_flow_python::ui_flow_django::extract_with,
+        archguard_flow_python::ui_flow_fastapi::extract_with,
+        archguard_flow_python::ui_flow_flask::extract_with,
+        archguard_flow_server::ui_flow_laravel::extract_with,
+        archguard_flow_server::ui_flow_phoenix::extract_with,
+        archguard_flow_server::ui_flow_rails::extract_with,
+        archguard_flow_rust::ui_flow_rust::extract_with,
+        archguard_flow_server::ui_flow_go::extract_with,
+        archguard_flow_jvm::ui_flow_quarkus::extract_with,
+        archguard_flow_jvm::ui_flow_micronaut::extract_with,
         crate::ui_flow_roles::extract_with,
     ];
     let mut flow = (extractors.into_iter()).fold(UiFlow::default(), |flow, extract| {

@@ -2,11 +2,11 @@
 //! language without an extractor.
 use std::path::Path;
 
-use crate::extract_ctx::{ExtractContext, with_root_config};
 use archguard_core::ArchguardError;
 use archguard_core::domain_model::{
     DOMAIN_MODEL_DEFINITION, DOMAIN_MODEL_IMPORT_SOURCE, DomainModel, merge_domain_models,
 };
+use archguard_flow_common::extract_ctx::{ExtractContext, with_root_config};
 
 pub const DOMAIN_MODEL_FILE: &str = ".archguard/domain-model.json";
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
@@ -51,10 +51,10 @@ pub fn analyze(root: &Path) -> Result<DomainModel, ArchguardError> {
 pub fn analyze_with(ctx: &ExtractContext) -> Result<DomainModel, ArchguardError> {
     let import = read_domain_model(ctx.root)?.unwrap_or_default();
     let extractors = [
-        crate::domain_csharp::extract_with,
-        crate::domain_java::extract_with,
-        crate::domain_typescript::extract_with,
-        crate::domain_python::extract_with,
+        archguard_flow_dotnet::domain_csharp::extract_with,
+        archguard_flow_jvm::domain_java::extract_with,
+        archguard_flow_node::domain_typescript::extract_with,
+        archguard_flow_python::domain_python::extract_with,
     ];
     let model = (extractors.into_iter())
         .map(|extract| extract(ctx))

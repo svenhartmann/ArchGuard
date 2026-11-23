@@ -547,7 +547,7 @@ fn go_packages(root: &Path, project: &str) -> BTreeMap<String, Package> {
             if budget > 8_000_000 {
                 break;
             }
-            let file = super::support::relative(root, e.path());
+            let file = archguard_flow_common::support::relative(root, e.path());
             let directory = Path::new(&file)
                 .parent()
                 .unwrap_or(Path::new(""))

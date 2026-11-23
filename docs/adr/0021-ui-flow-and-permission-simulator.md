@@ -582,3 +582,8 @@ history `2875e9fe..cff184dd`):
   conditional or indirect call, or differing implementations give `PathOnly`;
   self-invocation, `private`/`final` methods and similar give `Hint`. Service
   layers can only add `Protected` conditions, never open an endpoint.
+
+### 2026-11-23: crate locations
+
+The readers moved out of `archguard-engine` into `archguard-flow-*` crates (pure move, no behaviour
+change): shared substrate `archguard-flow-common`, Java/Kotlin/C# kernel `archguard-flow-clike`, Spring/ASP.NET driver `archguard-flow-backend`, then `-jvm`, `-dotnet`, `-python`, `-web`, `-node`, `-server`, `-rust` per language family. Module names are unchanged; the engine keeps the registry (`ui_flow`, `domain_model`).

@@ -1,11 +1,11 @@
 //! Literal Spring configuration and client evidence. No application/profile is executed.
 use super::service_communications::{Token, arguments, is, lex, scopes};
 use super::service_datastores::{SPRING as DATASOURCE, SpringDatasource};
-use super::support::{diagnostic, relative};
 use archguard_core::{
     Service, ServiceDependency, ServiceDependencyKind as Kind, ServiceEvidence, ServiceProject,
     ServiceTopology,
 };
+use archguard_flow_common::support::{diagnostic, relative};
 use serde::Deserialize;
 use serde_yaml_ng::Value;
 use std::{
