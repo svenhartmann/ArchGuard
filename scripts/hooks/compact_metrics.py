@@ -129,20 +129,35 @@ def follow_renames(table, renames):
     return {rekey(k): v for k, v in table.items()}
 
 
-def follow_moves(before, after, name_of):
-    """Rename HEAD keys that vanished to the one new key with the same name."""
-    gone = [k for k in before if k not in after]
-    new = [k for k in after if k not in before]
-    by_name = {}
-    for key in gone + new:
-        by_name.setdefault(name_of(key), []).append(key)
+def follow_moves(before, after, name_of, smaller_only):
+    """Rename HEAD keys that vanished to the one new key with the same name.
+
+    Two passes: the same `Class#name` in another file, then a bare name that
+    is unique on both sides. The bare match only counts for `smaller_only`
+    tables and when no metric grew, so an unrelated new method of that name
+    does not inherit the old one's grandfathered values.
+    """
     moved = {}
-    for name, keys in by_name.items():
-        old = [k for k in keys if k in before and k not in after]
-        added = [k for k in keys if k in after and k not in before]
-        if name and len(old) == 1 and len(added) == 1:
+    for name_for, strict in ((class_method, False), (name_of, smaller_only)):
+        gone = [k for k in before if k not in after and k not in moved]
+        new = [k for k in after if k not in before and k not in moved.values()]
+        groups = {}
+        for key in gone:
+            groups.setdefault(name_for(key), ([], []))[0].append(key)
+        for key in new:
+            groups.setdefault(name_for(key), ([], []))[1].append(key)
+        for name, (old, added) in groups.items():
+            if not name or len(old) != 1 or len(added) != 1:
+                continue
+            if strict and any(after[added[0]][0].get(m, 0) > v for m, v in before[old[0]][0].items() if v is not None):
+                continue
             moved[old[0]] = added[0]
     return {moved.get(k, k): v for k, v in before.items()}
+
+
+def class_method(key):
+    """`lang:path::Class#name` -> `Class#name` (empty for non-methods)."""
+    return key.partition("::")[2] if "#" in key else ""
 
 
 def method_name(key):
@@ -176,7 +191,7 @@ def main():
     after = measure(calls(binary, staged_tree))
     renames = staged_renames()
     before = tuple(follow_renames(t, renames) for t in before)
-    before = (follow_moves(before[0], after[0], method_name), follow_moves(before[1], after[1], class_name))
+    before = (follow_moves(before[0], after[0], method_name, True), follow_moves(before[1], after[1], class_name, False))
     found = violations("method", METHOD_CEILINGS, before[0], after[0])
     found += violations("class", CLASS_CEILINGS, before[1], after[1])
     if found:

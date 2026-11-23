@@ -131,6 +131,14 @@ class PreCommitTests(unittest.TestCase):
         self.stage("b.rs", ACYCLIC["b.rs"] + long_fn("legacy", 81))
         self.assert_blocked(self.run_hook(), "legacy", "80 -> 81")
 
+    def test_unrelated_new_method_with_a_deleted_name_is_new(self):
+        self.stage("a.rs", "pub struct A;\n" + long_fn("legacy", 80))
+        self.commit()
+        method = long_fn("legacy", 90).replace("fn legacy()", "fn legacy(&self)")
+        self.stage("a.rs", "pub struct A;\n")
+        self.stage("b.rs", ACYCLIC["b.rs"] + "impl B {\n" + method + "}\n")
+        self.assert_blocked(self.run_hook(), "legacy", "(new)")
+
     def write_arc42(self, name="arc42.md"):
         subprocess.run([str(BINARY), "doc", str(self.repo), "--arc42", f"--out={name}"], check=True, capture_output=True)
         git(self.repo, "add", ".")
