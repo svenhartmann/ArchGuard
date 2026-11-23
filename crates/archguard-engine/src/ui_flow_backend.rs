@@ -133,6 +133,7 @@ pub(crate) fn extract_with(ctx: &ExtractContext, hook: Option<RouteHook>) -> UiF
             pages.get(dir).map_or(&[], Vec::as_slice),
             sources,
             &index,
+            application.as_deref(),
             &mut out,
         );
         spring::central_rules(sources, &index, &conf, &mut out, first);
@@ -1864,6 +1865,77 @@ mod controllers {
         combine(parts, Condition::All).unwrap_or_else(|| out.2.default_condition())
     }
 
+    /// The modifiers of a minimal-API delegate argument: the attributes of a
+    /// lambda, or those of the method a method group (`Handler`,
+    /// `Handlers.Get`) names when exactly one such method is in the sources;
+    /// else `Unknown` with a gap (an overload, an instance or a local variable
+    /// is not guessed).
+    pub(super) fn delegate_mods(
+        (src, sources, index): (&Source, &[Source], &Index),
+        out: &mut Out,
+        at: usize,
+        arg: &str,
+    ) -> Vec<minimal::Mod> {
+        let arg = arg.trim();
+        // A lambda, or a piece of one cut at a generic comma (`async Task<A, B> (…)`).
+        let lambda = arg.contains("=>")
+            || arg.starts_with('[')
+            || arg.starts_with("async ")
+            || arg.starts_with("static ")
+            || arg.matches('<').count() > arg.matches('>').count()
+            || arg.matches('(').count() > arg.matches(')').count();
+        if lambda {
+            return lambda_mods(index, src, out, arg);
+        }
+        let path = arg
+            .split('.')
+            .all(|p| !p.is_empty() && p.bytes().all(lex::is_ident));
+        let (class, name) = match arg.rsplit_once('.') {
+            Some((c, n)) => (c.rsplit('.').next().map(str::to_string), n),
+            // An unqualified name binds in the class around the call.
+            None => (handlers::enclosing_class(src, at), arg),
+        };
+        let mut found = if path {
+            group_methods(sources, class.as_deref(), name)
+        } else {
+            vec![]
+        };
+        match found.pop() {
+            Some((s, Some(attrs))) if found.is_empty() => attr_mods(index, s, out, attrs),
+            _ => {
+                let text =
+                    format!("method group {arg} is not a single readable method of the sources");
+                vec![minimal::Mod::Auth(out.unknown(src, at, &text))]
+            }
+        }
+    }
+
+    /// The methods named `name` declared in the class `class` (none: outside
+    /// any class) with their attributes; `None` when attributes may have been
+    /// lost (a `[` before the method in its statement that no declaration carries).
+    fn group_methods<'a>(
+        sources: &'a [Source],
+        class: Option<&str>,
+        name: &str,
+    ) -> Vec<(&'a Source, Option<Vec<Attr>>)> {
+        let mut found = Vec::new();
+        for s in sources.iter().filter(|s| s.rel.ends_with(".cs")) {
+            let declared = decls(s, false);
+            for open in handlers::definitions(s, name) {
+                if handlers::enclosing_class(s, open).as_deref() != class {
+                    continue;
+                }
+                let attrs = (declared.iter().find(|d| !d.class && d.open == open))
+                    .map(|d| d.attrs.clone())
+                    .unwrap_or_default();
+                let start = s.text[..open].rfind([';', '{', '}']).map_or(0, |i| i + 1);
+                let lost = attrs.is_empty() && s.text[start..open].contains('[');
+                found.push((s, (!lost).then_some(attrs)));
+            }
+        }
+        found
+    }
+
     /// `[Authorize]` / `[AllowAnonymous]` before a lambda handler read like
     /// `.RequireAuthorization()` / `.AllowAnonymous()` (dotnet.md C-04).
     pub(super) fn lambda_mods(
@@ -1873,9 +1945,22 @@ mod controllers {
         delegate: &str,
     ) -> Vec<minimal::Mod> {
         let base = delegate.as_ptr() as usize - src.text.as_ptr() as usize;
-        let mut mods = Vec::new();
-        for mut a in directive_attrs(delegate) {
+        let attrs = directive_attrs(delegate).into_iter().map(|mut a| {
             a.at += base;
+            a
+        });
+        attr_mods(index, src, out, attrs.collect())
+    }
+
+    /// The modifiers the attributes `attrs` (read in `src`) stand for.
+    pub(super) fn attr_mods(
+        index: &Index,
+        src: &Source,
+        out: &mut Out,
+        attrs: Vec<Attr>,
+    ) -> Vec<minimal::Mod> {
+        let mut mods = Vec::new();
+        for a in attrs {
             if a.name == "AllowAnonymous" || index.is_open(&a) {
                 mods.push(minimal::Mod::Anonymous);
             } else if a.name == "Authorize" {
@@ -2137,9 +2222,8 @@ mod minimal {
             None => None,
         };
         let mut mods = chain.mods;
-        mods.extend(
-            delegate.map_or_else(Vec::new, |d| controllers::lambda_mods(index, src, out, d)),
-        );
+        let at = (src, sources, index);
+        mods.extend(delegate.map_or_else(Vec::new, |d| controllers::delegate_mods(at, out, p, d)));
         mods.extend(trailing(src, out, close, usize::MAX));
         if let Some(m) = returning_method(src, p, &chain.vars) {
             let found = cache
@@ -5898,7 +5982,13 @@ mod razor {
         raw: String,
     }
 
-    pub(super) fn scan(pages: &[Source], sources: &[Source], index: &Index, out: &mut Out) {
+    pub(super) fn scan(
+        pages: &[Source],
+        sources: &[Source],
+        index: &Index,
+        application: Option<&str>,
+        out: &mut Out,
+    ) {
         if pages.is_empty() {
             return;
         }
@@ -5911,10 +6001,20 @@ mod razor {
         let conventions = conventions(&cs, index);
         let pages_mods = out.2.pages.clone();
         let saved = std::mem::replace(&mut out.2.convention, pages_mods);
-        for page in pages {
-            one(page, pages, index, &conventions, out);
-        }
+        let found: Vec<Page> = (pages.iter())
+            .filter_map(|page| one(page, pages, index, &conventions, out))
+            .collect();
         out.2.convention = saved;
+        screens::emit(pages, &found, application, out);
+    }
+
+    /// A page with `@page`: where it is, its route and the access of its endpoints.
+    pub(super) struct Page<'a> {
+        pub(super) src: &'a Source,
+        pub(super) at: usize,
+        pub(super) route: String,
+        pub(super) place: (Option<String>, String),
+        pub(super) state: AccessState,
     }
 
     fn moved_root(src: &Source) -> bool {
@@ -6051,7 +6151,10 @@ mod razor {
             if let Some(imp) = pages.iter().find(|p| p.rel == name) {
                 let (imp, _) = directives(imp);
                 if !imp.attrs.is_empty() {
-                    // Whether Razor applies it is not confirmed by the docs.
+                    // The docs list the directives `_ViewImports` supports (`@addTagHelper`,
+                    // `@removeTagHelper`, `@tagHelperPrefix`, `@using`, `@model`, `@inherits`,
+                    // `@inject`, `@namespace`); `@attribute` is not among them, so it is a gap:
+                    // https://learn.microsoft.com/en-us/aspnet/core/mvc/views/layout#importing-shared-directives
                     let message = format!("@attribute in _ViewImports not read: {name}");
                     out.at(page, d.at, message);
                 }
@@ -6171,15 +6274,15 @@ mod razor {
             .collect()
     }
 
-    fn one(
-        page: &Source,
+    fn one<'a>(
+        page: &'a Source,
         pages: &[Source],
         index: &Index,
         conventions: &[Convention],
         out: &mut Out,
-    ) {
+    ) -> Option<Page<'a>> {
         let (Some(d), Some(place)) = (page_directives(page, pages, out), locate(&page.rel)) else {
-            return;
+            return None;
         };
         let route = route(page, &place, &d, out);
         let (mut levels, verbs) = model_levels(page, index, &d, out);
@@ -6189,6 +6292,13 @@ mod razor {
         for verb in verbs {
             out.endpoint(page, d.at, &verb, route.clone(), &state);
         }
+        Some(Page {
+            src: page,
+            at: d.at,
+            route,
+            place,
+            state,
+        })
     }
 
     /// `OnGet`, `OnPostAsync`, `OnPostDelete`…: the verb of a page handler;
@@ -6216,6 +6326,395 @@ mod razor {
             );
             out.at(src, a.at, message);
         }
+    }
+}
+
+/// The screens of Razor Pages (one per page with `@page`, with the access of its
+/// endpoint) and the links and forms between them that are literal:
+/// `<a asp-page="/Contact">`, `<a href="/Contact">`, `<form method="post"
+/// asp-page="/Contact">`, `<form method="post" action="/x">`. Anything else
+/// (`@…` in the value, MVC `asp-controller`/`asp-action`, a relative page name,
+/// a page that is not in the project, a `<partial>` or layout that holds
+/// links) is a gap; a link under an `@if` or other code block is shown with an
+/// unreadable condition, never as unconditional.
+mod screens {
+    use super::razor::Page;
+    use super::*;
+    use archguard_core::{Action, Call, Origin, Screen, ScreenKind, Target, Transition};
+
+    const SOURCE: &str = "aspnet";
+
+    struct Tag {
+        at: usize,
+        form: bool,
+        attrs: Vec<(String, Option<String>)>,
+        /// Plain text up to `</a>`.
+        label: Option<String>,
+    }
+
+    impl Tag {
+        fn get(&self, name: &str) -> Option<&str> {
+            (self.attrs.iter())
+                .find(|(n, _)| n == name)
+                .and_then(|(_, v)| v.as_deref())
+        }
+        fn has(&self, name: &str) -> bool {
+            self.attrs.iter().any(|(n, _)| n == name)
+        }
+        /// The literal value; `Err` for `@…` or a missing value.
+        fn literal(&self, name: &str) -> Result<Option<&str>, String> {
+            match self.get(name) {
+                Some(v) if v.contains('@') => Err(format!("{name}=\"{v}\" is not literal")),
+                None if self.has(name) => Err(format!("{name} without a literal value")),
+                v => Ok(v),
+            }
+        }
+    }
+
+    pub(super) fn emit(pages: &[Source], found: &[Page], application: Option<&str>, out: &mut Out) {
+        let app = application.unwrap_or("");
+        let id = |route: &str| format!("{app}:{route}");
+        for p in found {
+            let name = p.place.1.trim_start_matches('/');
+            let name = match &p.place.0 {
+                Some(area) => format!("{area}/{name}"),
+                None => name.to_string(),
+            };
+            out.0.screens.push(Screen {
+                weak: false,
+                id: id(&p.route),
+                name,
+                kind: ScreenKind::Page,
+                route: Some(p.route.clone()),
+                application: application.map(str::to_string),
+                file: p.src.rel.clone(),
+                line: p.src.line(p.at),
+                access: p.state.clone(),
+                source: SOURCE.into(),
+            });
+        }
+        for p in found {
+            links(p, found, &id, out);
+        }
+        let others = pages
+            .iter()
+            .filter(|s| !found.iter().any(|p| p.src.rel == s.rel));
+        for other in others {
+            let name = other.rel.rsplit('/').next().unwrap_or("");
+            if name.starts_with("_ViewImports") || name.starts_with("_ViewStart") {
+                continue;
+            }
+            let text = crate::lang_markup::blank(&other.text, "@*", "*@");
+            if tags(&text)
+                .iter()
+                .any(|t| t.has("href") || t.has("asp-page") || t.has("action"))
+            {
+                let message = "Links of a layout or partial (a template without @page) are not attributed to screens";
+                out.at(other, 0, message.into());
+            }
+        }
+    }
+
+    fn links(p: &Page, all: &[Page], id: &dyn Fn(&str) -> String, out: &mut Out) {
+        let text = crate::lang_markup::blank(&p.src.text, "@*", "*@");
+        let conditions = conditions(&text);
+        let lower = text.to_ascii_lowercase();
+        let partials = [
+            "<partial",
+            "html.partial",
+            "renderpartial",
+            "<vc:",
+            "component.invoke",
+            "<component",
+        ];
+        if partials.iter().any(|k| lower.contains(k)) {
+            let message =
+                "Partials and components of this page are not followed; their links are unknown";
+            out.at(p.src, 0, message.into());
+        }
+        let from = Origin::Screen(id(&p.route));
+        for tag in tags(&text) {
+            let line = p.src.line(tag.at);
+            let header = (conditions
+                .iter()
+                .find(|(lo, hi, _)| (*lo..*hi).contains(&tag.at)))
+            .map(|(_, _, header)| header.clone());
+            let access = match &header {
+                Some(h) => {
+                    let message = format!(
+                        "Link under the Razor block `{h}` is shown with an unreadable condition"
+                    );
+                    out.at(p.src, tag.at, message);
+                    AccessState::Protected(Condition::Unknown(h.clone()))
+                }
+                None => AccessState::Undeclared,
+            };
+            match target(&tag, p, all) {
+                Err(why) => {
+                    let kind = if tag.form { "<form>" } else { "<a>" };
+                    out.at(
+                        p.src,
+                        tag.at,
+                        format!("Navigation target of {kind} is not read: {why}"),
+                    );
+                }
+                Ok(None) => {}
+                Ok(Some(Dest::Screen(route))) => out.0.transitions.push(Transition {
+                    from: from.clone(),
+                    target: Target::Screen(id(&route)),
+                    trigger: tag.label.clone(),
+                    file: p.src.rel.clone(),
+                    line,
+                    condition: access,
+                    weak: false,
+                    source: SOURCE.into(),
+                }),
+                Ok(Some(Dest::Post(path))) => out.0.actions.push(Action {
+                    screen: from.clone(),
+                    trigger: tag.label.clone(),
+                    call: Call::Http {
+                        method: "POST".into(),
+                        path,
+                    },
+                    file: p.src.rel.clone(),
+                    line,
+                    condition: access,
+                    weak: false,
+                    source: SOURCE.into(),
+                }),
+            }
+        }
+    }
+
+    enum Dest {
+        Screen(String),
+        Post(String),
+    }
+
+    /// Where the tag leads: nothing, a page or a POST; `Err` with the reason
+    /// when it cannot be read.
+    fn target(tag: &Tag, from: &Page, all: &[Page]) -> Result<Option<Dest>, String> {
+        let post = tag.form
+            && tag
+                .literal("method")?
+                .is_some_and(|m| m.eq_ignore_ascii_case("post"));
+        for name in ["asp-controller", "asp-action", "asp-route"] {
+            if tag.has(name) {
+                return Err(format!("{name} is not a Razor Pages target"));
+            }
+        }
+        let (page, area) = (tag.literal("asp-page")?, tag.literal("asp-area")?);
+        let url = tag.literal(if tag.form { "action" } else { "href" })?;
+        match (page, url) {
+            (Some(name), _) => page_target(name, area, post, from, all).map(Some),
+            (None, Some(url)) => url_target(url, post, all),
+            (None, None) if post => Ok(Some(Dest::Post(from.route.clone()))),
+            (None, None) => Ok(None),
+        }
+    }
+
+    /// `asp-page="/Name"` (with `asp-area`): an absolute page of the project.
+    fn page_target(
+        name: &str,
+        area: Option<&str>,
+        post: bool,
+        from: &Page,
+        all: &[Page],
+    ) -> Result<Dest, String> {
+        let area = match area {
+            Some("") => None,
+            Some(a) => Some(a.to_lowercase()),
+            None if from.place.0.is_some() => {
+                return Err("its area is the ambient area of the page".into());
+            }
+            None => None,
+        };
+        let hit = all.iter().find(|q| {
+            name.starts_with('/')
+                && q.place.0.as_ref().map(|a| a.to_lowercase()) == area
+                && q.place.1.to_lowercase() == name.to_lowercase()
+        });
+        match hit {
+            Some(q) if post => Ok(Dest::Post(q.route.clone())),
+            Some(q) => Ok(Dest::Screen(q.route.clone())),
+            None => Err(format!(
+                "asp-page=\"{name}\" is not an absolute page of this project"
+            )),
+        }
+    }
+
+    /// `href="/x"` / `action="/x"`: a POST to it, or the page with that route;
+    /// external, anchor and relative URLs are no page links.
+    fn url_target(url: &str, post: bool, all: &[Page]) -> Result<Option<Dest>, String> {
+        let url = url.trim_start_matches('~');
+        if !url.starts_with('/') {
+            return Ok(None);
+        }
+        let clean = url.split(['?', '#']).next().unwrap_or("");
+        if post {
+            return Ok(Some(Dest::Post(clean.to_string())));
+        }
+        let want = clean.trim_end_matches('/').to_lowercase();
+        let hit = all
+            .iter()
+            .find(|q| q.route.trim_end_matches('/').to_lowercase() == want);
+        // Not a literal route of a page: a parameter route, a library page or a file.
+        let miss = || format!("href=\"{clean}\" matches no page route literally");
+        hit.map(|q| Some(Dest::Screen(q.route.clone())))
+            .ok_or_else(miss)
+    }
+
+    /// The end of the `{…}` block that opens at `open` (the text's end when unbalanced).
+    fn block_end(text: &str, open: usize) -> usize {
+        let mut depth = 0i32;
+        for (i, c) in text.bytes().enumerate().skip(open) {
+            depth += i32::from(c == b'{') - i32::from(c == b'}');
+            if depth == 0 {
+                return i;
+            }
+        }
+        text.len()
+    }
+
+    /// `@if (…) {…}`, `@else {…}` and other code blocks: (start, end, header).
+    fn conditions(text: &str) -> Vec<(usize, usize, String)> {
+        let mut found = blocks(text);
+        // Braces in markup or strings cannot be told from code braces: the block
+        // ends are not trusted, every link from the first block on is conditional.
+        if let Some(first) = found
+            .iter()
+            .map(|b| b.0)
+            .min()
+            .filter(|_| unsure_braces(text))
+        {
+            found.push((first, text.len(), "braces in markup or strings".to_string()));
+        }
+        found
+    }
+
+    /// Whether a brace may sit in markup or a string: a line with a brace and a
+    /// tag, a brace inside quotes, or unequal numbers of `{` and `}`.
+    fn unsure_braces(text: &str) -> bool {
+        let braces = |l: &str| l.contains(['{', '}']);
+        let (open, close) = (text.matches('{').count(), text.matches('}').count());
+        open != close
+            || text.lines().any(|l| {
+                let quoted = l.split('"').skip(1).step_by(2).any(braces);
+                braces(l) && (l.contains('<') && l.contains('>') || quoted)
+            })
+    }
+
+    fn blocks(text: &str) -> Vec<(usize, usize, String)> {
+        let mut found = Vec::new();
+        let keys = [
+            "@if",
+            "@switch",
+            "@for",
+            "@while",
+            "@do",
+            "@lock",
+            "@try",
+            "@using (",
+            "@using(",
+            "@{",
+            "@functions",
+            "@code",
+            "else",
+        ];
+        for key in keys {
+            for (at, _) in text.match_indices(key) {
+                let after_block = text[..at].trim_end().ends_with('}');
+                let open = text[at..].find('{').map(|o| o + at);
+                if let Some(open) = open.filter(|_| key != "else" || after_block) {
+                    found.push((
+                        open,
+                        block_end(text, open),
+                        text[at..open].trim().to_string(),
+                    ));
+                }
+            }
+        }
+        found
+    }
+
+    /// The attributes of the tag whose name ends at `i`, and the position of its `>`.
+    fn read_attrs(text: &str, mut i: usize) -> (Vec<(String, Option<String>)>, usize) {
+        let b = text.as_bytes();
+        let mut attrs = Vec::new();
+        while i < b.len() && b[i] != b'>' {
+            if b[i].is_ascii_whitespace() || b[i] == b'/' {
+                i += 1;
+                continue;
+            }
+            let s = i;
+            while i < b.len() && !b[i].is_ascii_whitespace() && !matches!(b[i], b'=' | b'>') {
+                i += 1;
+            }
+            let name = text[s..i].to_ascii_lowercase();
+            let value = (b.get(i) == Some(&b'=')).then(|| {
+                let (value, next) = read_value(text, i + 1);
+                i = next;
+                value
+            });
+            attrs.push((name, value));
+        }
+        (attrs, i)
+    }
+
+    /// A quoted or bare attribute value from `i`, and the position after it.
+    fn read_value(text: &str, i: usize) -> (String, usize) {
+        let b = text.as_bytes();
+        match b.get(i) {
+            Some(&q) if q == b'"' || q == b'\'' => {
+                let end = text[i + 1..].find(q as char).map_or(b.len(), |e| i + 1 + e);
+                (text[i + 1..end].to_string(), end + 1)
+            }
+            _ => {
+                let end = (i..b.len())
+                    .find(|&k| b[k].is_ascii_whitespace() || b[k] == b'>')
+                    .unwrap_or(b.len());
+                (text[i.min(end)..end].to_string(), end)
+            }
+        }
+    }
+
+    /// The `<a …>` and `<form …>` tags of a template.
+    fn tags(text: &str) -> Vec<Tag> {
+        let mut found = Vec::new();
+        for (at, _) in text.match_indices('<') {
+            let rest = &text[at + 1..];
+            let (form, len) = if rest
+                .get(..4)
+                .is_some_and(|s| s.eq_ignore_ascii_case("form"))
+            {
+                (true, 4)
+            } else if rest.starts_with(['a', 'A']) {
+                (false, 1)
+            } else {
+                continue;
+            };
+            if !text
+                .as_bytes()
+                .get(at + 1 + len)
+                .is_some_and(u8::is_ascii_whitespace)
+            {
+                continue;
+            }
+            let (attrs, end) = read_attrs(text, at + 1 + len);
+            let label = (!form)
+                .then(|| text[end.min(text.len())..].split_once("</a>"))
+                .flatten()
+                .map(|(l, _)| l.trim())
+                .filter(|l| !l.is_empty() && !l.contains(['<', '@']))
+                .map(str::to_string);
+            found.push(Tag {
+                at,
+                form,
+                attrs,
+                label,
+            });
+        }
+        found
     }
 }
 
@@ -6302,8 +6801,16 @@ mod handlers {
 
     /// The parameter list of a method named `name` declared in `src`.
     fn definition(src: &Source, name: &str) -> Option<usize> {
+        definitions(src, name).next()
+    }
+
+    /// The parameter lists of all methods named `name` declared in `src`.
+    pub(super) fn definitions<'a>(
+        src: &'a Source,
+        name: &'a str,
+    ) -> impl Iterator<Item = usize> + 'a {
         let b = src.bytes();
-        words(&src.text, name).find_map(|p| {
+        words(&src.text, name).filter_map(move |p| {
             let prev = skip_ws_back(b, p);
             let typed =
                 prev > 0 && (is_ident(b[prev - 1]) || matches!(b[prev - 1], b'>' | b']' | b'?'));
@@ -6972,6 +7479,9 @@ public static class OrdersApi
         api.MapGet("{orderId:int}", GetOrderAsync);
         return api;
     }
+
+    public static IResult CreateOrderAsync() => null;
+    public static IResult GetOrderAsync(int orderId) => null;
 
     public static IEndpointRouteBuilder MapPublic(this IEndpointRouteBuilder app)
     {
@@ -10208,6 +10718,212 @@ builder.Services.AddRazorPages(o => { o.Conventions.AuthorizeFolder(Folders.Priv
         assert_eq!(access(&flow, "GET", "/P"), &AccessState::Undeclared);
         assert!(
             gaps(&flow, "@attribute in _ViewImports") >= 1,
+            "{:#?}",
+            flow.diagnostics
+        );
+    }
+
+    // W6c: Razor Pages are screens too, with the access of their endpoint; links
+    // and forms only where the target is literal.
+    #[test]
+    fn w6c_razor_pages_emit_screens_links_and_forms() {
+        let index = "@page\n<a asp-page=\"/Contact\">c</a>\n<a href=\"/Anon\">a</a>\n<a href=\"@Url.Foo()\">x</a>\n<form method=\"post\" asp-page=\"/Contact\"></form>\n";
+        let mut files = vec![
+            ("Program.cs", PAGE_CONVENTIONS),
+            ("Pages/Index.cshtml", index),
+        ];
+        files.extend(
+            PAGES
+                .iter()
+                .filter(|(p, _)| *p != "Pages/Index.cshtml")
+                .copied(),
+        );
+        let flow = web(&tfm("net10.0"), &files);
+        let screen = |route: &str| {
+            (flow.screens.iter())
+                .find(|s| s.route.as_deref() == Some(route))
+                .unwrap_or_else(|| panic!("no screen {route}: {:#?}", flow.screens))
+        };
+        assert_eq!(
+            screen("/Contact").access,
+            protected(Condition::Authenticated)
+        );
+        assert_eq!(screen("/Anon").access, AccessState::Open);
+        assert_eq!(screen("/").id, "Web:/");
+        let to = |t: &str| archguard_core::Target::Screen(t.into());
+        let targets: Vec<_> = flow.transitions.iter().map(|t| t.target.clone()).collect();
+        assert!(targets.contains(&to("Web:/Contact")), "{targets:?}");
+        assert!(targets.contains(&to("Web:/Anon")), "{targets:?}");
+        assert!(
+            flow.actions.iter().any(|a| matches!(&a.call,
+            archguard_core::Call::Http { method, path } if method == "POST" && path == "/Contact"))
+        );
+        assert!(gaps(&flow, "@Url.Foo()") >= 1, "{:#?}", flow.diagnostics);
+        assert!(!flow.screens.iter().any(|s| s.name.contains("NotAPage")));
+    }
+
+    // W6c review: a method the scan cannot take apart (attribute lost to a line
+    // break, tuple return) and delegates that are no plain name are Unknown, never
+    // attribute-free; a same-class overload is ambiguous.
+    #[test]
+    fn w6c_review_unreadable_method_groups_are_unknown() {
+        let program = r#"
+app.MapGet("/nl", Api.GetAsync);
+app.MapGet("/tuple", Api.Pair);
+app.MapGet("/gen", Api.Plain<int>);
+app.MapGet("/cast", (Func<IResult>)Api.Plain2);
+app.MapGet("/fac", Api.Make());
+"#;
+        let api = r#"
+public static class Api
+{
+    [Authorize] public static async Task<Results<Ok, NotFound>>
+        GetAsync(int id) => null;
+    [Authorize] public static (int, string)
+        Pair() => (1, "a");
+    public static IResult Plain<T>() => null;
+    public static IResult Plain2() => null;
+    public static Delegate Make() => null;
+}
+public static class Ov
+{
+    public static void Map(IEndpointRouteBuilder app) { app.MapGet("/ov", Pick); }
+    static IResult Pick() => null;
+    [Authorize] static IResult Pick(int x) => null;
+}
+"#;
+        let flow = web(&tfm("net10.0"), &[("Program.cs", program), ("Api.cs", api)]);
+        // `/nl` and `/tuple` have `[Authorize]`: never Undeclared or Open, whether the
+        // declaration scan reads the attribute (Protected) or not (Unknown).
+        for path in ["/nl", "/tuple"] {
+            let state = access(&flow, "GET", path);
+            assert!(
+                matches!(state, AccessState::Protected(_)),
+                "{path}: {state:?}"
+            );
+        }
+        for path in ["/gen", "/cast", "/fac", "/ov"] {
+            let state = access(&flow, "GET", path);
+            assert!(
+                matches!(state, AccessState::Protected(Condition::Unknown(_))),
+                "{path}: {state:?}"
+            );
+        }
+    }
+
+    // W6c review: braces in markup or strings cannot be ruled out, other code
+    // blocks count, and a local href without a page is a gap.
+    #[test]
+    fn w6c_review_razor_blocks_braces_and_hrefs() {
+        let p = "@page\n@if (a) {\n<p>}</p>\n}\n<a asp-page=\"/Q\">q</a>\n";
+        let r = "@page\n@do {\n<a asp-page=\"/Q\">q</a>\n} while (b);\n";
+        let o = "@page \"{id}\"\n<a href=\"/Orders/5\">five</a>\n";
+        let flow = web(
+            &tfm("net10.0"),
+            &[
+                ("Program.cs", "var x = 1;"),
+                ("Pages/P.cshtml", p),
+                ("Pages/R.cshtml", r),
+                ("Pages/Q.cshtml", "@page\n"),
+                ("Pages/Orders.cshtml", o),
+            ],
+        );
+        for file in ["Pages/P.cshtml", "Pages/R.cshtml"] {
+            let t = flow
+                .transitions
+                .iter()
+                .find(|t| t.file == format!("Web/{file}"));
+            let t = t.unwrap_or_else(|| panic!("{file}: {:#?}", flow.transitions));
+            assert!(
+                matches!(&t.condition, AccessState::Protected(Condition::Unknown(_))),
+                "{file}: {:?}",
+                t.condition
+            );
+        }
+        assert!(gaps(&flow, "/Orders/5") >= 1, "{:#?}", flow.diagnostics);
+    }
+
+    // W6c: a link under a Razor condition is never unconditional; layout links are a gap.
+    #[test]
+    fn w6c_razor_links_under_conditions_and_in_layouts_are_gaps() {
+        let p = "@page\n@if (User.IsInRole(\"a\")) {\n<a asp-page=\"/Q\">q</a>\n}\n";
+        let flow = web(
+            &tfm("net10.0"),
+            &[
+                ("Program.cs", "var x = 1;"),
+                ("Pages/P.cshtml", p),
+                ("Pages/Q.cshtml", "@page\n"),
+                ("Pages/Shared/_Layout.cshtml", "<a href=\"/Q\">q</a>"),
+            ],
+        );
+        let t = &flow.transitions;
+        assert_eq!(t.len(), 1, "{t:#?}");
+        assert!(
+            matches!(&t[0].condition, AccessState::Protected(Condition::Unknown(h)) if h.contains("@if")),
+            "{:?}",
+            t[0].condition
+        );
+        assert!(gaps(&flow, "Razor block") >= 1, "{:#?}", flow.diagnostics);
+        assert!(
+            gaps(&flow, "layout or partial") >= 1,
+            "{:#?}",
+            flow.diagnostics
+        );
+    }
+
+    // W6c: a method group is resolved in the scanned sources and its attributes apply.
+    #[test]
+    fn w6c_minimal_method_groups_apply_their_attributes() {
+        let program = r#"
+app.MapGet("/sec", Handlers.Secure);
+app.MapGet("/anon", Handlers.Anon);
+app.MapGet("/plain", Handlers.Plain);
+app.MapGet("/gone", Handlers.Missing);
+app.MapGet("/twice", Twice);
+app.MapGet("/typed", async Task<Results<Ok<int>, NotFound>> () => 1);
+"#;
+        let handlers = r#"
+public static class Handlers
+{
+    [Authorize(Roles = "Admin")] public static IResult Secure() => null;
+    [AllowAnonymous] public static IResult Anon() => null;
+    public static IResult Plain() => null;
+}
+public static class Reg
+{
+    public static void Map(IEndpointRouteBuilder app) { app.MapGet("/own", Own); }
+    [Authorize] static IResult Own() => null;
+}
+public static class Elsewhere { static IResult Own() => null; }
+public static class A { public static IResult Twice() => null; }
+public static class B { [Authorize] public static IResult Twice() => null; }
+"#;
+        let flow = web(
+            &tfm("net10.0"),
+            &[("Program.cs", program), ("Handlers.cs", handlers)],
+        );
+        assert_eq!(
+            access(&flow, "GET", "/sec"),
+            &protected(Condition::Role("Admin".into()))
+        );
+        assert_eq!(access(&flow, "GET", "/anon"), &AccessState::Open);
+        assert_eq!(access(&flow, "GET", "/plain"), &AccessState::Undeclared);
+        // An unqualified name binds in the class around the call, not in other classes.
+        assert_eq!(
+            access(&flow, "GET", "/own"),
+            &protected(Condition::Authenticated)
+        );
+        // A lambda cut at a generic comma is no method group.
+        assert_eq!(access(&flow, "GET", "/typed"), &AccessState::Undeclared);
+        for path in ["/gone", "/twice"] {
+            let state = access(&flow, "GET", path);
+            assert!(
+                matches!(state, AccessState::Protected(Condition::Unknown(_))),
+                "{path}: {state:?}"
+            );
+        }
+        assert!(
+            gaps(&flow, "Handlers.Missing") >= 1,
             "{:#?}",
             flow.diagnostics
         );
