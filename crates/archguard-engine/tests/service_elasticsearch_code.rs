@@ -157,3 +157,69 @@ fn builder_variables_name_indices_in_a_separate_statement() {
     assert_eq!(gaps(&report), 1);
     assert!(!report.complete);
 }
+
+#[test]
+fn fixture_lists_python_and_typescript_indices_with_access() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/elasticsearch-services");
+    let report = analyze_services(&root).unwrap();
+    assert_eq!(
+        usages(&report, "py-indexer"),
+        pairs(&[
+            ("bulk-target", "write"),
+            ("events-count", "read"),
+            ("events-old", "write"),
+            ("events-v1", "read"),
+            ("events-v1", "write"),
+            ("in-list", "write"),
+        ])
+    );
+    assert_eq!(
+        usages(&report, "ts-search"),
+        pairs(&[
+            ("products-v2", "read"),
+            ("products-v2", "write"),
+            ("single-doc", "read"),
+            ("tpl-index", "read"),
+        ])
+    );
+    let own = |f: &str| f.starts_with("py-indexer/") || f.starts_with("ts-search/");
+    assert!(!report.diagnostics.iter().any(|d| own(&d.file)));
+}
+
+#[test]
+fn script_non_literals_are_gaps_and_only_imports_and_name_positions_count() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(
+        root,
+        "compose.yaml",
+        "services:\n  api:\n    build: ./api\n",
+    );
+    put(
+        root,
+        "api/a.py",
+        "import elasticsearch\ndef f(es, name, doc):\n    es.index(index=name, document=doc)\n    es.search(index=f\"x-{name}\")\n    es.get(index=\"ok\", id=doc)\n    es.index(document={\"index\": \"body\"})\n    helpers.bulk(es, [{\"_index\": name}])\n",
+    );
+    put(
+        root,
+        "api/b.ts",
+        "import { Client } from '@elastic/elasticsearch'\nasync function f(c: Client, cfg: any, n: string) {\n  await c.index({ index: cfg.idx, document: n })\n  await c.search({ index: `x-${n}` })\n  await c.count({ index: 'ok-ts' })\n  await c.index(params)\n}\n",
+    );
+    put(
+        root,
+        "api/c.py",
+        "# from elasticsearch import Elasticsearch\nes.index(index=\"comment-only\")\n",
+    );
+    put(
+        root,
+        "api/d.ts",
+        "// import x from '@elastic/elasticsearch'\nc.index({ index: 'comment-only' })\n",
+    );
+    let report = analyze_services(root).unwrap();
+    assert_eq!(
+        usages(&report, "api"),
+        pairs(&[("ok", "read"), ("ok-ts", "read")])
+    );
+    assert_eq!(gaps(&report), 2);
+    assert!(!report.complete);
+}

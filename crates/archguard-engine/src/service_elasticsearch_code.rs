@@ -1,4 +1,4 @@
-//! Index names a service's Java and C# source names literally, with the access the
+//! Index names a service's Java, C#, Python and TypeScript source names literally, with the access the
 //! surrounding call implies (ADR 0023, items 6 and 7). Names that are not literals
 //! are reported as gaps; nothing is guessed from configuration.
 use crate::project_files::read_repo_file;
@@ -9,7 +9,7 @@ use std::path::Path;
 
 const MAX_BYTES: u64 = 1 << 20;
 const MAX_FILES: usize = 5_000;
-const SOURCES: [&str; 2] = ["java", "cs"];
+const SOURCES: [&str; 5] = ["java", "cs", "py", "ts", "tsx"];
 const IMPORTS: [&str; 5] = [
     "co.elastic.clients",
     "org.elasticsearch",
@@ -121,7 +121,7 @@ pub(super) fn augment(root: &Path, discovery: &Discovery, report: &mut ServiceTo
             continue;
         };
         let text = String::from_utf8_lossy(&bytes);
-        if !IMPORTS.iter().any(|i| text.contains(i)) {
+        if !imports_client(&text, ext) {
             continue;
         }
         let [service] = owners.as_slice() else {
@@ -130,7 +130,12 @@ pub(super) fn augment(root: &Path, discovery: &Discovery, report: &mut ServiceTo
                 .for_each(|s| diagnostic(report, &rel, Some(short(s)), SAME_DIR));
             continue;
         };
-        for m in mentions(&text, ext) {
+        let found_here = match ext {
+            "py" => script_mentions(&text, true),
+            "ts" | "tsx" => script_mentions(&text, false),
+            _ => mentions(&text, ext),
+        };
+        for m in found_here {
             let Some(name) = m.name else {
                 diagnostic(report, &rel, Some(short(service)), GAP);
                 continue;
@@ -271,11 +276,19 @@ fn name(arg: &str) -> Option<Option<String>> {
 
 /// The top-level arguments of the call whose `(` just ended `s`, trimmed.
 fn split_args(s: &str) -> Vec<&str> {
-    let (mut out, mut depth, mut start, mut quote) = (Vec::new(), 0usize, 0, false);
-    for (i, ch) in s.char_indices() {
+    split_quoted(s, &['"'])
+}
+
+/// `split_args` where each of `quotes` opens a string that runs to the same character.
+fn split_quoted<'a>(s: &'a str, quotes: &[char]) -> Vec<&'a str> {
+    let inside = string_mask(s, quotes);
+    let (mut out, mut depth, mut start) = (Vec::new(), 0usize, 0);
+    for ((i, ch), _) in s
+        .char_indices()
+        .zip(&inside)
+        .filter(|(_, in_str)| !**in_str)
+    {
         match ch {
-            '"' => quote = !quote,
-            _ if quote => {}
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' if depth == 0 => {
                 out.push(s[start..i].trim());
@@ -290,6 +303,27 @@ fn split_args(s: &str) -> Vec<&str> {
         }
     }
     out
+}
+
+/// Per character: whether it belongs to a string, quotes included; `\` escapes.
+fn string_mask(s: &str, quotes: &[char]) -> Vec<bool> {
+    let (mut quote, mut escaped) = (None, false);
+    s.chars()
+        .map(|ch| match quote {
+            None if quotes.contains(&ch) => {
+                quote = Some(ch);
+                true
+            }
+            None => false,
+            Some(q) => {
+                if !escaped && ch == q {
+                    quote = None;
+                }
+                escaped = !escaped && ch == '\\';
+                true
+            }
+        })
+        .collect()
 }
 
 /// Whether the receiver of the call at `at` is a local declared with a builder type,
@@ -309,4 +343,125 @@ fn builder_variable(text: &str, at: usize) -> bool {
             .split(';')
             .filter(|stmt| stmt.contains("Builder"))
             .any(|stmt| word(stmt.split('=').next().unwrap_or("")) == receiver)
+}
+
+/// Whether the file imports an Elasticsearch client; only import lines count.
+fn imports_client(text: &str, ext: &str) -> bool {
+    let mut lines = text.lines().map(str::trim_start);
+    match ext {
+        // elasticsearch_dsl and similar siblings count: they wrap the same client.
+        "py" => lines
+            .any(|l| l.starts_with("from elasticsearch") || l.starts_with("import elasticsearch")),
+        "ts" | "tsx" => lines.any(|l| {
+            (l.starts_with("import ") || l.contains("require("))
+                && l.contains("@elastic/elasticsearch")
+        }),
+        _ => IMPORTS.iter().any(|i| text.contains(i)),
+    }
+}
+
+/// Method names of the Python and TypeScript clients and the access they imply.
+const METHODS: [(&str, &str); 9] = [
+    ("index", "write"),
+    ("create", "write"),
+    ("update", "write"),
+    ("delete", "write"),
+    ("bulk", "write"),
+    ("search", "read"),
+    ("count", "read"),
+    ("get", "read"),
+    ("msearch", "read"),
+];
+
+/// Python (`index="x"`, `"_index": "x"` for bulk helpers) and TypeScript (`{ index: 'x' }`).
+fn script_mentions(text: &str, python: bool) -> Vec<Mention> {
+    let mut out = Vec::new();
+    for (method, access) in METHODS {
+        let needle = format!(".{method}(");
+        for (at, _) in text.match_indices(&needle) {
+            let args = split_quoted(&text[at + needle.len()..], &SCRIPT_QUOTES);
+            let value = index_value(&args, python);
+            out.extend(value.into_iter().flat_map(literals).map(|name| Mention {
+                name,
+                access,
+                line: text[..at].matches('\n').count() as u32 + 1,
+                pointer: method,
+            }));
+        }
+    }
+    if python && text.contains("bulk(") {
+        out.extend(bulk_helper_mentions(text));
+    }
+    out
+}
+
+const SCRIPT_QUOTES: [char; 3] = ['"', '\'', '`'];
+
+/// The `index` argument: a keyword in Python, a property of the request object literal in
+/// TypeScript.
+fn index_value<'a>(args: &[&'a str], python: bool) -> Option<&'a str> {
+    if python {
+        return args.iter().find_map(|a| keyed(a, "index", '='));
+    }
+    let body = args.first().and_then(|a| a.strip_prefix('{'))?;
+    split_quoted(body, &SCRIPT_QUOTES)
+        .into_iter()
+        .find_map(|a| keyed(a, "index", ':'))
+}
+
+/// `"_index": "x"` entries of bulk helper actions.
+fn bulk_helper_mentions(text: &str) -> Vec<Mention> {
+    let mut out = Vec::new();
+    for (at, _) in text.match_indices("_index") {
+        let rest = text[at + 6..].trim_start_matches(['"', '\'']).trim_start();
+        let Some(value) = rest
+            .strip_prefix(':')
+            .filter(|_| text[..at].ends_with(['"', '\'']))
+        else {
+            continue;
+        };
+        let value = split_quoted(value, &['"', '\''])
+            .first()
+            .copied()
+            .unwrap_or("");
+        out.extend(literals(value).into_iter().map(|name| Mention {
+            name,
+            access: "write",
+            line: text[..at].matches('\n').count() as u32 + 1,
+            pointer: "_index",
+        }));
+    }
+    out
+}
+
+/// The value of `key<sep>value` (key optionally quoted), or a bare `key` in TypeScript shorthand.
+fn keyed<'a>(arg: &'a str, key: &'a str, sep: char) -> Option<&'a str> {
+    let rest = arg.trim_start_matches(['"', '\'']).strip_prefix(key)?;
+    let rest = rest.trim_start_matches(['"', '\'']).trim_start();
+    match rest.strip_prefix(sep) {
+        Some(v) if !v.starts_with('=') => Some(v.trim()),
+        None if rest.is_empty() && sep == ':' => Some(key),
+        _ => None,
+    }
+}
+
+/// A literal string or a list of them; every non-literal element is a gap (`None`).
+fn literals(value: &str) -> Vec<Option<String>> {
+    match value.strip_prefix('[') {
+        Some(list) => split_quoted(list, &['"', '\'', '`'])
+            .into_iter()
+            .filter(|a| !a.is_empty())
+            .map(literal)
+            .collect(),
+        None => vec![literal(value)],
+    }
+}
+
+fn literal(value: &str) -> Option<String> {
+    let quote = value
+        .chars()
+        .next()
+        .filter(|c| matches!(c, '"' | '\'' | '`'))?;
+    let inner = value.strip_prefix(quote)?.strip_suffix(quote)?;
+    (!inner.is_empty() && !inner.contains(quote) && !inner.contains("${")).then(|| inner.to_owned())
 }
