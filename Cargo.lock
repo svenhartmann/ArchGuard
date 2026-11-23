@@ -375,6 +375,7 @@ dependencies = [
  "archguard-flow-jvm",
  "archguard-flow-node",
  "archguard-flow-python",
+ "archguard-flow-rust",
  "archguard-flow-server",
  "archguard-flow-web",
  "archguard-report",
@@ -481,6 +482,17 @@ version = "0.3.5"
 dependencies = [
  "archguard-core",
  "archguard-flow-common",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "archguard-flow-rust"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-flow-common",
+ "serde_json",
  "tempfile",
  "toml",
 ]

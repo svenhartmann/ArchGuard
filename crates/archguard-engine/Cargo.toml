@@ -32,6 +32,7 @@ archguard-flow-python = { path = "../archguard-flow-python" }
 archguard-flow-web = { path = "../archguard-flow-web" }
 archguard-flow-node = { path = "../archguard-flow-node" }
 archguard-flow-server = { path = "../archguard-flow-server" }
+archguard-flow-rust = { path = "../archguard-flow-rust" }
 archguard-flow-common = { path = "../archguard-flow-common" }
 archguard-report = { path = "../archguard-report" }
 archguard-store = { path = "../archguard-store" }
