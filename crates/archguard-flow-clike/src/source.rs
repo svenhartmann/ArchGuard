@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use crate::lex::{self, literal_end};
 
 /// A source file with comments blanked (offsets and lines unchanged).
+#[derive(Clone)]
 pub struct Source {
     pub rel: String,
     pub text: String,
