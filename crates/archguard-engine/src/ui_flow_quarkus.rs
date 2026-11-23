@@ -133,7 +133,34 @@ fn scan(root: &Path, files: Vec<String>, out: &mut Out) {
         let props = Props::read(root, &project.configs, out);
         protos.push((application, quarkus, server_build(root, dir), props));
     }
-    emit(srcs, protos, out);
+    let bus = bus_configured(root, &files, &texts);
+    emit(srcs, protos, bus, out);
+}
+
+/// Whether any source or XML/properties/YAML file configures a CXF bus
+/// (interceptors and features there apply to every server and are not read).
+fn bus_configured(root: &Path, files: &[String], texts: &[(&String, String, String)]) -> bool {
+    let marked = |t: &str| {
+        let t = t.to_lowercase();
+        [
+            "bus.",
+            "bus().",
+            "busfactory",
+            "springbus",
+            "cxf:bus",
+            "cxf.xml",
+        ]
+        .iter()
+        .any(|m| t.contains(m))
+    };
+    let config = |f: &&String| {
+        [".xml", ".properties", ".yml", ".yaml"]
+            .iter()
+            .any(|e| f.ends_with(e))
+    };
+    texts.iter().any(|(_, _, t)| marked(t))
+        || (files.iter().filter(config))
+            .any(|f| read_text(root, f, MAX_BYTES).is_ok_and(|t| marked(&t)))
 }
 
 /// Whether the build file of `dir` itself depends on a Quarkus REST server
@@ -1281,7 +1308,7 @@ fn collect(srcs: &[Src]) -> (Vec<Member>, Vec<(usize, Decl)>) {
     (members, classes)
 }
 
-fn emit(srcs: Vec<Src>, protos: Vec<Proto>, out: &mut Out) {
+fn emit(srcs: Vec<Src>, protos: Vec<Proto>, bus: bool, out: &mut Out) {
     let (members, classes) = collect(&srcs);
     let ctxs: Vec<Pctx> = (protos.into_iter().enumerate())
         .map(|(i, p)| Pctx::build(i, p, &srcs, &classes, out))
@@ -1311,7 +1338,7 @@ fn emit(srcs: Vec<Src>, protos: Vec<Proto>, out: &mut Out) {
             world.by_base.entry(b.clone()).or_default().push(i);
         }
     }
-    world.registered = world.cxf_registrations();
+    world.registered = world.cxf_registrations(bus);
     let world = world;
     let mut announced = BTreeSet::new();
     let first = out.0.endpoints.len();
@@ -1383,14 +1410,24 @@ mod cxf {
             "setServiceBeans",
             "setAddress",
             "setStaticSubresourceResolution",
-            "create",
         ];
         let mut declared = false;
         for p in lex::words(text, recv) {
             let rest = text[p + recv.len()..].trim_start();
             if let Some(call) = rest.strip_prefix('.') {
-                if !plain.contains(&ident_at(call.trim_start())) {
-                    return false;
+                let call = call.trim_start();
+                let bare = |c: &str| {
+                    let before = text[..p].trim_end();
+                    let stmt = [";", "{", "}"].iter().any(|e| before.ends_with(e))
+                        || before.ends_with("return");
+                    stmt && c
+                        .trim_start()
+                        .strip_prefix("()")
+                        .is_some_and(|r| r.trim_start().starts_with(';'))
+                };
+                let name = ident_at(call);
+                if !(plain.contains(&name) || name == "create" && bare(&call[name.len()..])) {
+                    return false; // may add providers, or leak the server
                 }
             } else if let Some(rhs) = rest.strip_prefix('=').filter(|r| !r.starts_with('=')) {
                 if !rhs.trim_start().starts_with("new ") {
@@ -1629,7 +1666,7 @@ impl World<'_> {
     /// source: the types named by the argument, with everything below them.
     /// The value says whether `x` is left without any provider/interceptor.
     /// Spring XML `<jaxrs:server>` is not read; such classes stay unregistered.
-    fn cxf_registrations(&self) -> HashMap<usize, bool> {
+    fn cxf_registrations(&self, bus: bool) -> HashMap<usize, bool> {
         let mut found: HashMap<usize, bool> = HashMap::new();
         for s in self.srcs {
             for at in lex::words(&s.src.text, "setServiceBeans") {
@@ -1640,7 +1677,7 @@ impl World<'_> {
                     let ty = &self.classes[i].1.name;
                     let api = &self.srcs[self.classes[i].0].src.text;
                     for j in self.subtypes(ty, api).into_iter().chain([i]) {
-                        *found.entry(j).or_insert(true) &= clean;
+                        *found.entry(j).or_insert(true) &= clean && !bus;
                     }
                 }
             }
@@ -2137,6 +2174,10 @@ mod tests {
 
     // W6a: a CXF registration (`setServiceBeans`) ties the implementation to a server.
     fn cxf(chain: &str, annotated: bool) -> UiFlow {
+        cxf_with(chain, annotated, &[])
+    }
+
+    fn cxf_with(chain: &str, annotated: bool, extra: &[(&str, &str)]) -> UiFlow {
         let api = "import jakarta.ws.rs.*;\n@Path(\"/api/x\") public interface XApi extends JAXRSService { @GET String g(); }\n";
         let ann = if annotated {
             "@jakarta.annotation.security.PermitAll "
@@ -2149,7 +2190,7 @@ mod tests {
         let ctx = format!(
             "class Ctx {{ @Bean Server c(final List<JAXRSService> services) {{ var s = new SpringJAXRSServerFactoryBean(); s.setServiceBeans(services.stream().map(Object.class::cast).toList());{chain} return s.create(); }} }}\n"
         );
-        run(&[
+        let mut files = vec![
             ("api/pom.xml", "<project/>"),
             ("api/src/main/java/XApi.java", api),
             (
@@ -2157,9 +2198,11 @@ mod tests {
                 "public interface JAXRSService {}\n",
             ),
             ("core/pom.xml", "<project/>"),
-            ("core/src/main/java/XImpl.java", &imp),
-            ("core/src/main/java/Ctx.java", &ctx),
-        ])
+            ("core/src/main/java/XImpl.java", imp.as_str()),
+            ("core/src/main/java/Ctx.java", ctx.as_str()),
+        ];
+        files.extend_from_slice(extra);
+        run(&files)
     }
 
     #[test]
@@ -2207,6 +2250,46 @@ mod tests {
     #[test]
     fn cxf_alias_of_the_factory_is_not_chain_free() {
         let f = cxf(" var t = s; t.setProviders(List.of());", true);
+        assert!(matches!(
+            handler_access(&f, "XImpl.g"),
+            Protected(Condition::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn cxf_assigned_create_result_is_not_chain_free() {
+        let f = cxf(
+            " Server srv = s.create(); srv.getEndpoint().getInInterceptors().add(new Jaas());",
+            true,
+        );
+        assert!(matches!(
+            handler_access(&f, "XImpl.g"),
+            Protected(Condition::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn cxf_chained_call_after_create_is_not_chain_free() {
+        let f = cxf(
+            " s.create().getEndpoint().getInInterceptors().add(new Jaas());",
+            true,
+        );
+        assert!(matches!(
+            handler_access(&f, "XImpl.g"),
+            Protected(Condition::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn cxf_bus_configuration_anywhere_is_not_chain_free() {
+        let bus = "class B { void f(Bus bus) { bus.getInInterceptors().add(new Jaas()); } }\n";
+        let f = cxf_with("", true, &[("core/src/main/java/B.java", bus)]);
+        assert!(matches!(
+            handler_access(&f, "XImpl.g"),
+            Protected(Condition::Unknown(_))
+        ));
+        let xml = "<beans><cxf:bus/></beans>";
+        let f = cxf_with("", true, &[("core/src/main/resources/cxf.xml", xml)]);
         assert!(matches!(
             handler_access(&f, "XImpl.g"),
             Protected(Condition::Unknown(_))
