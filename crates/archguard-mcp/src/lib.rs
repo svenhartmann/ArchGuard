@@ -1105,6 +1105,9 @@ fn service_topology_value(topology: &archguard_engine::core::ServiceTopology) ->
         ("datastore_usages", "/datastores/usages"),
         ("shared_datastores", "/datastores/shared"),
         ("datastore_tables", "/datastores/tables"),
+        ("elasticsearch_artifacts", "/elasticsearch/artifacts"),
+        ("elasticsearch_usages", "/elasticsearch/usages"),
+        ("elasticsearch_findings", "/elasticsearch/findings"),
     ];
     value["totals"] = Value::Object(
         lists
@@ -1131,6 +1134,12 @@ fn service_topology_value(topology: &archguard_engine::core::ServiceTopology) ->
         "server": shared(SharedDatastoreScope::Server),
         "table": shared(SharedDatastoreScope::Table)
     });
+    let mut es_counts = serde_json::Map::new();
+    for finding in &topology.elasticsearch.findings {
+        let n = es_counts.entry(finding.kind.clone()).or_insert(json!(0));
+        *n = json!(n.as_u64().unwrap_or(0) + 1);
+    }
+    value["elasticsearch_finding_counts"] = Value::Object(es_counts);
     value["project_counts"] = json!({
         "application":topology.projects.iter().filter(|project|project.kind=="application").count(),
         "library":topology.projects.iter().filter(|project|project.kind=="library").count(),
@@ -2984,6 +2993,30 @@ links = ["docs/adr/1.md"]
         assert!(value["projects"].as_array().unwrap().len() < 100);
         assert_eq!(value["projects"][0]["id"], "project:apps/0/pom.xml");
         assert_eq!(value["projects"][0]["evidence"][0]["line"], 5);
+    }
+
+    #[test]
+    fn service_topology_elasticsearch_totals_counts_and_truncation() {
+        let findings: Vec<_> = (0..300)
+            .map(|i| json!({"kind":if i%3==0 {"undeclared_index"} else {"shared_write_index"},
+                "subject":format!("index-{i}-{}","x".repeat(40)),"services":["a","b"],"evidence":[]}))
+            .collect();
+        let topology = serde_json::from_value(json!({"schema_version":1,"root":"/project","monorepo":false,"monorepo_reason":"","compose_files":[],"projects":[],"services":[],"dependencies":[],"cycles":[],"diagnostics":[],"complete":true,
+            "elasticsearch":{"artifacts":[],"usages":[],"findings":findings}})).unwrap();
+        let value = service_topology_value(&topology);
+        assert_eq!(value["totals"]["elasticsearch_findings"], 300);
+        assert_eq!(value["totals"]["elasticsearch_artifacts"], 0);
+        assert_eq!(
+            value["elasticsearch_finding_counts"]["undeclared_index"],
+            100
+        );
+        assert_eq!(
+            value["elasticsearch_finding_counts"]["shared_write_index"],
+            200
+        );
+        assert_eq!(value["truncated"], true);
+        assert!(value.to_string().len() <= tools::MAX_RESPONSE_BYTES);
+        assert!(value["elasticsearch"]["findings"].as_array().unwrap().len() < 300);
     }
 
     #[test]
