@@ -186,7 +186,7 @@ mod sig {
     }
 
     /// Names that need no import in Java or Kotlin (never qualified).
-    const IMPLICIT: [&str; 14] = [
+    const IMPLICIT: &[&str] = &[
         "String",
         "Object",
         "Any",
@@ -201,17 +201,23 @@ mod sig {
         "Array",
         "Nothing",
         "Throwable",
+        "Void",
+        "Class",
+        "Enum",
+        "Comparable",
+        "Iterator",
+        "Runnable",
     ];
 
     /// `Dto` -> `x.Dto` by the file's explicit import, else its package; left
-    /// plain when a wildcard import could supply it (`fits` then cannot tell
-    /// the packages apart and treats it as a match).
+    /// plain when a wildcard import could supply it (`same_type` then reports
+    /// the package as unknown).
     fn qualify(src: &Source, ty: &str) -> String {
         let base = ty.trim_end_matches("[]");
         let dims = &ty[base.len()..];
         if base.contains('.')
             || !base.starts_with(|c: char| c.is_ascii_uppercase())
-            || IMPLICIT.contains(&base)
+            || IMPLICIT.contains(&canon(base).as_str())
             || is_primitive(&canon(base))
         {
             return ty.to_string();
@@ -378,12 +384,21 @@ mod sig {
         format!("{word}{}", "[]".repeat(dims + extra))
     }
 
-    /// Whether two types that match by name are surely the same: not from
-    /// other packages, not a boxed type against its primitive.
+    /// Whether two types that match by name are surely the same: package
+    /// known and equal, and not a boxed type against its primitive.
     fn same_type(x: &str, y: &str) -> bool {
         let (ux, uy) = (unq(x), unq(y));
         let other_package = x.len() > ux.len() && y.len() > uy.len() && x != y;
-        !other_package && (ux == uy || !is_primitive(&canon(&ux)))
+        // a capitalised name with no known package may come from a wildcard import
+        let unknown = |t: &str| {
+            let base = unq(t);
+            let base = base.trim_end_matches("[]");
+            !t.contains('.')
+                && base.starts_with(|c: char| c.is_ascii_uppercase())
+                && !IMPLICIT.contains(&canon(base).as_str())
+                && !is_primitive(&canon(base))
+        };
+        !(unknown(x) || unknown(y) || other_package) && (ux == uy || !is_primitive(&canon(&ux)))
     }
 
     fn is_plain(t: &str) -> bool {
@@ -2026,5 +2041,22 @@ mod tests {
             "{KT_HEAD}@Controller(\"/c\") class C : Api {{\n  @Secured(\"ROLE_X\")\n  override // see {{x}}; y\n  fun u(a: Dto): String = \"\"\n}}\n"
         );
         no_open_and_a_gap(&run(SEC, &[("src/Api.java", &api), ("src/C.kt", &ctl)]));
+    }
+
+    #[test]
+    fn wildcard_imported_type_is_not_a_definite_match_for_a_qualified_one() {
+        let api = java_type(
+            "interface",
+            "Api",
+            "@Get(\"/i\") @Secured(\"isAnonymous()\") String i(Dto a);",
+        )
+        .replace("package a;", "package a;\nimport x.*;");
+        let ctl = java_type(
+            "@Controller(\"/c\") class",
+            "C implements Api",
+            "@Secured(\"ROLE_X\") public String i(Dto a) { return \"\"; }",
+        )
+        .replace("package a;", "package a;\nimport y.Dto;");
+        no_open_and_a_gap(&run(SEC, &[("src/Api.java", &api), ("src/C.java", &ctl)]));
     }
 }

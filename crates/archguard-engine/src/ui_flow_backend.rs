@@ -607,7 +607,14 @@ pub(crate) fn decls(src: &Source, annotations: bool) -> Vec<Decl> {
             }
             _ => {
                 let end = header_end(src, i);
-                out.extend(declaration(src, i, end, std::mem::take(&mut pending)));
+                // `final` / `public` alone on a line: the header goes on below
+                let goes_on = b.get(end) == Some(&b'\n') && !src.text[i..end].contains('(');
+                if !(goes_on
+                    && !pending.is_empty()
+                    && class_name(&src.text[i..end], src.rel.ends_with(".kt")).is_none())
+                {
+                    out.extend(declaration(src, i, end, std::mem::take(&mut pending)));
+                }
                 end + 1
             }
         };
@@ -10526,5 +10533,19 @@ public class PController : ControllerBase
             )],
         );
         assert_eq!(notes(&flow, "ambiguous"), 0, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn annotations_survive_a_modifier_only_header_line() {
+        for text in [
+            "class C {\n  @PreAuthorize(\"x\") final\n  String run() { return \"\"; }\n}\n",
+            "class C {\n  @GetMapping(\"/a\") public\n  String a() { return \"\"; }\n}\n",
+            "class C {\n  @GetMapping(\"/a\")\n  public\n  String\n  a() { return \"\"; }\n}\n",
+        ] {
+            let src = Source::new("C.java".into(), text);
+            let m: Vec<_> = decls(&src, true).into_iter().filter(|d| !d.class).collect();
+            assert_eq!(m.len(), 1, "{text}");
+            assert_eq!(m[0].attrs.len(), 1, "{text}");
+        }
     }
 }

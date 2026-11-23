@@ -774,3 +774,44 @@ fn modifiers_on_the_line_before_the_method_still_count() {
     let l = layers(&flow);
     assert_eq!(l[0].0, ServiceHow::Hint, "{l:?}");
 }
+
+#[test]
+fn annotations_before_a_modifier_only_line_are_read() {
+    let split = svc(
+        "@Service",
+        "@PreAuthorize(\"hasRole('B')\") final\n  String run() { return \"x\"; }",
+    );
+    let Some(flow) = run(
+        SPRING_POM,
+        &[
+            ("Conf.java", ENABLE),
+            ("Ctl.java", &ctl("return svc.run();", "")),
+            ("Svc.java", &split),
+        ],
+    ) else {
+        return;
+    };
+    let l = layers(&flow);
+    assert_eq!(l[0].0, ServiceHow::Hint, "{l:?}");
+}
+
+#[test]
+fn a_class_missing_from_the_call_model_leaves_a_gap() {
+    super::ui_flow_service::DROPPED.with(|d| *d.borrow_mut() = vec!["app.Svc".into()]);
+    let Some(flow) = run(
+        SPRING_POM,
+        &[
+            ("Conf.java", ENABLE),
+            ("Ctl.java", &ctl("return svc.run();", "")),
+            ("Svc.java", &svc("@Service", PRE_B)),
+        ],
+    ) else {
+        return;
+    };
+    super::ui_flow_service::DROPPED.with(|d| d.borrow_mut().clear());
+    assert!(
+        (flow.diagnostics.iter()).any(|d| d.message.contains("missing from the call model")),
+        "{:#?}",
+        flow.diagnostics
+    );
+}

@@ -140,7 +140,11 @@ pub(crate) fn apply(ctx: &ExtractContext, flow: &mut UiFlow) {
     if !has_signs(&projects) && !descriptor {
         return;
     }
-    let analysis = jvm_calls(ctx, &projects);
+    let mut analysis = jvm_calls(ctx, &projects);
+    #[cfg(test)]
+    analysis
+        .classes
+        .retain(|c| !DROPPED.with(|d| d.borrow().contains(&c.name)));
     if analysis.methods.is_empty() {
         flow.diagnostics.push(not_read(&analysis));
         return;
@@ -169,6 +173,12 @@ pub(crate) fn apply(ctx: &ExtractContext, flow: &mut UiFlow) {
     flow.service_layers.dedup();
     flow.diagnostics.sort();
     flow.diagnostics.dedup();
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Class names the tests take out of the call model (a library class).
+    pub(crate) static DROPPED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The Java call model, plus Kotlin's when the project has Kotlin sources. Not
@@ -415,7 +425,7 @@ impl<'a> World<'a> {
             let Some(reached) = self.reach(call) else {
                 // a library class: its checks are never read
                 let message = format!(
-                    "Check of `{}.{}` not read: the class is not in the scan, so a check there is unknown.",
+                    "Check of `{}.{}` not read: the class is missing from the call model (a library class or one the analysis did not read), so a check there is unknown.",
                     call.to_class.as_deref().map_or("?", simple),
                     call.target_label
                 );
@@ -590,6 +600,7 @@ impl<'a> World<'a> {
             return None;
         };
         let decl = self.decl_of(msrc, &mclass, m);
+        self.gaps.extend(self.unread_annotations(msrc, &decl, m));
         let dir = (self.dir_of.get(src.rel.as_str())).copied();
         let dir = dir.unwrap_or_default();
         let bean = bean_of(src, &class, &self.index);
@@ -672,6 +683,17 @@ impl<'a> World<'a> {
             ds,
             self.index.type_in(ds, simple(&dc.name))?.clone(),
         ))
+    }
+
+    /// A gap when the method has annotations in the source but no declaration was matched.
+    fn unread_annotations(&self, msrc: &Source, decl: &Decl, m: &CallMethod) -> Option<Gap> {
+        let head = head_at(msrc, m.line, &m.name)?;
+        let lost = decl.attrs.is_empty() && head.contains('@');
+        let message = format!(
+            "Check of `{}` not read: its annotations could not be matched to the call model, so a check there is unknown.",
+            m.name
+        );
+        lost.then(|| (msrc.rel.clone(), m.line, message))
     }
 
     /// The annotated declaration of `m` in `mclass`, else an empty one.
