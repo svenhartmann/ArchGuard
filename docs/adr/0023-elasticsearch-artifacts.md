@@ -166,4 +166,6 @@ are code, but no analyzer measures them.
 - Security roles, saved-object contents, mappings, fields and query contents
   are not analyzed.
 
+## History
+
 - **2026-11-23:** Proposed and accepted.
