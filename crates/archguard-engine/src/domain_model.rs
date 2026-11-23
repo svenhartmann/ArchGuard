@@ -53,7 +53,7 @@ pub fn analyze_with(ctx: &ExtractContext) -> Result<DomainModel, ArchguardError>
     let extractors = [
         archguard_flow_dotnet::domain_csharp::extract_with,
         archguard_flow_jvm::domain_java::extract_with,
-        crate::domain_typescript::extract_with,
+        archguard_flow_node::domain_typescript::extract_with,
         archguard_flow_python::domain_python::extract_with,
     ];
     let model = (extractors.into_iter())

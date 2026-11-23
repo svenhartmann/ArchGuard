@@ -373,6 +373,7 @@ dependencies = [
  "archguard-flow-common",
  "archguard-flow-dotnet",
  "archguard-flow-jvm",
+ "archguard-flow-node",
  "archguard-flow-python",
  "archguard-flow-web",
  "archguard-report",
@@ -461,6 +462,16 @@ dependencies = [
  "serde",
  "serde_yaml_ng",
  "tempfile",
+]
+
+[[package]]
+name = "archguard-flow-node"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-flow-common",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]
