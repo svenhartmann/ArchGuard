@@ -110,7 +110,7 @@ pub(crate) fn extract_with(ctx: &ExtractContext, hook: Option<RouteHook>) -> UiF
         out.note(".", 0, message);
     }
     let (projects, pages, build_dirs) = read_all(ctx.root, &mut out);
-    let modules = crate::ui_flow_apps::Modules::read(ctx.root, build_dirs.iter());
+    let mut apps = spring::Apps::new(ctx.root, &build_dirs);
     let access = ctx.config.views.access.clone();
     let index = Index::new(projects.values().flat_map(|(_, s, _)| s), access);
     for (dir, (application, sources, quarkus)) in &projects {
@@ -136,7 +136,7 @@ pub(crate) fn extract_with(ctx: &ExtractContext, hook: Option<RouteHook>) -> UiF
             &index,
             &mut out,
         );
-        spring::central(dir, &projects, &modules, (&index, &conf), &mut out, first);
+        spring::central(dir, &projects, &mut apps, (&index, &conf), &mut out, first);
         for e in &mut out.0.endpoints[first..] {
             e.application = application.clone();
         }
@@ -3717,7 +3717,7 @@ pub(crate) mod spring {
         }
     }
 
-    pub(super) use chain_apps::central;
+    pub(super) use chain_apps::{Apps, central};
     pub(crate) use conf::Conf;
     use conf::{Atom, Flag};
 
@@ -4992,6 +4992,8 @@ pub(crate) mod spring {
                     .map(|unit| match &unit.scope {
                         // may take any request: decides nothing, shadows the rest
                         None if unit.barrier() => Hit::Part,
+                        // code outside the text may have widened the scope
+                        Some(s) if unit.opaque.is_some() => matches(s, e).max(Hit::Part),
                         s => s.as_ref().map_or(Hit::Full, |s| matches(s, e)),
                     })
                     .collect();
@@ -5013,9 +5015,7 @@ pub(crate) mod spring {
                             break;
                         }
                         [u] => {
-                            if !units[u].barrier() {
-                                *done.scope_partial.entry(u).or_default() += 1;
-                            }
+                            unknown_or_partial(u, &units[u], e, &mut done);
                             break;
                         }
                         // equal order, both may match: Spring's choice is not read
@@ -5024,6 +5024,18 @@ pub(crate) mod spring {
                 }
             }
             done
+        }
+
+        /// An endpoint a chain may match only in part, or, if code outside the
+        /// readable text may have widened its scope, may match at all.
+        fn unknown_or_partial(u: usize, unit: &Unit, e: &mut EndpointAccess, done: &mut Applied) {
+            match (&unit.opaque, unit.barrier()) {
+                (Some(why), false) => {
+                    e.access = require(&e.access, Condition::Unknown(why.clone()))
+                }
+                (_, false) => *done.scope_partial.entry(u).or_default() += 1,
+                _ => {}
+            }
         }
 
         /// The unit's rules for `e`; in a chain that code outside the readable
@@ -5079,52 +5091,60 @@ pub(crate) mod spring {
     /// The central rules of a project in the applications that include it.
     mod chain_apps {
         use super::super::*;
-        use super::chain::central_rules;
+        use super::chain::{Prepared, central_rules, prepare, run};
         use super::conf::Conf;
+
+        /// The module graph and the chains of each application, read once: by
+        /// its set of modules.
+        pub(in super::super) struct Apps<'s> {
+            modules: crate::ui_flow_apps::Modules,
+            cache: HashMap<BTreeSet<String>, Option<Prepared<'s>>>,
+        }
+
+        impl Apps<'_> {
+            pub(in super::super) fn new(root: &Path, build_dirs: &BTreeSet<String>) -> Self {
+                Apps {
+                    modules: crate::ui_flow_apps::Modules::read(root, build_dirs.iter()),
+                    cache: HashMap::new(),
+                }
+            }
+        }
 
         /// The Spring central rules for the endpoints of project `dir` from `first`
         /// on: the project's own chains, or, when applications include it, the chains
-        /// of each of them (see [`ui_flow_apps`](crate::ui_flow_apps)).
-        pub(in super::super) fn central(
+        /// of each of them (see [`ui_flow_apps`](crate::ui_flow_apps)). An endpoint
+        /// takes the access all applications agree on; otherwise it keeps its
+        /// declared access.
+        pub(in super::super) fn central<'s>(
             dir: &str,
-            projects: &BTreeMap<String, Project>,
-            modules: &crate::ui_flow_apps::Modules,
+            projects: &'s BTreeMap<String, Project>,
+            known: &mut Apps<'s>,
             (index, conf): (&Index, &Conf),
             out: &mut Out,
             first: usize,
         ) {
-            let apps = modules.applications(dir);
+            let apps = known.modules.applications(dir);
             if apps.is_empty() || out.0.endpoints.len() == first {
                 let own: Vec<&Source> = projects.get(dir).map_or(vec![], |p| p.1.iter().collect());
                 return central_rules(&own, index, conf, out, first);
             }
-            let apps: Vec<Vec<&Source>> = (apps.iter())
-                .map(|app| {
-                    (app.iter().filter_map(|d| projects.get(d)))
-                        .flat_map(|p| p.1.iter())
-                        .collect()
-                })
-                .collect();
-            central_rules_in_applications(&apps, index, conf, out, first);
-        }
-
-        /// [`central_rules`] for each application that includes this project (the
-        /// chains may live in another module of it). An endpoint takes the access
-        /// all applications agree on; otherwise it keeps its declared access.
-        fn central_rules_in_applications(
-            apps: &[Vec<&Source>],
-            index: &Index,
-            conf: &Conf,
-            out: &mut Out,
-            first: usize,
-        ) {
             let before: Vec<EndpointAccess> = out.0.endpoints[first..].to_vec();
-            let mut results: Vec<Vec<AccessState>> = Vec::new();
-            for app in apps {
+            let (mut results, mut notes) = (Vec::new(), Vec::new());
+            for app in &apps {
+                let prepared = known.cache.entry(app.clone()).or_insert_with(|| {
+                    let all: Vec<&Source> = (app.iter().filter_map(|d| projects.get(d)))
+                        .flat_map(|p| p.1.iter())
+                        .collect();
+                    prepare(&all, index, conf, out)
+                });
                 out.0.endpoints[first..].clone_from_slice(&before);
-                central_rules(app, index, conf, out, first);
+                let mark = out.0.diagnostics.len();
+                if let Some(p) = prepared {
+                    run(p, out, first);
+                }
+                notes.push(out.0.diagnostics.split_off(mark));
                 let access = out.0.endpoints[first..].iter().map(|e| e.access.clone());
-                results.push(access.collect());
+                results.push(access.collect::<Vec<_>>());
             }
             let mut disagree = 0;
             for (i, e) in out.0.endpoints[first..].iter_mut().enumerate() {
@@ -5135,6 +5155,9 @@ pub(crate) mod spring {
                     false => before[i].access.clone(),
                 };
             }
+            // a change that is undone is not reported
+            let undone = |m: &str| disagree > 0 && m.contains("endpoint(s) changed");
+            (out.0.diagnostics).extend(notes.into_iter().flatten().filter(|d| !undone(&d.message)));
             if let (true, Some(e)) = (disagree > 0, before.first()) {
                 let message = format!(
                     "{} applications include this project and apply different central rules to {disagree} endpoint(s); they keep their declared access.",
@@ -5249,6 +5272,14 @@ pub(crate) mod spring {
             Full,
         }
 
+        /// The chains of a set of sources, read once: what does not depend on the
+        /// endpoints they are applied to.
+        pub(in super::super) struct Prepared<'s> {
+            units: Vec<Unit<'s>>,
+            home: (&'s Source, usize),
+            rules: usize,
+        }
+
         pub(in super::super) fn central_rules(
             sources: &[&Source],
             index: &Index,
@@ -5256,6 +5287,19 @@ pub(crate) mod spring {
             out: &mut Out,
             first: usize,
         ) {
+            if let Some(p) = prepare(sources, index, conf, out) {
+                run(&p, out, first);
+            }
+        }
+
+        /// Reads the chains of `sources`; `None` (with a note) when they cannot be
+        /// put in sequence at all, or there are none.
+        pub(in super::super) fn prepare<'s>(
+            sources: &[&'s Source],
+            index: &Index,
+            conf: &Conf,
+            out: &mut Out,
+        ) -> Option<Prepared<'s>> {
             let found: Vec<&Source> = (sources.iter().copied())
                 .filter(|s| !s.rel.ends_with(".cs"))
                 .filter(|s| {
@@ -5265,9 +5309,7 @@ pub(crate) mod spring {
                 })
                 .collect();
             let mut units: Vec<Unit> = found.iter().flat_map(|s| units(s)).collect();
-            let Some(home) = units.first().map(|u| (u.src, u.span.0)) else {
-                return;
-            };
+            let home = units.first().map(|u| (u.src, u.span.0))?;
             let mut recognised = Vec::new();
             for u in &mut units {
                 let (scope, spans) = scope(u.src, index, u.span);
@@ -5283,7 +5325,8 @@ pub(crate) mod spring {
                 let message = format!(
                     "{why}: central rules are not evaluated; endpoints marked undeclared may be protected there."
                 );
-                return out.note(&home.0.rel, home.0.line(home.1), message);
+                out.note(&home.0.rel, home.0.line(home.1), message);
+                return None;
             }
             mark_opaque(&mut units, &why, &recognised, out);
             if ties(&units) {
@@ -5301,9 +5344,15 @@ pub(crate) mod spring {
                 rule_note(r, out);
             }
             units.sort_by_key(|u| u.order);
-            let done = apply(&units, &mut out.0.endpoints[first..], &out.1.endpoints);
-            partial_notes(&units, &done, out);
-            if rules == 0 {
+            Some(Prepared { units, home, rules })
+        }
+
+        /// Applies the prepared chains to the endpoints from `first` on.
+        pub(in super::super) fn run(p: &Prepared, out: &mut Out, first: usize) {
+            let (units, home) = (&p.units, p.home);
+            let done = apply(units, &mut out.0.endpoints[first..], &out.1.endpoints);
+            partial_notes(units, &done, out);
+            if p.rules == 0 {
                 return;
             }
             let source = if units.iter().all(|u| !u.adapter) {
@@ -5312,8 +5361,8 @@ pub(crate) mod spring {
                 "Security configuration"
             };
             let message = format!(
-                "{source} rules evaluated: {rules} rule(s), access of {} endpoint(s) changed.",
-                done.changed
+                "{source} rules evaluated: {} rule(s), access of {} endpoint(s) changed.",
+                p.rules, done.changed
             );
             out.note(&home.0.rel, home.0.line(home.1), message);
         }
@@ -10131,17 +10180,17 @@ class Sec {
             ),
             "{diag}"
         );
-        // equal order and an unreadable chain: nothing decided, never Open
-        assert_eq!(
-            access(&flow, "GET", "/mcp/z"),
-            &AccessState::Undeclared,
-            "{diag}"
-        );
-        assert_eq!(
-            access(&flow, "GET", "/web"),
-            &AccessState::Undeclared,
-            "{diag}"
-        );
+        // reaching the customised chain: its code may have widened its scope, so
+        // these are unknown, never Open
+        for path in ["/mcp/z", "/web"] {
+            assert!(
+                matches!(
+                    access(&flow, "GET", path),
+                    AccessState::Protected(Condition::Unknown(_))
+                ),
+                "{path} {diag}"
+            );
+        }
         assert!(!flow.complete, "{diag}");
     }
 
@@ -10245,6 +10294,44 @@ class Sec {
             1,
             "{diag}"
         );
+        // the undone change is not reported (guard: written with the cache)
+        assert_eq!(notes(&flow, "access of 1 endpoint(s) changed"), 0, "{diag}");
+    }
+
+    // Code outside the scan that gets the HttpSecurity may widen the scope it
+    // is read with: endpoints outside the readable scope are unknown, so a
+    // later chain's permitAll never opens them.
+    #[test]
+    fn a_hand_off_out_of_the_scan_keeps_a_later_permit_all_from_opening() {
+        let chains = r#"@Configuration
+class Sec {
+    @Bean @Order(1)
+    SecurityFilterChain a(HttpSecurity http) throws Exception {
+        http.securityMatcher("/a/**").authorizeHttpRequests(x -> x.anyRequest().authenticated());
+        External.widen(http);
+        return http.build();
+    }
+    @Bean @Order(2)
+    SecurityFilterChain b(HttpSecurity http) throws Exception {
+        http.authorizeHttpRequests(x -> x.anyRequest().permitAll());
+        return http.build();
+    }
+}
+"#;
+        let endpoints = "@RestController class E {\n    @GetMapping(\"/a/x\") void a() {}\n    @GetMapping(\"/b/y\") void b() {}\n}\n";
+        let flow = spring_flow(&[
+            ("src/main/java/Sec.java", chains),
+            ("src/main/java/E.java", endpoints),
+        ]);
+        let diag = format!("{:#?}", flow.diagnostics);
+        let unknown = |m: &str, p: &str| matches!(access(&flow, m, p), AccessState::Protected(c) if format!("{c:?}").contains("Unknown"));
+        assert!(unknown("GET", "/a/x"), "{diag}");
+        assert!(
+            unknown("GET", "/b/y"),
+            "{:?} {diag}",
+            access(&flow, "GET", "/b/y")
+        );
+        assert!(!flow.complete, "{diag}");
     }
 
     // F32: the pre-6 `requestMatchers().antMatchers(..)` scope of an adapter.

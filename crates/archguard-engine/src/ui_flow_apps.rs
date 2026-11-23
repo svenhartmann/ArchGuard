@@ -15,10 +15,12 @@ const MAX_BYTES: u64 = 1024 * 1024;
 pub(crate) struct Modules {
     /// Project directory → the project directories it depends on.
     deps: BTreeMap<String, BTreeSet<String>>,
+    /// Modules with `<packaging>pom</packaging>`: aggregators and bundles, no code.
+    pom_only: BTreeSet<String>,
 }
 
 /// `(artifactId, dependency artifactIds)` of a `pom.xml` text.
-fn read_pom(text: &str) -> Option<(String, Vec<String>)> {
+fn read_pom(text: &str) -> Option<(String, Vec<String>, bool)> {
     let doc = roxmltree::Document::parse(text).ok()?;
     let project = doc.root_element();
     let child = |n: roxmltree::Node<'_, '_>, tag: &str| {
@@ -30,10 +32,12 @@ fn read_pom(text: &str) -> Option<(String, Vec<String>)> {
     let deps = (project.children().find(|c| c.has_tag_name("dependencies")))
         .into_iter()
         .flat_map(|d| d.children().filter(|c| c.has_tag_name("dependency")))
-        .filter(|d| child(*d, "scope").as_deref() != Some("test"))
+        .filter(|d| !matches!(child(*d, "scope").as_deref(), Some("test" | "provided")))
+        .filter(|d| child(*d, "optional").as_deref() != Some("true"))
         .filter_map(|d| child(d, "artifactId"))
         .collect();
-    Some((artifact, deps))
+    let pom = child(project, "packaging").as_deref() == Some("pom");
+    Some((artifact, deps, pom))
 }
 
 impl Modules {
@@ -47,29 +51,30 @@ impl Modules {
             } else {
                 format!("{dir}/pom.xml")
             };
-            if let Some((artifact, deps)) = read_text(root, &rel, MAX_BYTES)
+            if let Some((artifact, deps, pom)) = read_text(root, &rel, MAX_BYTES)
                 .ok()
                 .and_then(|t| read_pom(&t))
             {
-                poms.push((dir.clone(), artifact, deps));
+                poms.push((dir.clone(), artifact, deps, pom));
             }
         }
         let mut dir_of: BTreeMap<&str, Option<&String>> = BTreeMap::new();
-        for (dir, artifact, _) in &poms {
+        for (dir, artifact, ..) in &poms {
             let slot = dir_of.entry(artifact).or_insert(Some(dir));
             if slot.is_some_and(|d| d != dir) {
                 *slot = None;
             }
         }
         let deps = (poms.iter())
-            .map(|(dir, _, deps)| {
+            .map(|(dir, _, deps, _)| {
                 let found = deps
                     .iter()
                     .filter_map(|a| (*dir_of.get(a.as_str())?).cloned());
                 (dir.clone(), found.filter(|d| d != dir).collect())
             })
             .collect();
-        Modules { deps }
+        let pom_only = (poms.iter().filter(|p| p.3)).map(|p| p.0.clone()).collect();
+        Modules { deps, pom_only }
     }
 
     /// Every module reachable from `dir` through dependencies, `dir` included.
@@ -90,9 +95,13 @@ impl Modules {
     /// depends on and that reaches `dir` (or is `dir`), all its modules. Empty
     /// when `dir` stands alone.
     pub(crate) fn applications(&self, dir: &str) -> Vec<BTreeSet<String>> {
-        let depended: BTreeSet<&String> = self.deps.values().flatten().collect();
+        let code = self
+            .deps
+            .iter()
+            .filter(|(d, _)| !self.pom_only.contains(*d));
+        let depended: BTreeSet<&String> = code.flat_map(|(_, v)| v).collect();
         (self.deps.keys())
-            .filter(|r| !depended.contains(r))
+            .filter(|r| !depended.contains(r) && !self.pom_only.contains(*r))
             .map(|r| self.closure(r))
             .filter(|c| c.contains(dir) && c.len() > 1)
             .collect()
@@ -111,7 +120,12 @@ mod tests {
                 ("sec".into(), BTreeSet::from(["web".to_string()])),
                 ("app".into(), BTreeSet::from(["sec".to_string()])),
                 ("lone".into(), BTreeSet::new()),
+                (
+                    "report".into(),
+                    BTreeSet::from(["app".to_string(), "web".to_string()]),
+                ),
             ]),
+            pom_only: BTreeSet::from(["report".to_string()]),
         };
         let apps = m.applications("web");
         assert_eq!(apps.len(), 1);
@@ -121,11 +135,22 @@ mod tests {
     }
 
     #[test]
+    fn a_pom_packaging_is_flagged() {
+        let pom = "<project><artifactId>r</artifactId><packaging>pom</packaging></project>";
+        assert_eq!(read_pom(pom), Some(("r".into(), vec![], true)));
+    }
+
+    #[test]
     fn a_pom_gives_its_artifact_and_non_test_dependencies() {
         let pom = "<project><artifactId>a</artifactId><dependencies>\
             <dependency><artifactId>b</artifactId></dependency>\
             <dependency><artifactId>t</artifactId><scope>test</scope></dependency>\
+            <dependency><artifactId>o</artifactId><optional>true</optional></dependency>\
+            <dependency><artifactId>p</artifactId><scope>provided</scope></dependency>\
             </dependencies></project>";
-        assert_eq!(read_pom(pom), Some(("a".into(), vec!["b".to_string()])));
+        assert_eq!(
+            read_pom(pom),
+            Some(("a".into(), vec!["b".to_string()], false))
+        );
     }
 }
