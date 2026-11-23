@@ -1877,35 +1877,47 @@ mod controllers {
         arg: &str,
     ) -> Vec<minimal::Mod> {
         let arg = arg.trim();
-        // A fragment (`async Task<A, B> (…)` cut at its comma) or a call is no method group.
+        // A lambda, or a piece of one cut at a generic comma (`async Task<A, B> (…)`).
+        let lambda = arg.contains("=>")
+            || arg.starts_with('[')
+            || arg.starts_with("async ")
+            || arg.starts_with("static ")
+            || arg.matches('<').count() > arg.matches('>').count()
+            || arg.matches('(').count() > arg.matches(')').count();
+        if lambda {
+            return lambda_mods(index, src, out, arg);
+        }
         let path = arg
             .split('.')
             .all(|p| !p.is_empty() && p.bytes().all(lex::is_ident));
-        if arg.contains("=>") || !path {
-            return lambda_mods(index, src, out, arg);
-        }
         let (class, name) = match arg.rsplit_once('.') {
             Some((c, n)) => (c.rsplit('.').next().map(str::to_string), n),
             // An unqualified name binds in the class around the call.
             None => (handlers::enclosing_class(src, at), arg),
         };
-        let mut found = group_methods(sources, class.as_deref(), name);
+        let mut found = if path {
+            group_methods(sources, class.as_deref(), name)
+        } else {
+            vec![]
+        };
         match found.pop() {
-            Some((s, attrs)) if found.is_empty() => attr_mods(index, s, out, attrs),
+            Some((s, Some(attrs))) if found.is_empty() => attr_mods(index, s, out, attrs),
             _ => {
-                let text = format!("method group {arg} is not a single method of the sources");
+                let text =
+                    format!("method group {arg} is not a single readable method of the sources");
                 vec![minimal::Mod::Auth(out.unknown(src, at, &text))]
             }
         }
     }
 
     /// The methods named `name` declared in the class `class` (none: outside
-    /// any class) with their attributes.
+    /// any class) with their attributes; `None` when attributes may have been
+    /// lost (a `[` before the method in its statement that no declaration carries).
     fn group_methods<'a>(
         sources: &'a [Source],
         class: Option<&str>,
         name: &str,
-    ) -> Vec<(&'a Source, Vec<Attr>)> {
+    ) -> Vec<(&'a Source, Option<Vec<Attr>>)> {
         let mut found = Vec::new();
         for s in sources.iter().filter(|s| s.rel.ends_with(".cs")) {
             let declared = decls(s, false);
@@ -1913,8 +1925,12 @@ mod controllers {
                 if handlers::enclosing_class(s, open).as_deref() != class {
                     continue;
                 }
-                let decl = declared.iter().find(|d| !d.class && d.open == open);
-                found.push((s, decl.map(|d| d.attrs.clone()).unwrap_or_default()));
+                let attrs = (declared.iter().find(|d| !d.class && d.open == open))
+                    .map(|d| d.attrs.clone())
+                    .unwrap_or_default();
+                let start = s.text[..open].rfind([';', '{', '}']).map_or(0, |i| i + 1);
+                let lost = attrs.is_empty() && s.text[start..open].contains('[');
+                found.push((s, (!lost).then_some(attrs)));
             }
         }
         found
@@ -6491,7 +6507,7 @@ mod screens {
         let url = tag.literal(if tag.form { "action" } else { "href" })?;
         match (page, url) {
             (Some(name), _) => page_target(name, area, post, from, all).map(Some),
-            (None, Some(url)) => Ok(url_target(url, post, all)),
+            (None, Some(url)) => url_target(url, post, all),
             (None, None) if post => Ok(Some(Dest::Post(from.route.clone()))),
             (None, None) => Ok(None),
         }
@@ -6529,19 +6545,23 @@ mod screens {
 
     /// `href="/x"` / `action="/x"`: a POST to it, or the page with that route;
     /// external, anchor and relative URLs are no page links.
-    fn url_target(url: &str, post: bool, all: &[Page]) -> Option<Dest> {
+    fn url_target(url: &str, post: bool, all: &[Page]) -> Result<Option<Dest>, String> {
         let url = url.trim_start_matches('~');
         if !url.starts_with('/') {
-            return None;
+            return Ok(None);
         }
         let clean = url.split(['?', '#']).next().unwrap_or("");
         if post {
-            return Some(Dest::Post(clean.to_string()));
+            return Ok(Some(Dest::Post(clean.to_string())));
         }
         let want = clean.trim_end_matches('/').to_lowercase();
-        (all.iter()
-            .find(|q| q.route.trim_end_matches('/').to_lowercase() == want))
-        .map(|q| Dest::Screen(q.route.clone()))
+        let hit = all
+            .iter()
+            .find(|q| q.route.trim_end_matches('/').to_lowercase() == want);
+        // Not a literal route of a page: a parameter route, a library page or a file.
+        let miss = || format!("href=\"{clean}\" matches no page route literally");
+        hit.map(|q| Some(Dest::Screen(q.route.clone())))
+            .ok_or_else(miss)
     }
 
     /// The end of the `{…}` block that opens at `open` (the text's end when unbalanced).
@@ -6558,8 +6578,50 @@ mod screens {
 
     /// `@if (…) {…}`, `@else {…}` and other code blocks: (start, end, header).
     fn conditions(text: &str) -> Vec<(usize, usize, String)> {
+        let mut found = blocks(text);
+        // Braces in markup or strings cannot be told from code braces: the block
+        // ends are not trusted, every link from the first block on is conditional.
+        if let Some(first) = found
+            .iter()
+            .map(|b| b.0)
+            .min()
+            .filter(|_| unsure_braces(text))
+        {
+            found.push((first, text.len(), "braces in markup or strings".to_string()));
+        }
+        found
+    }
+
+    /// Whether a brace may sit in markup or a string: a line with a brace and a
+    /// tag, a brace inside quotes, or unequal numbers of `{` and `}`.
+    fn unsure_braces(text: &str) -> bool {
+        let braces = |l: &str| l.contains(['{', '}']);
+        let (open, close) = (text.matches('{').count(), text.matches('}').count());
+        open != close
+            || text.lines().any(|l| {
+                let quoted = l.split('"').skip(1).step_by(2).any(braces);
+                braces(l) && (l.contains('<') && l.contains('>') || quoted)
+            })
+    }
+
+    fn blocks(text: &str) -> Vec<(usize, usize, String)> {
         let mut found = Vec::new();
-        for key in ["@if", "@switch", "@foreach", "@for", "@while", "@{", "else"] {
+        let keys = [
+            "@if",
+            "@switch",
+            "@for",
+            "@while",
+            "@do",
+            "@lock",
+            "@try",
+            "@using (",
+            "@using(",
+            "@{",
+            "@functions",
+            "@code",
+            "else",
+        ];
+        for key in keys {
             for (at, _) in text.match_indices(key) {
                 let after_block = text[..at].trim_end().ends_with('}');
                 let open = text[at..].find('{').map(|o| o + at);
@@ -10698,6 +10760,87 @@ builder.Services.AddRazorPages(o => { o.Conventions.AuthorizeFolder(Folders.Priv
         );
         assert!(gaps(&flow, "@Url.Foo()") >= 1, "{:#?}", flow.diagnostics);
         assert!(!flow.screens.iter().any(|s| s.name.contains("NotAPage")));
+    }
+
+    // W6c review: a method the scan cannot take apart (attribute lost to a line
+    // break, tuple return) and delegates that are no plain name are Unknown, never
+    // attribute-free; a same-class overload is ambiguous.
+    #[test]
+    fn w6c_review_unreadable_method_groups_are_unknown() {
+        let program = r#"
+app.MapGet("/nl", Api.GetAsync);
+app.MapGet("/tuple", Api.Pair);
+app.MapGet("/gen", Api.Plain<int>);
+app.MapGet("/cast", (Func<IResult>)Api.Plain2);
+app.MapGet("/fac", Api.Make());
+"#;
+        let api = r#"
+public static class Api
+{
+    [Authorize] public static async Task<Results<Ok, NotFound>>
+        GetAsync(int id) => null;
+    [Authorize] public static (int, string)
+        Pair() => (1, "a");
+    public static IResult Plain<T>() => null;
+    public static IResult Plain2() => null;
+    public static Delegate Make() => null;
+}
+public static class Ov
+{
+    public static void Map(IEndpointRouteBuilder app) { app.MapGet("/ov", Pick); }
+    static IResult Pick() => null;
+    [Authorize] static IResult Pick(int x) => null;
+}
+"#;
+        let flow = web(&tfm("net10.0"), &[("Program.cs", program), ("Api.cs", api)]);
+        // `/nl` and `/tuple` have `[Authorize]`: never Undeclared or Open, whether the
+        // declaration scan reads the attribute (Protected) or not (Unknown).
+        for path in ["/nl", "/tuple"] {
+            let state = access(&flow, "GET", path);
+            assert!(
+                matches!(state, AccessState::Protected(_)),
+                "{path}: {state:?}"
+            );
+        }
+        for path in ["/gen", "/cast", "/fac", "/ov"] {
+            let state = access(&flow, "GET", path);
+            assert!(
+                matches!(state, AccessState::Protected(Condition::Unknown(_))),
+                "{path}: {state:?}"
+            );
+        }
+    }
+
+    // W6c review: braces in markup or strings cannot be ruled out, other code
+    // blocks count, and a local href without a page is a gap.
+    #[test]
+    fn w6c_review_razor_blocks_braces_and_hrefs() {
+        let p = "@page\n@if (a) {\n<p>}</p>\n}\n<a asp-page=\"/Q\">q</a>\n";
+        let r = "@page\n@do {\n<a asp-page=\"/Q\">q</a>\n} while (b);\n";
+        let o = "@page \"{id}\"\n<a href=\"/Orders/5\">five</a>\n";
+        let flow = web(
+            &tfm("net10.0"),
+            &[
+                ("Program.cs", "var x = 1;"),
+                ("Pages/P.cshtml", p),
+                ("Pages/R.cshtml", r),
+                ("Pages/Q.cshtml", "@page\n"),
+                ("Pages/Orders.cshtml", o),
+            ],
+        );
+        for file in ["Pages/P.cshtml", "Pages/R.cshtml"] {
+            let t = flow
+                .transitions
+                .iter()
+                .find(|t| t.file == format!("Web/{file}"));
+            let t = t.unwrap_or_else(|| panic!("{file}: {:#?}", flow.transitions));
+            assert!(
+                matches!(&t.condition, AccessState::Protected(Condition::Unknown(_))),
+                "{file}: {:?}",
+                t.condition
+            );
+        }
+        assert!(gaps(&flow, "/Orders/5") >= 1, "{:#?}", flow.diagnostics);
     }
 
     // W6c: a link under a Razor condition is never unconditional; layout links are a gap.
