@@ -27,8 +27,8 @@
 //! descriptor overrides the annotations, `*` names every method, all matching
 //! permissions are united and an `unchecked` one permits every role,
 //! `exclude-list` denies; a bean only takes the descriptor of its own module). A reached project
-//! class whose source cannot be resolved leaves a gap. Not read: C# services
-//! (`IAuthorizationService`; see `service-level.md`), Micronaut. An earlier `return` in the handler makes the call
+//! class whose source cannot be resolved leaves a gap. Not read: Micronaut. C# services
+//! are `ui_flow_service_cs`. An earlier `return` in the handler makes the call
 //! `PathOnly`; an earlier `throw` does not.
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
