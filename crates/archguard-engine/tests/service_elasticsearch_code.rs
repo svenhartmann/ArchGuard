@@ -137,3 +137,23 @@ fn operation_arguments_are_neither_usages_nor_gaps() {
     assert_eq!(gaps(&report), 0);
     assert!(report.complete);
 }
+
+#[test]
+fn builder_variables_name_indices_in_a_separate_statement() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(
+        root,
+        "compose.yaml",
+        "services:\n  api:\n    build: ./api\n",
+    );
+    put(
+        root,
+        "api/B.java",
+        "import co.elastic.clients.elasticsearch.core.*;\nclass B { void f() {\n  var b = new IndexRequest.Builder<Doc>();\n  b.index(Names.ORDERS);\n  var c = new SearchRequest.Builder();\n  c.index(\"lit\");\n  elastic.index(req);\n} }\n",
+    );
+    let report = analyze_services(root).unwrap();
+    assert_eq!(usages(&report, "api"), pairs(&[("lit", "unknown")]));
+    assert_eq!(gaps(&report), 1);
+    assert!(!report.complete);
+}

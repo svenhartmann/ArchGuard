@@ -233,7 +233,7 @@ fn access(window: &str) -> &'static str {
 fn names(c: &Call, text: &str, at: usize, open: usize) -> Vec<Option<String>> {
     let window = &text[statement_start(text, at)..at];
     let builder = ["->", "=>", "Builder"].iter().any(|k| window.contains(k));
-    let gaps = c.always || builder || window.ends_with("Indices");
+    let gaps = c.always || builder || window.ends_with("Indices") || builder_variable(text, at);
     let mut args = split_args(&text[open..]);
     args.drain(..c.skip.min(args.len()));
     if !c.many {
@@ -290,4 +290,23 @@ fn split_args(s: &str) -> Vec<&str> {
         }
     }
     out
+}
+
+/// Whether the receiver of the call at `at` is a local declared with a builder type,
+/// e.g. `var b = new IndexRequest.Builder<Doc>();`; its `index(x)` takes a name.
+// shortcut: declarations are matched per statement by name, not by scope; upgrade if a shadowed name misleads.
+fn builder_variable(text: &str, at: usize) -> bool {
+    let word = |s: &str| {
+        let s = s.trim_end();
+        let start = s
+            .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .map_or(0, |i| i + 1);
+        s[start..].to_owned()
+    };
+    let receiver = word(&text[..at]);
+    !receiver.is_empty()
+        && text
+            .split(';')
+            .filter(|stmt| stmt.contains("Builder"))
+            .any(|stmt| word(stmt.split('=').next().unwrap_or("")) == receiver)
 }
