@@ -1,0 +1,6 @@
+# Static example only. No containers are started by archguard.
+services:
+  java-writer:
+    build: ./java-writer
+  dotnet-reader:
+    build: ./dotnet-reader
