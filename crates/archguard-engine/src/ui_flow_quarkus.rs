@@ -1333,56 +1333,106 @@ fn emit(srcs: Vec<Src>, protos: Vec<Proto>, out: &mut Out) {
     });
 }
 
-/// One `recv.setServiceBeans(args)` at `at`: whether `recv` gets no
-/// provider/interceptor/filter/handler/feature, and the type names of `args`
-/// (`new T(`, or the declared `T t` / `List<T> t` of a name in it).
-fn registration(src: &Source, at: usize) -> Option<(bool, Vec<&str>)> {
-    let (text, b) = (&src.text, src.text.as_bytes());
-    let open = at + "setServiceBeans".len();
-    let close = src.pair(open).filter(|_| b.get(open) == Some(&b'('))?;
-    let (rs, re) = lex::ident_before(b, at.saturating_sub(1));
-    let recv = &text[rs..re];
-    let setter = |p: usize| {
-        let m = &text[p + recv.len() + 1..];
-        let m = &m[..m.find(|c: char| !c.is_alphanumeric()).unwrap_or(m.len())];
-        let named = ["Provider", "Interceptor", "Filter", "Handler", "Feature"];
-        (m.starts_with("set") || m.starts_with("add")) && named.iter().any(|n| m.contains(n))
-    };
-    let clean = !recv.is_empty()
-        && !text
-            .match_indices(&format!("{recv}."))
-            .any(|(p, _)| setter(p));
-    let toks: Vec<&str> = (text[open + 1..close]
-        .split(|c: char| !(c.is_alphanumeric() || c == '_')))
-    .filter(|t| !t.is_empty())
-    .collect();
-    let mut types = Vec::new();
-    for (k, t) in toks.iter().enumerate() {
-        if *t == "new" {
-            types.extend(toks.get(k + 1));
-        } else if t.starts_with(|c: char| c.is_lowercase()) {
-            let decl = lex::words(&text[..at], t).last();
-            types.extend(decl.and_then(|d| declared_type(src, d)));
-        }
-    }
-    Some((clean, types))
-}
+/// Reading of CXF `setServiceBeans` registrations.
+mod cxf {
+    use super::*;
 
-/// The type of the name declared at `d`: `T t` or `List<T> t`.
-fn declared_type(src: &Source, d: usize) -> Option<&str> {
-    let (text, b) = (&src.text, src.text.as_bytes());
-    let k = lex::skip_ws_back(b, d);
-    let ty = if k > 0 && b[k - 1] == b'>' {
-        let lt = text[..k].rfind('<')?;
-        text[lt + 1..k - 1]
-            .rsplit(|c: char| !c.is_alphanumeric())
-            .next()?
-    } else {
-        let (a, z) = lex::ident_before(b, k);
-        &text[a..z]
-    };
-    ty.starts_with(|c: char| c.is_uppercase()).then_some(ty)
+    /// One `recv.setServiceBeans(args)` at `at`: whether `recv` is provably left
+    /// without providers/interceptors, and the type names of `args`.
+    pub(super) fn registration(src: &Source, at: usize) -> Option<(bool, Vec<&str>)> {
+        let (text, b) = (&src.text, src.text.as_bytes());
+        let open = at + "setServiceBeans".len();
+        let close = src.pair(open).filter(|_| b.get(open) == Some(&b'('))?;
+        let (rs, re) = lex::ident_before(b, at.saturating_sub(1));
+        let recv = &text[rs..re];
+        let clean = !recv.is_empty() && only_plain_use(text, recv);
+        let arg = &text[open + 1..close];
+        let mut types = Vec::new();
+        let mut k = 0;
+        while k < arg.len() {
+            let t = ident_at(&arg[k..]);
+            if t.is_empty() {
+                k += arg[k..].chars().next().map_or(1, char::len_utf8);
+                continue;
+            }
+            let (before, after) = (arg[..k].trim_end(), arg[k + t.len()..].trim_start());
+            if t == "new" {
+                types.push(ident_at(after));
+            } else if t.starts_with(|c: char| c.is_lowercase())
+                && !before.ends_with(['.', ':'])
+                && !after.starts_with('(')
+            {
+                types.extend(declared_type(src, at, t));
+            }
+            k += t.len();
+        }
+        Some((clean, types))
+    }
+
+    /// The identifier at the start of `s`.
+    fn ident_at(s: &str) -> &str {
+        &s[..s
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(s.len())]
+    }
+
+    /// Whether every use of `recv` in the file is its `= new` declaration or a
+    /// call from a short allowlist that adds no providers/interceptors.
+    fn only_plain_use(text: &str, recv: &str) -> bool {
+        let plain = [
+            "setServiceBeans",
+            "setAddress",
+            "setStaticSubresourceResolution",
+            "create",
+        ];
+        let mut declared = false;
+        for p in lex::words(text, recv) {
+            let rest = text[p + recv.len()..].trim_start();
+            if let Some(call) = rest.strip_prefix('.') {
+                if !plain.contains(&ident_at(call.trim_start())) {
+                    return false;
+                }
+            } else if let Some(rhs) = rest.strip_prefix('=').filter(|r| !r.starts_with('=')) {
+                if !rhs.trim_start().starts_with("new ") {
+                    return false; // aliased
+                }
+                declared = true;
+            } else {
+                return false; // passed, returned or compared
+            }
+        }
+        declared
+    }
+
+    /// The declared type of the name `t` before `at`: `T t` or `List<T> t`, only
+    /// when every declaration found names the same type.
+    fn declared_type<'a>(src: &'a Source, at: usize, t: &str) -> Option<&'a str> {
+        let (text, b) = (&src.text, src.text.as_bytes());
+        let found: BTreeSet<&str> = lex::words(&text[..at], t)
+            .filter(|p| {
+                text[p + t.len()..]
+                    .trim_start()
+                    .starts_with([',', ')', '=', ';'])
+            })
+            .filter_map(|p| {
+                let k = lex::skip_ws_back(b, p);
+                let ty = if k > 0 && b[k - 1] == b'>' {
+                    let lt = text[..k].rfind('<')?;
+                    text[lt + 1..k - 1]
+                        .rsplit(|c: char| !c.is_alphanumeric())
+                        .next()?
+                } else {
+                    let (a, z) = lex::ident_before(b, k);
+                    &text[a..z]
+                };
+                ty.starts_with(|c: char| c.is_uppercase()).then_some(ty)
+            })
+            .collect();
+        let mut it = found.into_iter();
+        it.next().filter(|_| it.next().is_none())
+    }
 }
+use cxf::registration;
 
 /// Everything the scan found, to place each resource method.
 struct World<'a> {
@@ -1527,10 +1577,14 @@ impl World<'_> {
             self.implementors.borrow_mut().insert(key, found.clone());
             found
         });
-        let (served, rest): (Vec<usize>, Vec<usize>) =
-            found.iter().copied().partition(|i| self.serving(*i));
-        let unregistered = served.is_empty();
-        let impls: Vec<usize> = if unregistered { rest } else { served };
+        let in_server = |i: &usize| self.ctxs[self.srcs[self.classes[*i].0].proj].serves;
+        let (served, rest): (Vec<usize>, Vec<usize>) = found.iter().copied().partition(in_server);
+        let impls: Vec<usize> = if served.is_empty() {
+            found
+        } else {
+            let tied = rest.into_iter().filter(|i| self.tied(*i));
+            served.into_iter().chain(tied).collect()
+        };
         if impls.is_empty() {
             let message = format!(
                 "No serving implementation of `{}` in the scan; it is not listed as an endpoint",
@@ -1540,15 +1594,22 @@ impl World<'_> {
             return vec![]; // nothing serves it: a client-side declaration
         }
         (impls.into_iter())
-            .map(|i| self.impl_target(i, &method.name, unregistered))
+            .map(|i| self.impl_target(i, &method.name, !in_server(&i) && !self.tied(i)))
             .collect()
     }
 
-    /// Whether class `i` is served: its project has a REST server, or a CXF
-    /// registration without unread providers ties it to one.
-    fn serving(&self, i: usize) -> bool {
-        self.ctxs[self.srcs[self.classes[i].0].proj].serves
-            || self.registered.get(&i) == Some(&true)
+    /// The one class called `name` that source text `from` can name (same
+    /// package or imported); none when absent or ambiguous.
+    fn named_from(&self, from: &str, name: &str) -> Option<usize> {
+        let mut hits = (self.by_name.get(name).into_iter().flatten())
+            .copied()
+            .filter(|i| names_interface(from, &self.srcs[self.classes[*i].0].src.text, name));
+        hits.next().filter(|_| hits.next().is_none())
+    }
+
+    /// Whether a CXF registration without unread providers ties class `i` to a server.
+    fn tied(&self, i: usize) -> bool {
+        self.registered.get(&i) == Some(&true)
     }
 
     fn impl_target(&self, i: usize, method: &str, unregistered: bool) -> Target {
@@ -1575,10 +1636,10 @@ impl World<'_> {
                 let Some((clean, types)) = registration(&s.src, at) else {
                     continue;
                 };
-                for i in types.iter().filter_map(|t| self.by_name.get(*t)).flatten() {
-                    let ty = &self.classes[*i].1.name;
-                    let api = &self.srcs[self.classes[*i].0].src.text;
-                    for j in self.subtypes(ty, api).into_iter().chain([*i]) {
+                for i in types.iter().filter_map(|t| self.named_from(&s.src.text, t)) {
+                    let ty = &self.classes[i].1.name;
+                    let api = &self.srcs[self.classes[i].0].src.text;
+                    for j in self.subtypes(ty, api).into_iter().chain([i]) {
                         *found.entry(j).or_insert(true) &= clean;
                     }
                 }
@@ -2123,6 +2184,104 @@ mod tests {
                 .iter()
                 .any(|d| d.message.contains("setServiceBeans"))
         );
+    }
+
+    // W6a review: registrations the reader cannot prove chain-free stay Unknown.
+    fn handler_access(f: &UiFlow, h: &str) -> AccessState {
+        (f.endpoints.iter())
+            .find(|e| e.handler.as_deref() == Some(h))
+            .unwrap_or_else(|| panic!("no {h} in {:?}", f.endpoints))
+            .access
+            .clone()
+    }
+
+    #[test]
+    fn cxf_interceptor_added_through_a_getter_is_not_chain_free() {
+        let f = cxf(" s.getInInterceptors().add(new Jaas());", true);
+        assert!(matches!(
+            handler_access(&f, "XImpl.g"),
+            Protected(Condition::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn cxf_alias_of_the_factory_is_not_chain_free() {
+        let f = cxf(" var t = s; t.setProviders(List.of());", true);
+        assert!(matches!(
+            handler_access(&f, "XImpl.g"),
+            Protected(Condition::Unknown(_))
+        ));
+    }
+
+    const CAPI: &str = "package api;\nimport jakarta.ws.rs.*;\n@Path(\"/api/x\") public interface XApi extends JAXRSService { @GET String g(); }\n";
+    fn two_impls(ctx: &str) -> UiFlow {
+        let imp = |p: &str, n: &str| {
+            format!(
+                "package {p};\nimport api.XApi;\npublic class {n} implements XApi {{ public String g() {{ return \"\"; }} }}\n"
+            )
+        };
+        run(&[
+            ("api/pom.xml", "<project/>"),
+            ("api/src/main/java/api/XApi.java", CAPI),
+            (
+                "api/src/main/java/api/JAXRSService.java",
+                "package api; public interface JAXRSService {}\n",
+            ),
+            ("core/pom.xml", "<project/>"),
+            ("core/src/main/java/a/XImpl.java", &imp("a", "XImpl")),
+            ("other/pom.xml", "<project/>"),
+            (
+                "other/src/main/java/b/OtherImpl.java",
+                &imp("b", "OtherImpl"),
+            ),
+            ("core/src/main/java/c/Ctx.java", ctx),
+        ])
+    }
+
+    #[test]
+    fn cxf_registered_implementation_does_not_drop_the_others() {
+        let f = two_impls(
+            "package c;\nimport a.XImpl;\nclass Ctx { Object c() { var s = new SpringJAXRSServerFactoryBean(); s.setServiceBeans(List.of(new XImpl())); return s.create(); } }\n",
+        );
+        assert_eq!(handler_access(&f, "XImpl.g"), Undeclared);
+        assert!(matches!(
+            handler_access(&f, "OtherImpl.g"),
+            Protected(Condition::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn cxf_argument_names_resolve_only_real_arguments() {
+        // `stream` in `services.stream()` is a method call, not the parameter `stream`
+        let ctx = "package c;\nimport a.XImpl;\nimport b.OtherImpl;\nclass Ctx { Object c(final List<XImpl> services, final OtherImpl stream) { var s = new SpringJAXRSServerFactoryBean(); s.setServiceBeans(services.stream().toList()); return s.create(); } }\n";
+        let f = two_impls(ctx);
+        assert_eq!(handler_access(&f, "XImpl.g"), Undeclared);
+        assert!(matches!(
+            handler_access(&f, "OtherImpl.g"),
+            Protected(Condition::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn cxf_type_name_without_import_is_ambiguous() {
+        let imp = |p: &str| {
+            format!(
+                "package {p};\nimport api.XApi;\npublic class Dup implements XApi {{ public String g() {{ return \"\"; }} }}\n"
+            )
+        };
+        let ctx = "package c;\nclass Ctx { Object c() { var s = new SpringJAXRSServerFactoryBean(); s.setServiceBeans(List.of(new Dup())); return s.create(); } }\n";
+        let f = run(&[
+            ("api/pom.xml", "<project/>"),
+            ("api/src/main/java/api/XApi.java", CAPI),
+            ("core/pom.xml", "<project/>"),
+            ("core/src/main/java/a/Dup.java", &imp("a")),
+            ("core/src/main/java/b/Dup.java", &imp("b")),
+            ("core/src/main/java/c/Ctx.java", ctx),
+        ]);
+        assert!(matches!(
+            handler_access(&f, "Dup.g"),
+            Protected(Condition::Unknown(_))
+        ));
     }
 
     // W5a: an implementation outside any REST server project (CXF registers it
