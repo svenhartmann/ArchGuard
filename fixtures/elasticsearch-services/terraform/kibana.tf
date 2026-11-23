@@ -36,3 +36,14 @@ resource "elasticstack_kibana_alerting_rule" "dynamic" {
 resource "elasticstack_kibana_import_saved_objects" "dashboards" {
   file_contents = file("dashboards.ndjson")
 }
+
+resource "elasticstack_kibana_alerting_rule" "search_source" {
+  name         = "orders-source-alert"
+  rule_type_id = ".es-query"
+  params = jsonencode({
+    searchType = "searchSource"
+    searchConfiguration = {
+      index = "00000000-dataview-id"
+    }
+  })
+}

@@ -183,3 +183,19 @@ fn kibana_gaps_and_saved_objects_note() {
             .all(|a| !a.address.contains("import_saved_objects"))
     );
 }
+
+#[test]
+fn nested_search_configuration_index_is_a_data_view_id_not_a_pattern() {
+    let r = fixture();
+    assert!(
+        find(&r, "alerting_rule", "orders-source-alert")
+            .patterns
+            .is_empty()
+    );
+    assert!(r.diagnostics.iter().any(|d| {
+        d.file == "kibana.tf"
+            && d.message
+                .contains("elasticstack_kibana_alerting_rule.search_source")
+            && d.message.contains("data view")
+    }));
+}

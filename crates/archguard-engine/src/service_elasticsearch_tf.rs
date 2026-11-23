@@ -173,10 +173,16 @@ impl Read<'_, '_> {
         let rule_type = attr(body, "rule_type_id").and_then(literal);
         let (mut found, mut gap) = (Vec::new(), false);
         if let Some(p) = attr(body, "params") {
-            params_index(p, true, &mut found, &mut gap);
+            params_index(p, &mut found, &mut gap);
         }
         if gap {
             self.text("the rule index", None);
+        } else if found.is_empty() {
+            let message = format!(
+                "{}: alerting rule has no top-level params index; its index comes from a data view or is unknown.",
+                self.r.address
+            );
+            diagnostic(self.report, &self.r.file.path, None, message);
         }
         let mut patterns = Vec::new();
         for e in found {
@@ -337,31 +343,21 @@ fn pipelines(e: &Expression, strict: bool, out: &mut Vec<Expression>, gap: &mut 
     }
 }
 
-/// Values of every `index` key in `jsonencode(...)`, literal JSON or plain objects. Unreadable
-/// top-level params (variable, function, malformed JSON) set `gap`; other keys are ignored.
-fn params_index(e: &Expression, strict: bool, out: &mut Vec<Expression>, gap: &mut bool) {
+/// The top-level `index` value of `params` given as `jsonencode(...)`, literal JSON or a plain
+/// object. Nested `index` keys (e.g. `searchConfiguration.index`) are data view ids, not patterns.
+/// Unreadable params (variable, function, malformed JSON) set `gap`.
+fn params_index(e: &Expression, out: &mut Vec<Expression>, gap: &mut bool) {
     match e {
         Expression::FuncCall(call) if call.name.name.as_str() == "jsonencode" => {
-            call.args
-                .iter()
-                .for_each(|a| params_index(a, true, out, gap));
+            call.args.iter().for_each(|a| params_index(a, out, gap));
         }
-        Expression::Object(_) => {
-            for (key, value) in object(e) {
-                if key == "index" {
-                    out.push(value.clone());
-                } else {
-                    params_index(value, false, out, gap);
-                }
-            }
-        }
-        Expression::Array(items) => items.iter().for_each(|i| params_index(i, strict, out, gap)),
-        other => match literal(other).filter(|s| s.trim_start().starts_with(['{', '['])) {
+        Expression::Object(_) => out.extend(get(e, "index").cloned()),
+        other => match literal(other).filter(|s| s.trim_start().starts_with('{')) {
             Some(s) => match parser::parse_expr(s.trim()) {
-                Ok(parsed) => params_index(&parsed, strict, out, gap),
-                Err(_) => *gap |= strict,
+                Ok(parsed) => params_index(&parsed, out, gap),
+                Err(_) => *gap = true,
             },
-            None => *gap |= strict,
+            None => *gap = true,
         },
     }
 }
