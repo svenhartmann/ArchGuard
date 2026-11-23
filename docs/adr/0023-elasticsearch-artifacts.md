@@ -125,7 +125,9 @@ are code, but no analyzer measures them.
     ternary `?:`, null-safe `?.` and Elvis `?:`. Strings, comments and regex
     literals are not scanned. Nesting is the maximum depth of control blocks.
     Unbalanced braces give no measurement. The rule lives in the module
-    documentation of the counter; this ADR names it.
+    documentation of the counter,
+    [`painless.rs`](../../crates/archguard-extract/src/painless.rs); this ADR names it and
+    does not repeat it.
 11. **Answers to the open questions.**
     - Q1: constants with a literal value in the same service are resolved
       (decision 6).

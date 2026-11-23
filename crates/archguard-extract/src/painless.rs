@@ -38,6 +38,9 @@ pub fn measure(src: &str) -> Option<PainlessMetrics> {
         stack: Vec::new(),
         pending: false,
         operand: false,
+        do_pending: false,
+        closed_do: false,
+        after_do: false,
     };
     while s.i < s.c.len() {
         s.step()?;
@@ -54,12 +57,17 @@ struct Scan {
     cyc: u32,
     max_nest: u32,
     depth: u32,
-    /// Open `(`, `[`, `{`; the flag marks a control-block brace.
-    stack: Vec<(char, bool)>,
+    /// Open `(`, `[`, `{`; the flags mark a control-block brace and a `do` block.
+    stack: Vec<(char, bool, bool)>,
     /// A control keyword was seen and its `{` has not opened yet.
     pending: bool,
     /// The previous token ends an operand, so `/` divides instead of opening a regex.
     operand: bool,
+    /// `do` was seen and its `{` has not opened yet.
+    do_pending: bool,
+    /// The last token closed a `do { … }` block; a `while` right after it is not a new loop.
+    closed_do: bool,
+    after_do: bool,
 }
 
 impl Scan {
@@ -71,7 +79,10 @@ impl Scan {
         let ch = self.c[self.i];
         if ch.is_whitespace() {
             self.i += 1;
-        } else if ch == '/' && matches!(self.at(1), Some('/' | '*')) {
+            return Some(());
+        }
+        self.after_do = std::mem::take(&mut self.closed_do);
+        if ch == '/' && matches!(self.at(1), Some('/' | '*')) {
             self.comment()?;
         } else if ch == '"' || ch == '\'' || (ch == '/' && !self.operand) {
             self.literal(ch)?;
@@ -124,7 +135,9 @@ impl Scan {
             self.i += 1;
         }
         let word: String = self.c[start..self.i].iter().collect();
-        self.cyc += u32::from(DECISION.contains(&word.as_str()));
+        let loop_end = word == "while" && self.after_do;
+        self.cyc += u32::from(DECISION.contains(&word.as_str()) && !loop_end);
+        self.do_pending |= word == "do";
         self.pending |= CONTROL.contains(&word.as_str());
         // `return /x/` and friends: a keyword is not an operand.
         self.operand = !matches!(word.as_str(), "return" | "case" | "else" | "in" | "do");
@@ -133,8 +146,13 @@ impl Scan {
     fn punct(&mut self, ch: char) -> Option<()> {
         let next = self.at(1);
         self.i += 1;
+        let before = self.operand;
         self.operand = matches!(ch, ')' | ']' | '}');
         match ch {
+            '+' | '-' if next == Some(ch) => {
+                self.i += 1;
+                self.operand = before;
+            }
             '&' | '|' if next == Some(ch) => {
                 self.cyc += 1;
                 self.i += 1;
@@ -144,10 +162,13 @@ impl Scan {
                 self.cyc += 1; // ternary, Elvis `?:` and null-safe `?.` each count once
                 self.i += usize::from(matches!(next, Some('.' | ':')));
             }
-            '(' | '[' => self.stack.push((ch, false)),
+            '(' | '[' => self.stack.push((ch, false, false)),
             '{' => self.open_brace(),
             ')' | ']' | '}' => return self.close(ch),
-            ';' if self.stack.iter().all(|s| s.0 == '{') => self.pending = false,
+            ';' if self.stack.iter().all(|s| s.0 == '{') => {
+                self.pending = false;
+                self.do_pending = false;
+            }
             _ => {}
         }
         Some(())
@@ -156,7 +177,8 @@ impl Scan {
     fn open_brace(&mut self) {
         let ctl = self.pending && self.stack.iter().all(|s| s.0 == '{');
         self.pending = false;
-        self.stack.push(('{', ctl));
+        let is_do = std::mem::take(&mut self.do_pending);
+        self.stack.push(('{', ctl, is_do));
         if ctl {
             self.depth += 1;
             self.max_nest = self.max_nest.max(self.depth);
@@ -170,8 +192,9 @@ impl Scan {
             _ => '{',
         };
         match self.stack.pop() {
-            Some((o, ctl)) if o == want => {
+            Some((o, ctl, is_do)) if o == want => {
                 self.depth -= u32::from(ctl);
+                self.closed_do = is_do;
                 Some(())
             }
             _ => None,
@@ -206,7 +229,9 @@ mod tests {
             ("for (x in xs) { y }", 2),
             ("for (;;) { y }", 2),
             ("while (a) { b }", 2),
-            ("do { a } while (b)", 3), // `do` and `while`
+            ("do { a } while (b)", 2), // the `while` of a do-while is not counted again
+            ("do { a } while (b) && c", 3),
+            ("do { if (a) { b } } while (c)", 3),
             ("switch (a) { case 1: b; case 2: c; }", 3),
             ("try { a } catch (Exception e) { b }", 2),
             ("a && b", 2),
@@ -214,6 +239,17 @@ mod tests {
             ("a ? b : c", 2),
             ("a ?: b", 2),
             ("a?.b", 2),
+        ] {
+            assert_eq!(cyc(src), want, "{src}");
+        }
+    }
+
+    #[test]
+    fn slash_after_postfix_increment_divides() {
+        for (src, want) in [
+            ("i++ / 2 ? a : b", 2),
+            ("i-- / 2 / 3", 1),
+            ("++i / 2 + 1", 1),
         ] {
             assert_eq!(cyc(src), want, "{src}");
         }
