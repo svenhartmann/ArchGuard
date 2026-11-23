@@ -140,6 +140,7 @@ pub(crate) fn apply(ctx: &ExtractContext, flow: &mut UiFlow) {
     if !has_signs(&projects) && !descriptor {
         return;
     }
+    #[allow(unused_mut)] // tests drop classes from it
     let mut analysis = jvm_calls(ctx, &projects);
     #[cfg(test)]
     analysis
