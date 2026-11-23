@@ -34,35 +34,35 @@ const MAX_ENTRIES: usize = 50_000;
 const MAX_MODULE_DEPTH: usize = 8;
 
 /// One parsed `.tf` file.
-struct TfFile {
-    path: String,
+pub(super) struct TfFile {
+    pub(super) path: String,
     /// Byte offset of each line start.
     line_at: Vec<usize>,
     body: Body,
 }
 
 impl TfFile {
-    fn line(&self, span: Option<Range<usize>>) -> Option<u32> {
+    pub(super) fn line(&self, span: Option<Range<usize>>) -> Option<u32> {
         let start = span?.start;
         u32::try_from(self.line_at.partition_point(|&s| s <= start)).ok()
     }
 }
 
 /// A `resource` block within one module instance.
-struct Resource<'a> {
-    kind: &'a str,
-    name: &'a str,
+pub(super) struct Resource<'a> {
+    pub(super) kind: &'a str,
+    pub(super) name: &'a str,
     /// Full address, e.g. `module.db.aws_db_instance.main`.
-    address: String,
-    block: &'a Block,
-    file: &'a TfFile,
+    pub(super) address: String,
+    pub(super) block: &'a Block,
+    pub(super) file: &'a TfFile,
 }
 
 impl Resource<'_> {
-    fn line(&self) -> Option<u32> {
+    pub(super) fn line(&self) -> Option<u32> {
         self.file.line(self.block.span())
     }
-    fn evidence(&self, line: Option<u32>, suffix: &str, note: &str) -> ServiceEvidence {
+    pub(super) fn evidence(&self, line: Option<u32>, suffix: &str, note: &str) -> ServiceEvidence {
         let file = &self.file.path;
         let at = line.map_or(String::new(), |l| format!(":{l}"));
         ServiceEvidence {
@@ -105,6 +105,8 @@ pub(super) fn deployments(
     root: &Path,
     discovery: &Discovery,
     report: &mut ServiceTopology,
+    // Called once per module instance; keeps readers of other resource families out of this file.
+    each_instance: &mut dyn FnMut(&mut ServiceTopology, &str, &[Resource]),
 ) -> Vec<Deployment> {
     let modules = parse(root, discovery, report);
     let called = module_calls(&modules, report);
@@ -121,6 +123,7 @@ pub(super) fn deployments(
             diagnostic(report, &file, None, message);
         }
         for resources in &instances {
+            each_instance(report, &scope, resources);
             module_instance(report, &scope, resources, &mut out);
         }
     }

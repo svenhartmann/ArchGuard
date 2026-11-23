@@ -23,6 +23,8 @@ mod service_datastore_settings;
 mod service_datastores;
 #[path = "service_deployments.rs"]
 mod service_deployments;
+#[path = "service_elasticsearch_tf.rs"]
+mod service_elasticsearch_tf;
 #[path = "service_spring.rs"]
 mod service_spring;
 #[path = "service_tables.rs"]
@@ -93,7 +95,14 @@ pub(crate) fn analyze_services_with(
     parsed.sort_by(|a, b| a.service.id.cmp(&b.service.id));
     compose_dependencies(parsed, &mut report);
     crate::service_projects::augment(&root, &discovery, &mut report)?;
-    let terraform = service_terraform::deployments(&root, &discovery, &mut report);
+    let terraform = service_terraform::deployments(
+        &root,
+        &discovery,
+        &mut report,
+        &mut service_elasticsearch_tf::augment,
+    );
+    let artifacts = &mut report.elasticsearch.artifacts;
+    artifacts.sort_by(|a, b| (&a.scope, &a.address).cmp(&(&b.scope, &b.address)));
     let (deployments, rendered) =
         service_deployments::augment(&root, &discovery, &mut report, tools, terraform);
     service_communications::augment(&root, &mut report);
