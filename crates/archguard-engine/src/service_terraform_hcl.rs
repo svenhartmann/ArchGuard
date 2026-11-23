@@ -13,7 +13,7 @@ pub(super) fn block<'b>(body: &'b Body, ident: &'b str) -> Option<&'b Body> {
 }
 
 /// A literal string, number or bool, or a template without interpolation.
-pub(super) fn literal(expr: &Expression) -> Option<String> {
+pub(crate) fn literal(expr: &Expression) -> Option<String> {
     match expr {
         Expression::String(s) => Some(s.value().clone()),
         Expression::Number(n) => Some(n.value().to_string()),
@@ -32,7 +32,7 @@ pub(super) fn literal(expr: &Expression) -> Option<String> {
 }
 
 /// Entries of an object expression with literal keys.
-pub(super) fn object(expr: &Expression) -> Vec<(String, &Expression)> {
+pub(crate) fn object(expr: &Expression) -> Vec<(String, &Expression)> {
     let Expression::Object(object) = expr else {
         return vec![];
     };
@@ -48,7 +48,7 @@ pub(super) fn object(expr: &Expression) -> Vec<(String, &Expression)> {
         .collect()
 }
 
-pub(super) fn get<'e>(expr: &'e Expression, key: &str) -> Option<&'e Expression> {
+pub(crate) fn get<'e>(expr: &'e Expression, key: &str) -> Option<&'e Expression> {
     object(expr)
         .into_iter()
         .find(|(k, _)| k == key)
