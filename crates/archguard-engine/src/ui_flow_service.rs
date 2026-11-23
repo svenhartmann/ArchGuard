@@ -623,7 +623,7 @@ impl<'a> World<'a> {
                 .flatten();
             match (why, advice) {
                 (why, Some(Advice::Aspectj)) => {
-                    if let Some(not) = not_woven(&site, msrc) {
+                    if let Some(not) = not_woven(&site, msrc, &mut self.gaps) {
                         verdict.how = ServiceHow::Hint;
                         verdict.note = join(&verdict.note, not);
                     } else if let Some(why) = why {
@@ -997,9 +997,15 @@ fn bean_of(src: &Source, class: &Decl, index: &Index) -> Bean {
 /// aspects of spring-security-aspects match a method-level `@PreAuthorize` or
 /// `@Secured` of the implementing class, and a class-level `@Secured` on a
 /// public method; interface annotations are never woven.
-fn not_woven(site: &Site, msrc: &Source) -> Option<&'static str> {
+fn not_woven(site: &Site, msrc: &Source, gaps: &mut Vec<Gap>) -> Option<&'static str> {
     let on =
         |attrs: &[Attr], names: &[&str]| attrs.iter().any(|a| names.contains(&a.name.as_str()));
+    // an interface method (also a default one) may not be woven
+    if site.mclass.flag {
+        let why = "`mode = ASPECTJ` is not known to weave a method declared on an interface; this check may not run";
+        gaps.push((msrc.rel.clone(), site.m.line, why.to_string()));
+        return Some(why);
+    }
     if on(&site.decl.attrs, &["PreAuthorize", "Secured"]) {
         return None;
     }
