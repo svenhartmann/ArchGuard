@@ -371,6 +371,7 @@ dependencies = [
  "archguard-flow-backend",
  "archguard-flow-clike",
  "archguard-flow-common",
+ "archguard-flow-jvm",
  "archguard-report",
  "archguard-store",
  "globset",
@@ -435,6 +436,18 @@ dependencies = [
  "rustix 1.1.6",
  "tempfile",
  "toml",
+]
+
+[[package]]
+name = "archguard-flow-jvm"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-flow-clike",
+ "archguard-flow-common",
+ "serde",
+ "serde_yaml_ng",
+ "tempfile",
 ]
 
 [[package]]

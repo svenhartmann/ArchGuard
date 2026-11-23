@@ -1,0 +1,16 @@
+[package]
+name = "archguard-flow-jvm"
+description = "L2: the Java/Kotlin readers: Quarkus and Micronaut UI-flow access (ADR 0021) and the Java domain model (ADR 0022)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+archguard-core = { path = "../archguard-core" }
+archguard-flow-common = { path = "../archguard-flow-common" }
+archguard-flow-clike = { path = "../archguard-flow-clike" }
+serde = { version = "1", features = ["derive"] }
+serde_yaml_ng = "0.10"
+
+[dev-dependencies]
+tempfile = "3.27.0"

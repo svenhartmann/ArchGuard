@@ -597,7 +597,7 @@ pub(crate) use sig::head_of;
 /// The declaration head before `name(` in the method starting at `line` (the
 /// call model may give the first annotation's line): annotations and modifiers
 /// up to the previous `;`, `{` or `}`, on however many lines.
-pub(crate) fn head_at(src: &Source, line: u32, name: &str) -> Option<String> {
+pub fn head_at(src: &Source, line: u32, name: &str) -> Option<String> {
     let from: usize = (src.text.split_inclusive('\n'))
         .take((line as usize).checked_sub(1)?)
         .map(str::len)

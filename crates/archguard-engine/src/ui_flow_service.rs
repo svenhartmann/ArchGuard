@@ -37,7 +37,6 @@ use archguard_core::{
     EndpointAccess, MethodCall, ServiceHow, ServiceKind, ServiceLayer, UiFlow, UiFlowDiagnostic,
 };
 
-use crate::ui_flow_micronaut::head_at;
 use archguard_extract::{Lang, strip_root};
 use archguard_flow_backend::ui_flow_backend::spring::{Conf, declared_access, family};
 use archguard_flow_backend::ui_flow_backend::{Index, Out, Project, read_projects};
@@ -46,6 +45,7 @@ use archguard_flow_clike::lex::{literals, named, positional, split_top};
 use archguard_flow_clike::quarkus_build::quarkus_build;
 use archguard_flow_clike::source::Source;
 use archguard_flow_common::extract_ctx::{ExtractContext, walk};
+use archguard_flow_jvm::ui_flow_micronaut::head_at;
 use ejb::Decision;
 
 /// Words that make a source file worth a call analysis.

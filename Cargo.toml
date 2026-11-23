@@ -12,6 +12,7 @@ members = [
     "crates/archguard-flow-backend",
     "crates/archguard-flow-clike",
     "crates/archguard-flow-common",
+    "crates/archguard-flow-jvm",
     "crates/archguard-mcp",
     "crates/archguard-report",
     "crates/archguard-store",
