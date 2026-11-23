@@ -51,7 +51,7 @@ pub fn analyze(root: &Path) -> Result<DomainModel, ArchguardError> {
 pub fn analyze_with(ctx: &ExtractContext) -> Result<DomainModel, ArchguardError> {
     let import = read_domain_model(ctx.root)?.unwrap_or_default();
     let extractors = [
-        crate::domain_csharp::extract_with,
+        archguard_flow_dotnet::domain_csharp::extract_with,
         archguard_flow_jvm::domain_java::extract_with,
         crate::domain_typescript::extract_with,
         crate::domain_python::extract_with,

@@ -255,11 +255,11 @@ fn refusal(dir: &Path, allowed: &Path, root: &Path) -> Option<Refusal> {
 
 fn extract_all(ctx: &ExtractContext) -> UiFlow {
     let extractors = [
-        crate::ui_flow_blazor::extract_with,
+        archguard_flow_dotnet::ui_flow_blazor::extract_with,
         crate::ui_flow_angular::extract_with,
         archguard_flow_backend::ui_flow_webflux::extract_with,
         crate::ui_flow_react::extract_with,
-        crate::ui_flow_xaml::extract_with,
+        archguard_flow_dotnet::ui_flow_xaml::extract_with,
         crate::ui_flow_vue::extract_with,
         crate::ui_flow_slint::extract_with,
         crate::ui_flow_nestjs::extract_with,
