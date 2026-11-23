@@ -43,6 +43,7 @@ use crate::ui_flow_backend::spring::{Conf, declared_access, family};
 use crate::ui_flow_backend::{
     Attr, Decl, Index, Out, Project, Source, class_header, decls, quarkus_build, read_projects,
 };
+use crate::ui_flow_micronaut::head_at;
 use archguard_extract::{Lang, strip_root};
 use ejb::Decision;
 
@@ -1002,14 +1003,7 @@ fn not_woven(site: &Site, msrc: &Source) -> Option<&'static str> {
     if on(&site.decl.attrs, &["PreAuthorize", "Secured"]) {
         return None;
     }
-    let line = msrc
-        .text
-        .lines()
-        .nth((site.m.line as usize).saturating_sub(1))?;
-    let before = line
-        .split(&format!("{}(", site.m.name))
-        .next()
-        .unwrap_or("");
+    let before = &head_at(msrc, site.m.line, &site.m.name)?;
     let public = if msrc.rel.ends_with(".kt") {
         !before
             .split_whitespace()
@@ -1030,8 +1024,7 @@ fn unadvisable(src: &Source, class: &Decl, m: &CallMethod) -> Option<&'static st
     if src.rel.ends_with(".kt") {
         return None;
     }
-    let line = src.text.lines().nth((m.line as usize).saturating_sub(1))?;
-    let before = line.split(&format!("{}(", m.name)).next().unwrap_or("");
+    let before = &head_at(src, m.line, &m.name)?;
     let has = |text: &str, w: &str| text.split_whitespace().any(|x| x == w);
     if has(before, "private") {
         return Some("the method is private, so the proxy cannot advise it");

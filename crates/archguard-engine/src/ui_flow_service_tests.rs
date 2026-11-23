@@ -721,3 +721,23 @@ fn an_ejb_jar_applies_only_to_the_beans_of_its_own_module() {
         flow.service_layers
     );
 }
+
+#[test]
+fn modifiers_on_the_line_before_the_method_still_count() {
+    let split = svc(
+        "@Service",
+        "@PreAuthorize(\"hasRole('B')\")\n  final String run() { return \"x\"; }",
+    );
+    let Some(flow) = run(
+        SPRING_POM,
+        &[
+            ("Conf.java", ENABLE),
+            ("Ctl.java", &ctl("return svc.run();", "")),
+            ("Svc.java", &split),
+        ],
+    ) else {
+        return;
+    };
+    let l = layers(&flow);
+    assert_eq!(l[0].0, ServiceHow::Hint, "{l:?}");
+}

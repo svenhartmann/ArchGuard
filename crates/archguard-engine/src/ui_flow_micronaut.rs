@@ -436,7 +436,7 @@ mod sig {
     /// The declaration head before the parameter list at `open`: modifiers,
     /// annotations, type parameters, return type and name. It starts after
     /// the last `;`, `{` or `}` outside parentheses and literals.
-    fn head_of(src: &Source, open: usize) -> &str {
+    pub(crate) fn head_of(src: &Source, open: usize) -> &str {
         let text = &src.text[..open];
         let (mut from, mut depth, mut it) = (0, 0u32, text.char_indices());
         while let Some((i, c)) = it.next() {
@@ -573,6 +573,19 @@ mod sig {
         }
         out
     }
+}
+pub(crate) use sig::head_of;
+
+/// The declaration head before `name(` in the method starting at `line` (the
+/// call model may give the first annotation's line): annotations and modifiers
+/// up to the previous `;`, `{` or `}`, on however many lines.
+pub(crate) fn head_at(src: &Source, line: u32, name: &str) -> Option<String> {
+    let from: usize = (src.text.split_inclusive('\n'))
+        .take((line as usize).checked_sub(1)?)
+        .map(str::len)
+        .sum();
+    let at = from + src.text[from..].find(&format!("{name}("))?;
+    Some(head_of(src, at + name.len()).to_string())
 }
 use sig::{Fit, Sig, class_vars, declared, fits, overrides, sig_of, vars_of};
 
