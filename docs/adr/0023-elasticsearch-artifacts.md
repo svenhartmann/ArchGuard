@@ -165,3 +165,5 @@ are code, but no analyzer measures them.
   expressions stay gaps and make `complete` `false`.
 - Security roles, saved-object contents, mappings, fields and query contents
   are not analyzed.
+
+- **2026-11-23:** Proposed and accepted.
