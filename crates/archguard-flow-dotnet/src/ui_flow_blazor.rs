@@ -407,7 +407,7 @@ mod attributes {
             let name = texts[0].0.rsplit('/').next().unwrap_or("");
             let name = name.strip_suffix(".razor").unwrap_or(name);
             let src = Source::new(file.clone(), text);
-            for decl in backend::decls(&src, false) {
+            for decl in backend::decls(&src, backend::Dialect::CSharp) {
                 if decl.class && decl.name == name {
                     for a in decl.attrs {
                         let line = line_of(text, a.at);
@@ -481,7 +481,7 @@ mod attributes {
                 continue;
             };
             let src = Source::new(rel.clone(), &text);
-            for d in backend::decls(&src, false) {
+            for d in backend::decls(&src, backend::Dialect::CSharp) {
                 if d.class {
                     let list = bases.entry(backend::simple(&d.name)).or_default();
                     list.extend(d.bases.iter().cloned());

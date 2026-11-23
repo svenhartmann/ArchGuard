@@ -75,7 +75,7 @@ use archguard_core::{
     EndpointAccess, HandlerSite, RoleConvention, UiFlow, UiFlowDiagnostic,
 };
 use archguard_flow_clike::decl::{
-    Attr, Decl, class_header, decls, directive_attrs, each_method, simple,
+    Attr, Decl, Dialect, class_header, decls, directive_attrs, each_method, simple,
 };
 use archguard_flow_clike::handlers::{self, simple_type};
 use archguard_flow_clike::lex;
@@ -512,9 +512,9 @@ mod index {
                 enforced: BTreeSet::new(),
             };
             for src in sources {
-                let decls = decls(src, !src.rel.ends_with(".cs"));
+                let decls = decls(src, Dialect::of_path(&src.rel));
                 if !src.rel.ends_with(".cs") {
-                    each_method(src, true, |class, m| {
+                    each_method(src, Dialect::jvm(src), |class, m| {
                         let list = index.methods.entry(class.name.clone()).or_default();
                         list.push((src, m.clone()));
                     });
@@ -1105,10 +1105,10 @@ mod controllers {
 
     pub(super) fn scan(src: &Source, index: &Index, routes: &[Route], out: &mut Out) {
         let mut methods: BTreeMap<usize, Vec<Decl>> = BTreeMap::new();
-        each_method(src, false, |class, d| {
+        each_method(src, Dialect::CSharp, |class, d| {
             methods.entry(class.open).or_default().push(d.clone());
         });
-        for class in decls(src, false).iter().filter(|d| d.class) {
+        for class in decls(src, Dialect::CSharp).iter().filter(|d| d.class) {
             if !controller(src, class, &index.chain(class).0) {
                 continue;
             }
@@ -1121,7 +1121,7 @@ mod controllers {
             // Public actions of a base class belong to the derived controller too.
             for (base_src, base) in &ancestors {
                 let mut inherited = Vec::new();
-                each_method(base_src, false, |c, m| {
+                each_method(base_src, Dialect::CSharp, |c, m| {
                     if c.open == base.open && !own.iter().any(|o| o.name == m.name) {
                         inherited.push(m.clone());
                     }
@@ -1470,7 +1470,7 @@ mod controllers {
     ) -> Vec<(&'a Source, Option<Vec<Attr>>)> {
         let mut found = Vec::new();
         for s in sources.iter().filter(|s| s.rel.ends_with(".cs")) {
-            let declared = decls(s, false);
+            let declared = decls(s, Dialect::CSharp);
             for open in handlers::definitions(s, name) {
                 if handlers::enclosing_class(s, open).as_deref() != class {
                     continue;
@@ -3085,13 +3085,13 @@ pub mod spring {
     pub(super) fn scan(src: &Source, index: &Index, conf: &Conf, out: &mut Out) {
         let controllers = inherit::controllers(src, index, out);
         let mut own: HashMap<usize, Vec<Decl>> = HashMap::new();
-        each_method(src, true, |class, d| {
+        each_method(src, Dialect::jvm(src), |class, d| {
             own.entry(class.open).or_default().push(d.clone());
             if controllers.contains(&class.open) {
                 method(src, index, conf, out, class, d);
             }
         });
-        for class in decls(src, true)
+        for class in decls(src, Dialect::jvm(src))
             .iter()
             .filter(|c| controllers.contains(&c.open))
         {
@@ -3135,7 +3135,10 @@ pub mod spring {
         /// scan extends is a gap: its routes are not emitted.
         pub(super) fn controllers(src: &Source, index: &Index, out: &mut Out) -> BTreeSet<usize> {
             let mut found = BTreeSet::new();
-            for c in decls(src, true).iter().filter(|c| c.class && !c.flag) {
+            for c in decls(src, Dialect::jvm(src))
+                .iter()
+                .filter(|c| c.class && !c.flag)
+            {
                 let (supers, _) = index.supers(src, c);
                 if !is_controller(c) && !supers.iter().any(|(_, t)| is_controller(t)) {
                     continue;
@@ -3518,7 +3521,7 @@ pub mod spring {
             /// the legacy `@EnableGlobalMethodSecurity` (all off by default).
             fn method_security(&mut self, sources: &[Source], out: &mut Out) {
                 for src in sources.iter().filter(|s| !s.rel.ends_with(".cs")) {
-                    for a in (decls(src, true).iter())
+                    for a in (decls(src, Dialect::jvm(src)).iter())
                         .filter(|d| d.class)
                         .flat_map(|d| &d.attrs)
                     {
@@ -3756,7 +3759,10 @@ pub mod spring {
         pub(super) fn filter_helpers(sources: &[&Source]) -> BTreeSet<String> {
             let (mut good, mut bad) = (BTreeSet::new(), BTreeSet::new());
             for src in sources.iter().copied().filter(|s| s.rel.ends_with(".java")) {
-                let classes: Vec<Decl> = decls(src, true).into_iter().filter(|d| d.class).collect();
+                let classes: Vec<Decl> = decls(src, Dialect::jvm(src))
+                    .into_iter()
+                    .filter(|d| d.class)
+                    .collect();
                 for p in HTTP_TYPES.iter().flat_map(|t| lex::words(&src.text, t)) {
                     match helper_at(src, &classes, p) {
                         Some((key, true)) => good.insert(key),
@@ -4259,7 +4265,7 @@ pub mod spring {
 
         /// The units of `src`: its adapters, its `SecurityFilterChain` bean methods.
         pub(super) fn units(src: &Source) -> Vec<Unit<'_>> {
-            let all = decls(src, true);
+            let all = decls(src, Dialect::jvm(src));
             let mut units: Vec<Unit> = all
                 .iter()
                 .filter(|d| d.class && is_adapter(d))
@@ -4348,7 +4354,7 @@ pub mod spring {
             args: &str,
         ) -> Option<Rule> {
             let (mut methods, mut patterns) = (Vec::new(), Vec::new());
-            let owner = (decls(src, true).into_iter())
+            let owner = (decls(src, Dialect::jvm(src)).into_iter())
                 .filter(|d| d.class && d.open < from && from < d.end)
                 .max_by_key(|d| d.open)
                 .map_or_else(String::new, |d| d.name);
@@ -4987,7 +4993,7 @@ pub mod spring {
         /// Classes extending the legacy Spring Security configurer adapters, as
         /// `(name, offset)`.
         fn adapters(src: &Source) -> Vec<(String, usize)> {
-            (decls(src, true).into_iter())
+            (decls(src, Dialect::jvm(src)).into_iter())
                 .filter(|d| d.class && is_adapter(d))
                 .map(|d| (d.name, d.open))
                 .collect()
@@ -6138,7 +6144,7 @@ mod razor {
             chain.push((*s, b.open));
         }
         for (s, open) in chain {
-            each_method(s, false, |c, m| {
+            each_method(s, Dialect::CSharp, |c, m| {
                 if c.open == open {
                     handler(s, m, verbs, out);
                 }
@@ -10825,7 +10831,10 @@ public class PController : ControllerBase
             "class C {\n  @GetMapping(\"/a\")\n  public\n  String a() { return \"\"; }\n}\n",
         ] {
             let src = Source::new("C.java".into(), text);
-            let m: Vec<_> = decls(&src, true).into_iter().filter(|d| !d.class).collect();
+            let m: Vec<_> = decls(&src, Dialect::jvm(&src))
+                .into_iter()
+                .filter(|d| !d.class)
+                .collect();
             assert_eq!(m.len(), 1, "{text}");
             assert_eq!(m[0].attrs.len(), 1, "{text}");
         }
@@ -10838,7 +10847,7 @@ public class PController : ControllerBase
             "class C {\n  @Inject lateinit var s: S\n  @Get(\"/b\") fun b(): String = \"\"\n}\n",
         ] {
             let src = Source::new("C.kt".into(), text);
-            let m: Vec<_> = decls(&src, true)
+            let m: Vec<_> = decls(&src, Dialect::jvm(&src))
                 .into_iter()
                 .filter(|d| d.name == "b")
                 .collect();
@@ -10851,7 +10860,10 @@ public class PController : ControllerBase
     fn annotations_survive_a_return_type_on_its_own_line() {
         let text = "class Ctl {\n  @GetMapping(\"/a\")\n  @PreAuthorize(\"hasRole('B')\")\n  String\n  a() { return \"\"; }\n  @GetMapping(\"/b\")\n  Map<String, List<X>>\n  b() { return null; }\n}\n";
         let src = Source::new("C.java".into(), text);
-        let m: Vec<_> = decls(&src, true).into_iter().filter(|d| !d.class).collect();
+        let m: Vec<_> = decls(&src, Dialect::jvm(&src))
+            .into_iter()
+            .filter(|d| !d.class)
+            .collect();
         assert_eq!(m.len(), 2);
         assert_eq!(m[0].attrs.len(), 2);
         assert_eq!(m[1].attrs.len(), 1);

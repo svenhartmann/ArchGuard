@@ -11,42 +11,6 @@ pub struct Source {
     lines: Vec<usize>,
 }
 impl Source {
-    /// Whether the header starting at `i` and ending at line end `end` goes on
-    /// below: the line holds only modifier keywords (`final`, `public`), or
-    /// only a return type that a name and `(` follow.
-    pub(crate) fn header_goes_on(&self, i: usize, end: usize) -> bool {
-        const MODS: [&str; 17] = [
-            "public",
-            "private",
-            "protected",
-            "internal",
-            "static",
-            "final",
-            "abstract",
-            "open",
-            "override",
-            "synchronized",
-            "native",
-            "default",
-            "sealed",
-            "virtual",
-            "async",
-            "partial",
-            "suspend",
-        ];
-        let line = &self.text[i..end];
-        let rest = (line.split_whitespace().filter(|_| true)).collect::<Vec<_>>();
-        let rest = rest.iter().skip_while(|w| MODS.contains(w)).count();
-        let type_only = (rest == 1 || (rest > 1 && line.contains('<')))
-            && line
-                .chars()
-                .all(|c| c.is_alphanumeric() || " _.<>,[]?".contains(c));
-        let name_next = (self.text[end..].trim_start().split_once('(')).is_some_and(|(n, _)| {
-            !n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || c == '_')
-        });
-        self.bytes().get(end) == Some(&b'\n') && (rest == 0 || (type_only && name_next))
-    }
-
     pub fn new(rel: String, raw: &str) -> Self {
         let text = lex::strip_comments(raw);
         let b = text.as_bytes();

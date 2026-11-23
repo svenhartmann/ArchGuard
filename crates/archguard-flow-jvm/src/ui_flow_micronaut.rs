@@ -24,7 +24,7 @@
 use archguard_core::{
     AccessState, Condition, DiagnosticSeverity, EndpointAccess, UiFlow, UiFlowDiagnostic,
 };
-use archguard_flow_clike::decl::{Attr, Decl, class_header, decls, each_method};
+use archguard_flow_clike::decl::{Attr, Decl, Dialect, class_header, decls, each_method};
 use archguard_flow_clike::source::Source;
 use archguard_flow_common::extract_ctx::with_root_config;
 use archguard_flow_common::extract_ctx::{
@@ -624,7 +624,7 @@ impl Types {
     fn new(sources: &[Source]) -> Self {
         let (mut all, mut open): (Vec<TypeInfo>, Vec<(usize, usize)>) = (vec![], vec![]);
         for src in sources {
-            for d in decls(src, true) {
+            for d in decls(src, Dialect::jvm(src)) {
                 while open.last().is_some_and(|o| o.0 < d.open) {
                     open.pop();
                 }
@@ -705,7 +705,7 @@ impl Project {
 
     fn run(&self, app: Option<String>, flow: &mut UiFlow) {
         let rule = self.sources.iter().find_map(|s| {
-            let class = decls(s, true)
+            let class = decls(s, Dialect::jvm(s))
                 .into_iter()
                 .find(|d| d.class && d.bases.iter().any(|b| b.starts_with("SecurityRule")))?;
             Some(Rule {
@@ -724,10 +724,10 @@ impl Project {
                 continue;
             }
             let mut own: HashMap<usize, Vec<Decl>> = HashMap::new();
-            each_method(src, true, |class, method| {
+            each_method(src, Dialect::jvm(src), |class, method| {
                 own.entry(class.open).or_default().push(method.clone());
             });
-            for class in decls(src, true).iter().filter(|d| d.class) {
+            for class in decls(src, Dialect::jvm(src)).iter().filter(|d| d.class) {
                 if !class.attrs.iter().any(|a| a.name == "Controller") {
                     continue;
                 }

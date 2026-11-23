@@ -36,7 +36,7 @@
 use archguard_core::{
     AccessState, Condition, DiagnosticSeverity, EndpointAccess, PolicyDef, UiFlow, UiFlowDiagnostic,
 };
-use archguard_flow_clike::decl::{Attr, Decl, class_header, decls, each_method};
+use archguard_flow_clike::decl::{Attr, Decl, Dialect, class_header, decls, each_method};
 use archguard_flow_clike::lex::{self, literal, literals, named, positional, split_top};
 use archguard_flow_clike::quarkus_build::quarkus_build;
 use archguard_flow_clike::source::Source;
@@ -1269,9 +1269,11 @@ fn find<'a>(attrs: &'a [Attr], name: &str) -> Option<&'a Attr> {
 fn collect(srcs: &[Src]) -> (Vec<Member>, Vec<(usize, Decl)>) {
     let (mut members, mut classes) = (Vec::new(), Vec::new());
     for (si, s) in srcs.iter().enumerate() {
-        let declared = decls(&s.src, true).into_iter().filter(|d| d.class);
+        let declared = decls(&s.src, Dialect::jvm(&s.src))
+            .into_iter()
+            .filter(|d| d.class);
         classes.extend(declared.map(|d| (si, d)));
-        each_method(&s.src, true, |c, m| {
+        each_method(&s.src, Dialect::jvm(&s.src), |c, m| {
             members.push(Member {
                 si,
                 class: c.clone(),

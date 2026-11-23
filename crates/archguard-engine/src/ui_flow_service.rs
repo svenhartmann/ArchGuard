@@ -40,7 +40,7 @@ use archguard_core::{
 use archguard_extract::{Lang, strip_root};
 use archguard_flow_backend::ui_flow_backend::spring::{Conf, declared_access, family};
 use archguard_flow_backend::ui_flow_backend::{Index, Out, Project, read_projects};
-use archguard_flow_clike::decl::{Attr, Decl, class_header, decls};
+use archguard_flow_clike::decl::{Attr, Decl, Dialect, class_header, decls};
 use archguard_flow_clike::lex::{literals, named, positional, split_top};
 use archguard_flow_clike::quarkus_build::quarkus_build;
 use archguard_flow_clike::source::Source;
@@ -229,7 +229,7 @@ enum Advice {
 fn advice_of(srcs: &[Source]) -> Advice {
     let (mut aspectj, mut proxy) = (false, false);
     for src in srcs.iter().filter(|s| !s.rel.ends_with(".cs")) {
-        for a in (decls(src, true).iter())
+        for a in (decls(src, Dialect::jvm(src)).iter())
             .filter(|d| d.class)
             .flat_map(|d| &d.attrs)
             .filter(|a| {

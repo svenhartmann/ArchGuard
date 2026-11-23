@@ -25,6 +25,99 @@ pub struct Decl {
     pub flag: bool,
 }
 
+/// The language a source is read as: its attribute syntax and keyword sets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dialect {
+    Java,
+    Kotlin,
+    CSharp,
+}
+
+impl Dialect {
+    /// By file extension: `.cs` is C#, `.kt` Kotlin, anything else Java.
+    pub fn of_path(rel: &str) -> Self {
+        if rel.ends_with(".cs") {
+            Self::CSharp
+        } else {
+            Self::jvm_path(rel)
+        }
+    }
+
+    /// Java or Kotlin (`@X(…)` annotations) by the source's extension.
+    pub fn jvm(src: &Source) -> Self {
+        Self::jvm_path(&src.rel)
+    }
+
+    fn jvm_path(rel: &str) -> Self {
+        if rel.ends_with(".kt") {
+            Self::Kotlin
+        } else {
+            Self::Java
+        }
+    }
+
+    fn rules(self) -> &'static Rules {
+        match self {
+            Self::Java => &JAVA,
+            Self::Kotlin => &KOTLIN,
+            Self::CSharp => &CSHARP,
+        }
+    }
+}
+
+/// What differs between the dialects when declarations are read.
+struct Rules {
+    /// `@X(…)` annotations; otherwise C# `[X(…), Y]` lists.
+    annotations: bool,
+    /// Words that open a type declaration.
+    type_keywords: &'static [&'static str],
+    /// Modifiers a header line may consist of before it goes on below.
+    header_modifiers: &'static [&'static str],
+    /// A public instance method without attributes counts in files with this
+    /// extension (conventional routing needs every public action).
+    bare_public_methods_ext: &'static str,
+}
+
+/// Today's union of the three languages' modifiers, for every dialect.
+const HEADER_MODIFIERS: &[&str] = &[
+    "public",
+    "private",
+    "protected",
+    "internal",
+    "static",
+    "final",
+    "abstract",
+    "open",
+    "override",
+    "synchronized",
+    "native",
+    "default",
+    "sealed",
+    "virtual",
+    "async",
+    "partial",
+    "suspend",
+];
+
+const JAVA: Rules = Rules {
+    annotations: true,
+    type_keywords: &["class", "interface", "record", "struct"],
+    header_modifiers: HEADER_MODIFIERS,
+    bare_public_methods_ext: ".cs",
+};
+const KOTLIN: Rules = Rules {
+    annotations: true,
+    type_keywords: &["class", "interface", "record", "struct", "object"],
+    header_modifiers: HEADER_MODIFIERS,
+    bare_public_methods_ext: ".cs",
+};
+const CSHARP: Rules = Rules {
+    annotations: false,
+    type_keywords: &["class", "interface", "record", "struct"],
+    header_modifiers: HEADER_MODIFIERS,
+    bare_public_methods_ext: ".cs",
+};
+
 /// The header of a type declaration: from its modifiers to the body (or `;`).
 pub fn class_header<'a>(src: &'a Source, d: &Decl) -> &'a str {
     let rest = &src.text[d.open..];
@@ -32,9 +125,9 @@ pub fn class_header<'a>(src: &'a Source, d: &Decl) -> &'a str {
 }
 
 /// Calls `f(class, method)` for each method with the innermost class around it.
-pub fn each_method(src: &Source, annotations: bool, mut f: impl FnMut(&Decl, &Decl)) {
+pub fn each_method(src: &Source, dialect: Dialect, mut f: impl FnMut(&Decl, &Decl)) {
     let mut open: Vec<Decl> = Vec::new();
-    for d in decls(src, annotations) {
+    for d in decls(src, dialect) {
         while open.last().is_some_and(|c| c.end < d.open) {
             open.pop();
         }
@@ -59,22 +152,29 @@ pub fn simple(name: &str) -> String {
 }
 
 /// Class and annotated method declarations with their attributes, in order.
-/// `annotations`: Java/Kotlin `@X(…)`; otherwise C# `[X(…), Y]`.
-pub fn decls(src: &Source, annotations: bool) -> Vec<Decl> {
+/// `dialect` picks `@X(…)` (Java, Kotlin) or `[X(…), Y]` (C#) and the keyword sets.
+pub fn decls(src: &Source, dialect: Dialect) -> Vec<Decl> {
+    let rules = dialect.rules();
     let b = src.bytes();
     let (mut out, mut pending, mut i) = (Vec::new(), Vec::new(), 0);
     while i < b.len() {
         i = match b[i] {
             c if c.is_ascii_whitespace() => i + 1,
-            b'[' if !annotations => attribute_list(src, i, &mut pending),
-            b'@' if annotations && !src.text[i..].starts_with("@interface") => {
+            b'[' if !rules.annotations => attribute_list(src, i, &mut pending),
+            b'@' if rules.annotations && !src.text[i..].starts_with("@interface") => {
                 annotation(src, i, &mut pending)
             }
             _ => {
                 let end = header_end(src, i);
-                let goes_on = src.header_goes_on(i, end);
+                let goes_on = header_goes_on(src, rules, i, end);
                 if !(goes_on && !pending.is_empty()) {
-                    out.extend(declaration(src, i, end, std::mem::take(&mut pending)));
+                    out.extend(declaration(
+                        src,
+                        rules,
+                        i,
+                        end,
+                        std::mem::take(&mut pending),
+                    ));
                 }
                 end + 1
             }
@@ -142,6 +242,25 @@ fn annotation(src: &Source, i: usize, pending: &mut Vec<Attr>) -> usize {
     close.map_or(j, |c| c + 1).max(i + 1)
 }
 
+/// Whether the header starting at `i` and ending at line end `end` goes on
+/// below: the line holds only modifier keywords (`final`, `public`), or
+/// only a return type that a name and `(` follow.
+fn header_goes_on(src: &Source, rules: &Rules, i: usize, end: usize) -> bool {
+    let line = &src.text[i..end];
+    let rest = (line.split_whitespace().filter(|_| true)).collect::<Vec<_>>();
+    let rest = rest
+        .iter()
+        .skip_while(|w| rules.header_modifiers.contains(w))
+        .count();
+    let type_only = (rest == 1 || (rest > 1 && line.contains('<')))
+        && line
+            .chars()
+            .all(|c| c.is_alphanumeric() || " _.<>,[]?".contains(c));
+    let name_next = (src.text[end..].trim_start().split_once('('))
+        .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || c == '_'));
+    src.bytes().get(end) == Some(&b'\n') && (rest == 0 || (type_only && name_next))
+}
+
 /// End of a declaration or statement head: `{`, `;`, `}` or a line end outside brackets.
 fn header_end(src: &Source, mut j: usize) -> usize {
     let b = src.bytes();
@@ -161,9 +280,15 @@ fn header_end(src: &Source, mut j: usize) -> usize {
 
 /// A class, or a method with attributes; in C# also a method without any
 /// (conventional routing needs every public action).
-fn declaration(src: &Source, start: usize, end: usize, attrs: Vec<Attr>) -> Option<Decl> {
+fn declaration(
+    src: &Source,
+    rules: &Rules,
+    start: usize,
+    end: usize,
+    attrs: Vec<Attr>,
+) -> Option<Decl> {
     let header = &src.text[start..end];
-    if let Some((interface, name)) = class_name(header, src.rel.ends_with(".kt")) {
+    if let Some((interface, name)) = class_name(header, rules.type_keywords) {
         let (bases, end) = class_shape(src, start);
         return Some(Decl {
             class: true,
@@ -181,7 +306,7 @@ fn declaration(src: &Source, start: usize, end: usize, attrs: Vec<Attr>) -> Opti
         .collect();
     let has = |w: &str| modifiers.iter().any(|m| m == w);
     let public = has("public") && !has("static") && !header[..p].contains('=');
-    if attrs.is_empty() && !(public && src.rel.ends_with(".cs")) {
+    if attrs.is_empty() && !(public && src.rel.ends_with(rules.bare_public_methods_ext)) {
         return None;
     }
     let (s, e) = ident_before(header.as_bytes(), p);
@@ -197,13 +322,13 @@ fn declaration(src: &Source, start: usize, end: usize, attrs: Vec<Attr>) -> Opti
 }
 
 /// `(is an interface, name)` of a type declaration header.
-fn class_name(header: &str, kotlin: bool) -> Option<(bool, String)> {
+fn class_name(header: &str, type_keywords: &[&str]) -> Option<(bool, String)> {
     let head = header.split('(').next().unwrap_or(header);
     let mut words = head
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .filter(|w| !w.is_empty());
     while let Some(w) = words.next() {
-        if matches!(w, "class" | "interface" | "record" | "struct") || kotlin && w == "object" {
+        if type_keywords.contains(&w) {
             return words.next().map(|n| (w == "interface", n.to_owned()));
         }
     }

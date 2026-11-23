@@ -7,7 +7,7 @@
 use crate::ui_flow_backend::spring::{Conf, declared_access, family};
 use crate::ui_flow_backend::{Index, Out, extract_with as backend_extract, path as join_path};
 use archguard_core::{AccessState, UiFlow};
-use archguard_flow_clike::decl::{Decl, decls, each_method};
+use archguard_flow_clike::decl::{Decl, Dialect, decls, each_method};
 use archguard_flow_clike::lex::{self, skip_ws, skip_ws_back, split_top, words};
 use archguard_flow_clike::source::Source;
 use archguard_flow_common::extract_ctx::{ExtractContext, with_root_config};
@@ -263,7 +263,7 @@ fn handler_access(ctx: &Ctx, out: &mut Out, at: usize, handler: Option<&str>) ->
         let all: Vec<(&Source, Decl)> = sources
             .iter()
             .flat_map(|s| {
-                (decls(s, true).into_iter())
+                (decls(s, Dialect::jvm(s)).into_iter())
                     .filter(|d| d.class && d.name == t)
                     .map(move |d| (s, d))
             })
@@ -272,7 +272,7 @@ fn handler_access(ctx: &Ctx, out: &mut Out, at: usize, handler: Option<&str>) ->
     });
     if let Some((csrc, class)) = class {
         let mut own: Vec<Decl> = vec![];
-        each_method(csrc, true, |c, d| {
+        each_method(csrc, Dialect::jvm(csrc), |c, d| {
             if c.open == class.open && d.name == method {
                 own.push(d.clone());
             }
@@ -293,7 +293,7 @@ fn handler_access(ctx: &Ctx, out: &mut Out, at: usize, handler: Option<&str>) ->
     }
     let secured = sources.iter().any(|s| {
         let mut hit = false;
-        each_method(s, true, |_, d| {
+        each_method(s, Dialect::jvm(s), |_, d| {
             hit |= d.name == method && d.attrs.iter().any(|a| family(&a.name).is_some());
         });
         hit
@@ -314,7 +314,7 @@ fn receiver_type(src: &Source, at: usize, recv: &str) -> Option<String> {
         return Some(recv.to_string());
     }
     if recv == "this" {
-        let classes = decls(src, true);
+        let classes = decls(src, Dialect::jvm(src));
         let own = (classes.iter()).rfind(|d| d.class && d.open < at && at <= d.end)?;
         return Some(own.name.clone());
     }

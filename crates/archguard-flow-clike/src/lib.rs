@@ -4,6 +4,8 @@
 //! sends, and the Quarkus build-file check.
 
 pub mod decl;
+#[cfg(test)]
+mod decl_rules_tests;
 pub mod handlers;
 pub mod lex;
 pub mod quarkus_build;
