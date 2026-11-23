@@ -188,9 +188,14 @@ impl Read<'_, '_> {
     }
 
     fn pipeline(&mut self, body: &Body) -> Vec<SearchReference> {
-        let mut found = Vec::new();
-        if let Some(p) = attr(body, "processors").or_else(|| attr(body, "on_failure")) {
-            pipelines(p, &mut found);
+        let (mut found, mut gap) = (Vec::new(), false);
+        for key in ["processors", "on_failure"] {
+            if let Some(p) = attr(body, key) {
+                pipelines(p, true, &mut found, &mut gap);
+            }
+        }
+        if gap {
+            self.text("a pipeline processor", None);
         }
         let mut refs = Vec::new();
         for n in found {
@@ -233,25 +238,29 @@ fn field<'b>(body: &'b Body, section: &'b str, key: &str) -> Option<&'b Expressi
 
 /// Names of `{ pipeline = { name = ... } }` processors anywhere in `jsonencode(...)`, literal
 /// JSON or plain objects; the name expressions are returned for the caller to read.
-fn pipelines(e: &Expression, out: &mut Vec<Expression>) {
+/// `strict` marks positions that must hold processors: an unreadable expression there sets `gap`.
+fn pipelines(e: &Expression, strict: bool, out: &mut Vec<Expression>, gap: &mut bool) {
     match e {
         Expression::FuncCall(call) if call.name.name.as_str() == "jsonencode" => {
-            call.args.iter().for_each(|a| pipelines(a, out));
+            call.args.iter().for_each(|a| pipelines(a, true, out, gap));
         }
-        Expression::Array(items) => items.iter().for_each(|i| pipelines(i, out)),
+        Expression::Array(items) => items.iter().for_each(|i| pipelines(i, strict, out, gap)),
         Expression::Object(_) => {
             for (key, value) in object(e) {
                 match (key.as_str(), get(value, "name")) {
                     ("pipeline", Some(n)) => out.push(n.clone()),
-                    _ => pipelines(value, out),
+                    _ => pipelines(value, false, out, gap),
                 }
             }
         }
-        other => {
-            let json = literal(other).filter(|s| s.trim_start().starts_with(['{', '[']));
-            if let Some(parsed) = json.and_then(|s| parser::parse_expr(s.trim()).ok()) {
-                pipelines(&parsed, out);
+        other => match literal(other) {
+            Some(s) if s.trim_start().starts_with(['{', '[']) => {
+                if let Ok(parsed) = parser::parse_expr(s.trim()) {
+                    pipelines(&parsed, strict, out, gap);
+                }
             }
-        }
+            Some(_) => {}
+            None => *gap |= strict,
+        },
     }
 }

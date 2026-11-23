@@ -107,3 +107,23 @@ fn non_literal_names_are_gaps_and_terraform_cache_is_never_read() {
             .all(|a| a.name.as_deref() != Some("must-not-appear"))
     );
 }
+
+#[test]
+fn on_failure_processors_are_read_besides_processors() {
+    let r = fixture();
+    assert_eq!(
+        refs(find(&r, "ingest_pipeline", "orders-failing")),
+        ["ingest_pipeline:orders-fallback"]
+    );
+}
+
+#[test]
+fn unreadable_processor_lists_are_gaps() {
+    let r = fixture();
+    let gaps = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.file == "pipelines.tf" && d.message.contains("not a literal"))
+        .count();
+    assert_eq!(gaps, 2, "{:#?}", r.diagnostics);
+}
