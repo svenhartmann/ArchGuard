@@ -1876,15 +1876,20 @@ mod controllers {
         at: usize,
         arg: &str,
     ) -> Vec<minimal::Mod> {
-        if arg.contains("=>") {
+        let arg = arg.trim();
+        // A fragment (`async Task<A, B> (…)` cut at its comma) or a call is no method group.
+        let path = arg
+            .split('.')
+            .all(|p| !p.is_empty() && p.bytes().all(lex::is_ident));
+        if arg.contains("=>") || !path {
             return lambda_mods(index, src, out, arg);
         }
-        let arg = arg.trim();
         let (class, name) = match arg.rsplit_once('.') {
-            Some((c, n)) => (c.rsplit('.').next(), n.trim()),
-            None => (None, arg),
+            Some((c, n)) => (c.rsplit('.').next().map(str::to_string), n),
+            // An unqualified name binds in the class around the call.
+            None => (handlers::enclosing_class(src, at), arg),
         };
-        let mut found = group_methods(sources, class, name);
+        let mut found = group_methods(sources, class.as_deref(), name);
         match found.pop() {
             Some((s, attrs)) if found.is_empty() => attr_mods(index, s, out, attrs),
             _ => {
@@ -1894,21 +1899,18 @@ mod controllers {
         }
     }
 
-    /// The methods named `name` (in a class named `class`, if given) with their attributes.
+    /// The methods named `name` declared in the class `class` (none: outside
+    /// any class) with their attributes.
     fn group_methods<'a>(
         sources: &'a [Source],
         class: Option<&str>,
         name: &str,
     ) -> Vec<(&'a Source, Vec<Attr>)> {
-        if name.is_empty() || !name.bytes().all(lex::is_ident) {
-            return vec![];
-        }
         let mut found = Vec::new();
         for s in sources.iter().filter(|s| s.rel.ends_with(".cs")) {
             let declared = decls(s, false);
             for open in handlers::definitions(s, name) {
-                let owner = handlers::enclosing_class(s, open);
-                if class.is_some_and(|k| owner.as_deref() != Some(k)) {
+                if handlers::enclosing_class(s, open).as_deref() != class {
                     continue;
                 }
                 let decl = declared.iter().find(|d| !d.class && d.open == open);
@@ -6391,7 +6393,7 @@ mod screens {
                 .iter()
                 .any(|t| t.has("href") || t.has("asp-page") || t.has("action"))
             {
-                let message = "Links of a layout or partial are not attributed to screens";
+                let message = "Links of a layout or partial (a template without @page) are not attributed to screens";
                 out.at(other, 0, message.into());
             }
         }
@@ -10735,6 +10737,7 @@ app.MapGet("/anon", Handlers.Anon);
 app.MapGet("/plain", Handlers.Plain);
 app.MapGet("/gone", Handlers.Missing);
 app.MapGet("/twice", Twice);
+app.MapGet("/typed", async Task<Results<Ok<int>, NotFound>> () => 1);
 "#;
         let handlers = r#"
 public static class Handlers
@@ -10743,6 +10746,12 @@ public static class Handlers
     [AllowAnonymous] public static IResult Anon() => null;
     public static IResult Plain() => null;
 }
+public static class Reg
+{
+    public static void Map(IEndpointRouteBuilder app) { app.MapGet("/own", Own); }
+    [Authorize] static IResult Own() => null;
+}
+public static class Elsewhere { static IResult Own() => null; }
 public static class A { public static IResult Twice() => null; }
 public static class B { [Authorize] public static IResult Twice() => null; }
 "#;
@@ -10756,6 +10765,13 @@ public static class B { [Authorize] public static IResult Twice() => null; }
         );
         assert_eq!(access(&flow, "GET", "/anon"), &AccessState::Open);
         assert_eq!(access(&flow, "GET", "/plain"), &AccessState::Undeclared);
+        // An unqualified name binds in the class around the call, not in other classes.
+        assert_eq!(
+            access(&flow, "GET", "/own"),
+            &protected(Condition::Authenticated)
+        );
+        // A lambda cut at a generic comma is no method group.
+        assert_eq!(access(&flow, "GET", "/typed"), &AccessState::Undeclared);
         for path in ["/gone", "/twice"] {
             let state = access(&flow, "GET", path);
             assert!(
