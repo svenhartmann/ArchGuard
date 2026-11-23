@@ -23,6 +23,8 @@ mod service_datastore_settings;
 mod service_datastores;
 #[path = "service_deployments.rs"]
 mod service_deployments;
+#[path = "service_elasticsearch_code.rs"]
+mod service_elasticsearch_code;
 #[path = "service_elasticsearch_tf.rs"]
 mod service_elasticsearch_tf;
 #[path = "service_spring.rs"]
@@ -110,6 +112,7 @@ pub(crate) fn analyze_services_with(
     service_clients::augment(&root, &mut report, &deployments);
     service_datastores::augment(&mut report, &deployments, &spring_datasources);
     service_tables::augment(&root, &discovery, &mut report);
+    service_elasticsearch_code::augment(&root, &discovery, &mut report);
     service_traces::augment(&root, &mut report);
     crate::service_flows::augment(&root, &mut report);
     crate::graphql_contracts::augment(&root, &discovery, &mut report);
