@@ -55,3 +55,9 @@ resource "elasticstack_kibana_alerting_rule" "anomaly" {
     jobSelection = { jobIds = ["orders-job"] }
   })
 }
+
+resource "elasticstack_kibana_alerting_rule" "dynamic_type" {
+  name         = "orders-typed-alert"
+  rule_type_id = var.rule_type
+  params       = jsonencode({ index = ["orders-*"] })
+}

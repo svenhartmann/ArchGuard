@@ -166,7 +166,11 @@ fn kibana_gaps_and_saved_objects_note() {
             .filter(|d| d.file == "kibana.tf" && d.message.contains(needle))
             .count()
     };
-    assert_eq!(in_kibana("not a literal"), 2, "{:#?}", r.diagnostics);
+    assert_eq!(in_kibana("not a literal"), 3, "{:#?}", r.diagnostics);
+    assert_eq!(
+        in_kibana("alerting_rule.dynamic_type: Elasticsearch name is not a literal; the rule type"),
+        1
+    );
     assert_eq!(in_kibana("saved objects are not analyzed"), 1);
     assert!(
         r.diagnostics
