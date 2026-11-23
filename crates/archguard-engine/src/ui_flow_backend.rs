@@ -3766,6 +3766,9 @@ pub(crate) mod spring {
             jsr250: Flag,
         }
 
+        /// What of a project's conventions the chain rules are read with.
+        pub(in super::super) type ConfKey = (bool, Option<String>, Option<String>, Option<String>);
+
         #[derive(Clone)]
         pub(crate) struct Conf {
             quarkus: bool,
@@ -3830,6 +3833,15 @@ pub(crate) mod spring {
         }
 
         impl Conf {
+            pub(in super::super) fn key(&self) -> ConfKey {
+                (
+                    self.quarkus,
+                    self.role_prefix.clone(),
+                    self.scope_prefix.clone(),
+                    self.role_claim.clone(),
+                )
+            }
+
             pub(crate) fn read(
                 sources: &[Source],
                 index: &Index,
@@ -5092,13 +5104,13 @@ pub(crate) mod spring {
     mod chain_apps {
         use super::super::*;
         use super::chain::{Prepared, central_rules, prepare, run};
-        use super::conf::Conf;
+        use super::conf::{Conf, ConfKey};
 
         /// The module graph and the chains of each application, read once: by
         /// its set of modules.
         pub(in super::super) struct Apps<'s> {
             modules: crate::ui_flow_apps::Modules,
-            cache: HashMap<BTreeSet<String>, Option<Prepared<'s>>>,
+            cache: HashMap<(BTreeSet<String>, ConfKey), Option<Prepared<'s>>>,
         }
 
         impl Apps<'_> {
@@ -5131,12 +5143,15 @@ pub(crate) mod spring {
             let before: Vec<EndpointAccess> = out.0.endpoints[first..].to_vec();
             let (mut results, mut notes) = (Vec::new(), Vec::new());
             for app in &apps {
-                let prepared = known.cache.entry(app.clone()).or_insert_with(|| {
-                    let all: Vec<&Source> = (app.iter().filter_map(|d| projects.get(d)))
-                        .flat_map(|p| p.1.iter())
-                        .collect();
-                    prepare(&all, index, conf, out)
-                });
+                let prepared = known
+                    .cache
+                    .entry((app.clone(), conf.key()))
+                    .or_insert_with(|| {
+                        let all: Vec<&Source> = (app.iter().filter_map(|d| projects.get(d)))
+                            .flat_map(|p| p.1.iter())
+                            .collect();
+                        prepare(&all, index, conf, out)
+                    });
                 out.0.endpoints[first..].clone_from_slice(&before);
                 let mark = out.0.diagnostics.len();
                 if let Some(p) = prepared {
@@ -10332,6 +10347,51 @@ class Sec {
             access(&flow, "GET", "/b/y")
         );
         assert!(!flow.complete, "{diag}");
+    }
+
+    // The role prefix is read per project: a project whose prefix is not
+    // readable stays unknown whichever project of the application is read first.
+    #[test]
+    fn a_shared_application_reads_the_chain_with_each_projects_role_prefix() {
+        let pom = |name: &str, deps: &[&str]| {
+            let d: String = deps
+                .iter()
+                .map(|d| format!("<dependency><artifactId>{d}</artifactId></dependency>"))
+                .collect();
+            format!(
+                "<project><artifactId>{name}</artifactId><dependencies>{d}</dependencies></project>"
+            )
+        };
+        let chain = "@Configuration\nclass Sec {\n    @Bean SecurityFilterChain c(HttpSecurity http) throws Exception {\n        http.authorizeHttpRequests(a -> a.anyRequest().hasRole(\"ADMIN\"));\n        return http.build();\n    }\n}\n";
+        let ctl = "@RestController class E {\n    @GetMapping(\"/x\") void a() {}\n}\n";
+        let bad = "class B { @Bean GrantedAuthorityDefaults d() { return new GrantedAuthorityDefaults(prefix()); } }\n";
+        for (first, second) in [("web-a", "web-b"), ("web-b", "web-a")] {
+            let (app, sec) = (pom("app", &["sec", first, second]), pom("sec", &[]));
+            let (pa, pb) = (pom(first, &[]), pom(second, &[]));
+            let files = [
+                ("pom.xml", "<project/>"),
+                ("app/pom.xml", &app[..]),
+                ("sec/pom.xml", &sec[..]),
+                ("sec/src/main/java/Sec.java", chain),
+                (&format!("{first}/pom.xml")[..], &pa[..]),
+                (&format!("{first}/src/main/java/E.java")[..], ctl),
+                (&format!("{second}/pom.xml")[..], &pb[..]),
+                (&format!("{second}/src/main/java/E.java")[..], ctl),
+                ("web-b/src/main/java/B.java", bad),
+            ];
+            let flow = extract(project(&files).path());
+            let of = |app: &str| {
+                (flow.endpoints.iter())
+                    .find(|e| e.application.as_deref() == Some(app))
+                    .map(|e| e.access.clone())
+            };
+            assert_eq!(of("web-a"), Some(protected(role("ROLE_ADMIN"))), "{first}");
+            assert!(
+                matches!(of("web-b"), Some(AccessState::Protected(c)) if format!("{c:?}").contains("Unknown")),
+                "{first}: {:?}",
+                of("web-b")
+            );
+        }
     }
 
     // F32: the pre-6 `requestMatchers().antMatchers(..)` scope of an adapter.
