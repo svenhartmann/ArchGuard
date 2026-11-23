@@ -21,10 +21,11 @@
 //!
 //! Not read: annotations inherited from parent classes or interfaces,
 //! `ip-patterns` (a gap), `SensitiveEndpointRule`, `RolesFinder`.
-use crate::ui_flow_backend::{Attr, Decl, Source, class_header, decls, each_method};
 use archguard_core::{
     AccessState, Condition, DiagnosticSeverity, EndpointAccess, UiFlow, UiFlowDiagnostic,
 };
+use archguard_flow_clike::decl::{Attr, Decl, class_header, decls, each_method};
+use archguard_flow_clike::source::Source;
 use archguard_flow_common::extract_ctx::with_root_config;
 use archguard_flow_common::extract_ctx::{
     ExtractContext, ancestors, dir_name, finish, gap, read_text, walk,

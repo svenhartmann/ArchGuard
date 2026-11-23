@@ -38,11 +38,12 @@
 //! (they stay unresolved), commented-out C# code in `.razor` files, `@inject` in
 //! `_Imports.razor`, components of referenced Razor class libraries (targets
 //! resolve within one application).
-use crate::ui_flow_backend as backend;
 use archguard_core::{
     AccessState, Action, Call, Condition, DiagnosticSeverity, Origin, Screen, ScreenKind,
     Transition, UiFlow, UiFlowDiagnostic,
 };
+use archguard_flow_clike::decl as backend;
+use archguard_flow_clike::source::Source;
 use archguard_flow_common::extract_ctx::{
     ExtractContext, ancestors, read_text, walk, with_root_config,
 };
@@ -405,7 +406,7 @@ mod attributes {
         if let Some((file, text)) = texts.get(1) {
             let name = texts[0].0.rsplit('/').next().unwrap_or("");
             let name = name.strip_suffix(".razor").unwrap_or(name);
-            let src = backend::Source::new(file.clone(), text);
+            let src = Source::new(file.clone(), text);
             for decl in backend::decls(&src, false) {
                 if decl.class && decl.name == name {
                     for a in decl.attrs {
@@ -479,7 +480,7 @@ mod attributes {
             let Ok(text) = read_text(root, rel, MAX_BYTES) else {
                 continue;
             };
-            let src = backend::Source::new(rel.clone(), &text);
+            let src = Source::new(rel.clone(), &text);
             for d in backend::decls(&src, false) {
                 if d.class {
                     let list = bases.entry(backend::simple(&d.name)).or_default();

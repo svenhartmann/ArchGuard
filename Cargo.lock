@@ -368,6 +368,7 @@ dependencies = [
  "archguard-analysis",
  "archguard-core",
  "archguard-extract",
+ "archguard-flow-clike",
  "archguard-flow-common",
  "archguard-report",
  "archguard-store",
@@ -402,6 +403,13 @@ dependencies = [
  "ignore",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "archguard-flow-clike"
+version = "0.3.5"
+dependencies = [
+ "archguard-flow-common",
 ]
 
 [[package]]

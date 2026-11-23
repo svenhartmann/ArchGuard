@@ -9,6 +9,7 @@ members = [
     "crates/archguard-desktop-ui",
     "crates/archguard-engine",
     "crates/archguard-extract",
+    "crates/archguard-flow-clike",
     "crates/archguard-flow-common",
     "crates/archguard-mcp",
     "crates/archguard-report",

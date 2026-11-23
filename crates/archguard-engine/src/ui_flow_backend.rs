@@ -74,6 +74,14 @@ use archguard_core::{
     ANY_METHOD, AccessMeaning, AccessState, Condition, ConventionOrigin, DiagnosticSeverity,
     EndpointAccess, HandlerSite, RoleConvention, UiFlow, UiFlowDiagnostic,
 };
+use archguard_flow_clike::decl::{
+    Attr, Decl, class_header, decls, directive_attrs, each_method, simple,
+};
+use archguard_flow_clike::handlers::{self, simple_type};
+use archguard_flow_clike::lex;
+use archguard_flow_clike::quarkus_build::{BUILD_FILES, MAX_BYTES};
+use archguard_flow_clike::source::{Source, statement_end};
+use archguard_flow_clike::supertypes::{jdk_type, names_interface};
 use archguard_flow_common::extract_ctx::{
     ExtractContext, ancestors, dir_name, read_text, walk, with_root_config,
 };
@@ -82,11 +90,7 @@ use lex::{ident_before, literal_end, split_top};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
-pub(crate) use handlers::{sends_in, simple_type};
-
-const MAX_BYTES: u64 = 1024 * 1024;
 const MAX_FILES: usize = 20_000;
-const BUILD_FILES: [&str; 3] = ["pom.xml", "build.gradle", "build.gradle.kts"];
 const SOURCES: [&str; 3] = [".cs", ".java", ".kt"];
 
 /// Endpoints with their declared access, plus diagnostics. `[views.access]`
@@ -218,17 +222,6 @@ mod projects {
         (by_project, pages, projects)
     }
 
-    pub(crate) fn quarkus_build(root: &Path, dir: &str) -> bool {
-        (BUILD_FILES.iter()).any(|b| {
-            let rel = if dir.is_empty() {
-                (*b).to_string()
-            } else {
-                format!("{dir}/{b}")
-            };
-            read_text(root, &rel, MAX_BYTES).is_ok_and(|t| t.contains("quarkus"))
-        })
-    }
-
     /// The owning application of a project directory, its sources, and whether
     /// its build file depends on the Quarkus Spring compatibility extensions.
     pub(crate) type Project = (Option<String>, Vec<Source>, bool);
@@ -290,7 +283,7 @@ mod projects {
     }
 }
 use projects::read_all;
-pub(crate) use projects::{Project, quarkus_build, read_projects};
+pub(crate) use projects::{Project, read_projects};
 
 /// The lowest major version of the project's `<TargetFramework(s)>` (`net10.0`
 /// is 10, `netcoreapp3.1` 3, `net48` 4); none without a `.csproj` or when a
@@ -419,102 +412,6 @@ impl Out {
     }
 }
 
-/// A source file with comments blanked (offsets and lines unchanged).
-pub(crate) struct Source {
-    pub(crate) rel: String,
-    pub(crate) text: String,
-    pairs: HashMap<usize, usize>,
-    lines: Vec<usize>,
-}
-impl Source {
-    /// Whether the header starting at `i` and ending at line end `end` goes on
-    /// below: the line holds only modifier keywords (`final`, `public`), or
-    /// only a return type that a name and `(` follow.
-    fn header_goes_on(&self, i: usize, end: usize) -> bool {
-        const MODS: [&str; 17] = [
-            "public",
-            "private",
-            "protected",
-            "internal",
-            "static",
-            "final",
-            "abstract",
-            "open",
-            "override",
-            "synchronized",
-            "native",
-            "default",
-            "sealed",
-            "virtual",
-            "async",
-            "partial",
-            "suspend",
-        ];
-        let line = &self.text[i..end];
-        let rest = (line.split_whitespace().filter(|_| true)).collect::<Vec<_>>();
-        let rest = rest.iter().skip_while(|w| MODS.contains(w)).count();
-        let type_only = (rest == 1 || (rest > 1 && line.contains('<')))
-            && line
-                .chars()
-                .all(|c| c.is_alphanumeric() || " _.<>,[]?".contains(c));
-        let name_next = (self.text[end..].trim_start().split_once('(')).is_some_and(|(n, _)| {
-            !n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || c == '_')
-        });
-        self.bytes().get(end) == Some(&b'\n') && (rest == 0 || (type_only && name_next))
-    }
-
-    pub(crate) fn new(rel: String, raw: &str) -> Self {
-        let text = lex::strip_comments(raw);
-        let b = text.as_bytes();
-        let lines = std::iter::once(0)
-            .chain(
-                b.iter()
-                    .enumerate()
-                    .filter(|(_, c)| **c == b'\n')
-                    .map(|(i, _)| i + 1),
-            )
-            .collect();
-        Self {
-            rel,
-            pairs: bracket_pairs(b),
-            text,
-            lines,
-        }
-    }
-    pub(crate) fn line(&self, at: usize) -> u32 {
-        self.lines.partition_point(|&s| s <= at) as u32
-    }
-    pub(crate) fn pair(&self, at: usize) -> Option<usize> {
-        self.pairs.get(&at).copied()
-    }
-    pub(crate) fn bytes(&self) -> &[u8] {
-        self.text.as_bytes()
-    }
-}
-
-/// Matching bracket positions, both ways, outside literals.
-fn bracket_pairs(b: &[u8]) -> HashMap<usize, usize> {
-    let (mut pairs, mut stack, mut i) = (HashMap::new(), Vec::new(), 0);
-    while i < b.len() {
-        if let Some(end) = literal_end(b, i) {
-            i = end;
-            continue;
-        }
-        match b[i] {
-            b'(' | b'[' | b'{' => stack.push(i),
-            b')' | b']' | b'}' => {
-                if let Some(open) = stack.pop() {
-                    pairs.insert(open, i);
-                    pairs.insert(i, open);
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    pairs
-}
-
 fn combine(mut items: Vec<Condition>, many: fn(Vec<Condition>) -> Condition) -> Option<Condition> {
     items.sort();
     items.dedup();
@@ -534,434 +431,8 @@ pub(crate) fn path(parts: &[&str]) -> String {
     format!("/{}", segments.join("/"))
 }
 
-#[derive(Clone)]
-pub(crate) struct Attr {
-    pub(crate) name: String,
-    pub(crate) args: String,
-    pub(crate) at: usize,
-}
-
-#[derive(Clone)]
-pub(crate) struct Decl {
-    pub(crate) class: bool,
-    pub(crate) name: String,
-    pub(crate) attrs: Vec<Attr>,
-    /// Offset of a method's parameter list; a class's header start.
-    pub(crate) open: usize,
-    /// A class's body end (`}`, or `;` without a body); 0 for a method.
-    pub(crate) end: usize,
-    /// A class's base list as simple names (`: Base<T>, IFoo`, `extends`,
-    /// `implements`); empty for a method.
-    pub(crate) bases: Vec<String>,
-    /// `interface` for a class; `public` and not `static` for a method.
-    pub(crate) flag: bool,
-}
-
-/// The header of a type declaration: from its modifiers to the body (or `;`).
-pub(crate) fn class_header<'a>(src: &'a Source, d: &Decl) -> &'a str {
-    let rest = &src.text[d.open..];
-    &rest[..rest.find(['{', ';']).unwrap_or(rest.len())]
-}
-
-/// Calls `f(class, method)` for each method with the innermost class around it.
-pub(crate) fn each_method(src: &Source, annotations: bool, mut f: impl FnMut(&Decl, &Decl)) {
-    let mut open: Vec<Decl> = Vec::new();
-    for d in decls(src, annotations) {
-        while open.last().is_some_and(|c| c.end < d.open) {
-            open.pop();
-        }
-        if d.class {
-            open.push(d);
-        } else if let Some(class) = open.last() {
-            f(class, &d);
-        }
-    }
-}
-
-/// Which supertype names a source can mean (package and imports).
-mod supertypes {
-    use super::Source;
-
-    /// `package x.y;` of a source ("" for none).
-    fn package_of(text: &str) -> &str {
-        (text.lines())
-            .find_map(|l| l.trim().strip_prefix("package "))
-            .map_or("", |p| p.trim().trim_end_matches(';').trim())
-    }
-
-    /// Whether the class in source `imp` can name interface `name` of source
-    /// `api`: same package, or an import of it (single or `*`).
-    pub(crate) fn names_interface(imp: &str, api: &str, name: &str) -> bool {
-        let pkg = package_of(api);
-        pkg == package_of(imp)
-            || imp
-                .lines()
-                .filter_map(|l| l.trim().strip_prefix("import "))
-                .any(|i| {
-                    let i = i.trim().trim_end_matches(';').trim();
-                    i == format!("{pkg}.{name}") || i == format!("{pkg}.*")
-                })
-    }
-
-    /// Whether supertype `name`, as `src` names it, is a JDK or Kotlin type: it
-    /// declares no routes (an `Object`-like name, or imported from `java.`,
-    /// `javax.` or `kotlin.`).
-    pub(crate) fn jdk_type(src: &Source, name: &str) -> bool {
-        ["Object", "Any", "Record", "Enum"].contains(&name)
-            || (src.text.lines())
-                .filter_map(|l| l.trim().strip_prefix("import "))
-                .map(|i| i.trim().trim_end_matches(';').trim())
-                .any(|i| {
-                    ["java.", "javax.", "kotlin."]
-                        .iter()
-                        .any(|p| i.starts_with(p))
-                        && i.rsplit('.').next() == Some(name)
-                })
-    }
-}
-pub(crate) use supertypes::{jdk_type, names_interface};
-
 fn has(attrs: &[Attr], name: &str) -> bool {
     attrs.iter().any(|a| a.name == name)
-}
-
-/// Last segment of a qualified attribute name, without `Attribute` and a target.
-pub(crate) fn simple(name: &str) -> String {
-    if let Some((head, generic)) = name.split_once('<') {
-        return format!("{}<{generic}", simple(head));
-    }
-    let name = name.rsplit([':', '.']).next().unwrap_or(name).trim();
-    name.strip_suffix("Attribute")
-        .filter(|n| !n.is_empty())
-        .unwrap_or(name)
-        .to_string()
-}
-
-/// Class and annotated method declarations with their attributes, in order.
-/// `annotations`: Java/Kotlin `@X(…)`; otherwise C# `[X(…), Y]`.
-pub(crate) fn decls(src: &Source, annotations: bool) -> Vec<Decl> {
-    let b = src.bytes();
-    let (mut out, mut pending, mut i) = (Vec::new(), Vec::new(), 0);
-    while i < b.len() {
-        i = match b[i] {
-            c if c.is_ascii_whitespace() => i + 1,
-            b'[' if !annotations => attribute_list(src, i, &mut pending),
-            b'@' if annotations && !src.text[i..].starts_with("@interface") => {
-                annotation(src, i, &mut pending)
-            }
-            _ => {
-                let end = header_end(src, i);
-                let goes_on = src.header_goes_on(i, end);
-                if !(goes_on && !pending.is_empty()) {
-                    out.extend(declaration(src, i, end, std::mem::take(&mut pending)));
-                }
-                end + 1
-            }
-        };
-    }
-    out
-}
-
-/// The attributes of a Razor `@attribute [A(…)] [B]` directive (text after
-/// the keyword); `at` is the offset of the list in `rest`.
-pub(crate) fn directive_attrs(rest: &str) -> Vec<Attr> {
-    let src = Source::new(String::new(), rest);
-    let (mut out, mut i) = (Vec::new(), 0);
-    while let Some(at) = src.text[i..].find(|c: char| !c.is_whitespace()) {
-        if src.bytes()[i + at] != b'[' {
-            break;
-        }
-        let next = attribute_list(&src, i + at, &mut out);
-        if next == i + at + 1 && src.pair(i + at).is_none() {
-            break;
-        }
-        i = next;
-    }
-    out
-}
-
-/// A C# `[A(…), B]` list at `i`; returns the position after it.
-fn attribute_list(src: &Source, i: usize, pending: &mut Vec<Attr>) -> usize {
-    let Some(close) = src.pair(i) else {
-        return i + 1;
-    };
-    for part in split_top(&src.text[i + 1..close]) {
-        let (name, args) = match part.find('(') {
-            Some(p) if part.ends_with(')') => (&part[..p], &part[p + 1..part.len() - 1]),
-            _ => (part, ""),
-        };
-        pending.push(Attr {
-            name: simple(name),
-            args: args.into(),
-            at: i,
-        });
-    }
-    close + 1
-}
-
-/// A Java/Kotlin `@A(…)` at `i`; returns the position after it.
-fn annotation(src: &Source, i: usize, pending: &mut Vec<Attr>) -> usize {
-    let b = src.bytes();
-    let j = i
-        + 1
-        + b[i + 1..]
-            .iter()
-            .take_while(|c| lex::is_ident(**c) || matches!(c, b'.' | b':'))
-            .count();
-    let k = j + b[j..]
-        .iter()
-        .take_while(|c| matches!(c, b' ' | b'\t'))
-        .count();
-    let close = (b.get(k) == Some(&b'(')).then(|| src.pair(k)).flatten();
-    pending.push(Attr {
-        name: simple(&src.text[i + 1..j]),
-        args: close.map_or("", |c| &src.text[k + 1..c]).into(),
-        at: i,
-    });
-    close.map_or(j, |c| c + 1).max(i + 1)
-}
-
-/// End of a declaration or statement head: `{`, `;`, `}` or a line end outside brackets.
-fn header_end(src: &Source, mut j: usize) -> usize {
-    let b = src.bytes();
-    while j < b.len() {
-        if let Some(end) = literal_end(b, j) {
-            j = end;
-            continue;
-        }
-        match b[j] {
-            b'(' | b'[' => j = src.pair(j).map_or(j + 1, |c| c + 1),
-            b'{' | b';' | b'}' | b'\n' => return j,
-            _ => j += 1,
-        }
-    }
-    b.len()
-}
-
-/// A class, or a method with attributes; in C# also a method without any
-/// (conventional routing needs every public action).
-fn declaration(src: &Source, start: usize, end: usize, attrs: Vec<Attr>) -> Option<Decl> {
-    let header = &src.text[start..end];
-    if let Some((interface, name)) = class_name(header, src.rel.ends_with(".kt")) {
-        let (bases, end) = class_shape(src, start);
-        return Some(Decl {
-            class: true,
-            name,
-            attrs,
-            open: start,
-            end,
-            bases,
-            flag: interface,
-        });
-    }
-    let p = header.find('(')?;
-    let modifiers: Vec<String> = (header[..p].split_whitespace())
-        .map(str::to_owned)
-        .collect();
-    let has = |w: &str| modifiers.iter().any(|m| m == w);
-    let public = has("public") && !has("static") && !header[..p].contains('=');
-    if attrs.is_empty() && !(public && src.rel.ends_with(".cs")) {
-        return None;
-    }
-    let (s, e) = ident_before(header.as_bytes(), p);
-    (s < e).then(|| Decl {
-        class: false,
-        name: header[s..e].into(),
-        attrs,
-        open: start + p,
-        end: 0,
-        bases: vec![],
-        flag: public,
-    })
-}
-
-/// `(is an interface, name)` of a type declaration header.
-fn class_name(header: &str, kotlin: bool) -> Option<(bool, String)> {
-    let head = header.split('(').next().unwrap_or(header);
-    let mut words = head
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .filter(|w| !w.is_empty());
-    while let Some(w) = words.next() {
-        if matches!(w, "class" | "interface" | "record" | "struct") || kotlin && w == "object" {
-            return words.next().map(|n| (w == "interface", n.to_owned()));
-        }
-    }
-    None
-}
-
-/// The base list and body end of the type declared at `start`.
-fn class_shape(src: &Source, start: usize) -> (Vec<String>, usize) {
-    let b = src.bytes();
-    let mut j = start;
-    while j < b.len() && !matches!(b[j], b'{' | b';') {
-        if let Some(end) = literal_end(b, j) {
-            j = end;
-            continue;
-        }
-        j = match b[j] {
-            b'(' | b'[' => src.pair(j).map_or(j + 1, |c| c + 1),
-            _ => j + 1,
-        };
-    }
-    let end = match b.get(j) {
-        Some(b'{') => src.pair(j).unwrap_or(b.len()),
-        _ => j,
-    };
-    (base_names(&src.text[start..j.min(b.len())]), end)
-}
-
-/// Simple names in the base list of a type header (`: Base<T>, IFoo`,
-/// `extends`, `implements`), primary constructors and generics left out.
-fn base_names(header: &str) -> Vec<String> {
-    let (mut head, mut depth) = (String::new(), 0i32);
-    for c in header.chars() {
-        match c {
-            '(' | '[' | '<' => depth += 1,
-            ')' | ']' | '>' => depth -= 1,
-            _ if depth == 0 => head.push(c),
-            _ => {}
-        }
-    }
-    let head = head.split(" where ").next().unwrap_or("");
-    let list = match head.find(':') {
-        Some(p) => &head[p + 1..],
-        None => match head.find(" extends ").or_else(|| head.find(" implements ")) {
-            Some(p) => &head[p..],
-            None => "",
-        },
-    };
-    (list.replace(" implements ", ",").replace(" extends ", ","))
-        .split(',')
-        .filter_map(|item| {
-            let item = item.split_whitespace().next()?;
-            let name = item.rsplit('.').next().unwrap_or(item);
-            let name: String = name
-                .chars()
-                .take_while(|c| lex::is_ident(*c as u8))
-                .collect();
-            (!name.is_empty()).then_some(name)
-        })
-        .collect()
-}
-
-/// Literals, brackets, identifiers and argument lists on raw text.
-pub(crate) mod lex {
-    pub(crate) use archguard_flow_common::lang_csharp::{
-        code as strip_comments, literal, literal_end,
-    };
-
-    pub(crate) fn is_ident(c: u8) -> bool {
-        c.is_ascii_alphanumeric() || c == b'_'
-    }
-
-    pub(crate) fn skip_ws(b: &[u8], i: usize) -> usize {
-        i + b[i.min(b.len())..]
-            .iter()
-            .take_while(|c| c.is_ascii_whitespace())
-            .count()
-    }
-
-    pub(crate) fn skip_ws_back(b: &[u8], mut i: usize) -> usize {
-        while i > 0 && b[i - 1].is_ascii_whitespace() {
-            i -= 1;
-        }
-        i
-    }
-
-    /// The identifier right before `end` (exclusive), skipping blanks and one `<…>`.
-    pub(crate) fn ident_before(b: &[u8], end: usize) -> (usize, usize) {
-        let mut k = skip_ws_back(b, end);
-        if k > 0 && b[k - 1] == b'>' {
-            let mut depth = 0;
-            while k > 0 {
-                k -= 1;
-                depth += match b[k] {
-                    b'>' => 1,
-                    b'<' => -1,
-                    _ => 0,
-                };
-                if depth == 0 {
-                    break;
-                }
-            }
-            k = skip_ws_back(b, k);
-        }
-        let start = k - b[..k].iter().rev().take_while(|c| is_ident(**c)).count();
-        (start, k)
-    }
-
-    /// Whole-word occurrences of `word`.
-    pub(crate) fn words<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
-        let b = text.as_bytes();
-        text.match_indices(word).map(|(i, _)| i).filter(move |&i| {
-            (i == 0 || !is_ident(b[i - 1])) && b.get(i + word.len()).is_none_or(|c| !is_ident(*c))
-        })
-    }
-
-    /// Splits on commas outside brackets and literals.
-    pub(crate) fn split_top(s: &str) -> Vec<&str> {
-        split_by(s, b',')
-    }
-
-    /// Splits on `sep` outside brackets and literals; empty parts are dropped.
-    pub(crate) fn split_by(s: &str, sep: u8) -> Vec<&str> {
-        let b = s.as_bytes();
-        let (mut parts, mut depth, mut start, mut i) = (Vec::new(), 0i32, 0, 0);
-        while i < b.len() {
-            if let Some(end) = literal_end(b, i) {
-                i = end;
-                continue;
-            }
-            match b[i] {
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => depth -= 1,
-                c if c == sep && depth == 0 => {
-                    parts.push(s[start..i].trim());
-                    start = i + 1;
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        parts.push(s[start..].trim());
-        parts.retain(|p| !p.is_empty());
-        parts
-    }
-
-    /// `name = value` (Java/Kotlin/C# attribute) or `name: value` (C# argument).
-    pub(crate) fn named_part(part: &str) -> Option<(&str, &str)> {
-        let b = part.as_bytes();
-        let end = b.iter().take_while(|c| is_ident(**c)).count();
-        let k = skip_ws(b, end);
-        let pair = (*b.get(k)?, b.get(k + 1).copied());
-        let named = matches!(pair, (b'=', next) if next != Some(b'='))
-            || matches!(pair, (b':', next) if next != Some(b':'));
-        (end > 0 && named).then(|| (&part[..end], part[k + 1..].trim()))
-    }
-
-    pub(crate) fn named<'a>(args: &'a str, key: &str) -> Option<&'a str> {
-        split_top(args)
-            .into_iter()
-            .find_map(|p| named_part(p).filter(|(k, _)| *k == key).map(|(_, v)| v))
-    }
-
-    pub(crate) fn positional(args: &str) -> Option<&str> {
-        split_top(args)
-            .into_iter()
-            .find(|p| named_part(p).is_none())
-    }
-
-    /// A literal or an array (`{…}`, `[…]`, `arrayOf(…)`) of literals.
-    pub(crate) fn literals(s: &str) -> Option<Vec<String>> {
-        let s = s.trim();
-        if let Some(one) = literal(s) {
-            return Some(vec![one]);
-        }
-        let inner = [("arrayOf(", ')'), ("{", '}'), ("[", ']')]
-            .iter()
-            .find_map(|(open, close)| s.strip_prefix(open)?.strip_suffix(*close))?;
-        split_top(inner).into_iter().map(literal).collect()
-    }
 }
 
 /// `access` that must also satisfy `extra`: both checks run in turn.
@@ -1439,7 +910,7 @@ mod index {
                         .find(['\n', ';'])
                         .map_or(src.text.len(), |e| eq + e)
                 } else {
-                    minimal::statement_end(src, eq + 1)
+                    statement_end(src, eq + 1)
                 };
                 found.push((
                     format!("{}.{name}{}", class.name, ["", "[]"][usize::from(array)]),
@@ -1595,7 +1066,7 @@ mod index {
                 else {
                     continue;
                 };
-                let end = minimal::statement_end(src, eq + 1);
+                let end = statement_end(src, eq + 1);
                 let init = static_qualified(src, src.text[eq + 1..end].trim());
                 found.push((format!("{}.{name}", owner.name), init));
             }
@@ -2636,22 +2107,6 @@ mod minimal {
             .collect()
     }
 
-    pub(super) fn statement_end(src: &Source, mut j: usize) -> usize {
-        let b = src.bytes();
-        while j < b.len() {
-            if let Some(end) = literal_end(b, j) {
-                j = end;
-                continue;
-            }
-            match b[j] {
-                b'(' | b'[' | b'{' => j = src.pair(j).map_or(j + 1, |c| c + 1),
-                b';' => return j,
-                _ => j += 1,
-            }
-        }
-        b.len()
-    }
-
     /// The extension method around `at` (`Name(this …)`) if it returns one of `vars`.
     fn returning_method<'a>(src: &'a Source, at: usize, vars: &[String]) -> Option<&'a str> {
         let b = src.bytes();
@@ -2729,8 +2184,9 @@ mod minimal {
 /// `Unknown` with a gap, never absent.
 mod aspnet {
     use super::lex::{literal, named_part, skip_ws, skip_ws_back, split_top, words};
-    use super::minimal::{self, Mod, call_close, statement_end};
+    use super::minimal::{self, Mod, call_close};
     use super::*;
+    use archguard_flow_clike::source::statement_end;
 
     const MAX_DEPTH: usize = 8;
     /// Words that make a statement conditional.
@@ -4715,7 +4171,7 @@ pub(crate) mod spring {
         /// chain with a leading `.` (comment lines skipped; a trailing `.` continues).
         pub(super) fn chain_end(src: &Source, from: usize) -> usize {
             let b = src.bytes();
-            let end = minimal::statement_end(src, from);
+            let end = statement_end(src, from);
             let mut j = from;
             while j < end {
                 if let Some(e) = literal_end(b, j) {
@@ -7160,598 +6616,6 @@ mod screens {
             });
         }
         found
-    }
-}
-
-/// The handler of an endpoint and the requests it sends (ADR 0022, decision 4).
-///
-/// In the handler body (method or lambda, parameters included):
-/// - `x.Send(arg)`, `x.SendAsync(arg)`, `x.send(arg)`, `x.sendAndWait(arg)`
-///   where the receiver name contains `mediator`, `sender`, `gateway` or `bus`
-///   (MediatR, `services.Mediator`, Axon `commandGateway`). `arg` is
-///   `new T(…)`, or a variable assigned `new T(…)` or declared with type `T`
-///   (local, parameter or field). A generic `new W<A, B>(x, …)` also yields the
-///   argument types that are one of `A`, `B`: the wrapped request.
-/// - `x.m(…)` where `x` is declared with a type named `*UseCase`,
-///   `*CommandHandler` or `*QueryHandler`: that class, called directly.
-///
-/// Anything else (a computed argument, a factory call, Kotlin constructor
-/// calls without `new`) adds nothing; nothing is guessed.
-mod handlers {
-    use super::Source;
-    use super::lex::{ident_before, is_ident, skip_ws, skip_ws_back, split_top, words};
-    use super::minimal::statement_end;
-
-    /// Handler method id, where it is declared and the types it sends.
-    pub(super) type Link = (Option<String>, Option<(String, u32)>, Vec<String>);
-
-    const SEND: [&str; 4] = ["Send", "SendAsync", "send", "sendAndWait"];
-    const RECEIVERS: [&str; 4] = ["mediator", "sender", "gateway", "bus"];
-    const USE_CASES: [&str; 3] = ["UseCase", "CommandHandler", "QueryHandler"];
-    const NOT_TYPES: [&str; 12] = [
-        "return", "new", "await", "in", "out", "ref", "is", "as", "case", "else", "throw", "yield",
-    ];
-    /// Bound for `a = b; b = new T()` hops.
-    const MAX_DEPTH: usize = 3;
-
-    /// The method of `class` whose parameter list opens at `open`.
-    pub(super) fn of_method(src: &Source, class: &str, name: &str, open: usize) -> Link {
-        let sends = method_span(src, open).map_or_else(Vec::new, |span| sends(src, span));
-        let at = (src.rel.clone(), src.line(open));
-        (Some(format!("{class}.{name}")), Some(at), sends)
-    }
-
-    /// A minimal-API delegate argument: a method group (searched in `src`, then
-    /// the project) or a lambda.
-    pub(super) fn of_delegate(src: &Source, sources: &[Source], arg: &str) -> Link {
-        let at = arg.as_ptr() as usize - src.text.as_ptr() as usize;
-        if arg.contains("=>") {
-            return (None, None, sends(src, (at, at + arg.len())));
-        }
-        let name = arg.rsplit('.').next().unwrap_or(arg).trim();
-        if name.is_empty() || !name.bytes().all(is_ident) {
-            return (None, None, vec![]);
-        }
-        let found = std::iter::once(src)
-            .chain(sources)
-            .find_map(|s| definition(s, name).map(|open| (s, open)));
-        match found {
-            Some((s, open)) => {
-                let class = enclosing_class(s, open).unwrap_or_default();
-                of_method(s, &class, name, open)
-            }
-            None => (None, None, vec![]),
-        }
-    }
-
-    /// From the parameter list at `open` to the end of the body; none without one.
-    fn method_span(src: &Source, open: usize) -> Option<(usize, usize)> {
-        let b = src.bytes();
-        let mut j = src.pair(open)? + 1;
-        while j < b.len() {
-            match b[j] {
-                b'=' if b.get(j + 1) == Some(&b'>') => return Some((open, statement_end(src, j))),
-                b'{' => return Some((open, src.pair(j)?)),
-                b';' | b'}' => return None,
-                _ => j += 1,
-            }
-        }
-        None
-    }
-
-    /// Whether `src` declares a method named `name` with a body.
-    pub(super) fn declares(src: &Source, name: &str) -> bool {
-        definition(src, name).is_some()
-    }
-
-    /// The parameter list of a method named `name` declared in `src`.
-    fn definition(src: &Source, name: &str) -> Option<usize> {
-        definitions(src, name).next()
-    }
-
-    /// The parameter lists of all methods named `name` declared in `src`.
-    pub(super) fn definitions<'a>(
-        src: &'a Source,
-        name: &'a str,
-    ) -> impl Iterator<Item = usize> + 'a {
-        let b = src.bytes();
-        words(&src.text, name).filter_map(move |p| {
-            let prev = skip_ws_back(b, p);
-            let typed =
-                prev > 0 && (is_ident(b[prev - 1]) || matches!(b[prev - 1], b'>' | b']' | b'?'));
-            let open = skip_ws(b, p + name.len());
-            (typed && b.get(open) == Some(&b'(') && method_span(src, open).is_some())
-                .then_some(open)
-        })
-    }
-
-    /// The innermost class, record or struct whose body contains `at`.
-    pub(super) fn enclosing_class(src: &Source, at: usize) -> Option<String> {
-        let b = src.bytes();
-        let mut found = None;
-        for kw in ["class", "record", "struct"] {
-            for p in words(&src.text, kw).filter(|p| *p < at) {
-                let s = skip_ws(b, p + kw.len());
-                let e = s + b[s..].iter().take_while(|c| is_ident(**c)).count();
-                let Some(open) = src.text[e..at].find('{').map(|o| o + e) else {
-                    continue;
-                };
-                if src.text[e..open].contains(';') || src.pair(open).is_none_or(|c| c < at) {
-                    continue;
-                }
-                if found.as_ref().is_none_or(|(o, _)| *o < open) {
-                    found = Some((open, src.text[s..e].to_string()));
-                }
-            }
-        }
-        found.map(|(_, name)| name)
-    }
-
-    /// [`sends`] for other extractors (message handlers, ADR 0022): `text` is
-    /// a C#, Java or Kotlin file, `span` a byte range of it.
-    pub(crate) fn sends_in(text: &str, span: (usize, usize)) -> Vec<String> {
-        sends(&Source::new(String::new(), text), span)
-    }
-
-    /// Sent request types and directly called use cases in `span`, sorted.
-    fn sends(src: &Source, span: (usize, usize)) -> Vec<String> {
-        let b = src.bytes();
-        let mut found = Vec::new();
-        for dot in (span.0..span.1).filter(|&i| b[i] == b'.') {
-            let (s, e) = ident_before(b, dot);
-            let m = skip_ws(b, dot + 1);
-            let m_end = m + b[m..].iter().take_while(|c| is_ident(**c)).count();
-            let open = skip_ws(b, m_end);
-            let close = (b.get(open) == Some(&b'('))
-                .then(|| src.pair(open))
-                .flatten();
-            let (Some(close), true) = (close, s < e) else {
-                continue;
-            };
-            let receiver = &src.text[s..e];
-            let lower = receiver.to_ascii_lowercase();
-            if SEND.contains(&&src.text[m..m_end]) && RECEIVERS.iter().any(|r| lower.contains(r)) {
-                if let Some(arg) = arguments(&src.text[open + 1..close]).first() {
-                    found.extend(resolve(src, span, arg, 0));
-                }
-            } else if let Some(t) = declared(src, span, receiver).filter(|t| use_case(t)) {
-                found.push(t);
-            }
-        }
-        found.sort();
-        found.dedup();
-        found
-    }
-
-    /// `split_top` that keeps `W<A, B>` in one argument.
-    fn arguments(s: &str) -> Vec<&str> {
-        let angles = |p: &str| {
-            let b = p.as_bytes();
-            let opened = b.iter().filter(|c| **c == b'<').count();
-            let closed = (b.iter().enumerate())
-                .filter(|(i, c)| **c == b'>' && (*i == 0 || b[i - 1] != b'='))
-                .count();
-            opened > closed
-        };
-        let mut out: Vec<&str> = Vec::new();
-        for part in split_top(s) {
-            match out.last_mut() {
-                Some(last) if angles(last) => {
-                    let start = last.as_ptr() as usize - s.as_ptr() as usize;
-                    let end = part.as_ptr() as usize - s.as_ptr() as usize + part.len();
-                    *last = &s[start..end];
-                }
-                _ => out.push(part),
-            }
-        }
-        out
-    }
-
-    /// `IdentifiedCommand` of `Ns.IdentifiedCommand<A, B>`.
-    pub(crate) fn simple_type(t: &str) -> &str {
-        let outer = t.split('<').next().unwrap_or(t).trim();
-        outer.rsplit('.').next().unwrap_or(outer)
-    }
-
-    fn use_case(type_text: &str) -> bool {
-        USE_CASES
-            .iter()
-            .any(|x| simple_type(type_text).ends_with(x))
-    }
-
-    /// Types the expression `expr` (a slice of `src.text`) stands for.
-    fn resolve(src: &Source, span: (usize, usize), expr: &str, depth: usize) -> Vec<String> {
-        let expr = expr.trim();
-        if depth > MAX_DEPTH {
-            return vec![];
-        }
-        if let Some(rest) = expr.strip_prefix("new ") {
-            return constructed(src, span, rest.trim_start(), depth);
-        }
-        if !expr.is_empty() && expr.bytes().all(is_ident) {
-            return variable(src, span, expr, depth);
-        }
-        vec![]
-    }
-
-    /// `T(…)` or `W<A, B>(x, …)` after `new`: `T`, or `W<A, B>` and the
-    /// arguments whose type is one of `A`, `B`.
-    fn constructed(src: &Source, span: (usize, usize), text: &str, depth: usize) -> Vec<String> {
-        let end = text.find(['(', '{']).unwrap_or(text.len());
-        let ty = text[..end].trim();
-        if ty.is_empty() {
-            return vec![];
-        }
-        let mut found = vec![ty.to_string()];
-        let generics: Vec<&str> = ty
-            .split_once('<')
-            .map(|(_, g)| g.trim_end_matches('>'))
-            .map_or_else(Vec::new, |g| g.split(',').map(simple_type).collect());
-        let at = text.as_ptr() as usize - src.text.as_ptr() as usize + end;
-        if let (false, Some(close)) = (generics.is_empty(), src.pair(at)) {
-            for arg in arguments(&src.text[at + 1..close]) {
-                let inner = resolve(src, span, arg, depth + 1);
-                found.extend(
-                    inner
-                        .into_iter()
-                        .filter(|t| generics.contains(&simple_type(t))),
-                );
-            }
-        }
-        found
-    }
-
-    /// The variable's initializer if it is `new …`, else its declared type: first
-    /// in `span`, then anywhere in the file (fields).
-    fn variable(src: &Source, span: (usize, usize), var: &str, depth: usize) -> Vec<String> {
-        for scope in [&src.text[span.0..span.1], &src.text[..]] {
-            let base = scope.as_ptr() as usize - src.text.as_ptr() as usize;
-            for p in words(scope, var).map(|p| p + base) {
-                if let Some(found) = declaration(src, span, p, var, depth) {
-                    return found;
-                }
-            }
-        }
-        vec![]
-    }
-
-    /// `T var`, `T var = init` or `var var = init` at `p`.
-    fn declaration(
-        src: &Source,
-        span: (usize, usize),
-        p: usize,
-        var: &str,
-        depth: usize,
-    ) -> Option<Vec<String>> {
-        let b = src.bytes();
-        let ty = type_before(src, p)?;
-        let eq = skip_ws(b, p + var.len());
-        if b.get(eq) == Some(&b'=') && !matches!(b.get(eq + 1), Some(b'=' | b'>')) {
-            let init = &src.text[eq + 1..statement_end(src, eq + 1)];
-            let found = resolve(src, span, init, depth + 1);
-            if !found.is_empty() {
-                return Some(found);
-            }
-        }
-        (!matches!(ty, "var" | "val")).then(|| vec![ty.to_string()])
-    }
-
-    /// The declared type right before the variable at `p`, if one is written.
-    fn type_before(src: &Source, p: usize) -> Option<&str> {
-        let b = src.bytes();
-        let end = skip_ws_back(b, p);
-        let (s, e) = ident_before(b, end);
-        let before = skip_ws_back(b, s);
-        let member = before > 0 && b[before - 1] == b'.';
-        let ty = &src.text[s..end];
-        (s < e && !member && !NOT_TYPES.contains(&&src.text[s..e])).then_some(ty)
-    }
-
-    /// The type text of the variable `var` in `span` or the file.
-    fn declared(src: &Source, span: (usize, usize), var: &str) -> Option<String> {
-        for scope in [&src.text[span.0..span.1], &src.text[..]] {
-            let base = scope.as_ptr() as usize - src.text.as_ptr() as usize;
-            let found = words(scope, var)
-                .map(|p| p + base)
-                .find_map(|p| type_before(src, p).filter(|t| !matches!(*t, "var" | "val")));
-            if let Some(t) = found {
-                return Some(t.to_string());
-            }
-        }
-        None
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::super::extract;
-        use archguard_core::{EndpointAccess, UiFlow};
-
-        fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
-            let dir = tempfile::tempdir().unwrap();
-            for (path, text) in files {
-                let path = dir.path().join(path);
-                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-                std::fs::write(path, text).unwrap();
-            }
-            dir
-        }
-
-        fn endpoint<'a>(flow: &'a UiFlow, method: &str, path: &str) -> &'a EndpointAccess {
-            (flow.endpoints.iter())
-                .find(|e| e.method == method && e.path == path)
-                .unwrap_or_else(|| panic!("{method} {path} in {:#?}", flow.endpoints))
-        }
-
-        fn link(flow: &UiFlow, method: &str, path: &str) -> (Option<String>, Vec<String>) {
-            let e = endpoint(flow, method, path);
-            (e.handler.clone(), e.sends.clone())
-        }
-
-        fn s(items: &[&str]) -> Vec<String> {
-            items.iter().map(|i| i.to_string()).collect()
-        }
-
-        /// Where the handler of the endpoint is declared.
-        fn site(flow: &UiFlow, method: &str, path: &str) -> Option<(String, u32)> {
-            let s = flow.handler_site(endpoint(flow, method, path))?;
-            Some((s.file.clone(), s.line))
-        }
-
-        /// The 1-based line of the first `needle` in `text`.
-        fn line_of(text: &str, needle: &str) -> u32 {
-            text.lines().position(|l| l.contains(needle)).expect(needle) as u32 + 1
-        }
-
-        const ORDERS_API: &str = r#"
-    public static class OrdersApi
-    {
-        public static RouteGroupBuilder MapOrdersApiV1(this IEndpointRouteBuilder app)
-        {
-            var api = app.MapGroup("api/orders");
-            api.MapPut("/cancel", CancelOrderAsync);
-            api.MapPost("/draft", CreateOrderDraftAsync);
-            api.MapPost("/", OrdersApi.CreateOrderAsync);
-            api.MapPost("/quick", async (QuickOrderCommand cmd, IMediator mediator) => await mediator.Send(cmd));
-            api.MapPost("/built", BuiltAsync);
-            api.MapPost("/mail", MailAsync);
-            api.MapPut("/ship", ShipAsync);
-            api.MapGet("/elsewhere", Handlers.Elsewhere);
-            return api;
-        }
-
-        public static async Task<Results<Ok, BadRequest<string>>> CancelOrderAsync(
-            [FromHeader(Name = "x-requestid")] Guid requestId,
-            CancelOrderCommand command,
-            [AsParameters] OrderServices services)
-        {
-            var requestCancelOrder = new IdentifiedCommand<CancelOrderCommand, bool>(command, requestId);
-            var commandResult = await services.Mediator.Send(requestCancelOrder);
-            return TypedResults.Ok();
-        }
-
-        public static async Task<OrderDraftDTO> CreateOrderDraftAsync(CreateOrderDraftCommand command, [AsParameters] OrderServices services)
-            => await services.Mediator.Send(command);
-
-        public static async Task<Results<Ok, BadRequest<string>>> CreateOrderAsync(
-            [FromHeader(Name = "x-requestid")] Guid requestId,
-            CreateOrderRequest request,
-            [AsParameters] OrderServices services)
-        {
-            using (services.Logger.BeginScope(new List<KeyValuePair<string, object>> { new("IdentifiedCommandId", requestId) }))
-            {
-                var createOrderCommand = new CreateOrderCommand(request.Items, request.UserId);
-                var requestCreateOrder = new IdentifiedCommand<CreateOrderCommand, bool>(createOrderCommand, requestId);
-                var result = await services.Mediator.Send(requestCreateOrder);
-                return TypedResults.Ok();
-            }
-        }
-
-        public static async Task<Ok> BuiltAsync([AsParameters] OrderServices services)
-        {
-            await services.Mediator.Send(Build());
-            return TypedResults.Ok();
-        }
-
-        public static Task<bool> ShipAsync(ShipOrderCommand command, Guid requestId, IMediator mediator)
-            => mediator.Send(new IdentifiedCommand<ShipOrderCommand, bool>(command, requestId));
-
-        public static async Task<Ok> MailAsync(IEmailService email)
-        {
-            await email.Send(new WelcomeMail());
-            return TypedResults.Ok();
-        }
-    }
-    "#;
-
-        const HANDLERS: &str = r#"
-    public static class Handlers
-    {
-        public static Task<int> Elsewhere(ISender sender) => sender.Send(new CountOrdersQuery());
-    }
-    "#;
-
-        #[test]
-        fn minimal_api_method_groups_and_lambdas_send_wrapped_commands() {
-            let dir = project(&[
-                ("Ordering.API/Ordering.API.csproj", "<Project />"),
-                ("Ordering.API/Apis/OrdersApi.cs", ORDERS_API),
-                ("Ordering.API/Apis/Handlers.cs", HANDLERS),
-            ]);
-            let flow = extract(dir.path());
-            let wrapped = |inner: &str| format!("IdentifiedCommand<{inner}, bool>");
-            assert_eq!(
-                link(&flow, "POST", "/api/orders"),
-                (
-                    Some("OrdersApi.CreateOrderAsync".into()),
-                    vec!["CreateOrderCommand".into(), wrapped("CreateOrderCommand")]
-                )
-            );
-            assert_eq!(
-                link(&flow, "PUT", "/api/orders/cancel"),
-                (
-                    Some("OrdersApi.CancelOrderAsync".into()),
-                    vec!["CancelOrderCommand".into(), wrapped("CancelOrderCommand")]
-                )
-            );
-            assert_eq!(
-                link(&flow, "POST", "/api/orders/draft"),
-                (
-                    Some("OrdersApi.CreateOrderDraftAsync".into()),
-                    s(&["CreateOrderDraftCommand"])
-                )
-            );
-            assert_eq!(
-                link(&flow, "POST", "/api/orders/quick"),
-                (None, s(&["QuickOrderCommand"]))
-            );
-            // A factory call and a mail service are not requests.
-            assert_eq!(
-                link(&flow, "POST", "/api/orders/built"),
-                (Some("OrdersApi.BuiltAsync".into()), vec![])
-            );
-            assert_eq!(
-                link(&flow, "POST", "/api/orders/mail").1,
-                Vec::<String>::new()
-            );
-            assert_eq!(
-                link(&flow, "PUT", "/api/orders/ship").1,
-                vec![
-                    "IdentifiedCommand<ShipOrderCommand, bool>".to_string(),
-                    "ShipOrderCommand".into()
-                ]
-            );
-            assert_eq!(
-                link(&flow, "GET", "/api/orders/elsewhere"),
-                (Some("Handlers.Elsewhere".into()), s(&["CountOrdersQuery"]))
-            );
-            let api = "Ordering.API/Apis/OrdersApi.cs".to_string();
-            assert_eq!(
-                site(&flow, "POST", "/api/orders"),
-                Some((api.clone(), line_of(ORDERS_API, "CreateOrderAsync(")))
-            );
-            assert_eq!(
-                site(&flow, "PUT", "/api/orders/ship"),
-                Some((api, line_of(ORDERS_API, "ShipAsync(")))
-            );
-            // A method group of another file is found there.
-            assert_eq!(
-                site(&flow, "GET", "/api/orders/elsewhere"),
-                Some((
-                    "Ordering.API/Apis/Handlers.cs".into(),
-                    line_of(HANDLERS, "Elsewhere(")
-                ))
-            );
-            assert_eq!(site(&flow, "POST", "/api/orders/quick"), None, "lambda");
-        }
-
-        const CONTROLLER: &str = r#"
-    [ApiController]
-    [Route("api/[controller]")]
-    public class PaymentsController : ControllerBase
-    {
-        private readonly IMediator _mediator;
-        private readonly ShipOrderUseCase _ship;
-
-        [HttpPost]
-        public async Task<IActionResult> Pay([FromBody] PayOrderCommand command)
-        {
-            await _mediator.Send(command);
-            return Ok();
-        }
-
-        [HttpPost("ship")]
-        public IActionResult Ship(int id)
-        {
-            _ship.Execute(id);
-            return Ok();
-        }
-
-        [HttpGet]
-        public IActionResult List() => Ok();
-    }
-    "#;
-
-        #[test]
-        fn controller_actions_send_parameters_and_call_use_case_fields() {
-            let dir = project(&[
-                ("Api/Api.csproj", "<Project />"),
-                ("Api/PaymentsController.cs", CONTROLLER),
-            ]);
-            let flow = extract(dir.path());
-            assert_eq!(
-                link(&flow, "POST", "/api/Payments"),
-                (
-                    Some("PaymentsController.Pay".into()),
-                    s(&["PayOrderCommand"])
-                )
-            );
-            assert_eq!(
-                link(&flow, "POST", "/api/Payments/ship"),
-                (
-                    Some("PaymentsController.Ship".into()),
-                    s(&["ShipOrderUseCase"])
-                )
-            );
-            assert_eq!(
-                link(&flow, "GET", "/api/Payments"),
-                (Some("PaymentsController.List".into()), vec![])
-            );
-            let file = "Api/PaymentsController.cs".to_string();
-            assert_eq!(
-                site(&flow, "POST", "/api/Payments/ship"),
-                Some((file.clone(), line_of(CONTROLLER, "Ship(int id)")))
-            );
-            assert_eq!(
-                site(&flow, "GET", "/api/Payments"),
-                Some((file, line_of(CONTROLLER, "List()")))
-            );
-        }
-
-        const SPRING: &str = r#"
-    @RestController
-    @RequestMapping("/orders")
-    public class OrderController {
-        private final CommandGateway commandGateway;
-        private final PayOrderUseCase payOrderUseCase;
-
-        @PostMapping
-        public CompletableFuture<String> create(@RequestBody CreateOrder body) {
-            return commandGateway.send(new PlaceOrderCommand(body.id(), body.items()));
-        }
-
-        @PutMapping("/{id}/pay")
-        public void pay(@PathVariable String id) throws IOException {
-            payOrderUseCase.execute(id);
-        }
-    }
-    "#;
-
-        #[test]
-        fn spring_methods_send_axon_commands_and_call_use_cases() {
-            let dir = project(&[
-                ("orders/pom.xml", "<project/>"),
-                ("orders/src/main/java/shop/OrderController.java", SPRING),
-            ]);
-            let flow = extract(dir.path());
-            assert_eq!(
-                link(&flow, "POST", "/orders"),
-                (
-                    Some("OrderController.create".into()),
-                    s(&["PlaceOrderCommand"])
-                )
-            );
-            assert_eq!(
-                link(&flow, "PUT", "/orders/{id}/pay"),
-                (Some("OrderController.pay".into()), s(&["PayOrderUseCase"]))
-            );
-            assert_eq!(
-                site(&flow, "PUT", "/orders/{id}/pay"),
-                Some((
-                    "orders/src/main/java/shop/OrderController.java".into(),
-                    line_of(SPRING, "void pay(")
-                ))
-            );
-        }
     }
 }
 
@@ -11996,5 +10860,298 @@ public class PController : ControllerBase
         assert_eq!(m.len(), 2);
         assert_eq!(m[0].attrs.len(), 2);
         assert_eq!(m[1].attrs.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod handlers_tests {
+    use super::extract;
+    use archguard_core::{EndpointAccess, UiFlow};
+
+    fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for (path, text) in files {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        dir
+    }
+
+    fn endpoint<'a>(flow: &'a UiFlow, method: &str, path: &str) -> &'a EndpointAccess {
+        (flow.endpoints.iter())
+            .find(|e| e.method == method && e.path == path)
+            .unwrap_or_else(|| panic!("{method} {path} in {:#?}", flow.endpoints))
+    }
+
+    fn link(flow: &UiFlow, method: &str, path: &str) -> (Option<String>, Vec<String>) {
+        let e = endpoint(flow, method, path);
+        (e.handler.clone(), e.sends.clone())
+    }
+
+    fn s(items: &[&str]) -> Vec<String> {
+        items.iter().map(|i| i.to_string()).collect()
+    }
+
+    /// Where the handler of the endpoint is declared.
+    fn site(flow: &UiFlow, method: &str, path: &str) -> Option<(String, u32)> {
+        let s = flow.handler_site(endpoint(flow, method, path))?;
+        Some((s.file.clone(), s.line))
+    }
+
+    /// The 1-based line of the first `needle` in `text`.
+    fn line_of(text: &str, needle: &str) -> u32 {
+        text.lines().position(|l| l.contains(needle)).expect(needle) as u32 + 1
+    }
+
+    const ORDERS_API: &str = r#"
+public static class OrdersApi
+{
+    public static RouteGroupBuilder MapOrdersApiV1(this IEndpointRouteBuilder app)
+    {
+        var api = app.MapGroup("api/orders");
+        api.MapPut("/cancel", CancelOrderAsync);
+        api.MapPost("/draft", CreateOrderDraftAsync);
+        api.MapPost("/", OrdersApi.CreateOrderAsync);
+        api.MapPost("/quick", async (QuickOrderCommand cmd, IMediator mediator) => await mediator.Send(cmd));
+        api.MapPost("/built", BuiltAsync);
+        api.MapPost("/mail", MailAsync);
+        api.MapPut("/ship", ShipAsync);
+        api.MapGet("/elsewhere", Handlers.Elsewhere);
+        return api;
+    }
+
+    public static async Task<Results<Ok, BadRequest<string>>> CancelOrderAsync(
+        [FromHeader(Name = "x-requestid")] Guid requestId,
+        CancelOrderCommand command,
+        [AsParameters] OrderServices services)
+    {
+        var requestCancelOrder = new IdentifiedCommand<CancelOrderCommand, bool>(command, requestId);
+        var commandResult = await services.Mediator.Send(requestCancelOrder);
+        return TypedResults.Ok();
+    }
+
+    public static async Task<OrderDraftDTO> CreateOrderDraftAsync(CreateOrderDraftCommand command, [AsParameters] OrderServices services)
+        => await services.Mediator.Send(command);
+
+    public static async Task<Results<Ok, BadRequest<string>>> CreateOrderAsync(
+        [FromHeader(Name = "x-requestid")] Guid requestId,
+        CreateOrderRequest request,
+        [AsParameters] OrderServices services)
+    {
+        using (services.Logger.BeginScope(new List<KeyValuePair<string, object>> { new("IdentifiedCommandId", requestId) }))
+        {
+            var createOrderCommand = new CreateOrderCommand(request.Items, request.UserId);
+            var requestCreateOrder = new IdentifiedCommand<CreateOrderCommand, bool>(createOrderCommand, requestId);
+            var result = await services.Mediator.Send(requestCreateOrder);
+            return TypedResults.Ok();
+        }
+    }
+
+    public static async Task<Ok> BuiltAsync([AsParameters] OrderServices services)
+    {
+        await services.Mediator.Send(Build());
+        return TypedResults.Ok();
+    }
+
+    public static Task<bool> ShipAsync(ShipOrderCommand command, Guid requestId, IMediator mediator)
+        => mediator.Send(new IdentifiedCommand<ShipOrderCommand, bool>(command, requestId));
+
+    public static async Task<Ok> MailAsync(IEmailService email)
+    {
+        await email.Send(new WelcomeMail());
+        return TypedResults.Ok();
+    }
+}
+"#;
+
+    const HANDLERS: &str = r#"
+public static class Handlers
+{
+    public static Task<int> Elsewhere(ISender sender) => sender.Send(new CountOrdersQuery());
+}
+"#;
+
+    #[test]
+    fn minimal_api_method_groups_and_lambdas_send_wrapped_commands() {
+        let dir = project(&[
+            ("Ordering.API/Ordering.API.csproj", "<Project />"),
+            ("Ordering.API/Apis/OrdersApi.cs", ORDERS_API),
+            ("Ordering.API/Apis/Handlers.cs", HANDLERS),
+        ]);
+        let flow = extract(dir.path());
+        let wrapped = |inner: &str| format!("IdentifiedCommand<{inner}, bool>");
+        assert_eq!(
+            link(&flow, "POST", "/api/orders"),
+            (
+                Some("OrdersApi.CreateOrderAsync".into()),
+                vec!["CreateOrderCommand".into(), wrapped("CreateOrderCommand")]
+            )
+        );
+        assert_eq!(
+            link(&flow, "PUT", "/api/orders/cancel"),
+            (
+                Some("OrdersApi.CancelOrderAsync".into()),
+                vec!["CancelOrderCommand".into(), wrapped("CancelOrderCommand")]
+            )
+        );
+        assert_eq!(
+            link(&flow, "POST", "/api/orders/draft"),
+            (
+                Some("OrdersApi.CreateOrderDraftAsync".into()),
+                s(&["CreateOrderDraftCommand"])
+            )
+        );
+        assert_eq!(
+            link(&flow, "POST", "/api/orders/quick"),
+            (None, s(&["QuickOrderCommand"]))
+        );
+        // A factory call and a mail service are not requests.
+        assert_eq!(
+            link(&flow, "POST", "/api/orders/built"),
+            (Some("OrdersApi.BuiltAsync".into()), vec![])
+        );
+        assert_eq!(
+            link(&flow, "POST", "/api/orders/mail").1,
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            link(&flow, "PUT", "/api/orders/ship").1,
+            vec![
+                "IdentifiedCommand<ShipOrderCommand, bool>".to_string(),
+                "ShipOrderCommand".into()
+            ]
+        );
+        assert_eq!(
+            link(&flow, "GET", "/api/orders/elsewhere"),
+            (Some("Handlers.Elsewhere".into()), s(&["CountOrdersQuery"]))
+        );
+        let api = "Ordering.API/Apis/OrdersApi.cs".to_string();
+        assert_eq!(
+            site(&flow, "POST", "/api/orders"),
+            Some((api.clone(), line_of(ORDERS_API, "CreateOrderAsync(")))
+        );
+        assert_eq!(
+            site(&flow, "PUT", "/api/orders/ship"),
+            Some((api, line_of(ORDERS_API, "ShipAsync(")))
+        );
+        // A method group of another file is found there.
+        assert_eq!(
+            site(&flow, "GET", "/api/orders/elsewhere"),
+            Some((
+                "Ordering.API/Apis/Handlers.cs".into(),
+                line_of(HANDLERS, "Elsewhere(")
+            ))
+        );
+        assert_eq!(site(&flow, "POST", "/api/orders/quick"), None, "lambda");
+    }
+
+    const CONTROLLER: &str = r#"
+[ApiController]
+[Route("api/[controller]")]
+public class PaymentsController : ControllerBase
+{
+    private readonly IMediator _mediator;
+    private readonly ShipOrderUseCase _ship;
+
+    [HttpPost]
+    public async Task<IActionResult> Pay([FromBody] PayOrderCommand command)
+    {
+        await _mediator.Send(command);
+        return Ok();
+    }
+
+    [HttpPost("ship")]
+    public IActionResult Ship(int id)
+    {
+        _ship.Execute(id);
+        return Ok();
+    }
+
+    [HttpGet]
+    public IActionResult List() => Ok();
+}
+"#;
+
+    #[test]
+    fn controller_actions_send_parameters_and_call_use_case_fields() {
+        let dir = project(&[
+            ("Api/Api.csproj", "<Project />"),
+            ("Api/PaymentsController.cs", CONTROLLER),
+        ]);
+        let flow = extract(dir.path());
+        assert_eq!(
+            link(&flow, "POST", "/api/Payments"),
+            (
+                Some("PaymentsController.Pay".into()),
+                s(&["PayOrderCommand"])
+            )
+        );
+        assert_eq!(
+            link(&flow, "POST", "/api/Payments/ship"),
+            (
+                Some("PaymentsController.Ship".into()),
+                s(&["ShipOrderUseCase"])
+            )
+        );
+        assert_eq!(
+            link(&flow, "GET", "/api/Payments"),
+            (Some("PaymentsController.List".into()), vec![])
+        );
+        let file = "Api/PaymentsController.cs".to_string();
+        assert_eq!(
+            site(&flow, "POST", "/api/Payments/ship"),
+            Some((file.clone(), line_of(CONTROLLER, "Ship(int id)")))
+        );
+        assert_eq!(
+            site(&flow, "GET", "/api/Payments"),
+            Some((file, line_of(CONTROLLER, "List()")))
+        );
+    }
+
+    const SPRING: &str = r#"
+@RestController
+@RequestMapping("/orders")
+public class OrderController {
+    private final CommandGateway commandGateway;
+    private final PayOrderUseCase payOrderUseCase;
+
+    @PostMapping
+    public CompletableFuture<String> create(@RequestBody CreateOrder body) {
+        return commandGateway.send(new PlaceOrderCommand(body.id(), body.items()));
+    }
+
+    @PutMapping("/{id}/pay")
+    public void pay(@PathVariable String id) throws IOException {
+        payOrderUseCase.execute(id);
+    }
+}
+"#;
+
+    #[test]
+    fn spring_methods_send_axon_commands_and_call_use_cases() {
+        let dir = project(&[
+            ("orders/pom.xml", "<project/>"),
+            ("orders/src/main/java/shop/OrderController.java", SPRING),
+        ]);
+        let flow = extract(dir.path());
+        assert_eq!(
+            link(&flow, "POST", "/orders"),
+            (
+                Some("OrderController.create".into()),
+                s(&["PlaceOrderCommand"])
+            )
+        );
+        assert_eq!(
+            link(&flow, "PUT", "/orders/{id}/pay"),
+            (Some("OrderController.pay".into()), s(&["PayOrderUseCase"]))
+        );
+        assert_eq!(
+            site(&flow, "PUT", "/orders/{id}/pay"),
+            Some((
+                "orders/src/main/java/shop/OrderController.java".into(),
+                line_of(SPRING, "void pay(")
+            ))
+        );
     }
 }

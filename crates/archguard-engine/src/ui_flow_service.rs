@@ -37,13 +37,14 @@ use archguard_core::{
     EndpointAccess, MethodCall, ServiceHow, ServiceKind, ServiceLayer, UiFlow, UiFlowDiagnostic,
 };
 
-use crate::ui_flow_backend::lex::{literals, named, positional, split_top};
 use crate::ui_flow_backend::spring::{Conf, declared_access, family};
-use crate::ui_flow_backend::{
-    Attr, Decl, Index, Out, Project, Source, class_header, decls, quarkus_build, read_projects,
-};
+use crate::ui_flow_backend::{Index, Out, Project, read_projects};
 use crate::ui_flow_micronaut::head_at;
 use archguard_extract::{Lang, strip_root};
+use archguard_flow_clike::decl::{Attr, Decl, class_header, decls};
+use archguard_flow_clike::lex::{literals, named, positional, split_top};
+use archguard_flow_clike::quarkus_build::quarkus_build;
+use archguard_flow_clike::source::Source;
 use archguard_flow_common::extract_ctx::{ExtractContext, walk};
 use ejb::Decision;
 
@@ -1121,7 +1122,7 @@ fn near(src: &Source, d: &Decl, m: &CallMethod) -> bool {
 mod body {
     use archguard_core::{CallMethod, MethodCall};
 
-    use crate::ui_flow_backend::Source;
+    use archguard_flow_clike::source::Source;
 
     fn line_start(src: &Source, line: u32) -> Option<usize> {
         let mut off = 0;

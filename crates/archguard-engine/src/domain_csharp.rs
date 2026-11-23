@@ -57,12 +57,12 @@
 //! pattern or Stateless, and constructor events as part of `initial`. The
 //! marker names are the constants below with the ADR 0022 defaults; reading
 //! them from the configuration comes later.
-use crate::ui_flow_backend::sends_in;
 use archguard_core::domain_model::{
     ApiModel, DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, EventHandlerSite,
     Field, MessageHandler, Relation, RelationKind, StateMachine, StateTransition, UseCase,
     UseCaseKind,
 };
+use archguard_flow_clike::handlers::sends_in;
 use archguard_flow_common::extract_ctx::{ExtractContext, domain_sources, with_root_config};
 use members::{field, generic_args, members};
 use states::{Rules, Step, assignments, created, raise_calls};

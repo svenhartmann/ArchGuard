@@ -64,11 +64,11 @@
 //! Statemachine and the State pattern, request types of `*CommandHandler`
 //! classes. The marker names are the constants below with the ADR 0022
 //! defaults; reading them from the configuration comes later.
-use crate::ui_flow_backend::sends_in;
 use archguard_core::domain_model::{
     DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, EventHandlerSite, Field,
     MessageHandler, Relation, RelationKind, StateMachine, StateTransition, UseCase, UseCaseKind,
 };
+use archguard_flow_clike::handlers::sends_in;
 use archguard_flow_common::extract_ctx::{ExtractContext, domain_sources, with_root_config};
 use archguard_flow_common::lang_text::*;
 use members::{Kind, Member, field, param_types};
