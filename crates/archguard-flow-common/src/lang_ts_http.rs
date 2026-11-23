@@ -13,18 +13,17 @@ use crate::lang_ts::{
 use crate::lang_ts_decl::{declared_value, imports};
 
 /// Request methods as `axios` and the Next.js and Nuxt route files name them.
-pub(crate) const HTTP_METHODS: [&str; 7] =
-    ["get", "post", "put", "patch", "delete", "head", "options"];
+pub const HTTP_METHODS: [&str; 7] = ["get", "post", "put", "patch", "delete", "head", "options"];
 
 /// An instance's `baseURL` path, or its source when not literal.
-pub(crate) type Base = Result<String, String>;
+pub type Base = Result<String, String>;
 
 /// Axios instances by (file, exported name or `default`).
-pub(crate) struct Clients {
+pub struct Clients {
     instances: BTreeMap<(String, String), Base>,
 }
 
-pub(crate) fn axios_names(text: &str) -> Vec<String> {
+pub fn axios_names(text: &str) -> Vec<String> {
     imports(text)
         .into_iter()
         .filter(|i| i.module == "axios" && i.imported.as_deref().is_none_or(|n| n == "*"))
@@ -33,7 +32,7 @@ pub(crate) fn axios_names(text: &str) -> Vec<String> {
 }
 
 /// The `baseURL` path of an `axios.create(…)` argument.
-pub(crate) fn base_of(text: &str, arg: &Item) -> Base {
+pub fn base_of(text: &str, arg: &Item) -> Base {
     match &arg.value {
         Value::Obj(fields) => match fields.iter().find(|(k, _)| k == "baseURL") {
             None => Ok(String::new()),
@@ -49,7 +48,7 @@ pub(crate) fn base_of(text: &str, arg: &Item) -> Base {
 }
 
 /// The name `axios.create` at `pos` is bound to: `const name =` or `export default`.
-pub(crate) fn instance_name(text: &str, pos: usize) -> Option<String> {
+pub fn instance_name(text: &str, pos: usize) -> Option<String> {
     let before = text[..pos].trim_end();
     match before.strip_suffix('=') {
         Some(lhs) => trailing_ident(lhs.trim_end()),
@@ -58,7 +57,7 @@ pub(crate) fn instance_name(text: &str, pos: usize) -> Option<String> {
 }
 
 /// `const name = axios.create({ baseURL })` and `export default axios.create(…)`.
-pub(crate) fn instances(text: &str) -> BTreeMap<String, Base> {
+pub fn instances(text: &str) -> BTreeMap<String, Base> {
     let mut out = BTreeMap::new();
     for a in axios_names(text) {
         for pos in words(text, &a) {
@@ -89,7 +88,7 @@ pub(crate) fn instances(text: &str) -> BTreeMap<String, Base> {
 
 impl Clients {
     /// The instances declared in `files` (path to text).
-    pub(crate) fn new(files: &BTreeMap<String, String>) -> Self {
+    pub fn new(files: &BTreeMap<String, String>) -> Self {
         let mut instances = BTreeMap::new();
         for (file, text) in files {
             for (name, base) in self::instances(text) {
@@ -101,7 +100,7 @@ impl Clients {
 
     /// HTTP receivers usable in `file`: axios itself (no base) and instances.
     /// `module` resolves an import specifier of `file` to a scanned file.
-    pub(crate) fn receivers<'m>(
+    pub fn receivers<'m>(
         &self,
         file: &str,
         text: &str,
@@ -128,7 +127,7 @@ impl Clients {
 }
 
 /// The method and URL argument of `recv.method(…)` at `pos`.
-pub(crate) fn client_call(text: &str, pos: usize, recv: &str) -> Option<(&'static str, Item)> {
+pub fn client_call(text: &str, pos: usize, recv: &str) -> Option<(&'static str, Item)> {
     let b = text.as_bytes();
     let rest = text[pos + recv.len()..].strip_prefix('.')?;
     let method = HTTP_METHODS.into_iter().find(|m| {
@@ -143,7 +142,7 @@ pub(crate) fn client_call(text: &str, pos: usize, recv: &str) -> Option<(&'stati
 }
 
 /// The call, or why it is unknown.
-pub(crate) fn http_call(
+pub fn http_call(
     method: Result<String, String>,
     url: Option<String>,
     base: Option<&Base>,
@@ -162,7 +161,7 @@ pub(crate) fn http_call(
 }
 
 /// Whether the call at `pos` is the global function, not a method or declaration.
-pub(crate) fn global_call(text: &str, pos: usize) -> bool {
+pub fn global_call(text: &str, pos: usize) -> bool {
     let before = &text[..pos];
     let member =
         before.ends_with('.') && !before.ends_with("window.") && !before.ends_with("globalThis.");
@@ -174,7 +173,7 @@ pub(crate) fn global_call(text: &str, pos: usize) -> bool {
 }
 
 /// The method of a fetch options argument; `GET` without one.
-pub(crate) fn fetch_method(text: &str, init: Option<&Item>) -> Result<String, String> {
+pub fn fetch_method(text: &str, init: Option<&Item>) -> Result<String, String> {
     let Some(init) = init else {
         return Ok("GET".into());
     };
@@ -200,9 +199,7 @@ const FETCHERS: [&str; 4] = ["fetch", "fetchJson", "fetchText", "fetchBlob"];
 /// `${…}` not after `/` is the query and dropped) and `method: "…"` (else `GET`),
 /// prefixed with the literal `baseUrl` of an exported `defaults` object. A
 /// function without such a call is left out; a non-literal one is `Err`.
-pub(crate) fn generated_calls(
-    files: &[(String, String)],
-) -> BTreeMap<String, Result<Call, String>> {
+pub fn generated_calls(files: &[(String, String)]) -> BTreeMap<String, Result<Call, String>> {
     let base = files.iter().find_map(|(_, t)| generated_base(t));
     let base = base.as_deref().unwrap_or("");
     (files.iter())

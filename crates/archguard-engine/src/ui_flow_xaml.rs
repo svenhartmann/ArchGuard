@@ -94,14 +94,16 @@
 //! C#-only pages without XAML, `ContentControl`
 //! switching by view model (`CurrentView = new XViewModel()`), the older MAUI
 //! `MainPage = …` assignment, services reached over more than one hop.
-use crate::extract_ctx::{ExtractContext, ancestors, dir_name, read_text, walk, with_root_config};
-use crate::lang_markup as xml;
-use crate::services::support::test_path;
 use access::{Access, guard};
 use archguard_core::{
     Action, Call, Condition, DiagnosticSeverity, Origin, Screen, ScreenKind, Target, Transition,
     UiFlow, UiFlowDiagnostic,
 };
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, ancestors, dir_name, read_text, walk, with_root_config,
+};
+use archguard_flow_common::lang_markup as xml;
+use archguard_flow_common::support::test_path;
 use navigation::{calls, navigations, resolve, string_value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -252,7 +254,8 @@ fn discover(root: &Path, flow: &mut UiFlow) -> Vec<App> {
             cs: vec![],
         });
         if rel.ends_with(".cs") {
-            app.cs.push((rel, crate::lang_csharp::code(&text)));
+            app.cs
+                .push((rel, archguard_flow_common::lang_csharp::code(&text)));
         } else {
             app.xaml.push((rel, blank(&text, "<!--", "-->")));
         }
@@ -1360,8 +1363,8 @@ mod actions {
 /// C# token scanning without knowledge of the model.
 mod access {
     use super::text::{Scope, balanced, ident, literal, split_args};
-    use crate::lang_csharp::literal_end;
     use archguard_core::{AccessMeaning, Condition};
+    use archguard_flow_common::lang_csharp::literal_end;
     use std::collections::BTreeMap;
 
     pub(super) type Access = BTreeMap<String, AccessMeaning>;
@@ -1650,11 +1653,11 @@ mod access {
 }
 
 mod text {
-    pub(super) use crate::lang_csharp::{
+    pub(super) use archguard_flow_common::lang_csharp::{
         balanced, ident_start, is_ident as ident, literal, split_args,
     };
-    pub(super) use crate::lang_markup::blank;
-    pub(super) use crate::lang_text::line;
+    pub(super) use archguard_flow_common::lang_markup::blank;
+    pub(super) use archguard_flow_common::lang_text::line;
 
     /// `word` at `at` in `hay` is a whole identifier.
     pub(super) fn word_at(hay: &str, at: usize, word: &str) -> bool {

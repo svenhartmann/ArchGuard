@@ -92,21 +92,21 @@
 //! Not recognized; each case is a diagnostic: non-literal targets, URLs and checks.
 //! Not followed: helpers of helpers, object methods written as `name() {…}`, redirects of `hooks.server`, `+page.ts`
 //! files without a `+page.svelte`, `resolve()` of `$app/paths`.
-use crate::extract_ctx::{
-    ExtractContext, access_condition, dir_name as app_name, finish, gap as diag,
-    read_source as read, walk, with_root_config,
-};
-use crate::lang_markup::blank;
-use crate::lang_text::{find_top, matching_back, split_top, unparen};
-use crate::lang_ts::*;
-use crate::lang_ts_decl::{declared_value, has_dep, imports};
-use crate::lang_ts_http::*;
-use crate::services::support::test_path;
 use archguard_core::{
     ANY_METHOD, AccessMeaning, AccessState, Action, Call, Condition, DiagnosticSeverity,
     EndpointAccess, Origin, Screen, ScreenKind, Target, Transition, UiFlow, UiFlowDiagnostic,
     best_route,
 };
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, access_condition, dir_name as app_name, finish, gap as diag,
+    read_source as read, walk, with_root_config,
+};
+use archguard_flow_common::lang_markup::blank;
+use archguard_flow_common::lang_text::{find_top, matching_back, split_top, unparen};
+use archguard_flow_common::lang_ts::*;
+use archguard_flow_common::lang_ts_decl::{declared_value, has_dep, imports};
+use archguard_flow_common::lang_ts_http::*;
+use archguard_flow_common::support::test_path;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -936,7 +936,7 @@ mod helper {
         path(mtext, returned(&source)?)
     }
 
-    pub(super) use crate::lang_ts_decl::declared_value as declared;
+    pub(super) use archguard_flow_common::lang_ts_decl::declared_value as declared;
 
     /// The returned expression of a function source: an arrow's expression, or the
     /// final `return` of its (or a function's) block.

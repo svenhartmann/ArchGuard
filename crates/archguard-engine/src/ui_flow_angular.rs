@@ -88,21 +88,21 @@
 //! services injected by services, `httpResource`, URL helper methods
 //! (`buildUrl('api/x')`), and a missing configuration (no `[views.access]` entries;
 //! an unreadable one is a note).
-use crate::extract_ctx::{
-    ExtractContext, dir_name as app_name, finish, gap as diag, read_source as read, walk,
-    with_root_config,
-};
-use crate::services::support::test_path;
 use archguard_core::{
     AccessMeaning, Action, Call, Condition, DiagnosticSeverity, Origin, Screen, ScreenKind, Target,
     Transition, UiFlow, UiFlowDiagnostic, best_route,
 };
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, dir_name as app_name, finish, gap as diag, read_source as read, walk,
+    with_root_config,
+};
+use archguard_flow_common::support::test_path;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::path::Path;
 
-use crate::lang_ts::*;
-use crate::lang_ts_decl::*;
+use archguard_flow_common::lang_ts::*;
+use archguard_flow_common::lang_ts_decl::*;
 use decls::*;
 use http::*;
 

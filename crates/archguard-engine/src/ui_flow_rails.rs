@@ -38,9 +38,11 @@
 //! `policy_scope`, `check_authorization` protect nothing.
 //! Not read: views and links, the Ability and policy catalogues, `Devise`
 //! controllers, `devise_group`, `shallow`, `direct`/`resolve`.
-use crate::extract_ctx::{ExtractContext, finish, gap, read_text, walk, with_root_config};
-use crate::services::support::test_path;
 use archguard_core::{DiagnosticSeverity, UiFlow, UiFlowDiagnostic};
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, finish, gap, read_text, walk, with_root_config,
+};
+use archguard_flow_common::support::test_path;
 
 const MAX_FILES: usize = 20_000;
 
@@ -912,8 +914,8 @@ mod proj {
     use super::names::{camelize, key_of, singular};
     use super::routes::Ctx;
     use super::{note, routes};
-    use crate::extract_ctx::dir_name;
     use archguard_core::{AccessMeaning, AccessState, Condition, EndpointAccess, UiFlowDiagnostic};
+    use archguard_flow_common::extract_ctx::dir_name;
     use std::collections::{BTreeMap, HashMap, HashSet};
 
     /// One route as read: controller path (with module) and action.
@@ -1352,7 +1354,7 @@ mod eval {
         }
 
         fn gap(&mut self, ev: &Ev, msg: impl Into<String>) {
-            crate::extract_ctx::gap(&mut self.diags, &ev.file, ev.line, msg);
+            archguard_flow_common::extract_ctx::gap(&mut self.diags, &ev.file, ev.line, msg);
         }
 
         fn note(&mut self, ev: &Ev, msg: impl Into<String>) {
@@ -1699,7 +1701,12 @@ mod eval {
                 Ok(p) => AccessState::Protected(Condition::Policy(p)),
                 Err(why) => {
                     let msg = format!("{text} in {}#{action}: {why}", self.p.classes[cls].name);
-                    crate::extract_ctx::gap(&mut self.diags, &ev.file, ev.line, msg);
+                    archguard_flow_common::extract_ctx::gap(
+                        &mut self.diags,
+                        &ev.file,
+                        ev.line,
+                        msg,
+                    );
                     unknown(text)
                 }
             }
@@ -1996,7 +2003,7 @@ mod routes {
         }
 
         fn gap(&mut self, line: u32, msg: impl Into<String>) {
-            crate::extract_ctx::gap(&mut self.p.diags, &self.file, line, msg);
+            archguard_flow_common::extract_ctx::gap(&mut self.p.diags, &self.file, line, msg);
         }
 
         pub(super) fn walk(&mut self, stmts: &[Stmt], ctx: &Ctx) {

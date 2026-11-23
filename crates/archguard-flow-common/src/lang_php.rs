@@ -60,14 +60,14 @@ fn heredoc(b: &[u8], i: usize) -> Option<(usize, usize, usize)> {
 
 /// `src` with comments and the contents of strings, heredocs and nowdocs
 /// blanked (quotes and heredoc markers kept), offsets and lines unchanged.
-pub(crate) fn mask(src: &str) -> String {
+pub fn mask(src: &str) -> String {
     blank_regions(src, |b, i| {
         token_at(b, i).map(|(_, from, to, next)| (from, to, next))
     })
 }
 
 /// `src` with comments blanked, literals kept.
-pub(crate) fn code(src: &str) -> String {
+pub fn code(src: &str) -> String {
     blank_regions(src, |b, i| {
         token_at(b, i).map(|(comment, from, to, next)| match comment {
             true => (from, to, next),
@@ -78,7 +78,7 @@ pub(crate) fn code(src: &str) -> String {
 
 /// The value of a plain string literal spanning all of `s` (`'a\'b'`,
 /// `"a"`); `None` for interpolation (`"$x"`), heredocs and anything computed.
-pub(crate) fn literal(s: &str) -> Option<String> {
+pub fn literal(s: &str) -> Option<String> {
     let s = s.trim();
     let b = s.as_bytes();
     let q = *b.first()?;
@@ -105,7 +105,7 @@ pub(crate) fn literal(s: &str) -> Option<String> {
 
 /// The bracket closing the one at `open` in raw PHP text, skipping strings
 /// and comments; for expressions cut out of templates (Blade directives).
-pub(crate) fn close(b: &[u8], open: usize) -> Option<usize> {
+pub fn close(b: &[u8], open: usize) -> Option<usize> {
     let (o, z) = match b.get(open)? {
         b'(' => (b'(', b')'),
         b'[' => (b'[', b']'),
@@ -129,7 +129,7 @@ pub(crate) fn close(b: &[u8], open: usize) -> Option<usize> {
 
 /// The trimmed top-level items of the `(…)` or `[…]` at `open` in masked
 /// text (a trailing comma adds none), and the offset of the closing bracket.
-pub(crate) fn args(mask: &str, open: usize) -> Option<(Vec<Range<usize>>, usize)> {
+pub fn args(mask: &str, open: usize) -> Option<(Vec<Range<usize>>, usize)> {
     let b = mask.as_bytes();
     let end = matching(b, open)?;
     let (mut out, mut depth, mut start) = (Vec::new(), 0i32, open + 1);
@@ -151,7 +151,7 @@ pub(crate) fn args(mask: &str, open: usize) -> Option<(Vec<Range<usize>>, usize)
 }
 
 /// `range` without surrounding whitespace.
-pub(crate) fn trim(s: &str, range: Range<usize>) -> Range<usize> {
+pub fn trim(s: &str, range: Range<usize>) -> Range<usize> {
     let part = &s[range.clone()];
     let start = range.start + (part.len() - part.trim_start().len());
     start..start.max(range.start + part.trim_end().len())
@@ -159,7 +159,7 @@ pub(crate) fn trim(s: &str, range: Range<usize>) -> Range<usize> {
 
 /// The items of the array at `open` (`[` or `array(` at its `(`): the key
 /// range for `k => v`, and the value range.
-pub(crate) fn array_items(mask: &str, open: usize) -> Vec<(Option<Range<usize>>, Range<usize>)> {
+pub fn array_items(mask: &str, open: usize) -> Vec<(Option<Range<usize>>, Range<usize>)> {
     let Some((items, _)) = args(mask, open) else {
         return vec![];
     };
@@ -172,7 +172,7 @@ pub(crate) fn array_items(mask: &str, open: usize) -> Vec<(Option<Range<usize>>,
 }
 
 /// First `pat` in `mask[range]` outside brackets.
-pub(crate) fn top_level(mask: &str, range: Range<usize>, pat: &str) -> Option<usize> {
+pub fn top_level(mask: &str, range: Range<usize>, pat: &str) -> Option<usize> {
     let b = mask.as_bytes();
     let mut depth = 0i32;
     for k in range.clone() {
@@ -188,7 +188,7 @@ pub(crate) fn top_level(mask: &str, range: Range<usize>, pat: &str) -> Option<us
 
 /// The `;` ending the statement that starts at `from` (outside brackets),
 /// or the first unmatched closing bracket, or the end.
-pub(crate) fn statement_end(mask: &str, from: usize) -> usize {
+pub fn statement_end(mask: &str, from: usize) -> usize {
     let b = mask.as_bytes();
     let mut depth = 0i32;
     for (k, &c) in b.iter().enumerate().skip(from) {
@@ -205,14 +205,14 @@ pub(crate) fn statement_end(mask: &str, from: usize) -> usize {
 
 /// Whether the word at `at` stands alone: no identifier character, `$`,
 /// `->` or `::` right before it.
-pub(crate) fn word_at(b: &[u8], at: usize, word: &str) -> bool {
+pub fn word_at(b: &[u8], at: usize, word: &str) -> bool {
     b[at..].starts_with(word.as_bytes())
         && !b.get(at + word.len()).is_some_and(|&c| is_id(c))
         && (at == 0 || !(is_id(b[at - 1]) || b[..at].ends_with(b"->") || b[..at].ends_with(b"::")))
 }
 
 /// Offsets of `word` standing alone ([`word_at`]) in `mask[range]`.
-pub(crate) fn words(mask: &str, range: Range<usize>, word: &str) -> Vec<usize> {
+pub fn words(mask: &str, range: Range<usize>, word: &str) -> Vec<usize> {
     let b = mask.as_bytes();
     let mut out = vec![];
     let mut from = range.start;
@@ -226,7 +226,7 @@ pub(crate) fn words(mask: &str, range: Range<usize>, word: &str) -> Vec<usize> {
 }
 
 /// The namespace the file declares (`namespace A\B;`), `""` for none.
-pub(crate) fn namespace(mask: &str) -> String {
+pub fn namespace(mask: &str) -> String {
     let at = words(mask, 0..mask.len(), "namespace").into_iter().next();
     at.map_or(String::new(), |k| {
         let end = statement_end(mask, k);
@@ -239,7 +239,7 @@ pub(crate) fn namespace(mask: &str) -> String {
 /// Class imports of the file (`use A\B;`, `use A\B as C;`, `use A\{B, C as
 /// D};`) as alias to fully qualified name; `use function`/`use const` and
 /// trait uses inside classes are left out.
-pub(crate) fn uses(mask: &str) -> BTreeMap<String, String> {
+pub fn uses(mask: &str) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for k in words(mask, 0..mask.len(), "use") {
         if depth_at(mask.as_bytes(), k) != 0 {
@@ -276,7 +276,7 @@ fn depth_at(b: &[u8], at: usize) -> i32 {
 
 /// A `class`, `enum`, `trait` or `interface` block.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Class {
+pub struct Class {
     pub kind: String,
     pub name: String,
     /// Offset of the name.
@@ -289,7 +289,7 @@ pub(crate) struct Class {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Method {
+pub struct Method {
     pub name: String,
     /// Offset of the name.
     pub at: usize,
@@ -301,7 +301,7 @@ pub(crate) struct Method {
 
 /// The named classes, enums, traits and interfaces of masked text with their
 /// methods (functions directly in the body); anonymous classes are skipped.
-pub(crate) fn classes(mask: &str) -> Vec<Class> {
+pub fn classes(mask: &str) -> Vec<Class> {
     let b = mask.as_bytes();
     let mut out = vec![];
     for kind in ["class", "enum", "trait", "interface"] {
@@ -370,7 +370,7 @@ fn methods(mask: &str, body: Range<usize>) -> Vec<Method> {
 
 /// The fully qualified name `name` (`Alias\Rest`, `\A\B`, `B`) means in a
 /// file with `uses` and `namespace`.
-pub(crate) fn qualify(name: &str, uses: &BTreeMap<String, String>, namespace: &str) -> String {
+pub fn qualify(name: &str, uses: &BTreeMap<String, String>, namespace: &str) -> String {
     if let Some(abs) = name.strip_prefix('\\') {
         return abs.to_string();
     }

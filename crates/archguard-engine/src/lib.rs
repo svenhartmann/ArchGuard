@@ -102,26 +102,7 @@ pub mod domain_java;
 pub mod domain_model;
 pub mod domain_python;
 pub mod domain_typescript;
-pub mod extract_ctx;
-#[cfg(test)]
-mod extract_ctx_tests;
-mod lang_blank;
-mod lang_csharp;
-mod lang_java;
-mod lang_markup;
-mod lang_php;
-mod lang_pyscan;
-mod lang_python;
-mod lang_rust;
-#[cfg(test)]
-mod lang_tests;
-mod lang_text;
-mod lang_ts;
-mod lang_ts_decl;
-mod lang_ts_imports;
-mod lang_ts_http;
-#[cfg(test)]
-mod lang_ts_tests;
+pub use archguard_flow_common::extract_ctx;
 #[cfg(test)]
 mod manifest_render_tests;
 #[cfg(test)]

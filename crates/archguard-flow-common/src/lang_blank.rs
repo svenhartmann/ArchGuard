@@ -5,7 +5,7 @@
 /// kept), so offsets and lines stay those of the source. `region_at(b, i)`
 /// gives (blank from, blank to, continue at) for a comment or literal at `i`.
 /// A byte order mark is blanked too: it would glue onto the first identifier.
-pub(crate) fn blank_regions(
+pub fn blank_regions(
     src: &str,
     region_at: impl Fn(&[u8], usize) -> Option<(usize, usize, usize)>,
 ) -> String {
@@ -27,7 +27,7 @@ pub(crate) fn blank_regions(
 }
 
 /// Spaces for `b[from..to]`, line breaks kept; bounds are clamped.
-pub(crate) fn blank(b: &mut [u8], from: usize, to: usize) {
+pub fn blank(b: &mut [u8], from: usize, to: usize) {
     let to = to.min(b.len());
     for c in &mut b[from.min(to)..to] {
         if *c != b'\n' {
@@ -37,7 +37,7 @@ pub(crate) fn blank(b: &mut [u8], from: usize, to: usize) {
 }
 
 /// Offset of `pat` at or after `from`.
-pub(crate) fn find(b: &[u8], from: usize, pat: &[u8]) -> Option<usize> {
+pub fn find(b: &[u8], from: usize, pat: &[u8]) -> Option<usize> {
     b.get(from..)?
         .windows(pat.len())
         .position(|w| w == pat)
@@ -45,7 +45,7 @@ pub(crate) fn find(b: &[u8], from: usize, pat: &[u8]) -> Option<usize> {
 }
 
 /// Offset of the line break ending the line of `i`, or the end.
-pub(crate) fn line_end(b: &[u8], i: usize) -> usize {
+pub fn line_end(b: &[u8], i: usize) -> usize {
     b[i..]
         .iter()
         .position(|&c| c == b'\n')

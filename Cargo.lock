@@ -368,6 +368,7 @@ dependencies = [
  "archguard-analysis",
  "archguard-core",
  "archguard-extract",
+ "archguard-flow-common",
  "archguard-report",
  "archguard-store",
  "globset",
@@ -401,6 +402,18 @@ dependencies = [
  "ignore",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "archguard-flow-common"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-extract",
+ "ignore",
+ "rustix 1.1.6",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

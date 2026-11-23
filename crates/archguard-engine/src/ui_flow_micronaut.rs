@@ -21,14 +21,16 @@
 //!
 //! Not read: annotations inherited from parent classes or interfaces,
 //! `ip-patterns` (a gap), `SensitiveEndpointRule`, `RolesFinder`.
-use crate::extract_ctx::with_root_config;
-use crate::extract_ctx::{ExtractContext, ancestors, dir_name, finish, gap, read_text, walk};
-use crate::lang_csharp::literal;
-use crate::services::support::test_path;
 use crate::ui_flow_backend::{Attr, Decl, Source, class_header, decls, each_method};
 use archguard_core::{
     AccessState, Condition, DiagnosticSeverity, EndpointAccess, UiFlow, UiFlowDiagnostic,
 };
+use archguard_flow_common::extract_ctx::with_root_config;
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, ancestors, dir_name, finish, gap, read_text, walk,
+};
+use archguard_flow_common::lang_csharp::literal;
+use archguard_flow_common::support::test_path;
 use serde::Deserialize;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};

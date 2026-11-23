@@ -11,8 +11,8 @@ use archguard_core::{
 };
 
 use crate::lang_ts::{Item, Value};
-use crate::project_files::read_repo_file;
-use crate::services::support::{Discovery, excluded, relative, test_path};
+use crate::repo_file::read_repo_file;
+use crate::support::{Discovery, excluded, relative, test_path};
 
 /// One extraction run: the analysed root and the configuration in force.
 pub struct ExtractContext<'a> {
@@ -114,16 +114,16 @@ pub fn config_file_in(root: &Path) -> &'static str {
 
 /// The regular files below `root` in walk order, as paths relative to it,
 /// honouring the discovery exclusions.
-pub(crate) struct Walk {
-    pub(crate) files: Vec<String>,
+pub struct Walk {
+    pub files: Vec<String>,
     /// Directory entries that could not be read.
-    pub(crate) errors: Vec<String>,
+    pub errors: Vec<String>,
     /// Notes of the discovery settings: (file, message).
-    pub(crate) notes: Vec<(String, String)>,
+    pub notes: Vec<(String, String)>,
 }
 
 /// [`Walk`] below `root`; `Err` when the discovery settings cannot be read.
-pub(crate) fn walk(root: &Path) -> Result<Walk, String> {
+pub fn walk(root: &Path) -> Result<Walk, String> {
     let mut scratch = ServiceTopology::default();
     let discovery = Discovery::new(root, &mut scratch).map_err(|e| e.to_string())?;
     let (mut files, mut errors) = (Vec::new(), Vec::new());
@@ -148,7 +148,7 @@ pub(crate) fn walk(root: &Path) -> Result<Walk, String> {
 
 /// The walk of the domain extractors: hidden files included, no ignore files,
 /// the engine's excluded directories and `skip` left out, at most 64 levels.
-pub(crate) fn domain_walk(root: &Path, skip: &'static [&'static str]) -> ignore::Walk {
+pub fn domain_walk(root: &Path, skip: &'static [&'static str]) -> ignore::Walk {
     ignore::WalkBuilder::new(root)
         .hidden(false)
         .follow_links(false)
@@ -163,13 +163,13 @@ pub(crate) fn domain_walk(root: &Path, skip: &'static [&'static str]) -> ignore:
 }
 
 /// A file (`""` for none) and why it was not read.
-pub(crate) type Gap = (String, String);
+pub type Gap = (String, String);
 
 /// The sources of one domain scan (ADR 0022): the files of [`domain_walk`]
 /// that `keep` accepts, test files left out, sorted, at most 5,000, each read
 /// up to 1 MiB. Returns (path, text) pairs and the gaps as (file, message);
 /// `language` names the files in the message about the cap.
-pub(crate) fn domain_sources(
+pub fn domain_sources(
     root: &Path,
     skip: &'static [&'static str],
     keep: impl Fn(&str) -> bool,
@@ -212,7 +212,7 @@ pub(crate) fn domain_sources(
 }
 
 /// Keeps the first `max` paths; the first one left out, if any.
-pub(crate) fn cap(paths: &mut Vec<String>, max: usize) -> Option<String> {
+pub fn cap(paths: &mut Vec<String>, max: usize) -> Option<String> {
     let dropped = paths.get(max).cloned();
     paths.truncate(max);
     dropped
@@ -220,7 +220,7 @@ pub(crate) fn cap(paths: &mut Vec<String>, max: usize) -> Option<String> {
 
 /// A file below `root` as text: at most `max` bytes, a UTF-8 byte order mark
 /// dropped, invalid UTF-8 replaced.
-pub(crate) fn read_text(root: &Path, rel: &str, max: u64) -> std::io::Result<String> {
+pub fn read_text(root: &Path, rel: &str, max: u64) -> std::io::Result<String> {
     let bytes = read_repo_file(root, Path::new(rel), max)?;
     let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
     Ok(String::from_utf8_lossy(bytes).into_owned())
@@ -228,7 +228,7 @@ pub(crate) fn read_text(root: &Path, rel: &str, max: u64) -> std::io::Result<Str
 
 /// A web front-end source up to 1 MiB ([`read_text`]); the gap message when
 /// it cannot be read.
-pub(crate) fn read_source(root: &Path, rel: &str) -> Result<String, String> {
+pub fn read_source(root: &Path, rel: &str) -> Result<String, String> {
     read_text(root, rel, 1 << 20).map_err(|e| {
         format!(
             "File not read ({e}): larger than 1 MiB, not a regular file or not readable; \
@@ -238,12 +238,7 @@ pub(crate) fn read_source(root: &Path, rel: &str) -> Result<String, String> {
 }
 
 /// A gap at `file:line`: something is unknown, so the flow is not complete.
-pub(crate) fn gap(
-    out: &mut Vec<UiFlowDiagnostic>,
-    file: &str,
-    line: u32,
-    message: impl Into<String>,
-) {
+pub fn gap(out: &mut Vec<UiFlowDiagnostic>, file: &str, line: u32, message: impl Into<String>) {
     out.push(UiFlowDiagnostic {
         file: file.into(),
         line,
@@ -254,7 +249,7 @@ pub(crate) fn gap(
 
 /// Sorts and deduplicates every list of an extracted flow; it is complete
 /// when no diagnostic is a gap.
-pub(crate) fn finish(flow: &mut UiFlow) {
+pub fn finish(flow: &mut UiFlow) {
     flow.screens.sort();
     flow.screens.dedup();
     flow.transitions.sort();
@@ -274,7 +269,7 @@ pub(crate) fn finish(flow: &mut UiFlow) {
 /// (several are `any`). `Err(name)` when such a form has no argument or a
 /// non-literal one, or a fallback form is still unresolved. This is the
 /// SvelteKit copy; other extractors may read a missing argument differently.
-pub(crate) fn access_condition(
+pub fn access_condition(
     access: &BTreeMap<String, AccessMeaning>,
     name: &str,
     args: &[Item],
@@ -306,7 +301,7 @@ pub(crate) fn access_condition(
 }
 
 /// The folders holding `rel`, nearest first, ending with the root `""`.
-pub(crate) fn ancestors(rel: &str) -> impl Iterator<Item = &str> {
+pub fn ancestors(rel: &str) -> impl Iterator<Item = &str> {
     let mut dir = Some(rel);
     std::iter::from_fn(move || {
         let parent = dir?.rsplit_once('/').map_or("", |(d, _)| d);
@@ -317,7 +312,7 @@ pub(crate) fn ancestors(rel: &str) -> impl Iterator<Item = &str> {
 
 /// The name of folder `dir` below `root`: its last segment, for the root
 /// itself the root's own folder name (`""` when it has none).
-pub(crate) fn dir_name(root: &Path, dir: &str) -> String {
+pub fn dir_name(root: &Path, dir: &str) -> String {
     match dir.rsplit('/').next() {
         Some(last) if !last.is_empty() => last.to_string(),
         _ => (root.canonicalize().ok())

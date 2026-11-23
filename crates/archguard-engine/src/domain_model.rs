@@ -2,11 +2,11 @@
 //! language without an extractor.
 use std::path::Path;
 
-use crate::extract_ctx::{ExtractContext, with_root_config};
 use archguard_core::ArchguardError;
 use archguard_core::domain_model::{
     DOMAIN_MODEL_DEFINITION, DOMAIN_MODEL_IMPORT_SOURCE, DomainModel, merge_domain_models,
 };
+use archguard_flow_common::extract_ctx::{ExtractContext, with_root_config};
 
 pub const DOMAIN_MODEL_FILE: &str = ".archguard/domain-model.json";
 const MAX_BYTES: u64 = 16 * 1024 * 1024;

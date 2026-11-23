@@ -3,16 +3,16 @@
 //! the text of an element.
 
 /// One XAML tag; `attrs` is the text after the name.
-pub(crate) struct Tag<'a> {
-    pub(crate) at: usize,
-    pub(crate) name: &'a str,
-    pub(crate) attrs: &'a str,
-    pub(crate) self_closing: bool,
-    pub(crate) closing: bool,
+pub struct Tag<'a> {
+    pub at: usize,
+    pub name: &'a str,
+    pub attrs: &'a str,
+    pub self_closing: bool,
+    pub closing: bool,
 }
 
 /// Every tag in text order, closing tags included; `<?` and `<!` skipped.
-pub(crate) fn all_tags(text: &str) -> Vec<Tag<'_>> {
+pub fn all_tags(text: &str) -> Vec<Tag<'_>> {
     let mut found = Vec::new();
     let mut from = 0;
     while let Some(i) = text[from..].find('<') {
@@ -43,13 +43,13 @@ pub(crate) fn all_tags(text: &str) -> Vec<Tag<'_>> {
 }
 
 /// Opening and self-closing tags.
-pub(crate) fn tags(text: &str) -> impl Iterator<Item = Tag<'_>> {
+pub fn tags(text: &str) -> impl Iterator<Item = Tag<'_>> {
     all_tags(text).into_iter().filter(|t| !t.closing)
 }
 
 /// (open offset, close offset, opening tag) of every non-self-closing
 /// element whose local name is one of `names`.
-pub(crate) fn blocks<'a>(text: &'a str, names: &[&str]) -> Vec<(usize, usize, Tag<'a>)> {
+pub fn blocks<'a>(text: &'a str, names: &[&str]) -> Vec<(usize, usize, Tag<'a>)> {
     let mut stack: Vec<Tag> = Vec::new();
     let mut found = Vec::new();
     for tag in all_tags(text) {
@@ -68,7 +68,7 @@ pub(crate) fn blocks<'a>(text: &'a str, names: &[&str]) -> Vec<(usize, usize, Ta
 }
 
 /// Offset of the `>` closing a tag, skipping quoted attribute values.
-pub(crate) fn tag_end(s: &str) -> Option<usize> {
+pub fn tag_end(s: &str) -> Option<usize> {
     let mut quote = None;
     for (i, c) in s.char_indices() {
         match (quote, c) {
@@ -82,7 +82,7 @@ pub(crate) fn tag_end(s: &str) -> Option<usize> {
 }
 
 /// `name="value"` pairs of a tag's attribute text.
-pub(crate) fn attributes(attrs: &str) -> Vec<(&str, &str)> {
+pub fn attributes(attrs: &str) -> Vec<(&str, &str)> {
     let mut found = Vec::new();
     let mut rest = attrs;
     loop {
@@ -99,7 +99,7 @@ pub(crate) fn attributes(attrs: &str) -> Vec<(&str, &str)> {
     found
 }
 
-pub(crate) fn attr<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
+pub fn attr<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
     attributes(attrs)
         .into_iter()
         .find(|(n, _)| *n == name)
@@ -108,7 +108,7 @@ pub(crate) fn attr<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
 
 /// Replaces `open`...`close` regions (`<!--`…`-->`, `@*`…`*@`) with spaces,
 /// keeping line breaks and byte offsets; an unclosed region runs to the end.
-pub(crate) fn blank(text: &str, open: &str, close: &str) -> String {
+pub fn blank(text: &str, open: &str, close: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find(open) {
@@ -128,7 +128,7 @@ pub(crate) fn blank(text: &str, open: &str, close: &str) -> String {
 }
 
 /// The text outside tags (`<…>`).
-pub(crate) fn strip_tags(s: &str) -> String {
+pub fn strip_tags(s: &str) -> String {
     let mut out = String::new();
     let mut depth = 0;
     for c in s.chars() {

@@ -1,9 +1,9 @@
 //! Static service topology; no Docker/build execution, process environment or secret resolution.
+use archguard_flow_common::support::{Discovery, diagnostic, relative};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
-use support::{Discovery, diagnostic, relative};
 
 use archguard_core::{
     ArchguardError, Edge, Graph, Node, NodeId, NodeKind, Service, ServiceCycle, ServiceDependency,
@@ -33,8 +33,6 @@ mod service_terraform;
 mod service_terraform_hcl;
 #[path = "service_traces.rs"]
 mod service_traces;
-#[path = "service_support.rs"]
-pub(crate) mod support;
 
 const COMPOSE_NAMES: [&str; 4] = [
     "compose.yaml",

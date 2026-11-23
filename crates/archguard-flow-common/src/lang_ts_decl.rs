@@ -9,7 +9,7 @@ use crate::lang_ts::{
 /// domain extractor's view of a file, ADR 0022).
 // shortcut: regular-expression literals are not recognized; a quote or
 // bracket inside one can shift the blanking. Upgrade when a project needs it.
-pub(crate) fn mask(src: &str, keep_strings: bool) -> String {
+pub fn mask(src: &str, keep_strings: bool) -> String {
     use crate::lang_blank::{blank_regions, find, line_end};
     // The closing quote of the literal opened at `i`, with `\` escapes;
     // `one_line` stops at a line break.
@@ -47,7 +47,7 @@ pub(crate) fn mask(src: &str, keep_strings: bool) -> String {
 }
 
 /// Offset of the `[` that `const|let|var name … = [` binds.
-pub(crate) fn local_array(text: &str, name: &str) -> Option<usize> {
+pub fn local_array(text: &str, name: &str) -> Option<usize> {
     let b = text.as_bytes();
     for kw in ["const", "let", "var"] {
         for pos in words(text, kw) {
@@ -69,7 +69,7 @@ pub(crate) fn local_array(text: &str, name: &str) -> Option<usize> {
 }
 
 /// Whether `text` declares `name` as function, class or variable.
-pub(crate) fn declares(text: &str, name: &str) -> bool {
+pub fn declares(text: &str, name: &str) -> bool {
     ["function", "class", "const", "let", "var"]
         .iter()
         .any(|kw| {
@@ -80,7 +80,7 @@ pub(crate) fn declares(text: &str, name: &str) -> bool {
 }
 
 /// `"name"` as a key in `package.json` text.
-pub(crate) fn has_dep(text: &str, name: &str) -> bool {
+pub fn has_dep(text: &str, name: &str) -> bool {
     let key = format!("\"{name}\"");
     text.match_indices(&key)
         .any(|(i, _)| text[i + key.len()..].trim_start().starts_with(':'))
@@ -88,13 +88,13 @@ pub(crate) fn has_dep(text: &str, name: &str) -> bool {
 
 /// One `import … from '…'`: `imported` is `None` for the default import and
 /// `Some("*")` for a namespace import.
-pub(crate) struct Import {
-    pub(crate) local: String,
-    pub(crate) imported: Option<String>,
-    pub(crate) module: String,
+pub struct Import {
+    pub local: String,
+    pub imported: Option<String>,
+    pub module: String,
 }
 
-pub(crate) fn imports(text: &str) -> Vec<Import> {
+pub fn imports(text: &str) -> Vec<Import> {
     let mut out = Vec::new();
     for pos in words(text, "import") {
         if let Some((clause, module)) = import_at(&text[pos + "import".len()..]) {
@@ -105,7 +105,7 @@ pub(crate) fn imports(text: &str) -> Vec<Import> {
 }
 
 /// The clause and module of the import whose text follows `import`.
-pub(crate) fn import_at(rest: &str) -> Option<(&str, String)> {
+pub fn import_at(rest: &str) -> Option<(&str, String)> {
     let from = *words(rest, "from").first()?;
     let clause = rest[..from].trim();
     if clause.contains(';') || clause.starts_with('(') || clause.starts_with("type ") {
@@ -150,12 +150,12 @@ fn import_names(clause: &str, module: &str, out: &mut Vec<Import>) {
 }
 
 /// What `… = hook()` binds: a name, or destructured `(key, local)` pairs.
-pub(crate) enum Binding {
+pub enum Binding {
     Name(String),
     Destructure(Vec<(String, String)>),
 }
 
-pub(crate) fn bindings(text: &str, hook: &str) -> Vec<Binding> {
+pub fn bindings(text: &str, hook: &str) -> Vec<Binding> {
     let b = text.as_bytes();
     let mut out = Vec::new();
     for pos in words(text, hook) {
@@ -191,7 +191,7 @@ pub(crate) fn bindings(text: &str, hook: &str) -> Vec<Binding> {
 }
 
 /// The value `const|let|var name = …` binds, or the body of `function name`.
-pub(crate) fn declared_value(text: &str, name: &str) -> Option<Item> {
+pub fn declared_value(text: &str, name: &str) -> Option<Item> {
     let b = text.as_bytes();
     for kw in ["const", "let", "var", "function"] {
         for pos in words(text, kw) {
@@ -224,9 +224,9 @@ pub(crate) fn declared_value(text: &str, name: &str) -> Option<Item> {
 
 /// A tsconfig `paths` entry: the import pattern and its targets as paths below
 /// the analysis root, `*` kept in both (`@/*` to `fe/src/*`).
-pub(crate) struct Alias {
-    pub(crate) pattern: String,
-    pub(crate) targets: Vec<String>,
+pub struct Alias {
+    pub pattern: String,
+    pub targets: Vec<String>,
 }
 
 /// The `paths` of tsconfig `rel` (a path below the analysis root; `read` gives
@@ -234,7 +234,7 @@ pub(crate) struct Alias {
 /// files, five hops at most; the nearest `baseUrl` and `paths` win, as in
 /// TypeScript. Comments and trailing commas are tolerated.
 // shortcut: `extends` arrays and package names are not followed, upgrade when a project needs it.
-pub(crate) fn tsconfig_aliases(rel: &str, read: &dyn Fn(&str) -> Option<String>) -> Vec<Alias> {
+pub fn tsconfig_aliases(rel: &str, read: &dyn Fn(&str) -> Option<String>) -> Vec<Alias> {
     let (mut base, mut paths) = (None, None);
     let mut cur = rel.to_string();
     for _ in 0..=5 {
@@ -298,6 +298,6 @@ pub(crate) fn tsconfig_aliases(rel: &str, read: &dyn Fn(&str) -> Option<String>)
 /// extractors still test `is_name` only.
 // shortcut: unused outside tests until the other extractors switch to it.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn name_path(s: &str) -> bool {
+pub fn name_path(s: &str) -> bool {
     is_name(s) && s.split('.').all(|p| !p.is_empty())
 }

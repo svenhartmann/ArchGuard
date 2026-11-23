@@ -67,19 +67,19 @@
 //! outside the application; decorators applied by code (`applyDecorators(…)(C)`);
 //! routes of controllers inherited from a base class; `RouterModule` paths;
 //! guards that read other metadata (their meaning comes from `[views.access]`).
-use crate::extract_ctx::{
-    ExtractContext, dir_name, finish, gap, read_source, walk, with_root_config,
-};
-use crate::lang_ts::{
-    Item, Parser, Value, block_end, call_parts, close, fill_all, ident_at, is_ident_char, is_name,
-    line_of, skip_generic, skip_ws, words,
-};
-use crate::lang_ts_decl::{has_dep, imports, mask};
-use crate::services::support::test_path;
 use archguard_core::{
     ANY_METHOD, AccessMeaning, AccessState, Condition, DiagnosticSeverity, EndpointAccess, UiFlow,
     UiFlowDiagnostic,
 };
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, dir_name, finish, gap, read_source, walk, with_root_config,
+};
+use archguard_flow_common::lang_ts::{
+    Item, Parser, Value, block_end, call_parts, close, fill_all, ident_at, is_ident_char, is_name,
+    line_of, skip_generic, skip_ws, words,
+};
+use archguard_flow_common::lang_ts_decl::{has_dep, imports, mask};
+use archguard_flow_common::support::test_path;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 

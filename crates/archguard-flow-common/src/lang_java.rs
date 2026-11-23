@@ -4,7 +4,7 @@ use crate::lang_blank::{blank_regions, find, line_end};
 
 /// `src` with comments and the contents of string, text-block (`"""`) and
 /// char literals blanked, offsets and lines unchanged.
-pub(crate) fn mask(src: &str) -> String {
+pub fn mask(src: &str) -> String {
     blank_regions(src, |b, i| {
         let next = b.get(i + 1).copied();
         match b[i] {

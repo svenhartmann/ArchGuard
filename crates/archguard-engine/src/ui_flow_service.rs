@@ -37,7 +37,6 @@ use archguard_core::{
     EndpointAccess, MethodCall, ServiceHow, ServiceKind, ServiceLayer, UiFlow, UiFlowDiagnostic,
 };
 
-use crate::extract_ctx::{ExtractContext, walk};
 use crate::ui_flow_backend::lex::{literals, named, positional, split_top};
 use crate::ui_flow_backend::spring::{Conf, declared_access, family};
 use crate::ui_flow_backend::{
@@ -45,6 +44,7 @@ use crate::ui_flow_backend::{
 };
 use crate::ui_flow_micronaut::head_at;
 use archguard_extract::{Lang, strip_root};
+use archguard_flow_common::extract_ctx::{ExtractContext, walk};
 use ejb::Decision;
 
 /// Words that make a source file worth a call analysis.

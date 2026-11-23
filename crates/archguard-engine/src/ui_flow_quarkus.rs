@@ -33,10 +33,6 @@
 //! reach, never `open`. Not read: meta-annotations over the security
 //! annotations, `HttpSecurity` observers, `roles-mapping` (a gap), `web.xml`,
 //! the active profile, service-level checks on CDI beans.
-use crate::extract_ctx::{
-    ExtractContext, ancestors, dir_name, finish, gap, read_text, walk, with_root_config,
-};
-use crate::services::support::test_path;
 use crate::ui_flow_backend::lex::{self, literal, literals, named, positional, split_top};
 use crate::ui_flow_backend::{
     Attr, Decl, Source, class_header, decls, each_method, jdk_type, names_interface, quarkus_build,
@@ -44,6 +40,10 @@ use crate::ui_flow_backend::{
 use archguard_core::{
     AccessState, Condition, DiagnosticSeverity, EndpointAccess, PolicyDef, UiFlow, UiFlowDiagnostic,
 };
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, ancestors, dir_name, finish, gap, read_text, walk, with_root_config,
+};
+use archguard_flow_common::support::test_path;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 

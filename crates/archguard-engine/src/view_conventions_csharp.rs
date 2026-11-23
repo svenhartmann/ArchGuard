@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 
 /// `src` with comments and literal contents blanked, quotes kept, so
 /// `new X("…")` still has its shape.
-pub(super) use crate::lang_csharp::mask as blank;
-pub(super) use crate::lang_text::line;
+pub(super) use archguard_flow_common::lang_csharp::mask as blank;
+pub(super) use archguard_flow_common::lang_text::line;
 
 /// The raise function of the C# domain extractor (`domain_csharp.rs`).
 pub(super) const RAISE_FUNCTION: &str = "AddDomainEvent";

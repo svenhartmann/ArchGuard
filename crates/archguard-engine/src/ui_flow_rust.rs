@@ -113,10 +113,10 @@
 //! placed in a form other than a tag, Yew wrapper components,
 //! navigation through helper functions, and messages that carry the screen
 //! through more than one variable.
-use crate::extract_ctx::{ExtractContext, finish, with_root_config};
-use crate::lang_rust::{FnItem, fn_items, literal_value};
-use crate::lang_text::offset;
 use archguard_core::{Screen, UiFlow};
+use archguard_flow_common::extract_ctx::{ExtractContext, finish, with_root_config};
+use archguard_flow_common::lang_rust::{FnItem, fn_items, literal_value};
+use archguard_flow_common::lang_text::offset;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -176,9 +176,9 @@ pub(crate) struct Src {
 
 impl Src {
     fn new(rel: String, text: &str) -> Self {
-        let mask = crate::lang_rust::mask(text);
+        let mask = archguard_flow_common::lang_rust::mask(text);
         let fns = fn_items(&mask);
-        let code = crate::lang_rust::code(text);
+        let code = archguard_flow_common::lang_rust::code(text);
         Src {
             rel,
             code,
@@ -188,7 +188,7 @@ impl Src {
     }
 
     fn line(&self, at: usize) -> u32 {
-        crate::lang_text::line(&self.code, at)
+        archguard_flow_common::lang_text::line(&self.code, at)
     }
 
     /// The source text of `part`, a slice of `mask`.
@@ -238,8 +238,8 @@ pub(crate) struct Known {
 
 mod files {
     use super::*;
-    use crate::extract_ctx::{ancestors, dir_name, read_text, walk};
-    use crate::services::support::test_path;
+    use archguard_flow_common::extract_ctx::{ancestors, dir_name, read_text, walk};
+    use archguard_flow_common::support::test_path;
 
     /// Dependency name and framework.
     const FRAMEWORKS: [(&str, &str); 7] = [
@@ -381,7 +381,7 @@ mod files {
     fn names_framework(mask: &str) -> bool {
         FRAMEWORKS.iter().any(|(dep, _)| {
             let b = mask.as_bytes();
-            (crate::lang_rust::words(mask, dep).into_iter())
+            (archguard_flow_common::lang_rust::words(mask, dep).into_iter())
                 .any(|at| b[at + dep.len()..].starts_with(b"::"))
         })
     }
@@ -458,10 +458,10 @@ mod files {
 /// Targets, origins and diagnostics shared by the framework rules.
 mod nav {
     use super::*;
-    use crate::lang_text::{next_nonws, split_top};
     use archguard_core::{
         DiagnosticSeverity, Origin, ScreenKind, Target, Transition, UiFlowDiagnostic, best_route,
     };
+    use archguard_flow_common::lang_text::{next_nonws, split_top};
 
     /// Diagnostic at `file:line`; a gap also marks the flow incomplete.
     pub(crate) fn diag(flow: &mut UiFlow, file: &str, line: u32, message: String, gap: bool) {
@@ -537,7 +537,7 @@ mod nav {
     /// page and one `fn` of the application have that name; else at any
     /// screen.
     pub(crate) fn origin(cx: Cx, at: usize) -> Origin {
-        let Some(f) = crate::lang_rust::fn_at(&cx.src.fns, at) else {
+        let Some(f) = archguard_flow_common::lang_rust::fn_at(&cx.src.fns, at) else {
             return any(cx.app);
         };
         let fns = (cx.app.rust.iter())
@@ -630,7 +630,7 @@ mod nav {
         }
         let b = e.as_bytes();
         let open = next_nonws(b, "format!".len()).filter(|_| e.starts_with("format!"))?;
-        let close = crate::lang_text::matching(b, open)?;
+        let close = archguard_flow_common::lang_text::matching(b, open)?;
         let first = split_top(&e[open + 1..close], ",")[0];
         Some(holes(&src.lit(first)?))
     }
@@ -643,7 +643,7 @@ mod nav {
                 ('{', Some('{')) | ('}', Some('}')) => out.push(chars.next().unwrap_or(c)),
                 ('{', _) => {
                     chars.by_ref().find(|&c| c == '}');
-                    out.push_str(crate::lang_ts::PARAM);
+                    out.push_str(archguard_flow_common::lang_ts::PARAM);
                 }
                 _ => out.push(c),
             }
@@ -673,15 +673,15 @@ mod nav {
 
     /// The text of a tag or call argument as written, for messages.
     pub(crate) fn shown(src: &Src, part: &str) -> String {
-        crate::lang_text::collapse(src.text(part))
+        archguard_flow_common::lang_text::collapse(src.text(part))
     }
 }
 
 /// Labels of buttons and tags.
 mod label {
     use super::*;
-    use crate::lang_rust::string_at;
-    use crate::lang_text::{is_id, matching, prev_nonws, prev_word};
+    use archguard_flow_common::lang_rust::string_at;
+    use archguard_flow_common::lang_text::{is_id, matching, prev_nonws, prev_word};
 
     /// Start of the expression chain holding `at`: back to `;`, `,` or an
     /// open bracket, skipping the arguments of method calls (`.on_press(`).
@@ -804,9 +804,9 @@ mod label {
 /// Dioxus and Yew: `#[derive(Routable)]` enums.
 mod routable {
     use super::*;
-    use crate::lang_rust::{Attr, attr_at, attrs_before, words};
-    use crate::lang_text::{ident_end, is_id, matching, next_nonws, split_top};
     use archguard_core::{ScreenKind, Target};
+    use archguard_flow_common::lang_rust::{Attr, attr_at, attrs_before, words};
+    use archguard_flow_common::lang_text::{ident_end, is_id, matching, next_nonws, split_top};
 
     /// An attribute or a variant in an enum body, in source order.
     pub(crate) enum Part {
@@ -939,7 +939,7 @@ mod routable {
     fn unreadable(flow: &mut UiFlow, src: &Src, a: &Attr) -> String {
         let message = "The route attribute holds no string literal; the route is unknown.";
         nav::diag(flow, &src.rel, src.line(a.at), message.into(), true);
-        crate::lang_ts::PARAM.into()
+        archguard_flow_common::lang_ts::PARAM.into()
     }
 
     /// Yew: `Enum::Variant => html! { <Comp … /> }` names the page's component.
@@ -1088,7 +1088,7 @@ mod routable {
     fn on_navigator(before: &str, navigators: &[String]) -> bool {
         let receiver = before.trim_end();
         let calls = ["navigator()", "router()", "use_navigator()"];
-        let word = crate::lang_text::prev_word(receiver, receiver.len());
+        let word = archguard_flow_common::lang_text::prev_word(receiver, receiver.len());
         calls.iter().any(|r| receiver.ends_with(r)) || navigators.iter().any(|n| n == word)
     }
 
@@ -1104,7 +1104,7 @@ mod routable {
                     continue;
                 };
                 let before = before.trim_end();
-                let name = crate::lang_text::prev_word(before, before.len());
+                let name = archguard_flow_common::lang_text::prev_word(before, before.len());
                 let head = before[..before.len() - name.len()].trim_end();
                 if !name.is_empty() && (head.ends_with("let") || head.ends_with("let mut")) {
                     out.push(name.to_string());
@@ -1118,8 +1118,8 @@ mod routable {
 /// Guards the Dioxus and Yew routing code puts on routable pages.
 mod guard {
     use super::*;
-    use crate::lang_rust::words;
-    use crate::lang_text::{is_id, matching, next_nonws};
+    use archguard_flow_common::lang_rust::words;
+    use archguard_flow_common::lang_text::{is_id, matching, next_nonws};
 
     /// (enum, variant, screen id) of every routable page, and the conditions
     /// the routing code adds to a screen id.
@@ -1274,9 +1274,9 @@ mod guard {
 /// Leptos `<Routes>` trees and links.
 mod leptos {
     use super::*;
-    use crate::lang_rust::words;
-    use crate::lang_text::{matching, next_nonws, split_top};
     use archguard_core::{AccessMeaning, Condition, Origin, ScreenKind, Target};
+    use archguard_flow_common::lang_rust::words;
+    use archguard_flow_common::lang_text::{matching, next_nonws, split_top};
 
     const LEAVES: [&str; 2] = ["Route", "ProtectedRoute"];
     const PARENTS: [&str; 2] = ["ParentRoute", "ProtectedParentRoute"];
@@ -1415,7 +1415,7 @@ mod leptos {
     /// (`Link<Route>` and `Router::<Route>` are type arguments).
     fn tags(mask: &str, tag: &str) -> Vec<usize> {
         let b = mask.as_bytes();
-        let id = |k: Option<&u8>| k.is_some_and(|&c| crate::lang_text::is_id(c));
+        let id = |k: Option<&u8>| k.is_some_and(|&c| archguard_flow_common::lang_text::is_id(c));
         let typed = |at: usize| at > 0 && (id(b.get(at - 1)) || b[at - 1] == b':');
         (mask.match_indices(tag))
             .map(|(at, _)| at)
@@ -1441,7 +1441,7 @@ mod leptos {
             let Some((path, required)) = get("path").and_then(|p| path(src, p)) else {
                 let message = format!("The path of <{tag}> is not readable; its route is unknown.");
                 nav::diag(flow, &src.rel, src.line(at), message, true);
-                let param = crate::lang_ts::PARAM.to_string();
+                let param = archguard_flow_common::lang_ts::PARAM.to_string();
                 return PARENTS.contains(&tag).then(|| Level {
                     path: param.clone(),
                     required: param,
@@ -1609,9 +1609,9 @@ mod leptos {
 /// Leptos and Dioxus `#[server]` functions.
 mod server {
     use super::*;
-    use crate::lang_rust::{attrs_before, words};
-    use crate::lang_text::{next_nonws, split_top};
     use archguard_core::{AccessState, Action, Call, EndpointAccess};
+    use archguard_flow_common::lang_rust::{attrs_before, words};
+    use archguard_flow_common::lang_text::{next_nonws, split_top};
 
     /// A server function: name, struct name, method, path.
     struct ServerFn {
@@ -1721,7 +1721,7 @@ mod server {
             .into_iter()
             .filter(|&at| src.mask[..at].trim_end().ends_with("::<"));
         for at in calls.chain(turbofish) {
-            let inside = crate::lang_rust::fn_at(&src.fns, at);
+            let inside = archguard_flow_common::lang_rust::fn_at(&src.fns, at);
             if inside.is_none_or(|f| f.name == server.name) {
                 continue;
             }
@@ -1746,9 +1746,9 @@ mod server {
 mod state {
     use super::routable::{Part, enum_body, parts};
     use super::*;
-    use crate::lang_rust::words;
-    use crate::lang_text::{ident_end, matching, next_nonws, prev_word, split_top};
     use archguard_core::{ScreenKind, Target};
+    use archguard_flow_common::lang_rust::words;
+    use archguard_flow_common::lang_text::{ident_end, matching, next_nonws, prev_word, split_top};
 
     const NAMES: [&str; 5] = ["screen", "page", "view", "tab", "route"];
     const ROOT_TRAITS: [&str; 3] = ["App", "Application", "Sandbox"];
@@ -1887,7 +1887,7 @@ mod state {
     fn start(app: &App, key: &Key, parts: &[Part], src: &Src, flow: &mut UiFlow, known: &Known) {
         let init = app.rust.iter().find_map(|s| {
             words(&s.mask, &key.field).into_iter().find_map(|at| {
-                let inside = crate::lang_rust::fn_at(&s.fns, at)?;
+                let inside = archguard_flow_common::lang_rust::fn_at(&s.fns, at)?;
                 let rest = s.mask[at + key.field.len()..]
                     .trim_start()
                     .strip_prefix(':')?;
@@ -2010,7 +2010,7 @@ mod state {
     }
     /// `Path::Variant(x) =>` before `at` in its `fn`: `Path::Variant`.
     fn arm_binding(src: &Src, at: usize, x: &str) -> Option<String> {
-        let f = crate::lang_rust::fn_at(&src.fns, at)?;
+        let f = archguard_flow_common::lang_rust::fn_at(&src.fns, at)?;
         let text = &src.mask[f.body.0..at];
         let pattern = format!("({x})");
         let k = text
@@ -2023,7 +2023,7 @@ mod state {
 
     /// The `A::B` (no parentheses) of the nearest `A::B =>` before `at` in its `fn`.
     fn arm_message(src: &Src, at: usize) -> Option<String> {
-        let f = crate::lang_rust::fn_at(&src.fns, at)?;
+        let f = archguard_flow_common::lang_rust::fn_at(&src.fns, at)?;
         let text = &src.mask[f.body.0..at];
         let k = text.rfind("=>")?;
         let path = path_before(text, k);
@@ -2092,8 +2092,9 @@ mod state {
         let src = cx.src;
         let b = src.mask.as_bytes();
         for (at, _) in src.mask.match_indices(message) {
-            let open = next_nonws(b, at + message.len())
-                .filter(|&k| b[k] == b'(' && (at == 0 || !crate::lang_text::is_id(b[at - 1])));
+            let open = next_nonws(b, at + message.len()).filter(|&k| {
+                b[k] == b'(' && (at == 0 || !archguard_flow_common::lang_text::is_id(b[at - 1]))
+            });
             let Some((open, close)) = open.and_then(|o| Some((o, matching(b, o)?))) else {
                 continue;
             };
@@ -2112,11 +2113,11 @@ mod state {
 /// Tauri commands, capabilities, windows and the frontend's `invoke`.
 mod tauri {
     use super::*;
-    use crate::lang_rust::{attrs_before, macro_bodies, words};
-    use crate::lang_text::{matching, next_nonws, split_top};
     use archguard_core::{
         AccessState, Action, Call, Condition, EndpointAccess, ScreenKind, Target,
     };
+    use archguard_flow_common::lang_rust::{attrs_before, macro_bodies, words};
+    use archguard_flow_common::lang_text::{matching, next_nonws, split_top};
     use serde_json::Value;
 
     pub(crate) const INVOKE: &str = "INVOKE";
@@ -2180,8 +2181,8 @@ mod tauri {
     }
 
     fn app_manifest(text: &str) -> Manifest {
-        let mask = crate::lang_rust::mask(text);
-        let code = crate::lang_rust::code(text);
+        let mask = archguard_flow_common::lang_rust::mask(text);
+        let code = archguard_flow_common::lang_rust::code(text);
         let mut m = Manifest::default();
         let Some(at) = words(&mask, "AppManifest").first().copied() else {
             return m;
@@ -2513,7 +2514,7 @@ mod tauri {
     /// underscores read as dashes.
     fn plugin(src: &Src, open: usize, close: usize) -> Option<String> {
         let at = open + 1 + src.mask[open + 1..close].find('#')?;
-        let attr = crate::lang_rust::attr_at(&src.mask, at)?;
+        let attr = archguard_flow_common::lang_rust::attr_at(&src.mask, at)?;
         let (o, c) = attr.args.filter(|_| attr.name(&src.mask) == "plugin")?;
         Some(src.mask[o + 1..c].trim().replace('_', "-"))
     }
@@ -2670,7 +2671,8 @@ mod tauri {
         for call in calls {
             for (at, _) in src.mask.match_indices(call) {
                 let open = next_nonws(b, at + call.len()).filter(|&k| b[k] == b'(');
-                let open = open.filter(|_| at == 0 || !crate::lang_text::is_id(b[at - 1]));
+                let open =
+                    open.filter(|_| at == 0 || !archguard_flow_common::lang_text::is_id(b[at - 1]));
                 let Some((open, close)) = open.and_then(|o| Some((o, matching(b, o)?))) else {
                     continue;
                 };
@@ -2721,9 +2723,10 @@ mod tauri {
         let mut stack = vec![];
         for k in from..at {
             match b[k] {
-                b'{' => {
-                    stack.push(crate::lang_text::prev_nonws(b, k).is_some_and(|p| b[p] == b'|'))
-                }
+                b'{' => stack.push(
+                    archguard_flow_common::lang_text::prev_nonws(b, k)
+                        .is_some_and(|p| b[p] == b'|'),
+                ),
                 b'}' => drop(stack.pop()),
                 _ => {}
             }
@@ -2734,9 +2737,9 @@ mod tauri {
     /// The frontend side.
     mod web {
         use super::*;
-        use crate::lang_ts::{Parser, Value, line_of, skip_generic};
-        use crate::lang_ts_decl::{imports, mask};
-        use crate::lang_ts_http::global_call;
+        use archguard_flow_common::lang_ts::{Parser, Value, line_of, skip_generic};
+        use archguard_flow_common::lang_ts_decl::{imports, mask};
+        use archguard_flow_common::lang_ts_http::global_call;
 
         const MODULES: [&str; 2] = ["@tauri-apps/api/core", "@tauri-apps/api/tauri"];
 
@@ -2762,11 +2765,12 @@ mod tauri {
             let b = masked.as_bytes();
             for (at, _) in masked.match_indices(name) {
                 let after = at + name.len();
-                let fits = (at == 0 || !crate::lang_text::is_id(b[at - 1]))
-                    && b.get(after).is_none_or(|&c| !crate::lang_text::is_id(c));
-                let mut open = crate::lang_ts::skip_ws(b, after);
+                let fits = (at == 0 || !archguard_flow_common::lang_text::is_id(b[at - 1]))
+                    && b.get(after)
+                        .is_none_or(|&c| !archguard_flow_common::lang_text::is_id(c));
+                let mut open = archguard_flow_common::lang_ts::skip_ws(b, after);
                 if b.get(open) == Some(&b'<') {
-                    open = crate::lang_ts::skip_ws(b, skip_generic(b, open));
+                    open = archguard_flow_common::lang_ts::skip_ws(b, skip_generic(b, open));
                 }
                 if !fits
                     || b.get(open) != Some(&b'(')

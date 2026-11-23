@@ -4,24 +4,24 @@
 use std::collections::BTreeSet;
 
 /// Placeholder for a route or URL segment that is not a literal.
-pub(crate) const PARAM: &str = ":param";
+pub const PARAM: &str = ":param";
 /// Nesting bound for parsed literals.
-pub(crate) const MAX_DEPTH: usize = 32;
+pub const MAX_DEPTH: usize = 32;
 
 /// A JavaScript literal as far as this scanner reads it; `at..end` is its source.
-pub(crate) struct Item {
-    pub(crate) at: usize,
-    pub(crate) end: usize,
-    pub(crate) value: Value,
+pub struct Item {
+    pub at: usize,
+    pub end: usize,
+    pub value: Value,
 }
 
 impl Item {
-    pub(crate) fn source(&self, text: &str) -> String {
+    pub fn source(&self, text: &str) -> String {
         text.get(self.at..self.end).unwrap_or("").trim().to_string()
     }
 }
 
-pub(crate) enum Value {
+pub enum Value {
     Str(String),
     /// Template literal with `${…}` holes, raw.
     Tpl(String),
@@ -33,7 +33,7 @@ pub(crate) enum Value {
 
 impl Value {
     /// A string literal, or a template literal that starts literal, holes as `:param`.
-    pub(crate) fn literal(&self) -> Option<String> {
+    pub fn literal(&self) -> Option<String> {
         match self {
             Value::Str(s) => Some(s.clone()),
             Value::Tpl(t) => fill(t, |_| None),
@@ -44,7 +44,7 @@ impl Value {
     /// A literal, or a link array joined: the first part must be readable, later
     /// unread parts become `:param`, objects (matrix parameters) are dropped. A name
     /// and a template hole are read through `constant`.
-    pub(crate) fn link(&self, constant: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    pub fn link(&self, constant: &dyn Fn(&str) -> Option<String>) -> Option<String> {
         let part = |v: &Value| match v {
             Value::Str(s) => Some(s.clone()),
             Value::Tpl(t) => fill(t, constant),
@@ -67,18 +67,18 @@ impl Value {
     }
 }
 
-pub(crate) struct Parser<'a> {
-    pub(crate) s: &'a str,
-    pub(crate) i: usize,
+pub struct Parser<'a> {
+    pub s: &'a str,
+    pub i: usize,
 }
 
 impl Parser<'_> {
-    pub(crate) fn peek(&self) -> u8 {
+    pub fn peek(&self) -> u8 {
         self.s.as_bytes().get(self.i).copied().unwrap_or(0)
     }
 
     /// Skips whitespace and comments.
-    pub(crate) fn ws(&mut self) {
+    pub fn ws(&mut self) {
         let b = self.s.as_bytes();
         loop {
             self.i = skip_ws(b, self.i);
@@ -96,7 +96,7 @@ impl Parser<'_> {
     }
 
     /// Offset after the string literal at the cursor; the end for an open one.
-    pub(crate) fn string_end(&self) -> usize {
+    pub fn string_end(&self) -> usize {
         let b = self.s.as_bytes();
         let quote = b[self.i];
         let mut i = self.i + 1;
@@ -111,14 +111,14 @@ impl Parser<'_> {
     }
 
     /// Content of the string literal at the cursor; moves past it.
-    pub(crate) fn string(&mut self) -> String {
+    pub fn string(&mut self) -> String {
         let at = self.i;
         self.i = self.string_end();
         self.s.get(at + 1..self.i - 1).unwrap_or("").to_string()
     }
 
     /// One value; anything followed by more than a separator is `Raw`.
-    pub(crate) fn value(&mut self, depth: usize) -> Item {
+    pub fn value(&mut self, depth: usize) -> Item {
         self.ws();
         let at = self.i;
         let value = match self.peek() {
@@ -144,7 +144,7 @@ impl Parser<'_> {
     }
 
     /// Source text up to the next separator outside brackets and strings.
-    pub(crate) fn raw(&mut self, at: usize) -> Item {
+    pub fn raw(&mut self, at: usize) -> Item {
         let b = self.s.as_bytes();
         self.i = at;
         let mut depth = 0usize;
@@ -175,7 +175,7 @@ impl Parser<'_> {
     }
 
     /// Items of the array whose `[` is at the cursor.
-    pub(crate) fn array(&mut self, depth: usize) -> Vec<Item> {
+    pub fn array(&mut self, depth: usize) -> Vec<Item> {
         self.i += 1;
         let mut items = Vec::new();
         loop {
@@ -203,7 +203,7 @@ impl Parser<'_> {
     }
 
     /// Fields of the object whose `{` is at the cursor; shorthand and methods are `Raw`.
-    pub(crate) fn object(&mut self, depth: usize) -> Vec<(String, Item)> {
+    pub fn object(&mut self, depth: usize) -> Vec<(String, Item)> {
         self.i += 1;
         let mut fields = Vec::new();
         loop {
@@ -250,7 +250,7 @@ impl Parser<'_> {
 }
 
 /// Path of a URL: scheme and host, query and fragment dropped, leading `/`.
-pub(crate) fn url_path(url: &str) -> String {
+pub fn url_path(url: &str) -> String {
     let url = url.split(['?', '#']).next().unwrap_or("");
     let url = match url.split_once("://") {
         Some((_, rest)) => rest.find('/').map_or("", |i| &rest[i..]),
@@ -260,7 +260,7 @@ pub(crate) fn url_path(url: &str) -> String {
 }
 
 /// `dir` and `rel` joined with `.` and `..` applied; `..` stops at the top.
-pub(crate) fn join(dir: &str, rel: &str) -> String {
+pub fn join(dir: &str, rel: &str) -> String {
     let mut parts: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
     for s in rel.split('/') {
         match s {
@@ -274,41 +274,41 @@ pub(crate) fn join(dir: &str, rel: &str) -> String {
     parts.join("/")
 }
 
-pub(crate) fn dir(file: &str) -> &str {
+pub fn dir(file: &str) -> &str {
     file.rsplit_once('/').map_or("", |(d, _)| d)
 }
 
-pub(crate) fn is_ident_char(c: char) -> bool {
+pub fn is_ident_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '$'
 }
 
 /// A plain identifier.
-pub(crate) fn is_ident(s: &str) -> bool {
+pub fn is_ident(s: &str) -> bool {
     !s.is_empty() && !s.starts_with(|c: char| c.is_ascii_digit()) && s.chars().all(is_ident_char)
 }
 
 /// A plain identifier or dotted name, e.g. `authGuard` or `Guards.admin`.
-pub(crate) fn is_name(s: &str) -> bool {
+pub fn is_name(s: &str) -> bool {
     !s.is_empty()
         && !s.starts_with(|c: char| c.is_ascii_digit())
         && s.chars().all(|c| is_ident_char(c) || c == '.')
 }
 
-pub(crate) fn ident_at(text: &str, at: usize) -> &str {
+pub fn ident_at(text: &str, at: usize) -> &str {
     let Some(rest) = text.get(at..) else {
         return "";
     };
     &rest[..rest.find(|c: char| !is_ident_char(c)).unwrap_or(rest.len())]
 }
 
-pub(crate) fn trailing_ident(text: &str) -> Option<String> {
+pub fn trailing_ident(text: &str) -> Option<String> {
     let start = text.rfind(|c: char| !is_ident_char(c)).map_or(0, |i| i + 1);
     let name = &text[start..];
     (!name.is_empty()).then(|| name.to_string())
 }
 
 /// Offsets of `word` with no identifier character on either side.
-pub(crate) fn words(text: &str, word: &str) -> Vec<usize> {
+pub fn words(text: &str, word: &str) -> Vec<usize> {
     let b = text.as_bytes();
     let edge = |i: Option<&u8>| i.is_none_or(|c| !is_ident_char(*c as char));
     text.match_indices(word)
@@ -317,7 +317,7 @@ pub(crate) fn words(text: &str, word: &str) -> Vec<usize> {
         .collect()
 }
 
-pub(crate) fn skip_ws(b: &[u8], mut i: usize) -> usize {
+pub fn skip_ws(b: &[u8], mut i: usize) -> usize {
     while b.get(i).is_some_and(u8::is_ascii_whitespace) {
         i += 1;
     }
@@ -325,7 +325,7 @@ pub(crate) fn skip_ws(b: &[u8], mut i: usize) -> usize {
 }
 
 /// Past a `<…>` type argument list; stops early at `(`, `;` or after 200 bytes.
-pub(crate) fn skip_generic(b: &[u8], start: usize) -> usize {
+pub fn skip_generic(b: &[u8], start: usize) -> usize {
     let mut depth = 0;
     for (i, c) in b.iter().enumerate().skip(start).take(200) {
         match c {
@@ -343,7 +343,7 @@ pub(crate) fn skip_generic(b: &[u8], start: usize) -> usize {
     start
 }
 
-pub(crate) fn line_of(text: &str, at: usize) -> u32 {
+pub fn line_of(text: &str, at: usize) -> u32 {
     let at = at.min(text.len());
     text.as_bytes()[..at]
         .iter()
@@ -352,14 +352,14 @@ pub(crate) fn line_of(text: &str, at: usize) -> u32 {
         + 1
 }
 
-pub(crate) fn idents(text: &str) -> BTreeSet<&str> {
+pub fn idents(text: &str) -> BTreeSet<&str> {
     text.split(|c: char| !is_ident_char(c))
         .filter(|w| !w.is_empty())
         .collect()
 }
 
 /// The top-level `+` operands of an expression; one part when there is none.
-pub(crate) fn split_plus(raw: &str) -> Vec<&str> {
+pub fn split_plus(raw: &str) -> Vec<&str> {
     let b = raw.as_bytes();
     let mut parts = Vec::new();
     let (mut depth, mut start, mut i) = (0usize, 0, 0);
@@ -391,7 +391,7 @@ pub(crate) fn split_plus(raw: &str) -> Vec<&str> {
 
 /// A template literal's text with each `${…}` hole replaced by `value(inner)`, or
 /// `:param` when that is `None`; `None` when the literal starts with an unread hole.
-pub(crate) fn fill(t: &str, mut value: impl FnMut(&str) -> Option<String>) -> Option<String> {
+pub fn fill(t: &str, mut value: impl FnMut(&str) -> Option<String>) -> Option<String> {
     let mut out = String::new();
     let mut rest = t;
     let mut first = true;
@@ -426,7 +426,7 @@ pub(crate) fn fill(t: &str, mut value: impl FnMut(&str) -> Option<String>) -> Op
 }
 
 /// [`fill`], but `None` when any hole stays unread.
-pub(crate) fn fill_all(t: &str, value: impl Fn(&str) -> Option<String>) -> Option<String> {
+pub fn fill_all(t: &str, value: impl Fn(&str) -> Option<String>) -> Option<String> {
     let mut all = true;
     let filled = fill(t, |hole| {
         let v = value(hole);
@@ -437,7 +437,7 @@ pub(crate) fn fill_all(t: &str, value: impl Fn(&str) -> Option<String>) -> Optio
 }
 
 /// `name(args)`: the called name and its arguments.
-pub(crate) fn call_parts(text: &str) -> Option<(&str, Vec<Item>)> {
+pub fn call_parts(text: &str) -> Option<(&str, Vec<Item>)> {
     let open = text.find('(')?;
     let name = text[..open].trim();
     if !is_name(name) || !text.trim_end().ends_with(')') {
@@ -448,7 +448,7 @@ pub(crate) fn call_parts(text: &str) -> Option<(&str, Vec<Item>)> {
 
 /// Calls `on(offset, byte, depth before)` for every `open`/`close` byte outside strings
 /// and comments from `from` on, until it returns `true`.
-pub(crate) fn scan_brackets(
+pub fn scan_brackets(
     text: &str,
     from: usize,
     (open, close): (u8, u8),
@@ -490,7 +490,7 @@ pub(crate) fn scan_brackets(
 }
 
 /// Offset after the bracket that closes the one at `at`; the end when unclosed.
-pub(crate) fn block_end(text: &str, at: usize, open: u8, close: u8) -> usize {
+pub fn block_end(text: &str, at: usize, open: u8, close: u8) -> usize {
     let mut end = text.len();
     scan_brackets(text, at, (open, close), |i, c, depth| {
         let done = c == close && depth == 1;
@@ -504,7 +504,7 @@ pub(crate) fn block_end(text: &str, at: usize, open: u8, close: u8) -> usize {
 
 /// Offset after the bracket that closes the one at `at`, skipping strings and
 /// comments; brackets of any kind count together.
-pub(crate) fn close(text: &str, at: usize) -> usize {
+pub fn close(text: &str, at: usize) -> usize {
     let b = text.as_bytes();
     let (mut i, mut depth) = (at, 0usize);
     while i < b.len() {

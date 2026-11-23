@@ -70,12 +70,14 @@
 //! inside helper extension methods, attributes on a minimal-API lambda, other
 //! SpEL (`unknown`), non-constant routes or roles (diagnostic, the endpoint
 //! is skipped or the condition is `unknown`), `MapIdentityApi`, Razor Pages.
-use crate::extract_ctx::{ExtractContext, ancestors, dir_name, read_text, walk, with_root_config};
-use crate::services::support::test_path;
 use archguard_core::{
     ANY_METHOD, AccessMeaning, AccessState, Condition, ConventionOrigin, DiagnosticSeverity,
     EndpointAccess, HandlerSite, RoleConvention, UiFlow, UiFlowDiagnostic,
 };
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, ancestors, dir_name, read_text, walk, with_root_config,
+};
+use archguard_flow_common::support::test_path;
 use lex::{ident_before, literal_end, split_top};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
@@ -844,7 +846,9 @@ fn base_names(header: &str) -> Vec<String> {
 
 /// Literals, brackets, identifiers and argument lists on raw text.
 pub(crate) mod lex {
-    pub(crate) use crate::lang_csharp::{code as strip_comments, literal, literal_end};
+    pub(crate) use archguard_flow_common::lang_csharp::{
+        code as strip_comments, literal, literal_end,
+    };
 
     pub(crate) fn is_ident(c: u8) -> bool {
         c.is_ascii_alphanumeric() || c == b'_'
@@ -6547,7 +6551,7 @@ mod razor {
         };
         let (mut found, mut offset) = (false, 0);
         // `@* … *@` comments hide directives; blanking keeps the offsets.
-        let text = crate::lang_markup::blank(&page.text, "@*", "*@");
+        let text = archguard_flow_common::lang_markup::blank(&page.text, "@*", "*@");
         for line in text.split_inclusive('\n') {
             let t = line.trim_start();
             let here = offset + (line.len() - t.len());
@@ -6845,7 +6849,7 @@ mod screens {
             if name.starts_with("_ViewImports") || name.starts_with("_ViewStart") {
                 continue;
             }
-            let text = crate::lang_markup::blank(&other.text, "@*", "*@");
+            let text = archguard_flow_common::lang_markup::blank(&other.text, "@*", "*@");
             if tags(&text)
                 .iter()
                 .any(|t| t.has("href") || t.has("asp-page") || t.has("action"))
@@ -6857,7 +6861,7 @@ mod screens {
     }
 
     fn links(p: &Page, all: &[Page], id: &dyn Fn(&str) -> String, out: &mut Out) {
-        let text = crate::lang_markup::blank(&p.src.text, "@*", "*@");
+        let text = archguard_flow_common::lang_markup::blank(&p.src.text, "@*", "*@");
         let conditions = conditions(&text);
         let lower = text.to_ascii_lowercase();
         let partials = [

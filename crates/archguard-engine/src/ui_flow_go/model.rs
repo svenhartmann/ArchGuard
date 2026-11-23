@@ -1,7 +1,7 @@
 //! Routers, routes, the interpreter state and the route access fold.
 use super::text::*;
-use crate::extract_ctx::{ExtractContext, gap};
 use archguard_core::{AccessState, DiagnosticSeverity, EndpointAccess, UiFlow, UiFlowDiagnostic};
+use archguard_flow_common::extract_ctx::{ExtractContext, gap};
 use std::collections::HashMap;
 
 pub(super) const MAX_DEPTH: usize = 12;

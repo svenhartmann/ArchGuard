@@ -2,11 +2,11 @@
 //! Helm charts and Kustomize overlays are rendered only after opt-in (`manifest_render`).
 use super::manifest_render::{self as render, Tools};
 use super::service_datastore_settings::{self as datastores, Settings};
-use super::support::{diagnostic, relative};
 use archguard_core::{
     Service, ServiceDependency, ServiceDependencyKind as Kind, ServiceEvidence, ServiceProject,
     ServiceTopology,
 };
+use archguard_flow_common::support::{diagnostic, relative};
 use serde::Deserialize;
 use serde_yaml_ng::Value;
 use std::{
@@ -577,7 +577,11 @@ impl Deployments<'_> {
     }
     /// Non-Compose YAML documents within the discovery input limits. Files that a
     /// rendered chart or overlay consumes are taken only from its rendered output.
-    fn manifests(&mut self, discovery: &super::support::Discovery, tools: &Tools) -> Vec<Manifest> {
+    fn manifests(
+        &mut self,
+        discovery: &archguard_flow_common::support::Discovery,
+        tools: &Tools,
+    ) -> Vec<Manifest> {
         let mut files = Vec::new();
         let mut sources = Vec::new();
         for entry in discovery.walk(self.root).take(50_000).flatten() {
@@ -845,7 +849,7 @@ impl Deployments<'_> {
 /// rendered documents how they were rendered.
 pub(super) fn augment(
     root: &Path,
-    discovery: &super::support::Discovery,
+    discovery: &archguard_flow_common::support::Discovery,
     report: &mut ServiceTopology,
     tools: &Tools,
     terraform: Vec<Deployment>,

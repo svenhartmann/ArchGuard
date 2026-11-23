@@ -13,7 +13,7 @@ use std::path::Path;
 use archguard_core::{ArchguardError, Config, ConfigSource};
 
 /// Canonical configuration location relative to the analyzed project root.
-pub const DEFAULT_CONFIG_PATH: &str = ".archguard/archguard.toml";
+pub use archguard_flow_common::support::DEFAULT_CONFIG_PATH;
 
 /// Legacy configuration location, consulted when the canonical file is absent.
 const CONFIG_FILE_NAME: &str = "archguard.toml";

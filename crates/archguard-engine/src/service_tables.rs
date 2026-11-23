@@ -2,11 +2,11 @@
 //! `ToTable`, `CreateTable`), JPA and TypeORM entities, SQLAlchemy `__tablename__`
 //! and `CREATE/ALTER TABLE` in SQL files. Names that are not literals stay unknown
 //! and are reported as gaps; nothing is guessed from configuration.
-use super::support::{Discovery, diagnostic, owners, relative, test_path};
 use crate::project_files::read_repo_file;
 use archguard_core::{
     ServiceDatastores, ServiceEvidence, ServiceTable, ServiceTopology, SharedDatastoreScope,
 };
+use archguard_flow_common::support::{Discovery, diagnostic, owners, relative, test_path};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 

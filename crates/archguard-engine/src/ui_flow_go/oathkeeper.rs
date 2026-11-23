@@ -1,9 +1,9 @@
 //! Ory Oathkeeper access rules.
-use crate::extract_ctx::{ExtractContext, dir_name, read_text};
 use archguard_core::{
     ANY_METHOD, AccessState, Condition, DiagnosticSeverity, EndpointAccess, UiFlow,
     UiFlowDiagnostic,
 };
+use archguard_flow_common::extract_ctx::{ExtractContext, dir_name, read_text};
 use serde_yaml_ng::Value as Y;
 
 /// Where the diagnostics of one rule go.

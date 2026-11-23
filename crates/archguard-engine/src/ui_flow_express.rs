@@ -66,19 +66,19 @@
 //! routers that are not mounted by any
 //! application, mounts that cannot be followed (aliases, factories, inline
 //! routers), mount cycles. Mounts inside `if` blocks count as mounted.
-use crate::extract_ctx::{
-    ExtractContext, access_condition, dir_name, finish, gap, read_source, walk, with_root_config,
-};
-use crate::lang_ts::{
-    Item, Parser, Value, call_parts, close, dir, ident_at, is_name, join, line_of, skip_ws,
-    trailing_ident, words,
-};
-use crate::lang_ts_decl::{Import, declared_value, has_dep, imports, mask};
-use crate::services::support::test_path;
 use archguard_core::{
     ANY_METHOD, AccessMeaning, AccessState, Condition, DiagnosticSeverity, EndpointAccess,
     HandlerSite, UiFlow, UiFlowDiagnostic,
 };
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, access_condition, dir_name, finish, gap, read_source, walk, with_root_config,
+};
+use archguard_flow_common::lang_ts::{
+    Item, Parser, Value, call_parts, close, dir, ident_at, is_name, join, line_of, skip_ws,
+    trailing_ident, words,
+};
+use archguard_flow_common::lang_ts_decl::{Import, declared_value, has_dep, imports, mask};
+use archguard_flow_common::support::test_path;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -1105,7 +1105,7 @@ fn error_handler(text: &str) -> bool {
 
 /// Reads whether a call sits in a branch.
 mod branch {
-    use crate::lang_ts::{is_ident_char, trailing_ident};
+    use archguard_flow_common::lang_ts::{is_ident_char, trailing_ident};
 
     /// Whether the call at `at` may not run: inside an `if`, `else`, loop, `switch`
     /// or `catch` block, or a statement with `?`, `&&`, `||` or a leading `if`.

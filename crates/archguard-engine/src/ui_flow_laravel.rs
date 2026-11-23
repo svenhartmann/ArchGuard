@@ -66,21 +66,21 @@
 //! middleware of base classes, checks in helper methods, view names built at
 //! run time, class-based Blade components and `@includeFirst` (gaps), forms
 //! without `action`.
-use crate::extract_ctx::{
-    ExtractContext, dir_name, finish, gap, read_text, walk, with_root_config,
-};
-use crate::lang_blank::{blank_regions, find};
-use crate::lang_php::{self as php, Class};
-use crate::lang_text::{
-    collapse, ident_end, idents, is_id, line, matching, matching_back, next_nonws, prev_nonws,
-};
-use crate::services::support::test_path;
 use access::{Acc, all, and, any, meaning, not};
 use archguard_core::{
     ANY_METHOD, AccessMeaning, AccessState, Action, Call, Condition, DiagnosticSeverity,
     EndpointAccess, Origin, PolicyDef, Screen, ScreenKind, Target, Transition, UiFlow,
     UiFlowDiagnostic, best_route, path_patterns_match,
 };
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, dir_name, finish, gap, read_text, walk, with_root_config,
+};
+use archguard_flow_common::lang_blank::{blank_regions, find};
+use archguard_flow_common::lang_php::{self as php, Class};
+use archguard_flow_common::lang_text::{
+    collapse, ident_end, idents, is_id, line, matching, matching_back, next_nonws, prev_nonws,
+};
+use archguard_flow_common::support::test_path;
 use index::App;
 use routes::{Handler, Mw, RouteDef};
 use std::collections::{BTreeMap, BTreeSet};

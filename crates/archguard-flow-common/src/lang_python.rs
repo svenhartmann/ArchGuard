@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 /// prefixes kept), offsets and lines unchanged. Triple-quoted strings span
 /// lines; others end at a line break at the latest. In raw strings `\` still
 /// keeps the next quote from ending the literal, as in Python.
-pub(crate) fn mask(src: &str) -> String {
+pub fn mask(src: &str) -> String {
     blank_regions(src, |b, i| match b[i] {
         b'#' => Some((i, line_end(b, i), line_end(b, i))),
         b'\'' | b'"' => Some(literal_at(b, i)),
@@ -41,7 +41,7 @@ fn literal_at(b: &[u8], i: usize) -> (usize, usize, usize) {
 /// The value of `expr` when it is one string literal or adjacent literals,
 /// optionally in parentheses. Prefixes `r`, `b`, `u`, `f` in any case; an
 /// f-string with a `{…}` hole is no literal, `{{`/`}}` are braces.
-pub(crate) fn string_value(expr: &str) -> Option<String> {
+pub fn string_value(expr: &str) -> Option<String> {
     let expr = unparen(expr);
     let b = expr.as_bytes();
     let (mut out, mut i, mut any) = (String::new(), 0, false);
@@ -126,19 +126,15 @@ fn unescape(text: &str) -> String {
 /// One argument of a call: keyword name (`None` when positional, also for
 /// `*a` and `**kw`), value as written and trimmed, offset of the argument.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Arg<'a> {
-    pub(crate) name: Option<&'a str>,
-    pub(crate) value: &'a str,
-    pub(crate) at: usize,
+pub struct Arg<'a> {
+    pub name: Option<&'a str>,
+    pub value: &'a str,
+    pub at: usize,
 }
 
 /// The arguments of the call whose `(` is at `open` in `masked` (same offsets
 /// as `src`), and the offset of its `)`; none when it is not closed.
-pub(crate) fn call_args<'a>(
-    src: &'a str,
-    masked: &str,
-    open: usize,
-) -> Option<(Vec<Arg<'a>>, usize)> {
+pub fn call_args<'a>(src: &'a str, masked: &str, open: usize) -> Option<(Vec<Arg<'a>>, usize)> {
     let close = matching(masked.as_bytes(), open)?;
     let args = (split_commas(masked, open + 1, close).into_iter())
         .filter_map(|(from, to)| {
@@ -170,7 +166,7 @@ pub(crate) fn call_args<'a>(
 }
 
 /// Ranges of `masked[from..to]` between commas outside brackets.
-pub(crate) fn split_commas(masked: &str, from: usize, to: usize) -> Vec<(usize, usize)> {
+pub fn split_commas(masked: &str, from: usize, to: usize) -> Vec<(usize, usize)> {
     let b = masked.as_bytes();
     let (mut out, mut depth, mut start) = (vec![], 0i32, from);
     for (k, &c) in b.iter().enumerate().take(to).skip(from) {
@@ -191,16 +187,16 @@ pub(crate) fn split_commas(masked: &str, from: usize, to: usize) -> Vec<(usize, 
 /// One logical line: from its first non-blank byte to its end (brackets and
 /// `\` continuations joined, trailing blanks and the line break excluded).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Stmt {
-    pub(crate) at: usize,
-    pub(crate) end: usize,
+pub struct Stmt {
+    pub at: usize,
+    pub end: usize,
     /// Columns before `at`.
-    pub(crate) indent: usize,
+    pub indent: usize,
 }
 
 /// Every non-blank logical line of `masked` (comments are blank there). A
 /// `;` does not split statements.
-pub(crate) fn statements(masked: &str) -> Vec<Stmt> {
+pub fn statements(masked: &str) -> Vec<Stmt> {
     let b = masked.as_bytes();
     let (mut out, mut i) = (vec![], 0);
     while i < b.len() {
@@ -236,7 +232,7 @@ pub(crate) fn statements(masked: &str) -> Vec<Stmt> {
 
 /// `statements(masked)` without the lines that only continue a multi-line
 /// string: its closing quotes at the start of a line are no statement.
-pub(crate) fn code_statements(src: &str, masked: &str) -> Vec<Stmt> {
+pub fn code_statements(src: &str, masked: &str) -> Vec<Stmt> {
     let b = src.as_bytes();
     let (mut closers, mut i) = (vec![], 0);
     while i < b.len() {
@@ -258,31 +254,31 @@ pub(crate) fn code_statements(src: &str, masked: &str) -> Vec<Stmt> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum DefKind {
+pub enum DefKind {
     Class,
     Function,
 }
 
 /// A `class` or `def` (also `async def`) block.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Def {
-    pub(crate) kind: DefKind,
-    pub(crate) name: String,
+pub struct Def {
+    pub kind: DefKind,
+    pub name: String,
     /// Line of the `class`/`def` keyword.
-    pub(crate) line: u32,
-    pub(crate) indent: usize,
+    pub line: u32,
+    pub indent: usize,
     /// Inside the parentheses after the name: bases or parameters.
-    pub(crate) head: Option<(usize, usize)>,
+    pub head: Option<(usize, usize)>,
     /// Each decorator's expression after `@`, outermost first.
-    pub(crate) decorators: Vec<(usize, usize)>,
+    pub decorators: Vec<(usize, usize)>,
     /// After the header's `:` to the end of the block's last statement.
-    pub(crate) body: (usize, usize),
+    pub body: (usize, usize),
     /// Index of the enclosing block in the returned list.
-    pub(crate) parent: Option<usize>,
+    pub parent: Option<usize>,
 }
 
 /// Every `class` and `def` of `masked`, in text order.
-pub(crate) fn defs(masked: &str) -> Vec<Def> {
+pub fn defs(masked: &str) -> Vec<Def> {
     let stmts = statements(masked);
     let mut out: Vec<Def> = vec![];
     for (n, s) in stmts.iter().enumerate() {
@@ -334,15 +330,15 @@ pub(crate) fn defs(masked: &str) -> Vec<Def> {
 
 /// `target = value` or `target += value`; a type annotation on the target is dropped.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Assign<'a> {
-    pub(crate) target: &'a str,
-    pub(crate) augmented: bool,
-    pub(crate) value: &'a str,
-    pub(crate) value_at: usize,
+pub struct Assign<'a> {
+    pub target: &'a str,
+    pub augmented: bool,
+    pub value: &'a str,
+    pub value_at: usize,
 }
 
 /// The assignment `stmt` makes, if it assigns one dotted name.
-pub(crate) fn assignment<'a>(src: &'a str, masked: &str, stmt: &Stmt) -> Option<Assign<'a>> {
+pub fn assignment<'a>(src: &'a str, masked: &str, stmt: &Stmt) -> Option<Assign<'a>> {
     let m = &masked[stmt.at..stmt.end];
     let b = m.as_bytes();
     let target_len = b.iter().take_while(|&&c| is_id(c) || c == b'.').count();
@@ -371,17 +367,17 @@ pub(crate) fn assignment<'a>(src: &'a str, masked: &str, stmt: &Stmt) -> Option<
 /// (`*` for a star import), `module` as written (leading dots relative),
 /// `name` the imported member of `from … import`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Import {
-    pub(crate) local: String,
-    pub(crate) module: String,
-    pub(crate) name: Option<String>,
-    pub(crate) line: u32,
+pub struct Import {
+    pub local: String,
+    pub module: String,
+    pub name: Option<String>,
+    pub line: u32,
 }
 
 /// Every `import` and `from … import` statement of `masked`, also inside
 /// blocks. `import a.b` binds `a` to module `a`; `import a.b as c` binds `c`
 /// to `a.b`.
-pub(crate) fn imports(masked: &str) -> Vec<Import> {
+pub fn imports(masked: &str) -> Vec<Import> {
     let mut out = vec![];
     for s in statements(masked) {
         let text = &masked[s.at..s.end];
@@ -444,7 +440,7 @@ fn import_items(masked: &str, from: usize, end: usize) -> Vec<(usize, String, St
 
 /// The first folder above `file` without `__init__.py` (`""` for the root):
 /// where absolute imports of `file` start.
-pub(crate) fn source_root<'a>(file: &'a str, files: &BTreeSet<String>) -> &'a str {
+pub fn source_root<'a>(file: &'a str, files: &BTreeSet<String>) -> &'a str {
     let mut dir = parent(file);
     while !dir.is_empty() && files.contains(&format!("{dir}/__init__.py")) {
         dir = parent(dir);
@@ -465,7 +461,7 @@ fn join(dir: &str, rel: &str) -> String {
 }
 
 /// The dotted module name of `file` below its source root (`a/b/__init__.py` is `a.b`).
-pub(crate) fn module_name(file: &str, files: &BTreeSet<String>) -> String {
+pub fn module_name(file: &str, files: &BTreeSet<String>) -> String {
     let root = source_root(file, files);
     let rel = file[root.len()..].trim_start_matches('/');
     let rel = (rel.strip_suffix("/__init__.py"))
@@ -478,11 +474,7 @@ pub(crate) fn module_name(file: &str, files: &BTreeSet<String>) -> String {
 /// packages up from `from_file`'s own; an absolute name starts at the source
 /// root of `from_file`. `a/b.py` before `a/b/__init__.py`; none for a module
 /// outside the scanned files (the standard library, installed packages).
-pub(crate) fn resolve_module(
-    from_file: &str,
-    module: &str,
-    files: &BTreeSet<String>,
-) -> Option<String> {
+pub fn resolve_module(from_file: &str, module: &str, files: &BTreeSet<String>) -> Option<String> {
     let dots = module.bytes().take_while(|&c| c == b'.').count();
     let mut dir = match dots {
         0 => source_root(from_file, files),
@@ -503,7 +495,7 @@ pub(crate) fn resolve_module(
 /// Where import `imp` of `from_file` points: the module file, and the symbol
 /// in it (none when the import binds a module, e.g. `from . import views`
 /// with a `views.py`).
-pub(crate) fn resolve_import(
+pub fn resolve_import(
     from_file: &str,
     imp: &Import,
     files: &BTreeSet<String>,

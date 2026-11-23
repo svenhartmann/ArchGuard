@@ -10,10 +10,10 @@ use crate::graphql_model::{
     GraphqlUnresolved, key,
 };
 use crate::graphql_scan::{MAX_BYTES, Scan, Source, scan};
-use crate::services::support::Discovery;
 use archguard_core::{
     ArchguardError, ServiceDependency, ServiceDependencyKind, ServiceEvidence, ServiceTopology,
 };
+use archguard_flow_common::support::Discovery;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};

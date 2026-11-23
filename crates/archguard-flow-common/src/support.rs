@@ -3,7 +3,10 @@ use std::path::Path;
 
 use archguard_core::{ArchguardError, ServiceDiagnostic, ServiceTopology};
 
-pub(super) fn diagnostic(
+/// Canonical configuration location relative to the analyzed project root.
+pub const DEFAULT_CONFIG_PATH: &str = ".archguard/archguard.toml";
+
+pub fn diagnostic(
     report: &mut ServiceTopology,
     file: &str,
     service: Option<&str>,
@@ -16,7 +19,7 @@ pub(super) fn diagnostic(
         message: message.into(),
     });
 }
-pub(crate) fn relative(root: &Path, path: &Path) -> String {
+pub fn relative(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .to_string_lossy()
@@ -26,7 +29,7 @@ pub(crate) fn relative(root: &Path, path: &Path) -> String {
 /// a Gradle test source set (`integrationTest`, `testFixtures`), a pytest file
 /// (`test_x.py`, `x_test.py`) or a `.test.`/`.spec.` file. The camel-case checks are
 /// case-sensitive so `Contest`, `latest` and `Testimonials` stay production code.
-pub(crate) fn test_path(rel: &str) -> bool {
+pub fn test_path(rel: &str) -> bool {
     let file = rel.rsplit('/').next().unwrap_or(rel);
     rel.split('/').any(|p| {
         let tail = p.rsplit('.').next().unwrap_or(p);
@@ -49,7 +52,7 @@ pub(crate) fn test_path(rel: &str) -> bool {
 }
 /// The services whose source scope (build context or project path) is the
 /// deepest one containing `rel`; several when their scopes tie.
-pub(crate) fn owners(topology: &ServiceTopology, rel: &str) -> Vec<String> {
+pub fn owners(topology: &ServiceTopology, rel: &str) -> Vec<String> {
     let mut best: Option<(usize, std::collections::BTreeSet<&str>)> = None;
     for s in &topology.services {
         let project = s
@@ -79,7 +82,7 @@ pub(crate) fn owners(topology: &ServiceTopology, rel: &str) -> Vec<String> {
         ids.into_iter().map(str::to_owned).collect()
     })
 }
-pub(crate) fn excluded(name: &str) -> bool {
+pub fn excluded(name: &str) -> bool {
     matches!(
         name,
         ".git"
@@ -104,21 +107,21 @@ pub(crate) fn excluded(name: &str) -> bool {
 }
 /// Shared discovery bounds for manifests and deployment declarations.
 /// Samples remain analyzable when explicitly selected as the analysis root.
-pub(crate) struct Discovery {
+pub struct Discovery {
     excludes: archguard_extract::Excludes,
 }
 impl Discovery {
-    pub(crate) fn new(root: &Path, report: &mut ServiceTopology) -> Result<Self, ArchguardError> {
+    pub fn new(root: &Path, report: &mut ServiceTopology) -> Result<Self, ArchguardError> {
         // Only explicit discovery exclusions apply here. Import defaults (e.g.
         // tests/**), source roots and semantic settings do not constrain inventory.
         let mut patterns = Vec::new();
-        for name in [crate::config::DEFAULT_CONFIG_PATH, "archguard.toml"] {
+        for name in [DEFAULT_CONFIG_PATH, "archguard.toml"] {
             // No-follow read: a symlinked config is refused (as in config.rs), so
             // a parse error can never quote a file outside the root.
             if std::fs::symlink_metadata(root.join(name)).is_err() {
                 continue;
             }
-            match crate::project_files::read_repo_file(root, Path::new(name), 1024 * 1024)
+            match crate::repo_file::read_repo_file(root, Path::new(name), 1024 * 1024)
                 .map_err(|error| error.to_string())
                 .and_then(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()))
                 .and_then(|text| {
@@ -159,7 +162,7 @@ impl Discovery {
             excludes: archguard_extract::Excludes::new(&patterns)?,
         })
     }
-    pub(crate) fn walk(&self, root: &Path) -> ignore::Walk {
+    pub fn walk(&self, root: &Path) -> ignore::Walk {
         let root = root.to_path_buf();
         let scope_root = root.clone();
         let excludes = self.excludes.clone();

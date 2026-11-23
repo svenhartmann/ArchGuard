@@ -5,7 +5,7 @@ use crate::lang_text::{matching, next_nonws};
 
 /// Whether `shown` has an `import … from 'm'` with `module(m)` that names one
 /// of `names` (any name when empty).
-pub(crate) fn imports(shown: &str, module: impl Fn(&str) -> bool, names: &[&str]) -> bool {
+pub fn imports(shown: &str, module: impl Fn(&str) -> bool, names: &[&str]) -> bool {
     let mut from = 0;
     while let Some(i) = shown[from..].find("from") {
         let at = from + i;
@@ -35,7 +35,7 @@ pub(crate) fn imports(shown: &str, module: impl Fn(&str) -> bool, names: &[&str]
 }
 
 /// `'x'`, `"x"` or `` `x` `` (in `shown` text) → `x`.
-pub(crate) fn string_literal(x: &str) -> Option<String> {
+pub fn string_literal(x: &str) -> Option<String> {
     let x = x.trim();
     let q = x.chars().next().filter(|c| matches!(c, '\'' | '"' | '`'))?;
     let inner = x.strip_prefix(q)?.strip_suffix(q)?;
@@ -43,7 +43,7 @@ pub(crate) fn string_literal(x: &str) -> Option<String> {
 }
 
 /// Past a `<…>` type-argument list at `i`, if one follows.
-pub(crate) fn skip_generics(b: &[u8], i: usize) -> usize {
+pub fn skip_generics(b: &[u8], i: usize) -> usize {
     match next_nonws(b, i).filter(|&k| b[k] == b'<') {
         Some(k) => matching(b, k).map_or(i, |e| e + 1),
         None => i,

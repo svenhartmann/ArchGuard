@@ -70,13 +70,13 @@
 //! `@relation` on lists, request types of named `*Handler` classes, state
 //! libraries (XState) and the State pattern. The marker names are the
 //! constants below; reading them from the configuration comes later.
-use crate::extract_ctx::{ExtractContext, domain_sources, with_root_config};
-use crate::lang_text::*;
-use crate::lang_ts_imports::{imports, skip_generics, string_literal};
 use archguard_core::domain_model::{
     DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, Field, Relation, RelationKind,
     StateMachine, StateTransition, UseCase, UseCaseKind,
 };
+use archguard_flow_common::extract_ctx::{ExtractContext, domain_sources, with_root_config};
+use archguard_flow_common::lang_text::*;
+use archguard_flow_common::lang_ts_imports::{imports, skip_generics, string_literal};
 #[path = "domain_typescript_schema.rs"]
 mod schema;
 use members::{Kind, Member, field};
@@ -260,8 +260,8 @@ impl Extractor {
         }
         for (rel, src) in sources {
             self.files.push(Src {
-                text: crate::lang_ts_decl::mask(&src, false),
-                shown: crate::lang_ts_decl::mask(&src, true),
+                text: archguard_flow_common::lang_ts_decl::mask(&src, false),
+                shown: archguard_flow_common::lang_ts_decl::mask(&src, true),
                 prisma: rel.ends_with(".prisma"),
                 rel,
             });

@@ -1,8 +1,8 @@
 //! Casbin model and CSV policy evaluation per route.
 use super::model::*;
 use super::text::*;
-use crate::extract_ctx::{gap, read_text};
 use archguard_core::{ANY_METHOD, AccessState, Condition, DiagnosticSeverity, UiFlowDiagnostic};
+use archguard_flow_common::extract_ctx::{gap, read_text};
 use std::collections::BTreeSet;
 
 /// `(request definition, policy effect, matcher)` of a model, whitespace

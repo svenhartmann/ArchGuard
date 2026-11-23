@@ -50,7 +50,7 @@ fn relative_name(path: &Path) -> Option<String> {
 }
 pub(crate) fn augment(
     root: &Path,
-    discovery: &crate::services::support::Discovery,
+    discovery: &archguard_flow_common::support::Discovery,
     report: &mut ServiceTopology,
 ) -> Result<(), ArchguardError> {
     let walker = discovery.walk(root);

@@ -8,7 +8,7 @@ use crate::lang_blank::{blank_regions, find, line_end};
 use crate::lang_text::{is_id, matching, matching_back, next_nonws, prev_nonws, prev_word};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Token {
+pub enum Token {
     Comment,
     /// A string, byte string or char literal.
     Literal,
@@ -16,7 +16,7 @@ pub(crate) enum Token {
 
 /// The comment or literal starting at `i`: (kind, blank from, blank to,
 /// continue at). For a literal, `from..to` is its content between the quotes.
-pub(crate) fn token_at(b: &[u8], i: usize) -> Option<(Token, usize, usize, usize)> {
+pub fn token_at(b: &[u8], i: usize) -> Option<(Token, usize, usize, usize)> {
     match (b[i], b.get(i + 1)) {
         (b'/', Some(b'/')) => Some((Token::Comment, i, line_end(b, i), line_end(b, i))),
         (b'/', Some(b'*')) => {
@@ -102,14 +102,14 @@ fn prefixed(b: &[u8], i: usize) -> Option<(Token, usize, usize, usize)> {
 
 /// `src` with comments and the contents of string and char literals blanked
 /// (quotes and prefixes kept), offsets and lines unchanged.
-pub(crate) fn mask(src: &str) -> String {
+pub fn mask(src: &str) -> String {
     blank_regions(src, |b, i| {
         token_at(b, i).map(|(_, from, to, next)| (from, to, next))
     })
 }
 
 /// `src` with comments blanked, literals kept.
-pub(crate) fn code(src: &str) -> String {
+pub fn code(src: &str) -> String {
     blank_regions(src, |b, i| {
         token_at(b, i).map(|(kind, from, to, next)| match kind {
             Token::Comment => (from, to, next),
@@ -122,7 +122,7 @@ pub(crate) fn code(src: &str) -> String {
 /// its value and the offset after it. Plain strings have the escapes `\"`,
 /// `\\`, `\n`, `\t` and `\'` read; raw strings are taken as written; byte,
 /// C strings and other escapes are no plain value.
-pub(crate) fn string_at(code: &str, at: usize) -> Option<(String, usize)> {
+pub fn string_at(code: &str, at: usize) -> Option<(String, usize)> {
     let b = code.as_bytes();
     let at = next_nonws(b, at)?;
     if !matches!(b[at], b'"' | b'r') {
@@ -152,7 +152,7 @@ pub(crate) fn string_at(code: &str, at: usize) -> Option<(String, usize)> {
 }
 
 /// The value of a string literal spanning all of `s` (`"x"`, `r#"x"#`).
-pub(crate) fn literal_value(s: &str) -> Option<String> {
+pub fn literal_value(s: &str) -> Option<String> {
     let s = s.trim();
     string_at(s, 0)
         .filter(|(_, end)| *end == s.len())
@@ -161,18 +161,18 @@ pub(crate) fn literal_value(s: &str) -> Option<String> {
 
 /// One attribute `#[path(args)]`: offsets in the masked text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Attr {
+pub struct Attr {
     /// The `#`.
-    pub(crate) at: usize,
+    pub at: usize,
     /// The closing `]`.
-    pub(crate) end: usize,
+    pub end: usize,
     /// The brackets around the arguments, if any.
-    pub(crate) args: Option<(usize, usize)>,
+    pub args: Option<(usize, usize)>,
 }
 
 impl Attr {
     /// The path, e.g. `tauri::command`, `route`, `derive`.
-    pub(crate) fn path<'a>(&self, mask: &'a str) -> &'a str {
+    pub fn path<'a>(&self, mask: &'a str) -> &'a str {
         let open = mask[self.at..self.end]
             .find('[')
             .map_or(self.at, |o| self.at + o);
@@ -181,14 +181,14 @@ impl Attr {
     }
 
     /// The last segment of the path.
-    pub(crate) fn name<'a>(&self, mask: &'a str) -> &'a str {
+    pub fn name<'a>(&self, mask: &'a str) -> &'a str {
         let path = self.path(mask);
         path.rsplit("::").next().unwrap_or(path).trim()
     }
 }
 
 /// The attribute whose `#` is at `at` (`#[…]` or `#![…]`).
-pub(crate) fn attr_at(mask: &str, at: usize) -> Option<Attr> {
+pub fn attr_at(mask: &str, at: usize) -> Option<Attr> {
     let b = mask.as_bytes();
     let mut open = next_nonws(b, at + 1)?;
     if b[open] == b'!' {
@@ -208,7 +208,7 @@ pub(crate) fn attr_at(mask: &str, at: usize) -> Option<Attr> {
 /// The attributes right before the item keyword at `at` (`fn`, `enum`,
 /// `struct`), in source order; visibility and `async`, `const`, `unsafe`
 /// between them and the keyword are skipped.
-pub(crate) fn attrs_before(mask: &str, at: usize) -> Vec<Attr> {
+pub fn attrs_before(mask: &str, at: usize) -> Vec<Attr> {
     let b = mask.as_bytes();
     let mut k = at;
     let mut out = vec![];
@@ -236,7 +236,7 @@ pub(crate) fn attrs_before(mask: &str, at: usize) -> Vec<Attr> {
 }
 
 /// Offsets of `word` with no identifier byte on either side.
-pub(crate) fn words(text: &str, word: &str) -> Vec<usize> {
+pub fn words(text: &str, word: &str) -> Vec<usize> {
     let b = text.as_bytes();
     (text.match_indices(word))
         .map(|(at, _)| at)
@@ -247,7 +247,7 @@ pub(crate) fn words(text: &str, word: &str) -> Vec<usize> {
 
 /// Bodies of `name! { … }`, `name!( … )` and `name![ … ]`: the offsets of
 /// their opening and closing brackets.
-pub(crate) fn macro_bodies(mask: &str, name: &str) -> Vec<(usize, usize)> {
+pub fn macro_bodies(mask: &str, name: &str) -> Vec<(usize, usize)> {
     let b = mask.as_bytes();
     let body = |at: usize| {
         let bang = next_nonws(b, at + name.len()).filter(|&k| b[k] == b'!')?;
@@ -259,16 +259,16 @@ pub(crate) fn macro_bodies(mask: &str, name: &str) -> Vec<(usize, usize)> {
 
 /// A `fn` item with a body.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct FnItem {
-    pub(crate) name: String,
+pub struct FnItem {
+    pub name: String,
     /// The `fn` keyword.
-    pub(crate) at: usize,
+    pub at: usize,
     /// The braces of the body.
-    pub(crate) body: (usize, usize),
+    pub body: (usize, usize),
 }
 
 /// Every `fn` with a body, in source order (nested ones included).
-pub(crate) fn fn_items(mask: &str) -> Vec<FnItem> {
+pub fn fn_items(mask: &str) -> Vec<FnItem> {
     let b = mask.as_bytes();
     let item = |at: usize| {
         let start = next_nonws(b, at + 2)?;
@@ -294,7 +294,7 @@ pub(crate) fn fn_items(mask: &str) -> Vec<FnItem> {
 }
 
 /// The innermost `fn` whose body holds `at`.
-pub(crate) fn fn_at(fns: &[FnItem], at: usize) -> Option<&FnItem> {
+pub fn fn_at(fns: &[FnItem], at: usize) -> Option<&FnItem> {
     (fns.iter())
         .filter(|f| f.body.0 < at && at < f.body.1)
         .max_by_key(|f| f.body.0)
@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn attributes_before_an_item_in_source_order() {
-        let src = "#[derive(Routable, Clone)]\n#[rustfmt::skip]\npub(crate) enum Route {}\n\
+        let src = "#[derive(Routable, Clone)]\n#[rustfmt::skip]\npub enum Route {}\n\
                    #[tauri::command]\npub async fn greet() {}";
         let m = mask(src);
         let attrs = attrs_before(&m, m.find("enum").unwrap());

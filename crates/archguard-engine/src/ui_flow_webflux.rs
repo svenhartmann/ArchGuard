@@ -4,7 +4,6 @@
 //! (`spring::chain`), which accepts these names too. This module hooks into
 //! the backend's extraction (`extract_with`) so the routes exist before the
 //! chain runs and it decides them like annotated controllers.
-use crate::extract_ctx::{ExtractContext, with_root_config};
 use crate::ui_flow_backend::lex::{self, skip_ws, skip_ws_back, split_top, words};
 use crate::ui_flow_backend::spring::{Conf, declared_access, family};
 use crate::ui_flow_backend::{
@@ -12,6 +11,7 @@ use crate::ui_flow_backend::{
     path as join_path,
 };
 use archguard_core::{AccessState, UiFlow};
+use archguard_flow_common::extract_ctx::{ExtractContext, with_root_config};
 use std::collections::BTreeSet;
 
 /// The backend flow with the functional routes of the project.

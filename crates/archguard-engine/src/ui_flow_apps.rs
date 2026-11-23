@@ -6,7 +6,7 @@
 //! imports, no Gradle): an application is a module nothing depends on, made of
 //! everything it reaches through those dependencies.
 
-use crate::extract_ctx::read_text;
+use archguard_flow_common::extract_ctx::read_text;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 

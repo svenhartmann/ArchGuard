@@ -25,12 +25,14 @@
 //! - TypeScript: `enum` or `const … = {…}` named `Authority`, `Role`, `Roles`
 //!   (roles) or `Permission`, `Permissions` (permissions); a member is a def only
 //!   when `Name.MEMBER` is used in a `.ts` or `.html` file. Names are kept as written.
-use crate::extract_ctx::{ExtractContext, ancestors, dir_name, read_text, walk, with_root_config};
-use crate::services::support::test_path;
 use archguard_core::{
     Condition, ConventionOrigin, DiagnosticSeverity, NameCase, PermissionFormat, PolicyDef,
     RoleConvention, RoleDef, RoleKind, UiFlow, UiFlowDiagnostic,
 };
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, ancestors, dir_name, read_text, walk, with_root_config,
+};
+use archguard_flow_common::support::test_path;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 

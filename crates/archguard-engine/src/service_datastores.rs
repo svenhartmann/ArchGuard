@@ -3,11 +3,11 @@
 //! and database name are kept; credentials, query strings and raw values never are.
 use super::service_datastore_settings::{Reference, parse_url, references};
 use super::service_deployments::{Deployment, proof};
-use super::support::diagnostic;
 use archguard_core::{
     Datastore, DatastoreUsage, ServiceEvidence, ServiceTopology, SharedDatastore,
     SharedDatastoreScope as Scope,
 };
+use archguard_flow_common::support::diagnostic;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A Spring connection property of one service.

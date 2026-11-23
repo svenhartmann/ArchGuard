@@ -32,11 +32,11 @@
 //!
 //! Not followed (gap): non-literal route paths, routers hidden in other
 //! structures, functions that take a router but are never called.
-use crate::extract_ctx::{
+use archguard_core::UiFlow;
+use archguard_flow_common::extract_ctx::{
     ExtractContext, dir_name, finish, gap, read_source, read_text, walk, with_root_config,
 };
-use crate::services::support::test_path;
-use archguard_core::UiFlow;
+use archguard_flow_common::support::test_path;
 use std::path::Path;
 
 mod casbin;

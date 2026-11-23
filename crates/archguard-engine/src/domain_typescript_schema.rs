@@ -22,9 +22,9 @@
 //! `relations(…)` helper is not read: it adds no structure beyond the foreign
 //! keys above.
 
-use crate::lang_text::*;
-use crate::lang_ts_imports::{imports, skip_generics, string_literal};
 use archguard_core::domain_model::{Entity, EntityKind, Field, Relation, RelationKind};
+use archguard_flow_common::lang_text::*;
+use archguard_flow_common::lang_ts_imports::{imports, skip_generics, string_literal};
 use std::collections::BTreeSet;
 
 const SOURCE: &str = "typescript";

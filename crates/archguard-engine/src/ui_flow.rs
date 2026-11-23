@@ -2,7 +2,7 @@
 //! without an extractor.
 use std::path::Path;
 
-use crate::extract_ctx::{
+use archguard_flow_common::extract_ctx::{
     ExtractContext, config_file_in, found_root_config, gap, with_root_config,
 };
 

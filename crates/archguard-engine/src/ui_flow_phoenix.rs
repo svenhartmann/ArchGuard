@@ -34,12 +34,14 @@
 //! Not read: channel `connect/3`, `handle_event` checks, Ash policies, a
 //! Bodyguard detail beyond the literal action, hosts (a `host:` scope is
 //! noted), routes from macros.
-use crate::extract_ctx::{ExtractContext, ancestors, cap, dir_name, finish, gap, read_text, walk};
-use crate::services::support::test_path;
 use archguard_core::{
     AccessMeaning, AccessState, Condition, DiagnosticSeverity, EndpointAccess, Screen, ScreenKind,
     UiFlow, UiFlowDiagnostic,
 };
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, ancestors, cap, dir_name, finish, gap, read_text, walk,
+};
+use archguard_flow_common::support::test_path;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const MAX_FILES: usize = 20_000;

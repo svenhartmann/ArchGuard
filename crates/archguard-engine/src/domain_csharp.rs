@@ -57,13 +57,13 @@
 //! pattern or Stateless, and constructor events as part of `initial`. The
 //! marker names are the constants below with the ADR 0022 defaults; reading
 //! them from the configuration comes later.
-use crate::extract_ctx::{ExtractContext, domain_sources, with_root_config};
 use crate::ui_flow_backend::sends_in;
 use archguard_core::domain_model::{
     ApiModel, DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, EventHandlerSite,
     Field, MessageHandler, Relation, RelationKind, StateMachine, StateTransition, UseCase,
     UseCaseKind,
 };
+use archguard_flow_common::extract_ctx::{ExtractContext, domain_sources, with_root_config};
 use members::{field, generic_args, members};
 use states::{Rules, Step, assignments, created, raise_calls};
 use std::collections::{BTreeMap, BTreeSet};
@@ -273,7 +273,7 @@ impl Extractor {
         }
         let mut projects = BTreeMap::new();
         for (rel, raw) in sources {
-            let text = crate::lang_csharp::mask(&raw);
+            let text = archguard_flow_common::lang_csharp::mask(&raw);
             let project = code::project_of(root, &rel, &[".csproj"], &mut projects);
             self.files.push(Src {
                 rel,
@@ -1574,7 +1574,7 @@ mod states {
 
 /// Navigation in blanked source text, plus what only C# needs.
 pub(crate) mod text {
-    pub(crate) use crate::lang_text::*;
+    pub(crate) use archguard_flow_common::lang_text::*;
 
     pub(super) fn skip_attributes(s: &str) -> &str {
         let mut s = s.trim_start();

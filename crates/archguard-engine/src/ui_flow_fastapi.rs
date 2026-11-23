@@ -56,14 +56,14 @@
 //! Endpoint `application`: the directory name of the nearest `pyproject.toml`,
 //! `setup.py`, `setup.cfg` or `requirements.txt`. `handler`: the dotted module
 //! (packages by `__init__.py`) plus the function; `sends` stays empty.
-use crate::extract_ctx::{
-    ExtractContext, ancestors, cap, dir_name, finish, gap, read_text, walk, with_root_config,
-};
-use crate::services::support::test_path;
 use archguard_core::{
     AccessMeaning, AccessState, Condition, DiagnosticSeverity, EndpointAccess, UiFlow,
     UiFlowDiagnostic,
 };
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, ancestors, cap, dir_name, finish, gap, read_text, walk, with_root_config,
+};
+use archguard_flow_common::support::test_path;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
@@ -131,8 +131,8 @@ pub(crate) fn all(items: Vec<Condition>) -> Condition {
 /// FastAPI's view of one Python source on top of `lang_python`: the masked
 /// bytes and bracket pairs, with offset-range helpers.
 pub(crate) mod py {
-    pub(crate) use crate::lang_pyscan::{dotted, skip_sp, skip_ws, word};
-    use crate::lang_python::{code_statements, mask, string_value};
+    pub(crate) use archguard_flow_common::lang_pyscan::{dotted, skip_sp, skip_ws, word};
+    use archguard_flow_common::lang_python::{code_statements, mask, string_value};
     use std::collections::HashMap;
 
     /// One Python source: comments and string bodies blanked to spaces
@@ -153,7 +153,7 @@ pub(crate) mod py {
 
         /// 1-based line of byte `at`.
         pub(crate) fn line(&self, at: usize) -> u32 {
-            crate::lang_text::line(&self.text, at)
+            archguard_flow_common::lang_text::line(&self.text, at)
         }
 
         /// The source text of `a..e`.
@@ -807,7 +807,7 @@ mod model {
 /// The files of one run, and name resolution across them.
 mod project {
     use super::*;
-    use crate::extract_ctx::Gap;
+    use archguard_flow_common::extract_ctx::Gap;
     use model::Facts;
 
     pub(super) struct File {

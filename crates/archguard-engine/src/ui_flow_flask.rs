@@ -41,15 +41,17 @@
 //! itself does not. A `LOGIN_DISABLED` setting is a gap.
 //! Not read: Flask-RESTful/-RESTX/-Smorest routes, `app.url_map`, route
 //! decorators on class methods other than a `MethodView`.
-use crate::extract_ctx::{ExtractContext, ancestors, cap, dir_name, finish, gap, read_text, walk};
-use crate::lang_python::{self as py, Arg, Def, DefKind, Import, Stmt};
-use crate::lang_text::line;
-use crate::services::support::test_path;
 use crate::ui_flow_fastapi::all;
 use archguard_core::{
     AccessMeaning, AccessState, Action, Call, Condition, DiagnosticSeverity, EndpointAccess,
     Origin, Screen, ScreenKind, Target, Transition, UiFlow, UiFlowDiagnostic,
 };
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, ancestors, cap, dir_name, finish, gap, read_text, walk,
+};
+use archguard_flow_common::lang_python::{self as py, Arg, Def, DefKind, Import, Stmt};
+use archguard_flow_common::lang_text::line;
+use archguard_flow_common::support::test_path;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const MAX_FILES: usize = 20_000;
@@ -1501,7 +1503,7 @@ struct ScreenViews {
 /// Jinja templates: links, includes, layouts and the conditions around them.
 mod jinja {
     use super::*;
-    use crate::lang_markup::{Tag, all_tags, attributes, blank};
+    use archguard_flow_common::lang_markup::{Tag, all_tags, attributes, blank};
 
     /// The Jinja templates by the name `render_template` uses; unreadable ones are gaps.
     pub(super) fn read_templates(
@@ -1859,7 +1861,7 @@ mod jinja {
         events.sort_by_key(|e| e.0);
         let (mut t, mut stack) = (Tpl::default(), Vec::<Option<Frame>>::new());
         for (at, ev) in events {
-            let ln = crate::lang_text::line(&text, at);
+            let ln = archguard_flow_common::lang_text::line(&text, at);
             let Ev::Block(close) = ev else {
                 if let Ev::Html(i) = ev {
                     link(&tags[i], (rel, ln), now(&stack), &mut t, diags);

@@ -99,17 +99,17 @@
 //! Not read: events, use cases, signals, `__init__` parameters as fields,
 //! `GenericForeignKey`, `Table(…)` association tables, `backref`, proxy and
 //! multi-table inherited fields of a concrete base.
-use crate::extract_ctx::{ExtractContext, domain_sources, with_root_config};
-use crate::lang_pyscan::dotted;
-use crate::lang_python::{
-    Arg, Def, DefKind, Import, Stmt, call_args, defs, imports, mask, module_name, resolve_import,
-    statements, string_value,
-};
-use crate::lang_text::{collapse, is_id, line, matching, unparen};
 use archguard_core::domain_model::{
     ApiModel, DomainDiagnostic, DomainModel, DomainRule, Entity, EntityKind, Field, Relation,
     RelationKind, StateMachine, StateTransition,
 };
+use archguard_flow_common::extract_ctx::{ExtractContext, domain_sources, with_root_config};
+use archguard_flow_common::lang_pyscan::dotted;
+use archguard_flow_common::lang_python::{
+    Arg, Def, DefKind, Import, Stmt, call_args, defs, imports, mask, module_name, resolve_import,
+    statements, string_value,
+};
+use archguard_flow_common::lang_text::{collapse, is_id, line, matching, unparen};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 

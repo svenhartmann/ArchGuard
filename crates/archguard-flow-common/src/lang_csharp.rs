@@ -6,7 +6,7 @@
 use crate::lang_blank::{blank_regions, find, line_end};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Token {
+pub enum Token {
     /// A `//` or `/* */` comment or a preprocessor line (`#if`, `#region`).
     Comment,
     /// A string or char literal.
@@ -15,7 +15,7 @@ pub(crate) enum Token {
 
 /// The comment or literal starting at `i`: (kind, blank from, blank to,
 /// continue at). For a literal, `from..to` is its content between the quotes.
-pub(crate) fn token_at(b: &[u8], i: usize) -> Option<(Token, usize, usize, usize)> {
+pub fn token_at(b: &[u8], i: usize) -> Option<(Token, usize, usize, usize)> {
     let next = b.get(i + 1).copied();
     match b[i] {
         b'/' if next == Some(b'/') => Some((Token::Comment, i, line_end(b, i), line_end(b, i))),
@@ -34,7 +34,7 @@ pub(crate) fn token_at(b: &[u8], i: usize) -> Option<(Token, usize, usize, usize
 }
 
 /// End (exclusive) of the string or char literal starting at `i`, if one does.
-pub(crate) fn literal_end(b: &[u8], i: usize) -> Option<usize> {
+pub fn literal_end(b: &[u8], i: usize) -> Option<usize> {
     match b[i] {
         b'"' | b'\'' => token_at(b, i).map(|(_, _, _, next)| next.min(b.len())),
         _ => None,
@@ -98,14 +98,14 @@ fn string_literal(b: &[u8], i: usize) -> (usize, usize, usize) {
 
 /// `src` with comments, preprocessor lines and the contents of string and
 /// char literals blanked (quotes kept), offsets and lines unchanged.
-pub(crate) fn mask(src: &str) -> String {
+pub fn mask(src: &str) -> String {
     blank_regions(src, |b, i| {
         token_at(b, i).map(|(_, from, to, next)| (from, to, next))
     })
 }
 
 /// `src` with comments and preprocessor lines blanked, literals kept.
-pub(crate) fn code(src: &str) -> String {
+pub fn code(src: &str) -> String {
     blank_regions(src, |b, i| {
         token_at(b, i).map(|(kind, from, to, next)| match kind {
             Token::Comment => (from, to, next),
@@ -115,13 +115,13 @@ pub(crate) fn code(src: &str) -> String {
 }
 
 /// ([`code`], [`mask`]) of `src`.
-pub(crate) fn clean(src: &str) -> (String, String) {
+pub fn clean(src: &str) -> (String, String) {
     (code(src), mask(src))
 }
 
 /// The content of a plain string literal spanning all of `s` (`"x"`,
 /// `@"x"`), as written; `None` for anything computed, interpolated or raw.
-pub(crate) fn literal(s: &str) -> Option<String> {
+pub fn literal(s: &str) -> Option<String> {
     let s = s.trim();
     let quote = usize::from(s.starts_with("@\""));
     let b = s.as_bytes();
@@ -130,7 +130,7 @@ pub(crate) fn literal(s: &str) -> Option<String> {
 }
 
 /// Prefix of `s` up to the `close` outside literals and nested brackets.
-pub(crate) fn balanced(s: &str, close: char) -> &str {
+pub fn balanced(s: &str, close: char) -> &str {
     let b = s.as_bytes();
     let mut depth = 0i32;
     let mut i = 0;
@@ -151,7 +151,7 @@ pub(crate) fn balanced(s: &str, close: char) -> &str {
 }
 
 /// Top-level comma separated arguments, trimmed.
-pub(crate) fn split_args(args: &str) -> Vec<String> {
+pub fn split_args(args: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = args;
     while !rest.trim().is_empty() {
@@ -163,12 +163,12 @@ pub(crate) fn split_args(args: &str) -> Vec<String> {
 }
 
 /// A C# identifier character (letters of any script, digits, `_`).
-pub(crate) fn is_ident(c: char) -> bool {
+pub fn is_ident(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
 /// Offset where the identifier ending `s` starts.
-pub(crate) fn ident_start(s: &str) -> usize {
+pub fn ident_start(s: &str) -> usize {
     s.char_indices()
         .rev()
         .take_while(|(_, c)| is_ident(*c))

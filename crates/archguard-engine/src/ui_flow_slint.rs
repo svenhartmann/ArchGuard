@@ -60,11 +60,11 @@
 //! component properties (`ViewBarTab { view: "start"; navigate(v) => … }`),
 //! Rust code that names the property by another path (`invoke_…`, models
 //! changed in place), `slint!` macros inside Rust, and actions (no HTTP).
-use crate::extract_ctx::{
+use archguard_core::{DiagnosticSeverity, Origin, Target, Transition, UiFlow, UiFlowDiagnostic};
+use archguard_flow_common::extract_ctx::{
     ExtractContext, ancestors, dir_name as app_name, read_text, walk, with_root_config,
 };
-use crate::services::support::test_path;
-use archguard_core::{DiagnosticSeverity, Origin, Target, Transition, UiFlow, UiFlowDiagnostic};
+use archguard_flow_common::support::test_path;
 use model::Ui;
 use std::collections::BTreeMap;
 use std::path::Path;

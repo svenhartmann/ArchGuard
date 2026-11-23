@@ -98,18 +98,18 @@
 //! `<Link to={Route.x}>` (unresolved). Not followed: descendant `<Routes>` in other components, calls
 //! through helper functions or services (`request({ url })`), links to catch-all
 //! routes (`*` matches no literal segment), `<a href>`.
-use crate::extract_ctx::{
-    ExtractContext, dir_name as app_name, finish, gap as diag, read_source as read, walk,
-    with_root_config,
-};
-use crate::lang_ts::*;
-use crate::lang_ts_decl::*;
-use crate::lang_ts_http::*;
-use crate::services::support::test_path;
 use archguard_core::{
     ANY_METHOD, AccessMeaning, AccessState, Action, Call, Condition, EndpointAccess, Origin,
     Screen, ScreenKind, Target, Transition, UiFlow, UiFlowDiagnostic, best_route,
 };
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, dir_name as app_name, finish, gap as diag, read_source as read, walk,
+    with_root_config,
+};
+use archguard_flow_common::lang_ts::*;
+use archguard_flow_common::lang_ts_decl::*;
+use archguard_flow_common::lang_ts_http::*;
+use archguard_flow_common::support::test_path;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 

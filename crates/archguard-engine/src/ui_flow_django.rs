@@ -1,6 +1,6 @@
 //! Django and Django REST framework extractor for ui-flow/v1 (ADR 0021): a
 //! text-level reader of URL configurations, views and templates (no Python
-//! interpreter), on [`crate::lang_python`].
+//! interpreter), on [`archguard_flow_common::lang_python`].
 //!
 //! A project is a folder with `manage.py`; its name is the `application` of
 //! every screen and endpoint. Routing starts at each literal `ROOT_URLCONF`
@@ -60,17 +60,19 @@
 //! variable name, relative `href`s, router subclasses that change routes,
 //! form posts. The method resolution order is approximated depth first, left
 //! to right.
-use crate::extract_ctx::{
-    ExtractContext, dir_name, finish, gap, read_text, walk, with_root_config,
-};
-use crate::lang_python::{self as py, Arg, Def, DefKind, Import, Stmt};
-use crate::lang_text::{collapse, idents, line, matching, matching_back, next_nonws, split_top};
-use crate::services::support::test_path;
 use archguard_core::{
     ANY_METHOD, AccessMeaning, AccessState, Action, Call, Condition, DiagnosticSeverity,
     EndpointAccess, Origin, Screen, ScreenKind, Target, Transition, UiFlow, UiFlowDiagnostic,
     best_route, path_patterns_match,
 };
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, dir_name, finish, gap, read_text, walk, with_root_config,
+};
+use archguard_flow_common::lang_python::{self as py, Arg, Def, DefKind, Import, Stmt};
+use archguard_flow_common::lang_text::{
+    collapse, idents, line, matching, matching_back, next_nonws, split_top,
+};
+use archguard_flow_common::support::test_path;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
@@ -118,7 +120,7 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
 
 /// The nearest project folder holding `file`.
 fn owner<'a>(file: &str, dirs: &BTreeSet<&'a str>) -> Option<&'a str> {
-    crate::extract_ctx::ancestors(file).find_map(|a| dirs.get(a).copied())
+    archguard_flow_common::extract_ctx::ancestors(file).find_map(|a| dirs.get(a).copied())
 }
 
 fn note(flow: &mut UiFlow, file: &str, line: u32, message: impl Into<String>) {
@@ -193,7 +195,7 @@ mod project {
         /// `(from, to)` of `text` (a slice of `src`) without surrounding blanks.
         /// Comments count as blanks (trimmed on the masked text).
         pub(super) fn span(&self, text: &str) -> (usize, usize) {
-            let at = crate::lang_text::offset(&self.src, text);
+            let at = archguard_flow_common::lang_text::offset(&self.src, text);
             let m = &self.masked[at..at + text.len()];
             let lead = m.len() - m.trim_start().len();
             (at + lead, at + m.trim_end().len().max(lead))
@@ -262,7 +264,8 @@ mod project {
         let t = text.trim();
         let ok = !t.is_empty()
             && !t.starts_with(|c: char| c.is_ascii_digit() || c == '.')
-            && t.bytes().all(|c| crate::lang_text::is_id(c) || c == b'.');
+            && t.bytes()
+                .all(|c| archguard_flow_common::lang_text::is_id(c) || c == b'.');
         ok.then_some(t)
     }
 
@@ -1081,7 +1084,7 @@ mod access {
 
         /// One permission class expression; `None` allows everyone.
         fn perm_expr(&self, f: Option<usize>, text: &str, at: (&str, &[Sym])) -> Option<Condition> {
-            let text = crate::lang_text::unparen(text);
+            let text = archguard_flow_common::lang_text::unparen(text);
             let parts = split_top(text, "|");
             if parts.len() > 1 {
                 let all: Option<Vec<Condition>> =
@@ -2599,7 +2602,7 @@ mod views {
 /// Django templates: inheritance, includes and links.
 mod templates {
     use super::*;
-    use crate::lang_markup::{attr, blank, tags};
+    use archguard_flow_common::lang_markup::{attr, blank, tags};
 
     /// A template reference (`{% extends %}`, `{% include %}`): the literal name, or the text.
     #[derive(Debug, Clone)]

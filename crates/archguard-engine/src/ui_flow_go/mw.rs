@@ -1,9 +1,9 @@
 //! Middleware classification and handler/server wrappers.
 use super::model::*;
 use super::text::*;
-use crate::extract_ctx::access_condition;
-use crate::lang_ts::{Item, Value};
 use archguard_core::{AccessState, Condition};
+use archguard_flow_common::extract_ctx::access_condition;
+use archguard_flow_common::lang_ts::{Item, Value};
 
 /// Packages whose middleware never decides access.
 const PASSIVE: [&str; 14] = [

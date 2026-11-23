@@ -38,13 +38,15 @@
 //! (they stay unresolved), commented-out C# code in `.razor` files, `@inject` in
 //! `_Imports.razor`, components of referenced Razor class libraries (targets
 //! resolve within one application).
-use crate::extract_ctx::{ExtractContext, ancestors, read_text, walk, with_root_config};
-use crate::services::support::test_path;
 use crate::ui_flow_backend as backend;
 use archguard_core::{
     AccessState, Action, Call, Condition, DiagnosticSeverity, Origin, Screen, ScreenKind,
     Transition, UiFlow, UiFlowDiagnostic,
 };
+use archguard_flow_common::extract_ctx::{
+    ExtractContext, ancestors, read_text, walk, with_root_config,
+};
+use archguard_flow_common::support::test_path;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use text::{
@@ -707,9 +709,11 @@ fn view_condition(text: &str, start: usize, file: &str, flow: &mut UiFlow) -> Co
 
 /// Markup and C# text scanning without knowledge of the model.
 mod text {
-    pub(super) use crate::lang_csharp::{balanced, ident_start, literal, split_args};
-    pub(super) use crate::lang_markup::{blank, strip_tags, tag_end};
-    pub(super) use crate::lang_text::{collapse as words, line};
+    pub(super) use archguard_flow_common::lang_csharp::{
+        balanced, ident_start, literal, split_args,
+    };
+    pub(super) use archguard_flow_common::lang_markup::{blank, strip_tags, tag_end};
+    pub(super) use archguard_flow_common::lang_text::{collapse as words, line};
 
     /// `<AuthorizeView>` and `<NotAuthorized>` blocks of one text.
     pub(super) type Blocks = (Vec<(usize, usize)>, Vec<(usize, usize)>);
@@ -872,7 +876,7 @@ mod text {
 mod csharp {
     use super::VERBS;
     use super::text::{balanced, ident_start, literal, shape, split_args};
-    pub(super) use crate::lang_csharp::clean;
+    pub(super) use archguard_flow_common::lang_csharp::clean;
     use std::collections::BTreeMap;
 
     pub(super) struct Method {

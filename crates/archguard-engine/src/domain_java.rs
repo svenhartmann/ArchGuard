@@ -64,13 +64,13 @@
 //! Statemachine and the State pattern, request types of `*CommandHandler`
 //! classes. The marker names are the constants below with the ADR 0022
 //! defaults; reading them from the configuration comes later.
-use crate::extract_ctx::{ExtractContext, domain_sources, with_root_config};
-use crate::lang_text::*;
 use crate::ui_flow_backend::sends_in;
 use archguard_core::domain_model::{
     DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, EventHandlerSite, Field,
     MessageHandler, Relation, RelationKind, StateMachine, StateTransition, UseCase, UseCaseKind,
 };
+use archguard_flow_common::extract_ctx::{ExtractContext, domain_sources, with_root_config};
+use archguard_flow_common::lang_text::*;
 use members::{Kind, Member, field, param_types};
 use states::{Rules, Step, assignments, created, raise_calls};
 use std::collections::{BTreeMap, BTreeSet};
@@ -265,7 +265,7 @@ impl Extractor {
         }
         let mut projects = BTreeMap::new();
         for (rel, raw) in sources {
-            let text = crate::lang_java::mask(&raw);
+            let text = archguard_flow_common::lang_java::mask(&raw);
             let imports = decls::imports(&text);
             let kotlin = rel.ends_with(".kt");
             let project =
