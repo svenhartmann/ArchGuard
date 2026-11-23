@@ -22,7 +22,7 @@ use slint::ComponentHandle;
 
 use crate::context::Loaded;
 use crate::screens_ui::{fill_form, form_of, notes};
-use crate::tab_support::{self, Actions, TabState, Texts, index};
+use crate::tab_support::{self, Actions, Flow, TabState, Texts, index};
 use crate::ui::{AppWindow, DomainData, DomainViewModel};
 pub use state::DomainState;
 use state::{Focus, build_from};
@@ -112,23 +112,26 @@ impl TabState for DomainState {
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
         let root = data.root.to_path_buf();
-        move || {
-            let model = archguard_engine::domain_model::analyze(&root).map_err(|e| e.to_string());
-            let flow = archguard_engine::ui_flow::analyze(&root).map_err(|e| e.to_string());
-            let mut s = build_from(model, flow);
-            if let Some(d) = s.model() {
-                s.services = services::Services::find(&root, d, (*s.flow).as_ref().ok());
-            }
-            s.fold_other_services();
-            s.config = archguard_engine::load_config(None, &root)
-                .ok()
-                .map(|l| l.config);
-            s.notes = notes::load(&root);
-            s.root = root;
-            snapshot_overrides(&mut s);
-            s
-        }
+        let flow = Flow::of(data);
+        move || load(root, &flow)
     });
+}
+
+/// The tab's state; the flow comes from the document's shared slot.
+pub(crate) fn load(root: std::path::PathBuf, flow: &Flow) -> DomainState {
+    let model = archguard_engine::domain_model::analyze(&root).map_err(|e| e.to_string());
+    let mut s = build_from(model, (*flow.get()).clone());
+    if let Some(d) = s.model() {
+        s.services = services::Services::find(&root, d, (*s.flow).as_ref().ok());
+    }
+    s.fold_other_services();
+    s.config = archguard_engine::load_config(None, &root)
+        .ok()
+        .map(|l| l.config);
+    s.notes = notes::load(&root);
+    s.root = root;
+    snapshot_overrides(&mut s);
+    s
 }
 
 /// `ARCHGUARD_DESKTOP_DOMAIN_ENTITY=<name>` focuses an entity,

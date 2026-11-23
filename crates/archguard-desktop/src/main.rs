@@ -27,6 +27,8 @@ mod export_ui;
 #[cfg(test)]
 mod fields_check;
 mod file_ui;
+#[cfg(test)]
+mod flow_share_check;
 mod follow;
 mod follow_ui;
 mod format;
@@ -66,6 +68,7 @@ mod shell;
 mod shell_ui;
 #[cfg(feature = "snapshot")]
 mod snapshot;
+mod stale_sources;
 mod start_ui;
 mod state;
 mod status;

@@ -82,6 +82,8 @@ pub struct Document {
     /// Counts [`Document::forget_derived`]: a worker's result for an older
     /// analysis is dropped ([`generation`]).
     generation: u64,
+    /// When the derived state was last (re)built; a newer source file makes it stale.
+    pub built: std::time::SystemTime,
     /// What is unsaved as (part, description), in the order it was first
     /// marked; empty: clean.
     unsaved: Vec<(&'static str, String)>,
@@ -106,6 +108,7 @@ impl Document {
             projects: Vec::new(),
             states: HashMap::new(),
             generation: 0,
+            built: std::time::SystemTime::now(),
             unsaved: Vec::new(),
             save_hooks: HashMap::new(),
         }
@@ -126,6 +129,7 @@ impl Document {
     pub fn forget_derived(&mut self) {
         DERIVED.with_borrow(|d| self.states.retain(|t, _| !d.contains(t)));
         self.generation += 1;
+        self.built = std::time::SystemTime::now();
     }
 
     pub fn has_state<T: 'static>(&self) -> bool {
