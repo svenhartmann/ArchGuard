@@ -4,6 +4,8 @@
 //! - cyclomatic: base 1, plus 1 for each `if` (so `else if` counts once), `for`
 //!   (both forms), `while`, `do`, `case`, `catch`, `&&`, `||`, ternary `? :`,
 //!   Elvis `?:` and null-safe `?.`. `else`, `try`, `switch` and `finally` add nothing.
+//!   Exception: the `while` that follows a closed `do { … }` block (comments in
+//!   between are skipped) belongs to that `do` and does not count again.
 //! - max_nesting: deepest stack of control blocks (`if`, `else`, `for`, `while`,
 //!   `do`, `switch`, `try`, `catch`, `finally`) opened with `{`. Lambda and map
 //!   braces do not count.
@@ -67,6 +69,7 @@ struct Scan {
     do_pending: bool,
     /// The last token closed a `do { … }` block; a `while` right after it is not a new loop.
     closed_do: bool,
+    /// The token before this one closed a `do { … }` block.
     after_do: bool,
 }
 
@@ -83,6 +86,7 @@ impl Scan {
         }
         self.after_do = std::mem::take(&mut self.closed_do);
         if ch == '/' && matches!(self.at(1), Some('/' | '*')) {
+            self.closed_do = self.after_do; // a comment between `}` and `while` keeps the do-while
             self.comment()?;
         } else if ch == '"' || ch == '\'' || (ch == '/' && !self.operand) {
             self.literal(ch)?;
@@ -231,6 +235,8 @@ mod tests {
             ("while (a) { b }", 2),
             ("do { a } while (b)", 2), // the `while` of a do-while is not counted again
             ("do { a } while (b) && c", 3),
+            ("do { a } // c\n while (b)", 2),
+            ("do { a } /* c */ while (b)", 2),
             ("do { if (a) { b } } while (c)", 3),
             ("switch (a) { case 1: b; case 2: c; }", 3),
             ("try { a } catch (Exception e) { b }", 2),
