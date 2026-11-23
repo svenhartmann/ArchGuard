@@ -374,6 +374,7 @@ dependencies = [
  "archguard-flow-dotnet",
  "archguard-flow-jvm",
  "archguard-flow-python",
+ "archguard-flow-web",
  "archguard-report",
  "archguard-store",
  "globset",
@@ -468,6 +469,17 @@ version = "0.3.5"
 dependencies = [
  "archguard-core",
  "archguard-flow-common",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "archguard-flow-web"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-flow-common",
+ "serde_json",
  "tempfile",
  "toml",
 ]

@@ -15,6 +15,7 @@ members = [
     "crates/archguard-flow-dotnet",
     "crates/archguard-flow-jvm",
     "crates/archguard-flow-python",
+    "crates/archguard-flow-web",
     "crates/archguard-mcp",
     "crates/archguard-report",
     "crates/archguard-store",
