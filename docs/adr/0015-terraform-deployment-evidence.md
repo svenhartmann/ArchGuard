@@ -83,3 +83,10 @@ contains secrets. ArchGuard must not do any of that.
   reported as gaps, so `complete` is often `false` for real Terraform code.
 - `*.tf.json`, `for_each`/`count` instances and `dynamic` blocks are not
   expanded; a resource counts once.
+
+## History
+
+- **2026-11-23:** [ADR 0023](0023-elasticsearch-artifacts.md) reads
+  Elasticsearch names from non-sensitive `variable` defaults and literal module
+  arguments. This applies only to those names; the decision above (variables
+  and locals stay unknown for workloads and datastores) is unchanged.
