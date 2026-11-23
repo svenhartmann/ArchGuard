@@ -59,7 +59,7 @@ may_depend_on = ["core", "extract"]
 [[layers]]
 name = "flow-clike"
 contains = ["archguard-flow-clike", "archguard-flow-clike/**"]
-may_depend_on = ["core", "extract", "flow-common"]
+may_depend_on = ["flow-common"]
 
 [[layers]]
 name = "flow-backend"
