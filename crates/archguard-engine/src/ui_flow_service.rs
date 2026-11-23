@@ -413,6 +413,13 @@ impl<'a> World<'a> {
         let mut queue = self.direct(handler, src, &mut seen);
         while let Some((call, always, depth, via)) = queue.pop_front() {
             let Some(reached) = self.reach(call) else {
+                // a library class: its checks are never read
+                let message = format!(
+                    "Check of `{}.{}` not read: the class is not in the scan, so a check there is unknown.",
+                    call.to_class.as_deref().map_or("?", simple),
+                    call.target_label
+                );
+                self.gaps.push((call.file.clone(), call.line, message));
                 continue;
             };
             let same = call.to_class.as_deref() == Some(handler.class_id.as_str());
