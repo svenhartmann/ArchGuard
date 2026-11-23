@@ -47,3 +47,11 @@ resource "elasticstack_kibana_alerting_rule" "search_source" {
     }
   })
 }
+
+resource "elasticstack_kibana_alerting_rule" "anomaly" {
+  name         = "orders-anomaly-alert"
+  rule_type_id = "xpack.ml.anomaly_detection_alert"
+  params = jsonencode({
+    jobSelection = { jobIds = ["orders-job"] }
+  })
+}

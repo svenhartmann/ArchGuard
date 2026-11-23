@@ -11,6 +11,8 @@ use hcl_edit::structure::Body;
 
 const PREFIX: &str = "elasticstack_elasticsearch_";
 const KIBANA: &str = "elasticstack_kibana_";
+/// Rule types that keep their index in `params.index`; others have no index to read.
+const INDEX_RULES: [&str; 2] = [".es-query", ".index-threshold"];
 const NOTE: &str =
     "Declared Elasticsearch artifact read statically; no terraform run, state or cluster access.";
 /// Resource type suffix, artifact kind and the attribute holding its name.
@@ -170,14 +172,18 @@ impl Read<'_, '_> {
     fn alerting_rule(&mut self) {
         let body = &self.r.block.body;
         let name = self.text("the alerting rule name", attr(body, "name"));
-        let rule_type = attr(body, "rule_type_id").and_then(literal);
+        let rule_type = self.text("the rule type", attr(body, "rule_type_id"));
         let (mut found, mut gap) = (Vec::new(), false);
         if let Some(p) = attr(body, "params") {
             params_index(p, &mut found, &mut gap);
         }
         if gap {
             self.text("the rule index", None);
-        } else if found.is_empty() {
+        } else if found.is_empty()
+            && rule_type
+                .as_deref()
+                .is_some_and(|t| INDEX_RULES.contains(&t))
+        {
             let message = format!(
                 "{}: alerting rule has no top-level params index; its index comes from a data view or is unknown.",
                 self.r.address

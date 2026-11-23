@@ -199,3 +199,17 @@ fn nested_search_configuration_index_is_a_data_view_id_not_a_pattern() {
             && d.message.contains("data view")
     }));
 }
+
+#[test]
+fn rule_types_without_a_params_index_are_no_gap() {
+    let r = fixture();
+    assert!(
+        find(&r, "alerting_rule", "orders-anomaly-alert")
+            .patterns
+            .is_empty()
+    );
+    assert!(!r.diagnostics.iter().any(|d| {
+        d.message
+            .contains("elasticstack_kibana_alerting_rule.anomaly")
+    }));
+}
