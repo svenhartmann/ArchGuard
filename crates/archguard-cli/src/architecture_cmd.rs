@@ -1,6 +1,9 @@
 use crate::args::{Cli, Format};
 use crate::output::{EXIT_OK, analysis_error, emit, usage};
-use archguard_engine::{LoadedConfig, core::Graph};
+use archguard_engine::{
+    LoadedConfig,
+    core::{Graph, MappedArchitectureComponent, TargetArchitectureReport},
+};
 
 pub(crate) fn patterns(
     cli: &Cli,
@@ -21,11 +24,15 @@ pub(crate) fn patterns(
                     for p in report.assessments {
                         outln!(
                             "\n{} · {} · {} · basis: {}",
-                            p.pattern, p.scope, p.status, p.basis
+                            p.pattern,
+                            p.scope,
+                            p.status,
+                            p.basis
                         );
                         outln!(
                             "  Evidence: {} · counter-evidence: {}",
-                            p.evidence_total, p.counter_evidence_total
+                            p.evidence_total,
+                            p.counter_evidence_total
                         );
                         for item in p.evidence.iter().chain(&p.counter_evidence) {
                             outln!(
@@ -62,56 +69,31 @@ pub(crate) fn run(cli: &Cli, loaded: &LoadedConfig, graph: &Graph) -> i32 {
         return EXIT_OK;
     }
     if cli.format == Format::Json {
-        emit(&serde_json::to_string_pretty(&report.map(|r|serde_json::to_value(r).unwrap()).unwrap_or_else(||serde_json::json!({"schema_version":1,"status":"not_configured","message":"Declare architecture.model in archguard.toml to evaluate logical boundaries."}))).unwrap());
+        emit(&report_json(report));
     } else if let Some(report) = report {
         outln!(
             "Target architecture: {} · {} coverage",
-            report.name, report.status
+            report.name,
+            report.status
         );
         outln!(
             "Mapped sources: {}/{} · ambiguous: {} · unmapped: {}",
-            report.mapped_nodes, report.source_nodes, report.ambiguous_nodes, report.unmapped_nodes
+            report.mapped_nodes,
+            report.source_nodes,
+            report.ambiguous_nodes,
+            report.unmapped_nodes
         );
         outln!(
             "Forbidden component directions: {} · unclassified source dependencies: {}",
-            report.violating_dependencies, report.unclassified_edges
+            report.violating_dependencies,
+            report.unclassified_edges
         );
         outln!(
             "Private source accesses: {} · Coupling limit violations: {}",
-            report.violating_interfaces, report.coupling_violations
+            report.violating_interfaces,
+            report.coupling_violations
         );
-        for component in &report.components {
-            if let Some(public) = &component.public {
-                outln!(
-                    "{} public interface: {}",
-                    component.name,
-                    if public.is_empty() {
-                        "closed".into()
-                    } else {
-                        public.join(", ")
-                    }
-                );
-            }
-            for (direction, count, limit) in [
-                (
-                    "incoming",
-                    component.incoming_components.len(),
-                    component.max_incoming_components,
-                ),
-                (
-                    "outgoing",
-                    component.outgoing_components.len(),
-                    component.max_outgoing_components,
-                ),
-            ] {
-                if let Some(limit) = limit {
-                    outln!(
-                        "{} {direction} components: {count} · limit: {limit}",
-                        component.name
-                    );
-                }
-            }
-        }
+        report.components.iter().for_each(print_component);
         for dependency in report.dependencies {
             outln!(
                 "{} → {}: {} · {} source dependencies · {}{} import references",
@@ -134,9 +116,51 @@ pub(crate) fn run(cli: &Cli, loaded: &LoadedConfig, graph: &Graph) -> i32 {
             "Coverage is classification of the configured source scope, not a conformance verdict. Use check for the gate and --format json for mappings and evidence."
         );
     } else {
-        outln!(
-            "No target architecture configured. Declare architecture.model in archguard.toml."
-        );
+        outln!("No target architecture configured. Declare architecture.model in archguard.toml.");
     }
     EXIT_OK
+}
+
+fn report_json(report: Option<TargetArchitectureReport>) -> String {
+    let value = report.map(|r| serde_json::to_value(r).unwrap()).unwrap_or_else(|| {
+        serde_json::json!({
+            "schema_version": 1,
+            "status": "not_configured",
+            "message": "Declare architecture.model in archguard.toml to evaluate logical boundaries."
+        })
+    });
+    serde_json::to_string_pretty(&value).unwrap()
+}
+
+fn print_component(component: &MappedArchitectureComponent) {
+    if let Some(public) = &component.public {
+        outln!(
+            "{} public interface: {}",
+            component.name,
+            if public.is_empty() {
+                "closed".into()
+            } else {
+                public.join(", ")
+            }
+        );
+    }
+    for (direction, count, limit) in [
+        (
+            "incoming",
+            component.incoming_components.len(),
+            component.max_incoming_components,
+        ),
+        (
+            "outgoing",
+            component.outgoing_components.len(),
+            component.max_outgoing_components,
+        ),
+    ] {
+        if let Some(limit) = limit {
+            outln!(
+                "{} {direction} components: {count} · limit: {limit}",
+                component.name
+            );
+        }
+    }
 }

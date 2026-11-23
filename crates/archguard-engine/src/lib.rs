@@ -124,9 +124,9 @@ mod typescript_calls;
 pub mod ui_flow;
 pub mod ui_flow_replay;
 pub mod ui_flow_roles;
-pub mod ui_flow_service;
 #[cfg(test)]
 mod ui_flow_roles_tests;
+pub mod ui_flow_service;
 #[cfg(test)]
 mod ui_flow_service_tests;
 pub mod view_conventions;

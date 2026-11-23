@@ -32,23 +32,10 @@ pub(crate) fn run(cli: &Cli, root: &Path, fail_on_found: bool) -> i32 {
             );
             outln!(
                 "Monorepo: {} — {}",
-                topology.monorepo, topology.monorepo_reason
+                topology.monorepo,
+                topology.monorepo_reason
             );
-            outln!("Projects: {}", topology.projects.len());
-            for project in &topology.projects {
-                outln!(
-                    "project [{}] {} · {} · {}{}",
-                    project.kind,
-                    project.name,
-                    project.path,
-                    project.manifest,
-                    project
-                        .runtime
-                        .as_ref()
-                        .map(|runtime| format!(" · {runtime}"))
-                        .unwrap_or_default()
-                );
-            }
+            print_projects(&topology);
             outln!("Configured HTTP cycle groups: {http_cycles}");
             outln!(
                 "Startup cycle groups: {}",
@@ -161,7 +148,9 @@ fn print_datastores(datastores: &ServiceDatastores) {
         for evidence in &usage.evidence {
             outln!(
                 "  {} {}: {}",
-                evidence.file, evidence.pointer, evidence.description
+                evidence.file,
+                evidence.pointer,
+                evidence.description
             );
         }
     }
@@ -200,4 +189,22 @@ fn print_datastores(datastores: &ServiceDatastores) {
         }
     }
     outln!("{}", datastores.note);
+}
+
+fn print_projects(topology: &archguard_engine::core::ServiceTopology) {
+    outln!("Projects: {}", topology.projects.len());
+    for project in &topology.projects {
+        outln!(
+            "project [{}] {} · {} · {}{}",
+            project.kind,
+            project.name,
+            project.path,
+            project.manifest,
+            project
+                .runtime
+                .as_ref()
+                .map(|runtime| format!(" · {runtime}"))
+                .unwrap_or_default()
+        );
+    }
 }
