@@ -1,0 +1,16 @@
+[package]
+name = "archguard-flow-server"
+description = "L2: the server-framework readers: Laravel, Rails, Phoenix and Go UI-flow (ADR 0021)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+archguard-core = { path = "../archguard-core" }
+archguard-extract = { path = "../archguard-extract" }
+archguard-flow-common = { path = "../archguard-flow-common" }
+serde_yaml_ng = "0.10"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+toml = "1.1.8"
