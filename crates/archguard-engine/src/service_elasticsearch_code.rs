@@ -7,7 +7,7 @@ use archguard_flow_common::support::{Discovery, diagnostic, owners, relative, te
 #[path = "service_elasticsearch_constants.rs"]
 mod constants;
 
-use constants::{Constants, GAP, Name, literal, short, site};
+use constants::{Constants, Name, gap, literal, short, site};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -185,7 +185,7 @@ impl Sink<'_> {
                 self.constants
                     .defer(service, ext, rel, r, (m.access, m.line, m.pointer))
             }
-            Name::Gap => diagnostic(self.report, rel, Some(short(service)), GAP),
+            Name::Gap => diagnostic(self.report, rel, Some(short(service)), gap(m.line)),
         }
     }
 }
@@ -275,7 +275,33 @@ fn names(c: &Call, text: &str, at: usize, open: usize) -> Vec<Name> {
         }
     }
     out.retain(|n| gaps || matches!(n, Name::Lit(_)));
+    out.retain(|n| !matches!(n, Name::Ref(r) if object_variable(text, r)));
     out
+}
+
+/// Whether `var` is declared as a request or operation object (`IndexRequest<Doc> var`,
+/// `var x = new IndexOperation...`), which `index(var)` passes whole instead of naming an index.
+// shortcut: matched by name over the whole file, not by scope; upgrade if a shadowed name misleads.
+fn object_variable(text: &str, var: &str) -> bool {
+    let object = |t: &str| t.ends_with("Request") || t.ends_with("Operation");
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    text.match_indices(var).any(|(at, _)| {
+        let (before, after) = (&text[..at], text[at + var.len()..].trim_start());
+        if before.ends_with(word) || after.starts_with(word) {
+            return false;
+        }
+        let before = before.trim_end();
+        let ty = match before.strip_suffix('>') {
+            Some(g) => g.rsplit_once('<').map_or("", |(t, _)| t),
+            None => before,
+        };
+        let ty = ty.rsplit(|c: char| !word(c)).next().unwrap_or("");
+        let created = after
+            .strip_prefix('=')
+            .and_then(|a| a.trim_start().strip_prefix("new "))
+            .map(|a| a.split(|c: char| !word(c)).next().unwrap_or(""));
+        object(ty) || (ty == "var" && created.is_some_and(object))
+    })
 }
 
 fn name(arg: &str) -> Option<Name> {

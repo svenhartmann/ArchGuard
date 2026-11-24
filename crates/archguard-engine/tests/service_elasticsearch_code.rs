@@ -220,7 +220,8 @@ fn script_non_literals_are_gaps_and_only_imports_and_name_positions_count() {
         usages(&report, "api"),
         pairs(&[("ok", "read"), ("ok-ts", "read")])
     );
-    assert_eq!(gaps(&report), 2);
+    // Gap messages carry their line, so the three in a.py and two in b.ts are five, not one per file.
+    assert_eq!(gaps(&report), 5);
     assert!(!report.complete);
 }
 
@@ -340,9 +341,10 @@ fn unresolvable_constants_stay_gaps() {
         "import org.elasticsearch.client.Client;\nclass F { var r = new SearchRequest.Builder().index(Doc.X); }\n",
     );
     let report = analyze_services(root).unwrap();
-    assert_eq!(usages(&report, "api"), pairs(&[]));
+    // Doc.TWICE resolves now: Doc declares it once, the other class's twin is a different owner.
+    assert_eq!(usages(&report, "api"), pairs(&[("t1", "read")]));
     assert_eq!(usages(&report, "web"), pairs(&[("web-x", "read")]));
-    assert_eq!(gaps(&report), 5);
+    assert_eq!(gaps(&report), 4);
 }
 
 /// Usages of service `api` for one source file calling `.index(arg)` (Java) or the language's call.
@@ -424,4 +426,104 @@ fn braces_in_literals_and_comments_do_not_move_the_owner() {
         }
     }
     assert!(broken.is_empty(), "owner lost for {broken:?}");
+}
+
+const API: &str = "services:\n  api:\n    build: ./api\n";
+const CLIENT: &str = "import co.elastic.clients.elasticsearch.core.*;\n";
+
+#[test]
+fn qualified_constants_resolve_when_other_classes_declare_the_same_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", API);
+    put(
+        root,
+        "api/A.java",
+        "class A { static final String NAME = \"a-ix\"; }\n",
+    );
+    put(
+        root,
+        "api/B.java",
+        "class B { static final String NAME = \"b-ix\"; }\n",
+    );
+    put(
+        root,
+        "api/U.java",
+        &format!(
+            "{CLIENT}class U {{ void f() {{\n  var m = new MsearchTemplateRequest.Builder().searches(s -> s.header(h -> h.index(A.NAME)));\n  var r = new SearchRequest.Builder().index(B.NAME);\n  var q = new SearchRequest.Builder().index(NAME);\n}} }}\n"
+        ),
+    );
+    let report = analyze_services(root).unwrap();
+    assert_eq!(
+        usages(&report, "api"),
+        pairs(&[("a-ix", "read"), ("b-ix", "read")])
+    );
+    assert_eq!(gaps(&report), 1); // unqualified NAME stays a gap
+}
+
+#[test]
+fn two_declarations_in_the_same_class_stay_a_gap() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", API);
+    put(
+        root,
+        "api/A.java",
+        "class A {\n  static final String NAME = \"x\";\n  static class A { static final String NAME = \"y\"; }\n}\n",
+    );
+    put(
+        root,
+        "api/U.java",
+        &format!("{CLIENT}class U {{ var r = new SearchRequest.Builder().index(A.NAME); }}\n"),
+    );
+    let report = analyze_services(root).unwrap();
+    assert_eq!(usages(&report, "api"), pairs(&[]));
+    assert_eq!(gaps(&report), 1);
+}
+
+#[test]
+fn request_and_operation_variables_are_no_gaps_but_builders_are() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", API);
+    put(
+        root,
+        "api/U.java",
+        &format!(
+            "{CLIENT}class U {{ void f() {{\n  IndexRequest<Doc> request = build();\n  var operationVariable = new IndexOperation.Builder<Doc>().build();\n  IndexOperation<Doc> op2 = build();\n  client.msearch(m -> m.searches(s -> s.header(h -> h.index(request))));\n  client.bulk(b -> b.operations(op -> op.index(op2)));\n  client.bulk(b -> b.operations(op -> op.index(operationVariable)));\n}} }}\n"
+        ),
+    );
+    put(
+        root,
+        "api/V.java",
+        &format!(
+            "{CLIENT}class V {{ void f() {{\n  var bld = new IndexRequest.Builder<Doc>();\n  bld.index(Names.ORDERS);\n}} }}\n"
+        ),
+    );
+    let report = analyze_services(root).unwrap();
+    assert_eq!(usages(&report, "api"), pairs(&[]));
+    assert_eq!(gaps(&report), 1); // only the builder variable
+}
+
+#[test]
+fn every_gap_names_its_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", API);
+    put(
+        root,
+        "api/U.java",
+        &format!(
+            "{CLIENT}class U {{ void f() {{\n  var a = new SearchRequest.Builder().index(Missing.X);\n  var b = new SearchRequest.Builder().index(a + \"y\");\n}} }}\n"
+        ),
+    );
+    let report = analyze_services(root).unwrap();
+    let mut lines: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.starts_with("Index name is not a literal"))
+        .map(|d| d.message.rsplit_once("line ").map(|(_, n)| n.to_owned()))
+        .collect();
+    lines.sort();
+    assert_eq!(lines, [Some("3.".into()), Some("4.".into())]);
 }
