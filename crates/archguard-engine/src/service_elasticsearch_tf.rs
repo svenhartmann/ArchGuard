@@ -420,11 +420,16 @@ fn variable_name(e: &Expression) -> Option<&str> {
     }
 }
 
-/// A literal string, or a list of literal strings, and whether it was a list.
+/// A string literal, or a list of string literals, and whether it was a list. Numbers and
+/// bools are no names.
 fn values(e: &Expression) -> Option<(Vec<String>, bool)> {
+    let string = |e: &Expression| match e {
+        Expression::String(_) => literal(e),
+        _ => None,
+    };
     match e {
-        Expression::Array(items) => Some((items.iter().map(literal).collect::<Option<_>>()?, true)),
-        other => Some((vec![literal(other)?], false)),
+        Expression::Array(items) => Some((items.iter().map(string).collect::<Option<_>>()?, true)),
+        other => Some((vec![string(other)?], false)),
     }
 }
 
@@ -437,7 +442,13 @@ fn readable(var: &Body) -> Option<Option<bool>> {
     match attr(var, "type") {
         None => Some(None),
         Some(Expression::Variable(v)) if v.as_str() == "string" => Some(Some(false)),
-        Some(Expression::FuncCall(c)) if c.name.name.as_str() == "list" => Some(Some(true)),
+        Some(Expression::FuncCall(c))
+            if c.name.name.as_str() == "list"
+                && matches!(c.args.iter().collect::<Vec<_>>().as_slice(),
+                    [Expression::Variable(v)] if v.as_str() == "string") =>
+        {
+            Some(Some(true))
+        }
         Some(_) => None,
     }
 }

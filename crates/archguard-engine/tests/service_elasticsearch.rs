@@ -317,7 +317,12 @@ fn unresolvable_variable_values_stay_gaps() {
         );
     }
     let module = gaps("modules/named/main.tf");
-    assert_eq!(module.len(), 2, "{module:#?}");
+    assert_eq!(module.len(), 3, "{module:#?}");
+    assert!(
+        module
+            .iter()
+            .any(|m| m.contains("module.number_arg") && m.contains("index.named"))
+    );
     assert!(
         module
             .iter()
@@ -353,5 +358,23 @@ fn sensitive_defaults_locals_and_tfvars_are_never_read() {
         "tfvars-must-not-appear",
     ] {
         assert!(!all.contains(forbidden), "{forbidden} leaked");
+    }
+}
+
+#[test]
+fn numbers_bools_and_non_string_lists_are_gaps_not_names() {
+    let r = fixture();
+    let gaps: Vec<_> = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.file == "types.tf" && d.message.contains("not a literal"))
+        .collect();
+    assert_eq!(gaps.len(), 3, "{gaps:#?}");
+    for needle in ["index.number", "index.bool", "index_template.numbers"] {
+        assert!(gaps.iter().any(|d| d.message.contains(needle)), "{needle}");
+    }
+    let all = format!("{:?}", r.elasticsearch.artifacts);
+    for bad in ["\"43\"", "\"true\"", "\"1\""] {
+        assert!(!all.contains(bad), "{bad} read as a name");
     }
 }
