@@ -319,4 +319,73 @@ mod tests {
         )));
         assert!(!is_elasticsearch_gap(&diag("Index name is fine")));
     }
+
+    /// `{CONST}` interpolation inside a format string.
+    fn interpolates_const(text: &str) -> bool {
+        text.split('{').skip(1).any(|r| {
+            r.split('}').next().is_some_and(|n| {
+                !n.is_empty() && n.chars().all(|c| c.is_ascii_uppercase() || c == '_')
+            })
+        })
+    }
+
+    /// Every diagnostic site of the three producers passes a constant, `gap(..)` or a message
+    /// built from a constant, so `is_elasticsearch_gap` can recognize it. A new fixed text needs
+    /// a constant and a clause in `is_elasticsearch_gap`.
+    #[test]
+    fn every_diagnostic_site_uses_a_constant() {
+        let files = [
+            (
+                "service_elasticsearch_code.rs",
+                include_str!("service_elasticsearch_code.rs"),
+            ),
+            (
+                "service_elasticsearch_constants.rs",
+                include_str!("service_elasticsearch_constants.rs"),
+            ),
+            (
+                "service_elasticsearch_tf.rs",
+                include_str!("service_elasticsearch_tf.rs"),
+            ),
+        ];
+        let mut sites = 0;
+        for (name, text) in files {
+            let lines: Vec<&str> = text
+                .lines()
+                .take_while(|l| !l.contains("#[cfg(test)]"))
+                .collect();
+            for (n, line) in lines.iter().enumerate() {
+                let at = format!("{name}:{} `{}`", n + 1, line.trim());
+                let window = lines[n..lines.len().min(n + 6)].join("\n");
+                let back = lines[n.saturating_sub(8)..n].join("\n");
+                if line.contains("ServiceDiagnostic {") && line.contains("push(") {
+                    sites += 1;
+                    assert!(
+                        interpolates_const(&window),
+                        "{at}: message without constant; see is_elasticsearch_gap"
+                    );
+                } else if line.contains("diagnostic(") && !line.contains("fn ") {
+                    sites += 1;
+                    let rest = line.split("diagnostic(").nth(1).unwrap();
+                    let arg = rest.splitn(4, ", ").nth(3).unwrap_or("");
+                    let ident: String = arg
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    let ok = match ident.as_str() {
+                        "gap" => true,
+                        "message" => interpolates_const(back.rsplit("let message").next().unwrap()),
+                        id => {
+                            !id.is_empty() && id.chars().all(|c| c.is_ascii_uppercase() || c == '_')
+                        }
+                    };
+                    assert!(ok, "{at}: text is not a constant; see is_elasticsearch_gap");
+                }
+            }
+        }
+        assert_eq!(
+            sites, 10,
+            "diagnostic sites changed; update is_elasticsearch_gap and this count"
+        );
+    }
 }
