@@ -51,7 +51,7 @@ fn covers(a: &str, b: &str) -> bool {
 
 /// The names of a usage's index list: comma-split, trimmed, without empty parts and `-`
 /// exclusions (an exclusion names nothing). The one split rule for findings and covers.
-fn index_parts(index: &str) -> impl Iterator<Item = &str> {
+pub(super) fn index_parts(index: &str) -> impl Iterator<Item = &str> {
     index
         .split(',')
         .map(str::trim)
