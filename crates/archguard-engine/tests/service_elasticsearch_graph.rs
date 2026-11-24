@@ -55,8 +55,10 @@ fn topo(
     artifacts: Vec<SearchArtifact>,
     usages: Vec<SearchIndexUsage>,
 ) -> ServiceTopology {
-    let mut t = ServiceTopology::default();
-    t.services = services.iter().map(|s| svc(s)).collect();
+    let mut t = ServiceTopology {
+        services: services.iter().map(|s| svc(s)).collect(),
+        ..Default::default()
+    };
     t.elasticsearch.artifacts = artifacts;
     t.elasticsearch.usages = usages;
     t
@@ -128,8 +130,10 @@ fn usage_edges_follow_access() {
             use_("web", "logs-a", "unknown"),
         ],
     );
+    let mut got = edges(&search_graph(&t));
+    got.sort();
     assert_eq!(
-        edges(&search_graph(&t)),
+        got,
         [
             ("api".into(), "logs-a".into(), "write"),
             ("logs-a".into(), "web".into(), "read"),
