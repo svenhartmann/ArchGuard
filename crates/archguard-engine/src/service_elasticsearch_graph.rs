@@ -18,6 +18,8 @@ pub struct SearchNode {
     pub service: Option<usize>,
     pub warn: bool,
     pub declared: bool,
+    /// Comes from a project of a set other than the primary one.
+    pub foreign: bool,
 }
 
 /// `relation` is `write`, `read`, `unknown`, `reference` or `covers`.
@@ -82,6 +84,7 @@ fn node(kind: &str, label: &str, title: &str, scope: &str) -> SearchNode {
         service: None,
         warn: false,
         declared: true,
+        foreign: false,
     }
 }
 
@@ -100,7 +103,17 @@ impl<'a> Build<'a> {
                 .position(|s| s.name == u.service || s.id == u.service);
             // The label is the name the services view shows; the id stays in the title.
             let label = at.map_or(u.service.as_str(), |i| self.t.services[i].name.as_str());
-            let mut n = node("service", label, &u.service, "");
+            // A set prefixes foreign services `<project>:`; the title says the project, the label stays short.
+            let m = &self.t.elasticsearch;
+            let project = u.service.split_once(':').map(|(p, _)| p).filter(|p| {
+                m.primary().is_some_and(|x| x != *p) && m.projects.iter().any(|q| q == p)
+            });
+            let (label, title) = match project {
+                Some(p) => (&label[p.len() + 1..], format!("{} · {p}", u.service)),
+                None => (label, u.service.clone()),
+            };
+            let mut n = node("service", label, &title, "");
+            n.foreign = project.is_some();
             n.service = at;
             seen.insert(u.service.as_str(), self.nodes.len());
             self.nodes.push(n);
@@ -110,8 +123,12 @@ impl<'a> Build<'a> {
 
     fn add_artifacts(&mut self) {
         for (i, a) in self.t.elasticsearch.artifacts.iter().enumerate() {
-            let title = a.name.as_deref().unwrap_or(&a.address);
-            let mut n = node(&a.kind, &base_label(a), title, &a.scope);
+            let mut title = a.name.as_deref().unwrap_or(&a.address).to_string();
+            if !a.origins.is_empty() {
+                title = format!("{title} · {}", a.origins.join(", "));
+            }
+            let mut n = node(&a.kind, &base_label(a), &title, &a.scope);
+            n.foreign = self.t.elasticsearch.primary().is_some_and(|p| a.foreign(p));
             n.artifact = Some(i);
             if let Some(name) = a.name.as_deref() {
                 self.by_name
