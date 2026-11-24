@@ -465,4 +465,13 @@ mod tests {
         let z = ((600.0f32 - 24.0) / m.width).min((200.0 - 24.0) / m.height);
         assert!((s.zoom - z).abs() < 1e-4 && s.zoom < 1.0, "{}", s.zoom);
     }
+    #[test]
+    fn read_only_services_keep_the_group_order_of_the_kinds() {
+        let mut t = ServiceTopology::default();
+        t.elasticsearch.artifacts = vec![artifact("index", "i", &[]), artifact("alias", "al", &[])];
+        t.elasticsearch.usages = vec![usage("svc", "i", "read")];
+        let m = build(&build_from(std::sync::Arc::new(Ok(t))));
+        let groups: Vec<String> = names(&m).into_iter().filter(|n| n.contains(" (")).collect();
+        assert_eq!(groups, ["service (1)", "index (1)", "alias (1)"]);
+    }
 }
