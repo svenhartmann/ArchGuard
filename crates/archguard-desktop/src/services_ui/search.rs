@@ -217,6 +217,7 @@ mod tests {
                 })
                 .collect(),
             evidence: vec![ev("main.tf", 3)],
+            origins: vec![],
         }
     }
 

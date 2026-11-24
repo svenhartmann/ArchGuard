@@ -261,6 +261,7 @@ mod tests {
                 patterns: vec![],
                 references: vec![],
                 evidence: vec![],
+                origins: vec![],
             }],
             usages: vec![SearchIndexUsage {
                 service: "api".into(),
@@ -274,6 +275,7 @@ mod tests {
                 services: vec!["api".into(), "web".into()],
                 evidence: vec![],
             }],
+            projects: vec![],
         };
         assert_eq!(
             elasticsearch_lines(&model),

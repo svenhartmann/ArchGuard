@@ -130,6 +130,7 @@ fn detail(s: &EsState) -> Option<SvcSearchDetail> {
                 patterns: Vec::new(),
                 references: Vec::new(),
                 evidence: Vec::new(),
+                origins: vec![],
             };
             &ghost
         }
@@ -289,6 +290,7 @@ mod tests {
                 })
                 .collect(),
             evidence: Vec::new(),
+            origins: vec![],
         }
     }
 
