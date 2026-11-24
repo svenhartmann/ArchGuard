@@ -272,6 +272,7 @@ fn artifact_covers_comma_lists_like_the_findings_logic() {
         patterns: vec![],
         references: vec![],
         evidence: vec![],
+        origins: vec![],
     };
     assert!(search_artifact_covers(&art("a"), "a,b"));
     assert!(search_artifact_covers(&art("b"), "a, b"));

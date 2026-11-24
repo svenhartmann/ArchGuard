@@ -29,6 +29,7 @@ fn art(kind: &str, name: Option<&str>, address: &str, scope: &str) -> SearchArti
         patterns: vec![],
         references: vec![],
         evidence: vec![],
+        origins: vec![],
     }
 }
 

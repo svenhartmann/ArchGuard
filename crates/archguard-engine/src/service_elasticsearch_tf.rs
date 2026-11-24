@@ -118,6 +118,7 @@ pub(super) fn search_templates(root: &Path, discovery: &Discovery, report: &mut 
                     "Search template declared in JSON file {rel}; name assumed from file name. Read as text; no cluster access."
                 ),
             }],
+            origins: vec![],
         });
     }
 }
@@ -295,6 +296,7 @@ impl Read<'_, '_> {
             patterns,
             references,
             evidence: vec![r.evidence(r.line(), "", NOTE)],
+            origins: vec![],
         });
     }
 

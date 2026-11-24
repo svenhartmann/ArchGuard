@@ -309,6 +309,7 @@ mod tests {
             patterns: patterns.iter().map(|p| p.to_string()).collect(),
             references: vec![],
             evidence: vec![],
+            origins: vec![],
         }
     }
 
