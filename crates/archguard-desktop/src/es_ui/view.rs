@@ -333,6 +333,22 @@ mod tests {
     }
 
     #[test]
+    fn a_kind_key_is_pressed_by_real_nodes_only_ghosts_are_counted_apart() {
+        let mut t = ServiceTopology::default();
+        t.elasticsearch.artifacts = vec![artifact("ingest_pipeline", "pipe", &[])];
+        t.elasticsearch.usages = vec![usage("svc-a", "missing", "write")];
+        let mut s = build_from(std::sync::Arc::new(Ok(t)));
+        let k = |s: &EsState, kind: &str| build(s).kinds.iter().find(|k| k.kind == kind).unwrap();
+        // Only a ghost is behind `index`: the key is not pressed, the ghost has its own count.
+        let ix = k(&s, "index");
+        assert_eq!((ix.count, ix.shown, ix.ghosts), (0, 0, 1));
+        assert!(names(&build(&s)).contains(&"⚠ missing".into()));
+        s.toggle_kind(kind_at(&s, "ingest_pipeline"));
+        let p = k(&s, "ingest_pipeline");
+        assert_eq!((p.count, p.shown, p.ghosts), (1, 1, 0));
+    }
+
+    #[test]
     fn a_group_row_per_kind_comes_before_its_nodes() {
         let m = build(&state());
         let n = names(&m);

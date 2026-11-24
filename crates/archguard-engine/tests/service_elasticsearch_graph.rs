@@ -366,6 +366,71 @@ fn labels_are_unique_over_a_generated_graph() {
     assert!(labels.iter().all(|l| l.chars().count() <= 32));
 }
 
+const TF: &str = "elasticstack_elasticsearch_index";
+
+fn tf(name: &str, scope: &str, module: &str) -> SearchArtifact {
+    let address = format!("{module}{TF}.res");
+    art("index", Some(name), &address, &format!("terraform:{scope}"))
+}
+
+#[test]
+fn service_label_is_the_service_name_the_id_stays_in_the_title() {
+    let mut t = topo(
+        &[],
+        vec![index("logs-a")],
+        vec![use_("project:functions/api", "logs-a", "write")],
+    );
+    let mut s = svc("api");
+    s.id = "project:functions/api".into();
+    t.services = vec![s];
+    let g = search_graph(&t);
+    assert_eq!(
+        (g.nodes[0].label.as_str(), g.nodes[0].title.as_str()),
+        ("api", "project:functions/api")
+    );
+}
+
+#[test]
+fn terraform_roots_are_told_apart_by_folder_path_and_instances_by_module_name() {
+    let mut arts = Vec::new();
+    for scope in ["infra", "local/infra"] {
+        for module in ["module.a.", "module.b."] {
+            arts.push(tf("doka", scope, module));
+        }
+    }
+    arts.push(tf("solo", "infra", "module.a."));
+    let labels = labels_of(arts);
+    assert_eq!(
+        labels,
+        [
+            "doka (infra) · module.a",
+            "doka (infra) · module.b",
+            "doka (local/infra) · module.a",
+            "doka (local/infra) · module.b",
+            "solo",
+        ]
+    );
+}
+
+#[test]
+fn a_scope_prefix_is_not_a_path_segment_and_a_lone_root_has_no_addition() {
+    let labels = labels_of(vec![
+        tf("cms", "x/terraform", ""),
+        tf("cms", "y/terraform", ""),
+        tf("one", "terraform", ""),
+    ]);
+    assert_eq!(labels, ["cms (x/terraform)", "cms (y/terraform)", "one"]);
+}
+
+#[test]
+fn instances_of_one_root_without_a_second_root_get_no_scope() {
+    let labels = labels_of(vec![
+        tf("doka", "infra", "module.a."),
+        tf("doka", "infra", "module.b."),
+    ]);
+    assert_eq!(labels, ["doka · module.a", "doka · module.b"]);
+}
+
 /// Counts only, no names; the path comes from the environment (spec `## Abnahme-Probe`).
 #[test]
 #[ignore]
