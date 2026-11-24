@@ -61,6 +61,8 @@ mod runtime_tools;
 mod sbom_tools;
 mod security_tools;
 mod semantic_tools;
+#[cfg(test)]
+mod service_set_tool_tests;
 mod test_coverage_tools;
 mod tools;
 mod traced;
