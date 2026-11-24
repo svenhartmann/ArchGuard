@@ -62,18 +62,34 @@ pub fn search_artifact_covers(a: &SearchArtifact, index: &str) -> bool {
 }
 
 /// The Elasticsearch reader gaps: the only way to create such a diagnostic is [`es_gap`], the
-/// only way to recognize one is [`is_elasticsearch_gap`]; both go through this list.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum EsGap {
-    SameDir,
-    Unread,
-    IndexNotLiteral,
-    ScanStop,
-    JsonUnread,
-    JsonTooLarge,
-    SavedObjects,
-    NotLiteral,
-    NoParamsIndex,
+/// only way to recognize one is [`is_elasticsearch_gap`]. One list defines the variants, `ALL`
+/// and their texts, so a variant cannot exist without being recognized.
+macro_rules! es_gaps {
+    ($($(#[$m:meta])* $name:ident => $text:expr,)+) => {
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        pub(super) enum EsGap { $($(#[$m])* $name,)+ }
+
+        impl EsGap {
+            pub(super) const ALL: &'static [EsGap] = &[$(EsGap::$name,)+];
+
+            /// The fixed text; for kinds with a dynamic part, the part next to it (see `render`).
+            pub(super) fn text(self) -> &'static str {
+                match self { $(EsGap::$name => $text,)+ }
+            }
+        }
+    };
+}
+
+es_gaps! {
+    SameDir => "Several services build from the same source directory; indices named in this file are attributed to none of them.",
+    Unread => "Source file not read: larger than 1 MiB, not a regular file or not readable; its indices are unknown.",
+    IndexNotLiteral => "Index name is not a literal (constant, variable or expression); the index stays unknown. Source line ",
+    ScanStop => "Index scan of the service stopped after ",
+    JsonUnread => "JSON file next to Terraform could not be read; search templates in it are unknown.",
+    JsonTooLarge => "JSON file next to Terraform is larger than 1 MiB and contains a mustache lang; it is not evaluated as a search template.",
+    SavedObjects => ": saved objects are not analyzed.",
+    NotLiteral => ": Elasticsearch name is not a literal; ",
+    NoParamsIndex => ": alerting rule has no top-level params index; its index comes from a data view or is unknown.",
 }
 
 const SCAN_STOP_TAIL: &str = " files; indices in later files are unknown.";
@@ -81,45 +97,6 @@ const NOT_LITERAL_TAIL: &str =
     " is unknown (variables, locals, each, module outputs and function calls are not evaluated).";
 
 impl EsGap {
-    pub(super) const ALL: [EsGap; 9] = [
-        Self::SameDir,
-        Self::Unread,
-        Self::IndexNotLiteral,
-        Self::ScanStop,
-        Self::JsonUnread,
-        Self::JsonTooLarge,
-        Self::SavedObjects,
-        Self::NotLiteral,
-        Self::NoParamsIndex,
-    ];
-
-    /// The fixed text; for kinds with a dynamic part, the part next to it (see `render`).
-    pub(super) fn text(self) -> &'static str {
-        match self {
-            Self::SameDir => {
-                "Several services build from the same source directory; indices named in this file are attributed to none of them."
-            }
-            Self::Unread => {
-                "Source file not read: larger than 1 MiB, not a regular file or not readable; its indices are unknown."
-            }
-            Self::IndexNotLiteral => {
-                "Index name is not a literal (constant, variable or expression); the index stays unknown. Source line "
-            }
-            Self::ScanStop => "Index scan of the service stopped after ",
-            Self::JsonUnread => {
-                "JSON file next to Terraform could not be read; search templates in it are unknown."
-            }
-            Self::JsonTooLarge => {
-                "JSON file next to Terraform is larger than 1 MiB and contains a mustache lang; it is not evaluated as a search template."
-            }
-            Self::SavedObjects => ": saved objects are not analyzed.",
-            Self::NotLiteral => ": Elasticsearch name is not a literal; ",
-            Self::NoParamsIndex => {
-                ": alerting rule has no top-level params index; its index comes from a data view or is unknown."
-            }
-        }
-    }
-
     /// `parts`: line number, file count, address, or address and what is unknown.
     fn render(self, parts: &[&str]) -> String {
         let (t, p) = (self.text(), |i: usize| {
@@ -408,8 +385,14 @@ mod tests {
     }
 
     #[test]
+    fn gap_texts_are_distinct() {
+        let texts: std::collections::BTreeSet<_> = EsGap::ALL.iter().map(|k| k.text()).collect();
+        assert_eq!(texts.len(), EsGap::ALL.len());
+    }
+
+    #[test]
     fn every_gap_kind_is_recognized_with_its_dynamic_part() {
-        for k in EsGap::ALL {
+        for &k in EsGap::ALL {
             let mut r = archguard_core::ServiceTopology::default();
             es_gap(&mut r, k, "f", None, &["7", "what"]);
             es_gap(&mut r, k, "f", None, &[]);
