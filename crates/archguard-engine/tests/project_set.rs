@@ -287,3 +287,55 @@ fn symlinked_set_file_is_read_but_a_link_to_a_directory_is_refused() {
         other => panic!("{other:?}"),
     }
 }
+
+#[cfg(unix)]
+fn linked(t: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    dirs(t, &["real/a", "real/b", "links"]);
+    let target = t.join("real/s.archguard-set.toml");
+    fs::write(&target, "name = \"s\"\nprojects = [\"a\", \"b\"]\n").unwrap();
+    let link = t.join("links/s.archguard-set.toml");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    (target, link)
+}
+
+#[cfg(unix)]
+#[test]
+fn link_in_another_folder_resolves_entries_against_the_target_folder() {
+    let t = tempfile::tempdir().unwrap();
+    let (_, link) = linked(t.path());
+    let base = t.path().canonicalize().unwrap().join("real");
+    assert_eq!(
+        read_project_set(&link).unwrap().projects,
+        vec![base.join("a"), base.join("b")]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn writing_through_a_link_keeps_the_link_and_changes_the_target() {
+    let t = tempfile::tempdir().unwrap();
+    let (target, link) = linked(t.path());
+    let base = t.path().canonicalize().unwrap().join("real");
+    let set = ProjectSet {
+        name: "new".into(),
+        projects: vec![base.join("b"), base.join("a")],
+    };
+    write_project_set(&link, &set).unwrap();
+    assert!(
+        fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(
+        fs::read_to_string(&target)
+            .unwrap()
+            .contains("name = \"new\"")
+    );
+    assert_eq!(read_project_set(&link).unwrap(), set);
+    assert_eq!(
+        fs::read_dir(t.path().join("real")).unwrap().count(),
+        3,
+        "a, b, target only"
+    );
+}
