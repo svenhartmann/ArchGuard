@@ -34,7 +34,7 @@ mod service_tables;
 #[path = "service_terraform.rs"]
 mod service_terraform;
 #[path = "service_terraform_hcl.rs"]
-mod service_terraform_hcl;
+pub(crate) mod service_terraform_hcl;
 #[path = "service_traces.rs"]
 mod service_traces;
 
