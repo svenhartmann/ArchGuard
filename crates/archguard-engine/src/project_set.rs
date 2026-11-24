@@ -67,8 +67,21 @@ fn resolve(file: &Path, base: &Path, entries: &[PathBuf]) -> Result<Vec<PathBuf>
     Ok(out)
 }
 
+/// The file behind a link (an existing path is canonicalised) and the folder its entries resolve against.
+fn target_of(link: &Path) -> (PathBuf, PathBuf) {
+    let path = link.canonicalize().unwrap_or_else(|_| link.to_path_buf());
+    let base = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
+    (path, base)
+}
+
 /// Reads and validates a set file; relative entries resolve against its folder and are canonicalised.
-pub fn read_project_set(path: &Path) -> Result<ProjectSet, ArchguardError> {
+pub fn read_project_set(link: &Path) -> Result<ProjectSet, ArchguardError> {
+    let (path, base) = target_of(link);
+    let path = path.as_path();
     // Before open: a FIFO would block there; links are followed, their target must be a file.
     let meta = std::fs::metadata(path).map_err(|e| fail(path, e.kind()))?;
     if !meta.is_file() {
@@ -93,24 +106,18 @@ pub fn read_project_set(path: &Path) -> Result<ProjectSet, ArchguardError> {
     })?;
     check_shape(path, &parsed.name, parsed.projects.len())?;
     let entries: Vec<PathBuf> = parsed.projects.into_iter().map(PathBuf::from).collect();
-    let base = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
     Ok(ProjectSet {
         name: parsed.name,
-        projects: resolve(path, base, &entries)?,
+        projects: resolve(path, &base, &entries)?,
     })
 }
 
 /// Validates `set` and writes it atomically (temp file + rename) in a stable format.
-pub fn write_project_set(path: &Path, set: &ProjectSet) -> Result<(), ArchguardError> {
+pub fn write_project_set(link: &Path, set: &ProjectSet) -> Result<(), ArchguardError> {
+    let (path, base) = target_of(link);
+    let path = path.as_path();
     check_shape(path, &set.name, set.projects.len())?;
-    let base = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    resolve(path, base, &set.projects)?;
+    resolve(path, &base, &set.projects)?;
     let projects = set
         .projects
         .iter()
@@ -125,7 +132,7 @@ pub fn write_project_set(path: &Path, set: &ProjectSet) -> Result<(), ArchguardE
         projects,
     })
     .map_err(|e| fail(path, e))?;
-    let mut temp = tempfile::NamedTempFile::new_in(base).map_err(|e| fail(path, e.kind()))?;
+    let mut temp = tempfile::NamedTempFile::new_in(&base).map_err(|e| fail(path, e.kind()))?;
     temp.write_all(text.as_bytes())
         .map_err(|e| fail(path, e.kind()))?;
     temp.as_file()
