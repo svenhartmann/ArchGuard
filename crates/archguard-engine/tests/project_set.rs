@@ -233,3 +233,40 @@ fn fixture_file_has_the_expected_content() {
     assert!(text.contains("name = \"search\""));
     assert!(text.contains("projects = [\"infra\", \"adapter\"]"));
 }
+
+#[test]
+fn empty_entry_is_rejected() {
+    let t = tempfile::tempdir().unwrap();
+    dirs(t.path(), &["a"]);
+    err(t.path(), "name = \"s\"\nprojects = [\"\", \"a\"]\n");
+}
+
+#[test]
+fn set_file_that_is_a_directory_fails_cleanly() {
+    let t = tempfile::tempdir().unwrap();
+    let d = t.path().join("d.archguard-set.toml");
+    fs::create_dir(&d).unwrap();
+    match read_project_set(&d) {
+        Err(ArchguardError::Config(m)) => assert!(m.contains("not a regular file"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn set_file_that_is_a_fifo_does_not_hang() {
+    let t = tempfile::tempdir().unwrap();
+    let p = t.path().join("f.archguard-set.toml");
+    let c = std::ffi::CString::new(p.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc_mkfifo(c.as_ptr(), 0o600) }, 0);
+    match read_project_set(&p) {
+        Err(ArchguardError::Config(m)) => assert!(m.contains("not a regular file"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[cfg(unix)]
+unsafe extern "C" {
+    #[link_name = "mkfifo"]
+    fn libc_mkfifo(path: *const std::ffi::c_char, mode: u32) -> i32;
+}
