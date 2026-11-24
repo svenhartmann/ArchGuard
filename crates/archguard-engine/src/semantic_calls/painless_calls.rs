@@ -5,6 +5,7 @@
 // shortcut: scripts inside JSON strings and `script { }` blocks are not found; add when a repo needs it.
 use crate::services::service_terraform_hcl::{literal, object};
 use archguard_core::{CallAnalysis, CallAnalyzer, CallClass, CallMethod, Config, MethodComplexity};
+use archguard_extract::Excludes;
 use archguard_extract::painless::measure;
 use hcl_edit::expr::Expression;
 use hcl_edit::{Span, parser};
@@ -16,9 +17,21 @@ const DEFINITION: &str = "ast-decisions-v1";
 const NOTE: &str = archguard_core::CallAnalyzer::PAINLESS_TOKENS;
 
 /// `.painless` and `.tf` files outside `.terraform/`, sorted by path; text is `None` when unreadable.
-fn sources(root: &Path) -> Result<Vec<(String, Option<String>)>, String> {
+fn sources(root: &Path, config: &Config) -> Result<Vec<(String, Option<String>)>, String> {
+    // Same exclusion rule as `walk_files` (`project.exclude`); that walk lists source languages only.
+    let excluded = Excludes::new(&config.project.exclude).map_err(|e| e.to_string())?;
     let mut found = Vec::new();
-    for entry in ignore::WalkBuilder::new(root).build() {
+    let base = root.to_path_buf();
+    let walker = ignore::WalkBuilder::new(root)
+        .require_git(false)
+        .filter_entry(move |e| {
+            let rel = e.path().strip_prefix(&base).unwrap_or(e.path());
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            let dir = e.file_type().is_some_and(|t| t.is_dir());
+            e.depth() == 0 || (!excluded.is_match(&rel, dir) && e.file_name() != ".terraform")
+        })
+        .build();
+    for entry in walker {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
         let wanted = path
@@ -38,9 +51,9 @@ fn sources(root: &Path) -> Result<Vec<(String, Option<String>)>, String> {
 }
 
 /// Content identity of everything the analyzer reads; the memo key knows only graph sources.
-pub(crate) fn painless_calls_fingerprint(root: &Path, _: &Config) -> Result<[u8; 32], String> {
+pub(crate) fn painless_calls_fingerprint(root: &Path, config: &Config) -> Result<[u8; 32], String> {
     let mut hash = Sha256::new();
-    for (path, text) in sources(root)? {
+    for (path, text) in sources(root, config)? {
         hash.update(path.as_bytes());
         hash.update(b"\0");
         hash.update(text.as_deref().unwrap_or("\0unreadable").as_bytes());
@@ -50,12 +63,12 @@ pub(crate) fn painless_calls_fingerprint(root: &Path, _: &Config) -> Result<[u8;
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) fn analyze_painless_calls(root: &Path, _: &Config) -> CallAnalysis {
+pub(crate) fn analyze_painless_calls(root: &Path, config: &Config) -> CallAnalysis {
     let mut report = CallAnalysis {
         java_release: 0,
         ..Default::default()
     };
-    let files = match sources(root) {
+    let files = match sources(root, config) {
         Ok(files) => files,
         Err(error) => {
             report.status = "unavailable".into();
@@ -74,7 +87,8 @@ pub(crate) fn analyze_painless_calls(root: &Path, _: &Config) -> CallAnalysis {
         }
         report.files += usize::from(report.classes.len() > before);
     }
-    if report.files == 0 {
+    // Unreadable or invalid files may hide scripts: keep their diagnostics even without a script.
+    if report.files == 0 && report.diagnostics.is_empty() {
         return report;
     }
     let ready = report.diagnostics.is_empty();
@@ -189,6 +203,9 @@ fn scripts<'e>(e: &'e Expression, out: &mut Vec<&'e Expression>) {
 
 fn terraform_scripts(report: &mut CallAnalysis, path: &str, text: &str) {
     let Ok(body) = parser::parse_body(text) else {
+        report.diagnostics.push(format!(
+            "{path}: Terraform file is not valid HCL; its scripts are unknown."
+        ));
         return;
     };
     let starts = crate::graphql_scan::line_starts(text);

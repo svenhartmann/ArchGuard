@@ -106,3 +106,52 @@ fn a_changed_script_changes_the_fingerprint() {
     std::fs::write(dir.path().join("main.tf"), "# changed\n").unwrap();
     assert_ne!(after, semantic_fingerprints(dir.path(), &config), "tf");
 }
+
+#[test]
+fn excluded_paths_are_neither_measured_nor_part_of_the_fingerprint() {
+    let calls = analyze_calls(&fixture(), &Config::default());
+    assert!(calls.classes.iter().all(|c| !c.file.starts_with("tests/")));
+    let dir = tempfile::tempdir().unwrap();
+    copy(&fixture(), dir.path());
+    let config = Config::default();
+    let before = semantic_fingerprints(dir.path(), &config);
+    std::fs::write(dir.path().join("tests/skipped.painless"), "return 1;\n").unwrap();
+    assert_eq!(before, semantic_fingerprints(dir.path(), &config));
+}
+
+#[test]
+fn an_invalid_tf_file_is_a_diagnostic_even_without_any_script() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("bad.tf"), "resource \"x\" {{{\n").unwrap();
+    let calls = analyze_calls(dir.path(), &Config::default());
+    assert!(
+        calls
+            .diagnostics
+            .iter()
+            .any(|d| d.contains("bad.tf") && d.contains("not valid HCL")),
+        "{:?}",
+        calls.diagnostics
+    );
+    assert!(
+        calls
+            .analyzers
+            .iter()
+            .any(|a| a.language == "painless" && a.status == "partial")
+    );
+}
+
+#[test]
+fn an_oversized_tf_file_is_a_diagnostic_even_without_any_script() {
+    let dir = tempfile::tempdir().unwrap();
+    let big = format!("# {}\n", "x".repeat(1024 * 1024 + 1));
+    std::fs::write(dir.path().join("big.tf"), big).unwrap();
+    let calls = analyze_calls(dir.path(), &Config::default());
+    assert!(
+        calls
+            .diagnostics
+            .iter()
+            .any(|d| d.contains("big.tf") && d.contains("could not be read")),
+        "{:?}",
+        calls.diagnostics
+    );
+}
