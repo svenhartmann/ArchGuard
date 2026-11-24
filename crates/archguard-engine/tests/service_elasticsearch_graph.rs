@@ -432,6 +432,76 @@ fn instances_of_one_root_without_a_second_root_get_no_scope() {
     assert_eq!(labels, ["doka · module.a", "doka · module.b"]);
 }
 
+fn from(origins: &[&str], mut a: SearchArtifact) -> SearchArtifact {
+    a.origins = origins.iter().map(|o| o.to_string()).collect();
+    a
+}
+
+fn set_topo(projects: &[&str]) -> ServiceTopology {
+    let mut t = topo(
+        &[],
+        vec![
+            from(&["infra"], index("orders")),
+            from(&["infra", "adapter"], index("audit")),
+            from(&["adapter"], index("local")),
+        ],
+        vec![
+            use_("writer", "audit", "write"),
+            use_("adapter:writer", "orders", "write"),
+        ],
+    );
+    t.elasticsearch.projects = projects.iter().map(|p| p.to_string()).collect();
+    t
+}
+
+fn foreign_labels(t: &ServiceTopology) -> Vec<String> {
+    let mut v: Vec<_> = search_graph(t)
+        .nodes
+        .iter()
+        .filter(|n| n.foreign)
+        .map(|n| n.label.clone())
+        .collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn without_a_set_nothing_is_foreign() {
+    let mut t = set_topo(&[]);
+    t.elasticsearch
+        .artifacts
+        .iter_mut()
+        .for_each(|a| a.origins.clear());
+    assert!(search_graph(&t).nodes.iter().all(|n| !n.foreign));
+}
+
+#[test]
+fn foreign_follows_the_primary_project_in_either_order() {
+    assert_eq!(foreign_labels(&set_topo(&["adapter", "infra"])), ["orders"]);
+    let l = foreign_labels(&set_topo(&["infra", "adapter"]));
+    assert_eq!(l.len(), 2);
+    assert!(l[0] == "local" && l[1].starts_with("writer"));
+}
+
+#[test]
+fn a_deduplicated_artifact_with_the_primary_among_its_origins_is_not_foreign() {
+    let g = search_graph(&set_topo(&["adapter", "infra"]));
+    assert!(!node(&g, "audit").1.foreign);
+}
+
+#[test]
+fn foreign_services_keep_short_unique_labels() {
+    let g = search_graph(&set_topo(&["infra", "adapter"]));
+    let writers: Vec<_> = g.nodes.iter().filter(|n| n.kind == "service").collect();
+    assert_eq!(writers.len(), 2);
+    assert!(writers.iter().all(|n| !n.label.contains("adapter:")));
+    assert_ne!(writers[0].label, writers[1].label);
+    assert!(g.nodes.iter().all(|n| n.label.chars().count() <= 32));
+    let foreign = writers.iter().find(|n| n.foreign).unwrap();
+    assert!(foreign.label.starts_with("writer"));
+    assert!(foreign.title.ends_with(" · adapter"));
+}
+
 /// Counts only, no names; the path comes from the environment (spec `## Abnahme-Probe`).
 #[test]
 #[ignore]
