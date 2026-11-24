@@ -35,3 +35,8 @@ export global ElasticsearchData {
     callback fit(float, float);
     callback resized(float);
 }
+
+// Stub: the component follows in the view commit.
+export component EsView inherits Rectangle {
+    out property <bool> header-scrolls: false;
+}

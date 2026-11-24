@@ -4,6 +4,8 @@
 
 mod state;
 mod view;
+#[cfg(test)]
+mod view_check;
 
 use slint::ComponentHandle;
 
