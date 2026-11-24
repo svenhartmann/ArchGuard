@@ -217,3 +217,141 @@ fn rule_types_without_a_params_index_are_no_gap() {
             .contains("elasticstack_kibana_alerting_rule.anomaly")
     }));
 }
+
+fn named<'a>(r: &'a ServiceTopology, address: &str) -> &'a SearchArtifact {
+    r.elasticsearch
+        .artifacts
+        .iter()
+        .find(|a| a.address == address)
+        .unwrap_or_else(|| panic!("{address} missing: {:#?}", r.elasticsearch.artifacts))
+}
+
+#[test]
+fn root_variable_default_names_the_artifact_with_its_source() {
+    let r = fixture();
+    let a = find(&r, "index", "orders-v3");
+    assert_eq!(a.address, "elasticstack_elasticsearch_index.from_default");
+    let d = &a.evidence[0].description;
+    assert!(
+        d.contains("default of variable root_index (vars.tf:"),
+        "{d}"
+    );
+    assert_eq!(
+        find(&r, "index_template", "vars-template").patterns,
+        ["vars-a-*", "vars-b-*"]
+    );
+}
+
+#[test]
+fn literal_module_argument_beats_the_variable_default() {
+    let r = fixture();
+    let a = find(&r, "index", "orders-v2");
+    assert_eq!(
+        a.address,
+        "module.literal_arg.elasticstack_elasticsearch_index.named"
+    );
+    let d = &a.evidence[0].description;
+    assert!(
+        d.contains("argument index_name of module.literal_arg (vars.tf:"),
+        "{d}"
+    );
+    let t = named(
+        &r,
+        "module.literal_arg.elasticstack_elasticsearch_index_template.named",
+    );
+    assert_eq!(t.patterns, ["vars-a-*", "vars-b-*"]);
+}
+
+#[test]
+fn module_argument_var_follows_one_hop_to_the_root_default() {
+    let r = fixture();
+    let a = find(&r, "index", "orders-v4");
+    assert_eq!(
+        a.address,
+        "module.chained_arg.elasticstack_elasticsearch_index.named"
+    );
+    assert!(
+        a.evidence[0]
+            .description
+            .contains("default of variable module_index")
+    );
+    let t = named(
+        &r,
+        "module.chained_arg.elasticstack_elasticsearch_index_template.named",
+    );
+    assert_eq!(t.patterns, ["chained-*"]);
+}
+
+#[test]
+fn unset_module_argument_falls_back_to_the_variable_default() {
+    let r = fixture();
+    let a = find(&r, "index", "named-default");
+    assert_eq!(
+        a.address,
+        "module.defaulted.elasticstack_elasticsearch_index.named"
+    );
+    assert!(
+        a.evidence[0]
+            .description
+            .contains("default of variable index_name (modules/named/main.tf:")
+    );
+}
+
+#[test]
+fn unresolvable_variable_values_stay_gaps() {
+    let r = fixture();
+    assert!(!r.complete);
+    let gaps = |file: &str| {
+        r.diagnostics
+            .iter()
+            .filter(|d| d.file == file && d.message.contains("not a literal"))
+            .map(|d| d.message.clone())
+            .collect::<Vec<_>>()
+    };
+    let root = gaps("vars.tf");
+    assert_eq!(root.len(), 3, "{root:#?}");
+    for needle in ["index.secret", "index.unset", "index.from_local"] {
+        assert!(
+            root.iter().any(|m| m.contains(needle)),
+            "{needle}: {root:#?}"
+        );
+    }
+    let module = gaps("modules/named/main.tf");
+    assert_eq!(module.len(), 2, "{module:#?}");
+    assert!(
+        module
+            .iter()
+            .any(|m| m.contains("module.defaulted") && m.contains("index_template"))
+    );
+    assert!(
+        module
+            .iter()
+            .any(|m| m.contains("module.dynamic_arg") && m.contains("index.named"))
+    );
+    assert!(
+        named(
+            &r,
+            "module.dynamic_arg.elasticstack_elasticsearch_index.named"
+        )
+        .name
+        .is_none()
+    );
+}
+
+#[test]
+fn sensitive_defaults_locals_and_tfvars_are_never_read() {
+    let r = fixture();
+    assert!(
+        named(&r, "elasticstack_elasticsearch_index.secret")
+            .name
+            .is_none()
+    );
+    let all = format!("{:#?}{:#?}", r.elasticsearch, r.diagnostics);
+    for forbidden in [
+        "secret-must-not-appear",
+        "local-must-not-appear",
+        "tfvars-must-not-appear",
+    ] {
+        assert!(!all.contains(forbidden), "{forbidden} leaked");
+    }
+}
