@@ -73,6 +73,25 @@ component Findings inherits VerticalLayout {
     }
 }
 
+// The open artifact's details: also the Elasticsearch tab's detail bar (es_view.slint).
+export component SearchDetailBody inherits VerticalLayout {
+    in property <SvcSearchDetail> detail;
+    spacing: 3px;
+    if detail.scope != "": Mono { text: detail.scope; }
+    if detail.declaration.length > 0: Heading { text: @tr("Declaration"); }
+    for e in detail.declaration: VerticalLayout {
+        Mono { text: e.location; }
+        Note { text: e.description; }
+    }
+    for p in detail.patterns: Mono { text: p; }
+    if detail.references.length > 0: Heading { text: @tr("References"); }
+    for ref in detail.references: Mono { text: ref; }
+    Note { text: @tr("Written by: {}", detail.writers != "" ? detail.writers : "—"); }
+    Note { text: @tr("Read by: {}", detail.readers != "" ? detail.readers : "—"); }
+    if detail.others != "": Note { text: @tr("Other access: {}", detail.others); }
+    Findings { items: detail.findings; }
+}
+
 export component SearchSection inherits VerticalLayout {
     in property <SvcSearch> data;
     callback choose(int);
@@ -91,23 +110,10 @@ export component SearchSection inherits VerticalLayout {
                 open: r.open;
                 clicked => { root.choose(r.index); }
             }
-            if r.open: VerticalLayout {
+            if r.open: SearchDetailBody {
                 padding-left: 22px;
                 padding-bottom: 6px;
-                spacing: 3px;
-                if data.detail.scope != "": Mono { text: data.detail.scope; }
-                Heading { text: @tr("Declaration"); }
-                for e in data.detail.declaration: VerticalLayout {
-                    Mono { text: e.location; }
-                    Note { text: e.description; }
-                }
-                for p in data.detail.patterns: Mono { text: p; }
-                if data.detail.references.length > 0: Heading { text: @tr("References"); }
-                for ref in data.detail.references: Mono { text: ref; }
-                Note { text: @tr("Written by: {}", data.detail.writers != "" ? data.detail.writers : "—"); }
-                Note { text: @tr("Read by: {}", data.detail.readers != "" ? data.detail.readers : "—"); }
-                if data.detail.others != "": Note { text: @tr("Other access: {}", data.detail.others); }
-                Findings { items: data.detail.findings; }
+                detail: data.detail;
             }
         }
     }

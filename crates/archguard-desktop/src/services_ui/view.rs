@@ -447,7 +447,7 @@ fn edges(sc: &Scope, s: &ServicesState, lay: &layout::Layout, deps: &[usize]) ->
     out
 }
 
-pub(super) fn evidence(items: &[ServiceEvidence]) -> ModelRc<SvcEvidence> {
+pub(crate) fn evidence(items: &[ServiceEvidence]) -> ModelRc<SvcEvidence> {
     model(items.iter().map(|e| {
         let line = e.line.map_or(String::new(), |l| format!(":{l}"));
         let pointer = if e.pointer.is_empty() {

@@ -14,6 +14,7 @@ slint::slint! {
     export component Page inherits Window {
         out property <bool> scrolls: view.header-scrolls;
         out property <bool> zoom-visible: view.zoom-visible;
+        out property <bool> bar-packed: view.bar-packed;
         view := EsView {}
     }
 }
@@ -219,4 +220,47 @@ fn zoom_and_fit_are_visible_at_400_px() {
     page.global::<ElasticsearchData>().set_model(model(true));
     frame(&window);
     assert!(page.get_zoom_visible(), "zoom and Fit lie beyond the pane");
+}
+
+fn with_detail(has: bool) -> EsModel {
+    let mut m = model(true);
+    m.has_detail = has;
+    m.focus = if has { "idx-a".into() } else { "".into() };
+    if has {
+        m.detail.writers = "svc-a".into();
+        m.detail.readers = "svc-b".into();
+    }
+    m
+}
+
+/// The bar appears with the focus (below the tree at 400 px) and goes with "Show all".
+#[test]
+fn the_detail_bar_appears_with_the_focus_and_goes_without() {
+    let window = window();
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    let data = page.global::<ElasticsearchData>();
+    data.set_model(with_detail(false));
+    let closed = frame(&window);
+    data.set_model(with_detail(true));
+    let open = frame(&window);
+    assert!(
+        ink(&open, H * 3 / 4, H) > ink(&closed, H * 3 / 4, H),
+        "the bar shows its texts below the tree"
+    );
+    data.set_model(with_detail(false));
+    assert!(same(&frame(&window), &closed), "the bar is gone");
+}
+
+/// A short detail (an undeclared name) sits at the top of a bar taller than it; the entries are
+/// not spread over the bar's height.
+#[test]
+fn the_detail_entries_are_packed_at_the_top_of_a_tall_bar() {
+    let window = window();
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    page.global::<ElasticsearchData>()
+        .set_model(with_detail(true));
+    frame(&window);
+    assert!(page.get_bar_packed(), "the entries are spread over the bar");
 }
