@@ -453,3 +453,21 @@ fn large_json_with_the_pattern_is_a_diagnostic_not_silence() {
         r.diagnostics
     );
 }
+
+#[test]
+fn alias_of_an_index_with_unknown_name_is_stored_without_target() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("main.tf"),
+        "resource \"elasticstack_elasticsearch_index\" \"i\" {\n  name = local.n\n  alias {\n    name = \"orders\"\n  }\n}\n",
+    )
+    .unwrap();
+    let r = analyze_services(dir.path()).unwrap();
+    assert!(find(&r, "alias", "orders").references.is_empty());
+    assert!(
+        r.elasticsearch
+            .artifacts
+            .iter()
+            .any(|a| a.kind == "index" && a.name.is_none())
+    );
+}

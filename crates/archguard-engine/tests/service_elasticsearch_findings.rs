@@ -192,3 +192,29 @@ fn comma_separated_and_excluded_usage_names() {
     let r = analyze_services(root).unwrap();
     assert_eq!(subjects(&r, "undeclared_index"), ["a,z"]);
 }
+
+#[test]
+fn alias_of_an_index_with_unknown_name_is_declared_and_keeps_its_own_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(
+        root,
+        "compose.yaml",
+        "services:\n  a:\n    build: ./a\n  b:\n    build: ./b\n",
+    );
+    put(
+        root,
+        "infra/main.tf",
+        "resource \"elasticstack_elasticsearch_index\" \"i\" {\n  name = local.n\n  alias {\n    name = \"orders\"\n  }\n}\n",
+    );
+    let java = |access: &str| {
+        format!(
+            "import org.elasticsearch.client.Client;\nclass W {{ var r = new {access}(\"orders\"); }}\n"
+        )
+    };
+    put(root, "a/W.java", &java("IndexRequest"));
+    put(root, "b/W.java", &java("IndexRequest"));
+    let r = analyze_services(root).unwrap();
+    assert!(subjects(&r, "undeclared_index").is_empty());
+    assert_eq!(subjects(&r, "shared_write_index"), ["orders"]);
+}
