@@ -204,7 +204,7 @@ fn stdout_of(args: &[&str]) -> String {
 fn services_two_paths_merge_the_search_model_with_origins_in_text() {
     let text = stdout_of(&[ES_INFRA, ES_ADAPTER]);
     assert!(text.contains("project set: infra, adapter"), "{text}");
-    assert!(text.contains(" [from adapter]"), "{text}");
+    assert!(text.contains(" [from infra]"), "{text}");
     assert!(text.contains(" [from infra, adapter]"), "{text}");
     assert!(!text.contains("undeclared_index"), "{text}");
 }
