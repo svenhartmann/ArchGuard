@@ -6,11 +6,12 @@ import { Button, ZoomControls, Legend, EmptyState } from "widgets.slint";
 import { Fmt } from "format.slint";
 import { ServicesTree, SvcRow, SvcEdge } from "services_tree.slint";
 
-// One artifact kind of the filter: all nodes of the kind, and the ones shown.
+// One artifact kind of the filter: declared nodes of the kind, the declared ones shown, and ghosts apart.
 export struct EsKind {
     kind: string,
     count: int,
     shown: int,
+    ghosts: int,
 }
 
 export struct EsModel {
