@@ -49,16 +49,24 @@ fn covers(a: &str, b: &str) -> bool {
     glob(a, &b.replace('*', "")) || glob(b, &a.replace('*', ""))
 }
 
-/// Whether `a` names or matches the index `index`: indices and aliases by name, templates,
-/// data views and alerting rules by their patterns; every other kind covers nothing.
+/// The names of a usage's index list: comma-split, trimmed, without empty parts and `-`
+/// exclusions (an exclusion names nothing). The one split rule for findings and covers.
+fn index_parts(index: &str) -> impl Iterator<Item = &str> {
+    index
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty() && !p.starts_with('-'))
+}
+
+/// Whether `a` names or matches a name of the usage's index list `index`: indices and aliases
+/// by name, templates, data views and alerting rules by their patterns; every other kind
+/// covers nothing.
 pub fn search_artifact_covers(a: &SearchArtifact, index: &str) -> bool {
-    match a.kind.as_str() {
-        "index" | "alias" => a.name.as_deref() == Some(index),
-        "index_template" | "data_view" | "alerting_rule" => {
-            a.patterns.iter().any(|p| covers(p, index))
-        }
+    index_parts(index).any(|p| match a.kind.as_str() {
+        "index" | "alias" => a.name.as_deref() == Some(p),
+        "index_template" | "data_view" | "alerting_rule" => a.patterns.iter().any(|q| covers(q, p)),
         _ => false,
-    }
+    })
 }
 
 /// The Elasticsearch reader gaps: the only way to create such a diagnostic is [`es_gap`], the
@@ -203,11 +211,7 @@ fn usage_hits(model: &ElasticsearchModel, out: &mut Hits<'_>) {
     let covered = |p: &str| declared.iter().any(|d| covers(d, p));
     if arts.iter().any(|a| a.address.contains("elasticstack_")) {
         for u in &model.usages {
-            let parts = u.index.split(',').map(str::trim);
-            if parts
-                .filter(|p| !p.is_empty() && !p.starts_with('-'))
-                .any(|p| !covered(p))
-            {
+            if index_parts(&u.index).any(|p| !covered(p)) {
                 add(
                     out,
                     "undeclared_index",
