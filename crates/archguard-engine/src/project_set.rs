@@ -69,8 +69,8 @@ fn resolve(file: &Path, base: &Path, entries: &[PathBuf]) -> Result<Vec<PathBuf>
 
 /// Reads and validates a set file; relative entries resolve against its folder and are canonicalised.
 pub fn read_project_set(path: &Path) -> Result<ProjectSet, ArchguardError> {
-    // Before open: a FIFO would block there; a symlinked set file is refused too.
-    let meta = std::fs::symlink_metadata(path).map_err(|e| fail(path, e.kind()))?;
+    // Before open: a FIFO would block there; links are followed, their target must be a file.
+    let meta = std::fs::metadata(path).map_err(|e| fail(path, e.kind()))?;
     if !meta.is_file() {
         return Err(fail(path, "not a regular file"));
     }
