@@ -344,3 +344,59 @@ fn unresolvable_constants_stay_gaps() {
     assert_eq!(usages(&report, "web"), pairs(&[("web-x", "read")]));
     assert_eq!(gaps(&report), 5);
 }
+
+/// Usages of service `api` for one source file calling `.index(arg)` (Java) or the language's call.
+fn api_usages(files: &[(&str, &str)]) -> (Vec<(String, String)>, usize) {
+    let dir = tempfile::tempdir().unwrap();
+    put(
+        dir.path(),
+        "compose.yaml",
+        "services:\n  api:\n    build: ./api\n",
+    );
+    for (path, text) in files {
+        put(dir.path(), &format!("api/{path}"), text);
+    }
+    let report = analyze_services(dir.path()).unwrap();
+    (usages(&report, "api"), gaps(&report))
+}
+
+const JAVA_USE: &str = "import org.elasticsearch.client.Client;\nclass U { var r = new SearchRequest.Builder().index(Doc.IDX); }\n";
+
+#[test]
+fn class_literals_and_logger_fields_do_not_hide_the_owner() {
+    let doc = "class Doc {\n  private static final Logger log = LoggerFactory.getLogger(Doc.class);\n  static final String IDX = \"orders\";\n}\n";
+    let (u, g) = api_usages(&[("Doc.java", doc), ("U.java", JAVA_USE)]);
+    assert_eq!((u, g), (pairs(&[("orders", "read")]), 0));
+    // A nested class closes: the constant after it belongs to the outer class again.
+    let nested = "class Doc {\n  static class In { }\n  static final String IDX = \"outer\";\n}\n";
+    let (u, g) = api_usages(&[("Doc.java", nested), ("U.java", JAVA_USE)]);
+    assert_eq!((u, g), (pairs(&[("outer", "read")]), 0));
+}
+
+#[test]
+fn interface_constants_resolve_but_method_locals_do_not() {
+    let doc = "interface Doc {\n  String IDX = \"if-idx\";\n}\n";
+    let (u, g) = api_usages(&[("Doc.java", doc), ("U.java", JAVA_USE)]);
+    assert_eq!((u, g), (pairs(&[("if-idx", "read")]), 0));
+    let local = "interface Doc {\n  default void f() {\n    String IDX = \"local\";\n  }\n}\n";
+    let (u, g) = api_usages(&[("Doc.java", local), ("U.java", JAVA_USE)]);
+    assert_eq!((u, g), (pairs(&[]), 1));
+}
+
+#[test]
+fn only_module_level_python_and_static_csharp_constants_count() {
+    let py = "import elasticsearch\ndef f(es):\n    IDX = \"local\"\n    es.get(index=IDX, id=1)\n";
+    assert_eq!(api_usages(&[("a.py", py)]), (pairs(&[]), 1));
+    let cs = |decl: &str| {
+        format!(
+            "using Nest;\nclass K {{\n  {decl}\n  void f() {{ client.Search<D>(s => s.Index(K.IDX)); }}\n}}\n"
+        )
+    };
+    let inst = cs("readonly string IDX = \"inst\";");
+    assert_eq!(api_usages(&[("K.cs", &inst)]), (pairs(&[]), 1));
+    let stat = cs("static readonly string IDX = \"stat\";");
+    assert_eq!(
+        api_usages(&[("K.cs", &stat)]),
+        (pairs(&[("stat", "read")]), 0)
+    );
+}

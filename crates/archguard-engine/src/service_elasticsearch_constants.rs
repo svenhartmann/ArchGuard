@@ -128,21 +128,97 @@ fn lang(ext: &str) -> &'static str {
     }
 }
 
-const TYPE_KEYWORDS: [&str; 5] = ["class", "interface", "enum", "record", "struct"];
+/// The type bodies a Java/C# file has open: (name, brace depth of the body, is interface).
+#[derive(Default)]
+struct Scope {
+    open: Vec<(String, usize, bool)>,
+    depth: usize,
+    waiting: Option<(String, bool)>,
+    keyword: Option<bool>,
+}
+
+impl Scope {
+    /// Follows the braces and type declarations of `code`; `.class` literals are not declarations.
+    fn feed(&mut self, code: &str) {
+        let mut quoted = false;
+        let mut word = String::new();
+        let mut prev = ' ';
+        for ch in code.chars().chain([' ']) {
+            if ch.is_alphanumeric() || ch == '_' {
+                word.push(ch);
+                continue;
+            }
+            if !word.is_empty() && !quoted {
+                self.on_word(&word, prev);
+            }
+            if !word.is_empty() {
+                prev = 'a';
+                word.clear();
+            }
+            match ch {
+                '"' => quoted = !quoted,
+                '{' if !quoted => self.open_body(),
+                '}' if !quoted => self.close_body(),
+                _ => {}
+            }
+            if !ch.is_whitespace() {
+                prev = ch;
+            }
+        }
+    }
+
+    /// A word after a type keyword names the type; `prev` is the character before this word.
+    fn on_word(&mut self, w: &str, prev: char) {
+        match (self.keyword.take(), w) {
+            (Some(iface), w) => self.waiting = Some((w.to_owned(), iface)),
+            (None, "class" | "enum" | "record" | "struct") if prev != '.' => {
+                self.keyword = Some(false)
+            }
+            (None, "interface") if prev != '.' => self.keyword = Some(true),
+            _ => {}
+        }
+    }
+
+    fn open_body(&mut self) {
+        self.depth += 1;
+        if let Some((name, iface)) = self.waiting.take() {
+            self.open.push((name, self.depth, iface));
+        }
+    }
+
+    fn close_body(&mut self) {
+        while self.open.last().is_some_and(|(_, d, _)| *d >= self.depth) {
+            self.open.pop();
+        }
+        self.depth = self.depth.saturating_sub(1);
+    }
+
+    /// The innermost type and whether a field declared here is a member of an interface.
+    fn owner(&self) -> Option<(&str, bool)> {
+        let (name, depth, iface) = self.open.last()?;
+        Some((name, *iface && *depth == self.depth))
+    }
+}
 
 /// The constant's name when `head` (the text before `=`) declares a string constant:
-/// Java `static final String`, C# `const string` (also `readonly`), TypeScript `const`,
-/// Python module level `NAME`.
-fn declared_name<'a>(ext: &str, head: &[&'a str], indented: bool) -> Option<&'a str> {
+/// Java `static final String` (or a bare `String` field of an interface), C# `const string`
+/// or `static readonly string`, TypeScript `const`, Python `NAME`; the last two only at top level.
+fn declared_name<'a>(ext: &str, head: &[&'a str], top: bool, interface: bool) -> Option<&'a str> {
     let has = |w: &str| head.contains(&w);
     let ok = match ext {
-        "java" => has("static") && has("final") && has("String"),
-        "cs" => (has("const") || has("readonly")) && has("string"),
-        "py" => head.len() == 1 && !indented,
-        _ => head.starts_with(&["const"]) || head.starts_with(&["export", "const"]),
+        "java" => java_constant(head, interface),
+        "cs" => (has("const") || (has("static") && has("readonly"))) && has("string"),
+        "py" => head.len() == 1 && top,
+        _ => top && (head.starts_with(&["const"]) || head.starts_with(&["export", "const"])),
     };
     let name = head.last().filter(|_| ok)?;
     Some(name.split(':').next().unwrap_or(name))
+}
+
+fn java_constant(head: &[&str], interface: bool) -> bool {
+    let has = |w: &str| head.contains(&w);
+    let bare = interface && head.len() >= 2 && head[head.len() - 2] == "String";
+    (has("static") && has("final") && has("String")) || bare
 }
 
 /// The literal on the right of `=`; a `;` inside it cuts it, which makes it a gap.
@@ -152,58 +228,55 @@ fn value_of(ext: &str, value: &str) -> Option<String> {
 }
 
 /// String constants one file declares.
-// shortcut: the owner is the last type keyword seen above the line, and unqualified references ignore
-// imports and nesting; upgrade if the same name in two classes of one service must be told apart.
+// shortcut: unqualified references ignore imports and nesting, and `=` splits the line at its first
+// occurrence; upgrade if a name declared in two classes of one service must be told apart.
 fn declarations(text: &str, ext: &str, rel: &str) -> Vec<(String, Constant)> {
     let stem = rel.rsplit('/').next().unwrap_or(rel);
     let stem = stem.rsplit_once('.').map_or(stem, |(s, _)| s);
     let jvm_like = matches!(ext, "java" | "cs");
-    let mut owner = stem.to_owned();
+    let mut scope = Scope::default();
     let mut out = Vec::new();
-    for (i, line) in text.lines().enumerate() {
-        let line = line.trim();
+    for (i, raw) in text.lines().enumerate() {
+        let line = raw.trim();
         if line.starts_with("//") || line.starts_with('*') || line.starts_with("/*") {
             continue;
         }
-        let mut words = line.split(|c: char| !(c.is_alphanumeric() || c == '_'));
-        if let Some(next) = jvm_like
-            .then(|| {
-                words
-                    .position(|w| TYPE_KEYWORDS.contains(&w))
-                    .and_then(|_| words.next())
-            })
-            .flatten()
-        {
-            owner = next.to_owned();
-        }
-        let Some((head, value)) = line
+        let split = line
             .split_once('=')
-            .filter(|(h, v)| !v.starts_with('=') && !h.ends_with(['!', '<', '>']))
-        else {
-            continue;
-        };
-        let head: Vec<&str> = head.split_whitespace().collect();
-        let indented = line.starts_with(char::is_whitespace);
-        let Some(name) = declared_name(ext, &head, indented) else {
-            continue;
-        };
-        out.push((
-            name.to_owned(),
-            Constant {
-                owner: if jvm_like {
-                    owner.clone()
-                } else {
-                    stem.to_owned()
+            .filter(|(h, v)| !v.starts_with('=') && !h.ends_with(['!', '<', '>']));
+        let (before, after) = split.map_or((line, ""), |(h, v)| (h, v));
+        if jvm_like {
+            scope.feed(before);
+        }
+        let owner = scope.owner();
+        let found = split.and_then(|(head, value)| {
+            // The brace that closes a one-line body sits after the value; it is read below.
+            let head = head.rsplit(['{', ';']).next().unwrap_or(head);
+            let head: Vec<&str> = head.split_whitespace().collect();
+            let top = !raw.starts_with(char::is_whitespace);
+            let name = declared_name(ext, &head, top, owner.is_some_and(|o| o.1))?;
+            Some((name, value))
+        });
+        if let Some((name, value)) = found {
+            let owner_name = owner.map_or(stem, |o| o.0);
+            let owner_name = if jvm_like { owner_name } else { stem };
+            out.push((
+                name.to_owned(),
+                Constant {
+                    owner: owner_name.to_owned(),
+                    value: value_of(ext, value),
+                    evidence: site(
+                        rel,
+                        i as u32 + 1,
+                        name,
+                        "Index name constant declared here.",
+                    ),
                 },
-                value: value_of(ext, value),
-                evidence: site(
-                    rel,
-                    i as u32 + 1,
-                    name,
-                    "Index name constant declared here.",
-                ),
-            },
-        ));
+            ));
+        }
+        if jvm_like {
+            scope.feed(after);
+        }
     }
     out
 }
