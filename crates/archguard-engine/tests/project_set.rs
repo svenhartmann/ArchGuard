@@ -27,7 +27,10 @@ fn err(root: &Path, text: &str) -> String {
 fn relative_entries_resolve_against_the_file_folder() {
     let t = tempfile::tempdir().unwrap();
     dirs(t.path(), &["infra", "adapter"]);
-    let f = set_file(t.path(), "name = \"search\"\nprojects = [\"infra\", \"./adapter\"]\n");
+    let f = set_file(
+        t.path(),
+        "name = \"search\"\nprojects = [\"infra\", \"./adapter\"]\n",
+    );
     let set = read_project_set(&f).unwrap();
     let base = t.path().canonicalize().unwrap();
     assert_eq!(set.name, "search");
@@ -40,7 +43,10 @@ fn absolute_entries_stay_absolute() {
     let other = tempfile::tempdir().unwrap();
     dirs(t.path(), &["a"]);
     let abs = other.path().canonicalize().unwrap();
-    let text = format!("name = \"s\"\nprojects = [\"a\", {:?}]\n", abs.to_str().unwrap());
+    let text = format!(
+        "name = \"s\"\nprojects = [\"a\", {:?}]\n",
+        abs.to_str().unwrap()
+    );
     let set = read_project_set(&set_file(t.path(), &text)).unwrap();
     assert_eq!(set.projects[1], abs);
 }
@@ -50,7 +56,10 @@ fn write_then_read_round_trips_and_has_stable_format() {
     let t = tempfile::tempdir().unwrap();
     dirs(t.path(), &["a", "b"]);
     let base = t.path().canonicalize().unwrap();
-    let set = ProjectSet { name: "my \"set\"".into(), projects: vec![base.join("a"), base.join("b")] };
+    let set = ProjectSet {
+        name: "my \"set\"".into(),
+        projects: vec![base.join("a"), base.join("b")],
+    };
     let f = t.path().join("out.archguard-set.toml");
     write_project_set(&f, &set).unwrap();
     assert_eq!(read_project_set(&f).unwrap(), set);
@@ -68,8 +77,14 @@ fn write_rejects_an_invalid_set_and_keeps_the_old_file() {
     let t = tempfile::tempdir().unwrap();
     dirs(t.path(), &["a"]);
     let f = set_file(t.path(), "old");
-    let set = ProjectSet { name: "s".into(), projects: vec![t.path().join("a")] };
-    assert!(matches!(write_project_set(&f, &set), Err(ArchguardError::Config(_))));
+    let set = ProjectSet {
+        name: "s".into(),
+        projects: vec![t.path().join("a")],
+    };
+    assert!(matches!(
+        write_project_set(&f, &set),
+        Err(ArchguardError::Config(_))
+    ));
     assert_eq!(fs::read_to_string(&f).unwrap(), "old");
 }
 
@@ -83,7 +98,10 @@ fn not_toml() {
 fn unknown_key() {
     let t = tempfile::tempdir().unwrap();
     dirs(t.path(), &["a", "b"]);
-    err(t.path(), "name = \"s\"\nprojects = [\"a\", \"b\"]\nextra = 1\n");
+    err(
+        t.path(),
+        "name = \"s\"\nprojects = [\"a\", \"b\"]\nextra = 1\n",
+    );
 }
 
 #[test]
@@ -97,8 +115,17 @@ fn empty_and_overlong_name() {
     let t = tempfile::tempdir().unwrap();
     dirs(t.path(), &["a", "b"]);
     err(t.path(), "name = \"  \"\nprojects = [\"a\", \"b\"]\n");
-    err(t.path(), &format!("name = \"{}\"\nprojects = [\"a\", \"b\"]\n", "n".repeat(201)));
-    let ok = format!("name = \"{}\"\nprojects = [\"a\", \"b\"]\n", "n".repeat(200));
+    err(
+        t.path(),
+        &format!(
+            "name = \"{}\"\nprojects = [\"a\", \"b\"]\n",
+            "n".repeat(201)
+        ),
+    );
+    let ok = format!(
+        "name = \"{}\"\nprojects = [\"a\", \"b\"]\n",
+        "n".repeat(200)
+    );
     read_project_set(&set_file(t.path(), &ok)).unwrap();
 }
 
@@ -116,12 +143,32 @@ fn project_count_bounds() {
     for n in &names {
         fs::create_dir(t.path().join(n)).unwrap();
     }
-    let list = |k: usize| names[..k].iter().map(|n| format!("{n:?}")).collect::<Vec<_>>().join(", ");
+    let list = |k: usize| {
+        names[..k]
+            .iter()
+            .map(|n| format!("{n:?}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     err(t.path(), "name = \"s\"\nprojects = []\n");
-    err(t.path(), &format!("name = \"s\"\nprojects = [{}]\n", list(1)));
-    err(t.path(), &format!("name = \"s\"\nprojects = [{}]\n", list(17)));
-    read_project_set(&set_file(t.path(), &format!("name = \"s\"\nprojects = [{}]\n", list(2)))).unwrap();
-    read_project_set(&set_file(t.path(), &format!("name = \"s\"\nprojects = [{}]\n", list(16)))).unwrap();
+    err(
+        t.path(),
+        &format!("name = \"s\"\nprojects = [{}]\n", list(1)),
+    );
+    err(
+        t.path(),
+        &format!("name = \"s\"\nprojects = [{}]\n", list(17)),
+    );
+    read_project_set(&set_file(
+        t.path(),
+        &format!("name = \"s\"\nprojects = [{}]\n", list(2)),
+    ))
+    .unwrap();
+    read_project_set(&set_file(
+        t.path(),
+        &format!("name = \"s\"\nprojects = [{}]\n", list(16)),
+    ))
+    .unwrap();
 }
 
 #[test]
@@ -147,14 +194,20 @@ fn symlink_entry_resolves_to_its_target_and_duplicates_are_caught() {
     dirs(t.path(), &["a", "b"]);
     std::os::unix::fs::symlink(t.path().join("a"), t.path().join("link")).unwrap();
     let ok = set_file(t.path(), "name = \"s\"\nprojects = [\"link\", \"b\"]\n");
-    assert_eq!(read_project_set(&ok).unwrap().projects[0], t.path().canonicalize().unwrap().join("a"));
+    assert_eq!(
+        read_project_set(&ok).unwrap().projects[0],
+        t.path().canonicalize().unwrap().join("a")
+    );
     err(t.path(), "name = \"s\"\nprojects = [\"a\", \"link\"]\n");
 }
 
 #[test]
 fn file_over_64_kib_and_missing_file() {
     let t = tempfile::tempdir().unwrap();
-    err(t.path(), &format!("name = \"s\"\n# {}\n", "x".repeat(64 * 1024)));
+    err(
+        t.path(),
+        &format!("name = \"s\"\n# {}\n", "x".repeat(64 * 1024)),
+    );
     let m = match read_project_set(&t.path().join("none.archguard-set.toml")) {
         Err(ArchguardError::Config(m)) => m,
         other => panic!("{other:?}"),
@@ -165,13 +218,17 @@ fn file_over_64_kib_and_missing_file() {
 #[test]
 fn errors_never_echo_the_content() {
     let t = tempfile::tempdir().unwrap();
-    let m = err(t.path(), "name = \"topsecretvalue\"\nprojects = [\"nope-dir\", \"x\"]\n");
+    let m = err(
+        t.path(),
+        "name = \"topsecretvalue\"\nprojects = [\"nope-dir\", \"x\"]\n",
+    );
     assert!(!m.contains("topsecretvalue"));
 }
 
 #[test]
 fn fixture_file_has_the_expected_content() {
-    let f = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/es-set/search.archguard-set.toml");
+    let f = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/es-set/search.archguard-set.toml");
     let text = fs::read_to_string(f).unwrap();
     assert!(text.contains("name = \"search\""));
     assert!(text.contains("projects = [\"infra\", \"adapter\"]"));
