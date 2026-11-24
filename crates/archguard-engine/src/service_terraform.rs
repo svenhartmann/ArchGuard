@@ -13,6 +13,7 @@ use hcl_edit::{Span, parser};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::path::{Component, Path};
+use std::rc::Rc;
 
 const WORKLOADS: [&str; 12] = [
     "kubernetes_deployment",
@@ -56,6 +57,30 @@ pub(super) struct Resource<'a> {
     pub(super) address: String,
     pub(super) block: &'a Block,
     pub(super) file: &'a TfFile,
+    pub(super) module: Rc<ModuleCtx<'a>>,
+}
+
+/// One module instance: its `variable` blocks, the `module` block that called it and the
+/// caller's context. Lets readers resolve `var.x` without a second parse.
+pub(super) struct ModuleCtx<'a> {
+    variables: Vec<(&'a Block, &'a TfFile)>,
+    call: Option<(&'a Block, &'a TfFile)>,
+    parent: Option<Rc<ModuleCtx<'a>>>,
+    /// Module nesting level; the root is 0.
+    depth: usize,
+}
+
+impl<'a> ModuleCtx<'a> {
+    pub(super) fn variable(&self, name: &str) -> Option<(&'a Block, &'a TfFile)> {
+        let named = |b: &&(&Block, &TfFile)| b.0.labels.first().is_some_and(|l| l.as_str() == name);
+        self.variables.iter().find(named).copied()
+    }
+    pub(super) fn call(&self) -> Option<(&'a Block, &'a TfFile)> {
+        self.call
+    }
+    pub(super) fn parent(&self) -> Option<&Rc<ModuleCtx<'a>>> {
+        self.parent.as_ref()
+    }
 }
 
 impl Resource<'_> {
@@ -115,7 +140,7 @@ pub(super) fn deployments(
         let scope = format!("terraform:{}", if dir.is_empty() { "." } else { dir });
         let mut instances = Vec::new();
         let mut deep = BTreeSet::new();
-        instance(&modules, dir, "", 0, &mut instances, &mut deep);
+        instance(&modules, dir, "", None, &mut instances, &mut deep);
         for file in deep {
             let message = format!(
                 "Terraform modules are nested deeper than {MAX_MODULE_DEPTH} levels; the modules called below are not analyzed and their resources are unknown."
@@ -263,13 +288,23 @@ fn instance<'a>(
     modules: &'a BTreeMap<String, Vec<TfFile>>,
     dir: &str,
     prefix: &str,
-    depth: usize,
+    caller: Option<(Rc<ModuleCtx<'a>>, &'a Block, &'a TfFile)>,
     out: &mut Vec<Vec<Resource<'a>>>,
     deep: &mut BTreeSet<String>,
 ) {
     let Some(files) = modules.get(dir) else {
         return;
     };
+    let ctx = Rc::new(ModuleCtx {
+        variables: files
+            .iter()
+            .flat_map(|f| blocks(f, "variable").map(move |b| (b, f)))
+            .collect(),
+        call: caller.as_ref().map(|c| (c.1, c.2)),
+        depth: caller.as_ref().map_or(0, |c| c.0.depth + 1),
+        parent: caller.map(|c| c.0),
+    });
+    let depth = ctx.depth;
     let mut resources = Vec::new();
     for file in files {
         for block in blocks(file, "resource") {
@@ -281,6 +316,7 @@ fn instance<'a>(
                     address: format!("{prefix}{kind}.{name}"),
                     block,
                     file,
+                    module: Rc::clone(&ctx),
                 });
             }
         }
@@ -294,7 +330,8 @@ fn instance<'a>(
                 .and_then(|s| local_source(dir, &s));
             if let (Some(child), [name]) = (child, block.labels.as_slice()) {
                 let prefix = format!("{prefix}module.{}.", name.as_str());
-                instance(modules, &child, &prefix, depth + 1, out, deep);
+                let caller = Some((Rc::clone(&ctx), block, file));
+                instance(modules, &child, &prefix, caller, out, deep);
             }
         }
     }

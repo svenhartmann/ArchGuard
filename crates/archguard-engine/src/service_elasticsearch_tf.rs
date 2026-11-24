@@ -1,11 +1,13 @@
 //! Elasticsearch artifacts declared as `elasticstack_elasticsearch_*` Terraform resources
-//! (ADR 0023). Names are read only from literals and `jsonencode({...})`; anything the
-//! provider would evaluate (variables, locals, `each`, module outputs, functions) is a gap.
-use super::service_terraform::Resource;
+//! (ADR 0023). Names are read from literals, `jsonencode({...})` and, for a plain `var.x`, from a
+//! non-sensitive `string`/`list(string)` literal module argument or `default`; anything else the
+//! provider would evaluate (locals, `each`, module outputs, functions) is a gap.
+use super::service_terraform::{ModuleCtx, Resource, TfFile};
 use super::service_terraform_hcl::{attr, block, get, literal, object};
 use archguard_core::{SearchArtifact, SearchReference, ServiceDiagnostic, ServiceTopology};
 use archguard_flow_common::support::diagnostic;
-use hcl_edit::expr::Expression;
+use hcl_edit::Span;
+use hcl_edit::expr::{Expression, TraversalOperator};
 use hcl_edit::parser;
 use hcl_edit::structure::Body;
 
@@ -47,9 +49,10 @@ pub(super) fn augment(report: &mut ServiceTopology, scope: &str, resources: &[Re
             r,
             scope,
             out: Vec::new(),
+            sources: Vec::new(),
         };
         read.resource(kind, name_key);
-        let out = read.out;
+        let out = read.finish();
         report.elasticsearch.artifacts.extend(out);
     }
 }
@@ -73,13 +76,14 @@ fn kibana(report: &mut ServiceTopology, scope: &str, r: &Resource, suffix: &str)
         r,
         scope,
         out: Vec::new(),
+        sources: Vec::new(),
     };
     if suffix == "data_view" {
         read.data_view();
     } else {
         read.alerting_rule();
     }
-    let out = read.out;
+    let out = read.finish();
     report.elasticsearch.artifacts.extend(out);
 }
 
@@ -88,6 +92,15 @@ struct Read<'x, 'a> {
     r: &'x Resource<'a>,
     scope: &'x str,
     out: Vec<SearchArtifact>,
+    /// Where names came from when read through `var.x`; attached to the evidence.
+    sources: Vec<String>,
+}
+
+/// Values read through a variable, and where they came from.
+struct Found {
+    values: Vec<String>,
+    list: bool,
+    source: String,
 }
 
 fn reference(kind: &str, name: Option<String>) -> Option<SearchReference> {
@@ -98,9 +111,31 @@ fn reference(kind: &str, name: Option<String>) -> Option<SearchReference> {
 }
 
 impl Read<'_, '_> {
+    fn finish(self) -> Vec<SearchArtifact> {
+        let mut out = self.out;
+        if !self.sources.is_empty() {
+            let note = format!(" Name read from {}.", self.sources.join("; "));
+            out.iter_mut()
+                .for_each(|a| a.evidence[0].description.push_str(&note));
+        }
+        out
+    }
+
+    /// The value of a plain `var.x`, remembering its source.
+    fn variable(&mut self, e: &Expression) -> Option<Found> {
+        let found = resolve(&self.r.module, variable_name(e)?)?;
+        if !self.sources.contains(&found.source) {
+            self.sources.push(found.source.clone());
+        }
+        Some(found)
+    }
+
     /// A literal name, or a gap diagnostic for `what` and `None`.
     fn text(&mut self, what: &str, e: Option<&Expression>) -> Option<String> {
-        let text = e.and_then(literal);
+        let text = e.and_then(literal).or_else(|| {
+            let found = self.variable(e?)?;
+            (!found.list).then(|| found.values.into_iter().next())?
+        });
         if text.is_none() {
             let message = format!(
                 "{}: Elasticsearch name is not a literal; {what} is unknown (variables, locals, each, module outputs and function calls are not evaluated).",
@@ -119,7 +154,10 @@ impl Read<'_, '_> {
                 .iter()
                 .filter_map(|i| self.text(what, Some(i)))
                 .collect(),
-            Some(e) => self.text(what, Some(e)).into_iter().collect(),
+            Some(e) => match self.variable(e) {
+                Some(found) => found.values,
+                None => self.text(what, Some(e)).into_iter().collect(),
+            },
         }
     }
 
@@ -366,4 +404,90 @@ fn params_index(e: &Expression, out: &mut Vec<Expression>, gap: &mut bool) {
             None => *gap = true,
         },
     }
+}
+
+/// `x` of a plain `var.x`.
+fn variable_name(e: &Expression) -> Option<&str> {
+    let Expression::Traversal(t) = e else {
+        return None;
+    };
+    match (&t.expr, t.operators.as_slice()) {
+        (Expression::Variable(v), [op]) if v.as_str() == "var" => match op.value() {
+            TraversalOperator::GetAttr(n) => Some(n.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// A string literal, or a list of string literals, and whether it was a list. Numbers and
+/// bools are no names.
+fn values(e: &Expression) -> Option<(Vec<String>, bool)> {
+    let string = |e: &Expression| match e {
+        Expression::String(_) => literal(e),
+        _ => None,
+    };
+    match e {
+        Expression::Array(items) => Some((items.iter().map(string).collect::<Option<_>>()?, true)),
+        other => Some((vec![string(other)?], false)),
+    }
+}
+
+/// `Some(Some(list))` for a declared `string`/`list(string)`, `Some(None)` when untyped,
+/// `None` for anything else or a sensitive variable: those are never read.
+fn readable(var: &Body) -> Option<Option<bool>> {
+    if attr(var, "sensitive").is_some_and(|s| literal(s).as_deref() != Some("false")) {
+        return None;
+    }
+    match attr(var, "type") {
+        None => Some(None),
+        Some(Expression::Variable(v)) if v.as_str() == "string" => Some(Some(false)),
+        Some(Expression::FuncCall(c))
+            if c.name.name.as_str() == "list"
+                && matches!(c.args.iter().collect::<Vec<_>>().as_slice(),
+                    [Expression::Variable(v)] if v.as_str() == "string") =>
+        {
+            Some(Some(true))
+        }
+        Some(_) => None,
+    }
+}
+
+fn at(f: &TfFile, e: &Expression) -> String {
+    let line = f.line(e.span()).map_or(String::new(), |l| format!(":{l}"));
+    format!("{}{line}", f.path)
+}
+
+/// The literal module argument `name` of the call, else the `default` of the variable in the
+/// module. A `var.y` argument continues in the caller's module, one hop per module level.
+fn resolve(ctx: &ModuleCtx, name: &str) -> Option<Found> {
+    let (var, var_file) = ctx.variable(name)?;
+    let list = readable(&var.body)?;
+    let found = match ctx
+        .call()
+        .and_then(|(c, f)| Some((c, f, attr(&c.body, name)?)))
+    {
+        Some((call, file, arg)) => {
+            let module = call.labels.first()?.as_str();
+            match values(arg) {
+                Some((values, list)) => Found {
+                    values,
+                    list,
+                    source: format!("argument {name} of module.{module} ({})", at(file, arg)),
+                },
+                None => resolve(ctx.parent()?, variable_name(arg)?)?,
+            }
+        }
+        None => {
+            let d = attr(&var.body, "default")?;
+            let (values, list) = values(d)?;
+            let source = format!("default of variable {name} ({})", at(var_file, d));
+            Found {
+                values,
+                list,
+                source,
+            }
+        }
+    };
+    list.is_none_or(|l| l == found.list).then_some(found)
 }
