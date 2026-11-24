@@ -7,7 +7,7 @@ use super::service_terraform_hcl::{attr, block, get, literal, object};
 use archguard_core::ServiceEvidence;
 use archguard_core::{SearchArtifact, SearchReference, ServiceDiagnostic, ServiceTopology};
 use archguard_flow_common::support::diagnostic;
-use archguard_flow_common::support::{Discovery, relative};
+use archguard_flow_common::support::{Discovery, relative, test_path};
 use hcl_edit::Span;
 use hcl_edit::expr::{Expression, TraversalOperator};
 use hcl_edit::parser;
@@ -84,17 +84,22 @@ pub(super) fn search_templates(root: &Path, discovery: &Discovery, report: &mut 
     }
     jsons.sort();
     for rel in jsons {
-        if !under(&tf_dirs, &rel) {
+        if test_path(&rel) || !under(&tf_dirs, &rel) {
             continue;
         }
-        let Ok(text) = crate::project_files::read_manifest(root, Path::new(&rel)) else {
-            let message = "JSON file next to Terraform could not be read or is larger than 1 MiB; search templates in it are unknown.";
+        let Some((text, whole)) = read_json(root, &rel) else {
+            let message = "JSON file next to Terraform could not be read; search templates in it are unknown.";
             archguard_flow_common::support::diagnostic(report, &rel, None, message);
             continue;
         };
         let Some(at) = mustache_lang(&text) else {
             continue;
         };
+        if !whole {
+            let message = "JSON file next to Terraform is larger than 1 MiB and contains a mustache lang; it is not evaluated as a search template.";
+            archguard_flow_common::support::diagnostic(report, &rel, None, message);
+            continue;
+        }
         let line = u32::try_from(text[..at].matches('\n').count() + 1).ok();
         let name = Path::new(&rel)
             .file_stem()
@@ -129,6 +134,27 @@ fn under(tf_dirs: &BTreeSet<String>, path: &str) -> bool {
         dir = parent(dir);
     }
     true
+}
+
+/// Text of a JSON file and whether it is complete. A file over 1 MiB yields its first 1 MiB only.
+// shortcut: a pattern beyond the first 1 MiB of a larger file is not seen; stream when a repo needs it.
+fn read_json(root: &Path, rel: &str) -> Option<(String, bool)> {
+    if let Ok(text) = crate::project_files::read_manifest(root, Path::new(rel)) {
+        return Some((text, true));
+    }
+    use std::io::Read;
+    let path = root.join(rel);
+    let meta = std::fs::symlink_metadata(&path).ok()?;
+    if !meta.is_file() || meta.len() <= 1024 * 1024 {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(1024 * 1024)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    Some((String::from_utf8_lossy(&bytes).into_owned(), false))
 }
 
 fn parent(path: &str) -> &str {

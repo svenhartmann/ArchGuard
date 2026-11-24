@@ -425,12 +425,27 @@ fn json_files_with_lang_mustache_become_search_templates_named_by_file() {
     assert!(r.diagnostics.is_empty(), "{:#?}", r.diagnostics);
 }
 
-#[test]
-fn oversized_json_next_to_terraform_is_a_diagnostic_not_silence() {
+fn big_json(head: &str) -> ServiceTopology {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("main.tf"), "").unwrap();
-    std::fs::write(dir.path().join("big.json"), " ".repeat(1024 * 1024 + 1)).unwrap();
-    let r = analyze_services(dir.path()).unwrap();
+    let text = format!("{head}{}", " ".repeat(1024 * 1024 + 1));
+    std::fs::write(dir.path().join("big.json"), text).unwrap();
+    analyze_services(dir.path()).unwrap()
+}
+
+#[test]
+fn large_json_without_the_pattern_is_no_diagnostic() {
+    let r = big_json("{}");
+    assert!(
+        r.complete && r.diagnostics.is_empty(),
+        "{:#?}",
+        r.diagnostics
+    );
+}
+
+#[test]
+fn large_json_with_the_pattern_is_a_diagnostic_not_silence() {
+    let r = big_json(r#"{"lang": "mustache"}"#);
     assert!(!r.complete);
     assert!(
         r.diagnostics.iter().any(|d| d.file == "big.json"),
