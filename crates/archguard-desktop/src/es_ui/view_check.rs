@@ -87,6 +87,7 @@ fn kind(kind: &str, count: i32, shown: i32) -> EsKind {
         kind: kind.into(),
         count,
         shown,
+        ghosts: 0,
     }
 }
 

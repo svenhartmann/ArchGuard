@@ -61,7 +61,7 @@ pub fn search_graph(t: &ServiceTopology) -> SearchGraph {
     b.reference_edges();
     b.cover_edges();
     b.mark_warnings();
-    relabel(&mut b.nodes);
+    relabel(&mut b.nodes, &t.elasticsearch.artifacts);
     SearchGraph {
         nodes: b.nodes,
         edges: b
@@ -93,12 +93,15 @@ impl<'a> Build<'a> {
             if seen.contains_key(u.service.as_str()) {
                 continue;
             }
-            let mut n = node("service", &u.service, &u.service, "");
-            n.service = self
+            let at = self
                 .t
                 .services
                 .iter()
                 .position(|s| s.name == u.service || s.id == u.service);
+            // The label is the name the services view shows; the id stays in the title.
+            let label = at.map_or(u.service.as_str(), |i| self.t.services[i].name.as_str());
+            let mut n = node("service", label, &u.service, "");
+            n.service = at;
             seen.insert(u.service.as_str(), self.nodes.len());
             self.nodes.push(n);
         }
@@ -244,14 +247,13 @@ fn base_label(a: &SearchArtifact) -> String {
     if let Some(name) = &a.name {
         return name.clone();
     }
-    let (head, key) = a
-        .address
-        .split_at(a.address.find('[').unwrap_or(a.address.len()));
-    let resource = match head.rfind("elasticstack_") {
-        Some(i) => head[i..].split_once('.').map_or(head, |(_, r)| r),
-        None => strip_modules(head),
-    };
-    format!("{resource}{key}")
+    match a.address.rfind("elasticstack_") {
+        Some(i) => a.address[i..]
+            .split_once('.')
+            .map_or(&a.address[i..], |(_, r)| r)
+            .into(),
+        None => strip_modules(&a.address).into(),
+    }
 }
 
 fn strip_modules(mut s: &str) -> &str {
@@ -296,15 +298,111 @@ fn scope_tails(scopes: &HashSet<String>) -> HashMap<String, String> {
     scopes.iter().map(|s| (s.clone(), tail(s, k))).collect()
 }
 
-/// Labels unique per graph and within `MAX_LABEL`: equal labels of different scopes get
-/// ` (<tail>)` (the name is cut, never the suffix), what still collides gets ` #<n>`.
-fn relabel(nodes: &mut [SearchNode]) {
+/// `module.a.module.b["k"]` of `module.a.module.b["k"].<type>.<name>`: the module instance, else empty.
+fn instance_of(address: &str) -> String {
+    let at = address.rfind("elasticstack_").unwrap_or(address.len());
+    let head = &address[..at];
+    let head = if at < address.len() {
+        head
+    } else {
+        &address[..address.len() - strip_modules(address).len()]
+    };
+    head.trim_end_matches('.').into()
+}
+
+/// The first unused candidate: name kept at 16, 8, 4, 2 characters at least, each cut at the head,
+/// then at the middle (two long names often differ at either end); `#<n>` is the last resort.
+fn fit_label(used: &mut HashSet<String>, name: &str, parts: &[(&str, &str, String)]) -> String {
+    let mut label = String::new();
+    for floor in [16, 8, 4, 2] {
+        let suffix = suffix(name.chars().count(), floor, parts);
+        let room = MAX_LABEL - suffix.chars().count();
+        for cut in [shorten(name, room), shorten_scope(name, room)] {
+            label = format!("{cut}{suffix}");
+            if !used.contains(&label) {
+                used.insert(label.clone());
+                return label;
+            }
+        }
+    }
+    unique(used, label)
+}
+
+/// `module.a` stays; nested `module.a.module.b` reads `a.b`.
+fn display_instance(inst: &str) -> String {
+    if inst.matches("module.").count() > 1 {
+        inst.replace("module.", "")
+    } else {
+        inst.into()
+    }
+}
+
+/// `<type>.<name>[key]` of the Terraform address, the last thing that tells two resources apart.
+fn resource_of(n: &SearchNode, artifacts: &[SearchArtifact]) -> String {
+    let Some(i) = n.artifact else {
+        return String::new();
+    };
+    let a = &artifacts[i].address;
+    a[a.rfind("elasticstack_")
+        .map_or(0, |i| i + "elasticstack_".len())..]
+        .into()
+}
+
+/// The name part of ` (<folder tail>)`, ` · <instance>` and ` [<kind>]`, shrunk (longest first)
+/// until the name keeps `min(name, floor)` of the 32 characters.
+fn suffix(name_len: usize, floor: usize, parts: &[(&str, &str, String)]) -> String {
+    let budget = MAX_LABEL - name_len.min(floor);
+    let mut lens: Vec<usize> = parts.iter().map(|p| p.2.chars().count()).collect();
+    let overhead: usize = parts
+        .iter()
+        .map(|p| p.0.chars().count() + p.1.chars().count())
+        .sum();
+    while lens.iter().sum::<usize>() + overhead > budget {
+        match lens.iter_mut().filter(|l| **l > 4).max() {
+            Some(l) => *l -= 1,
+            None => break,
+        }
+    }
+    let cut = |(o, c, t): &(&str, &str, String), n| format!("{o}{}{c}", shorten_scope(t, n));
+    parts.iter().zip(lens).map(|(p, n)| cut(p, n)).collect()
+}
+
+/// Labels unique per graph and within `MAX_LABEL`: equal labels of different roots get
+/// ` (<folder tail>)`, of different module instances in one root ` · <instance>`, of different
+/// kinds in one instance ` [<kind>]` (the name is cut, never the suffix); `#<n>` is the last resort.
+fn relabel(nodes: &mut [SearchNode], artifacts: &[SearchArtifact]) {
+    let scope_of = |n: &SearchNode| {
+        n.scope
+            .strip_prefix("terraform:")
+            .unwrap_or(&n.scope)
+            .to_string()
+    };
+    let instance = |n: &SearchNode| {
+        n.artifact
+            .map_or(String::new(), |i| instance_of(&artifacts[i].address))
+    };
     let mut scopes: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut by_scope: HashMap<(String, String), HashSet<String>> = HashMap::new();
+    let mut by_inst: HashMap<(String, String, String), HashSet<String>> = HashMap::new();
+    let mut by_kind: HashMap<(String, String, String, String), HashSet<String>> = HashMap::new();
     for n in nodes.iter() {
+        let (label, scope, inst) = (n.label.clone(), scope_of(n), instance(n));
         scopes
-            .entry(n.label.clone())
+            .entry(label.clone())
             .or_default()
-            .insert(n.scope.clone());
+            .insert(scope.clone());
+        by_scope
+            .entry((label.clone(), scope.clone()))
+            .or_default()
+            .insert(inst.clone());
+        by_inst
+            .entry((label.clone(), scope.clone(), inst.clone()))
+            .or_default()
+            .insert(n.kind.clone());
+        by_kind
+            .entry((label, scope, inst, n.kind.clone()))
+            .or_default()
+            .insert(resource_of(n, artifacts));
     }
     let tails: HashMap<_, _> = scopes
         .iter()
@@ -313,22 +411,38 @@ fn relabel(nodes: &mut [SearchNode]) {
         .collect();
     let mut used = HashSet::new();
     for n in nodes.iter_mut() {
-        let suffix = match tails.get(&n.label) {
-            Some(t) if !n.scope.is_empty() => format!(" ({})", shorten_scope(&t[&n.scope])),
-            _ => String::new(),
-        };
-        let name = shorten(&n.label, MAX_LABEL - suffix.chars().count());
-        n.label = unique(&mut used, format!("{name}{suffix}"));
+        let (scope, inst) = (scope_of(n), instance(n));
+        let mut parts = Vec::new();
+        if let Some(t) = tails.get(&n.label).filter(|_| !scope.is_empty()) {
+            parts.push((" (", ")", t[&scope].clone()));
+        }
+        if !inst.is_empty() && by_scope[&(n.label.clone(), scope.clone())].len() > 1 {
+            parts.push((" · ", "", display_instance(&inst)));
+        }
+        let key = (n.label.clone(), scope, inst);
+        if by_inst[&key].len() > 1 {
+            parts.push((" [", "]", n.kind.clone()));
+        }
+        if by_kind[&(key.0, key.1, key.2, n.kind.clone())].len() > 1 {
+            parts.push((" {", "}", resource_of(n, artifacts)));
+        }
+        n.label = fit_label(&mut used, &n.label, &parts);
     }
 }
 
-/// At most 21 characters, keeping the end of the path.
-fn shorten_scope(s: &str) -> String {
-    let n = s.chars().count();
-    if n <= 21 {
-        return s.to_string();
+/// At most `max` characters, both ends kept (what tells paths apart can sit at either end).
+fn shorten_scope(s: &str, max: usize) -> String {
+    let c: Vec<char> = s.chars().collect();
+    if c.len() <= max {
+        return s.into();
     }
-    std::iter::once('…').chain(s.chars().skip(n - 20)).collect()
+    let tail = (max - 1) / 2;
+    let head = max - 1 - tail;
+    c[..head]
+        .iter()
+        .chain(['…'].iter())
+        .chain(&c[c.len() - tail..])
+        .collect()
 }
 
 fn unique(used: &mut HashSet<String>, label: String) -> String {

@@ -475,6 +475,24 @@ fn probe() {
         .map(|n| n.kind.as_str())
         .collect::<std::collections::BTreeSet<_>>()
         .len();
+    let numbered = g.nodes.iter().filter(|n| n.label.contains(" #")).count();
+    let colon = g
+        .nodes
+        .iter()
+        .filter(|n| {
+            n.label
+                .split_once(" (")
+                .is_some_and(|(_, z)| z.contains(':'))
+        })
+        .count();
+    let cut = g
+        .nodes
+        .iter()
+        .filter(|n| n.kind == "service" && n.label.ends_with('…'))
+        .count();
+    println!(
+        "labels with #n: {numbered}, with ':' in the addition: {colon}, cut service labels: {cut}"
+    );
     println!("nodes by kind: {kinds:?}");
     println!("edges by relation: {rel:?}");
     println!("warn: {}", g.nodes.iter().filter(|n| n.warn).count());

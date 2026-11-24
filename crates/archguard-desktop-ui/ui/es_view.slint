@@ -71,7 +71,7 @@ export component EsView inherits Rectangle {
                         spacing: 8px;
                         alignment: start;
                         for k[i] in m.kinds: Button {
-                            text: k.kind + " (" + Fmt.int(k.count) + ")";
+                            text: k.kind + " (" + Fmt.int(k.count) + ")" + (k.ghosts > 0 ? " ⚠" + Fmt.int(k.ghosts) : "");
                             pressed-state: k.shown > 0;
                             compact: true;
                             clicked => { ElasticsearchData.toggle-kind(i); }
