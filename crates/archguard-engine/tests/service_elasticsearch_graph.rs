@@ -309,6 +309,63 @@ fn labels_over_32_characters_are_cut_to_31_plus_ellipsis_on_char_boundaries() {
     assert_eq!(label_of(art("index", Some(&exact), "a", "")).0, exact);
 }
 
+fn labels_of(artifacts: Vec<SearchArtifact>) -> Vec<String> {
+    search_graph(&topo(&[], artifacts, vec![]))
+        .nodes
+        .into_iter()
+        .map(|n| n.label)
+        .collect()
+}
+
+#[test]
+fn equal_long_names_with_long_scopes_stay_unique_and_within_32() {
+    let name = "n".repeat(40);
+    let labels = labels_of(vec![
+        art(
+            "index",
+            Some(&name),
+            "a",
+            "infrastructure/environments/production-eu",
+        ),
+        art(
+            "index",
+            Some(&name),
+            "b",
+            "infrastructure/environments/production-us",
+        ),
+    ]);
+    assert_ne!(labels[0], labels[1]);
+    assert!(labels.iter().all(|l| l.chars().count() <= 32), "{labels:?}");
+}
+
+#[test]
+fn scopes_with_the_same_last_segment_get_the_next_segment() {
+    let labels = labels_of(vec![
+        art("index", Some("same"), "a", "x/env"),
+        art("index", Some("same"), "b", "y/env"),
+    ]);
+    assert_eq!(labels, ["same (x/env)", "same (y/env)"]);
+}
+
+#[test]
+fn labels_are_unique_over_a_generated_graph() {
+    let arts: Vec<_> = (0..400)
+        .map(|i| {
+            let scope = format!("roots/team-{}/environments/stage-{}", i % 7, i % 3);
+            art(
+                "index",
+                Some(&format!("{}-{}", "name".repeat(i % 12), i % 20)),
+                "a",
+                &scope,
+            )
+        })
+        .collect();
+    let labels = labels_of(arts);
+    let unique: std::collections::HashSet<_> = labels.iter().collect();
+    assert_eq!(unique.len(), labels.len());
+    assert!(labels.iter().all(|l| l.chars().count() <= 32));
+}
+
 /// Counts only, no names; the path comes from the environment (spec `## Abnahme-Probe`).
 #[test]
 #[ignore]
