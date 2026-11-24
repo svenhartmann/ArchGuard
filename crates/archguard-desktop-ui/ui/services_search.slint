@@ -1,5 +1,11 @@
-// Services → Elasticsearch: the model of the section (the view follows).
+// Services → Elasticsearch: the model of the section and the section itself
+// (set from src/services_ui/search.rs). Kinds, names, patterns and index
+// names are raw identifiers: monospace, never translated.
 import { SvcEvidence } from "services_inspector.slint";
+import { Theme } from "theme.slint";
+import { Disclosure } from "widgets.slint";
+import { Fmt } from "format.slint";
+import { Note, Mono, Heading, Head, More } from "services_sections.slint";
 
 // One declared artifact; `index` is its position in the topology's list.
 export struct SvcSearchRow {
@@ -52,9 +58,72 @@ export struct SvcSearch {
     gaps: [SvcSearchGap],
 }
 
-// The section itself: a stub until the view is built.
+component Findings inherits VerticalLayout {
+    in property <[SvcSearchFinding]> items;
+    spacing: 3px;
+    for f in items: VerticalLayout {
+        padding-left: 8px;
+        Heading { text: "⚠ " + f.kind; }
+        Mono { text: f.subject; }
+        if f.services != "": Mono { text: f.services; }
+        for e in f.evidence: VerticalLayout {
+            Mono { text: e.location; }
+            Note { text: e.description; }
+        }
+    }
+}
+
 export component SearchSection inherits VerticalLayout {
     in property <SvcSearch> data;
     callback choose(int);
     callback more();
+    property <bool> gaps-open;
+    spacing: 4px;
+
+    Note { text: @tr("Artifacts: {}", Fmt.int(data.total)) + (data.findings.length > 0 ? " · ⚠ " + @tr("Findings: {}", Fmt.int(data.findings.length)) : ""); muted: false; }
+    for k in data.kinds: VerticalLayout {
+        spacing: 2px;
+        Mono { text: k.kind + " · " + Fmt.int(k.count); }
+        for r in k.rows: VerticalLayout {
+            Head {
+                text: (r.warn ? "⚠ " : "") + r.title;
+                mono: true;
+                open: r.open;
+                clicked => { root.choose(r.index); }
+            }
+            if r.open: VerticalLayout {
+                padding-left: 22px;
+                padding-bottom: 6px;
+                spacing: 3px;
+                if data.detail.scope != "": Mono { text: data.detail.scope; }
+                Heading { text: @tr("Declaration"); }
+                for e in data.detail.declaration: VerticalLayout {
+                    Mono { text: e.location; }
+                    Note { text: e.description; }
+                }
+                for p in data.detail.patterns: Mono { text: p; }
+                if data.detail.references.length > 0: Heading { text: @tr("References"); }
+                for ref in data.detail.references: Mono { text: ref; }
+                Note { text: @tr("Written by: {}", data.detail.writers != "" ? data.detail.writers : "—"); }
+                Note { text: @tr("Read by: {}", data.detail.readers != "" ? data.detail.readers : "—"); }
+                if data.detail.others != "": Note { text: @tr("Other access: {}", data.detail.others); }
+                Findings { items: data.detail.findings; }
+            }
+        }
+    }
+    if data.findings.length > 0: Heading { text: @tr("Elasticsearch findings"); }
+    Findings { items: data.findings; }
+    if data.gaps.length > 0: Disclosure {
+        text: @tr("Gaps ({})", Fmt.int(data.gaps.length));
+        open <=> root.gaps-open;
+    }
+    if data.gaps.length > 0 && root.gaps-open: VerticalLayout {
+        padding-left: 22px;
+        spacing: 3px;
+        for g in data.gaps: VerticalLayout {
+            Mono { text: g.file + (g.service != "" ? " · " + g.service : ""); }
+            Note { text: g.message; }
+        }
+    }
+    if data.more: More { text: @tr("Show more Elasticsearch entries"); clicked => { root.more(); } }
 }

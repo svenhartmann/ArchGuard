@@ -121,15 +121,15 @@ fn two_kinds() -> SvcSearch {
     }
 }
 
-/// Whether any pixel in the rightmost 12 columns differs from the background.
+/// Whether text is drawn into the rightmost 12 columns; the full-width
+/// separator lines are not text.
 fn ink_in_padding(buf: &[PremultipliedRgbaColor]) -> bool {
     let bg = buf[(H - 4) * W + 4];
-    (0..H).any(|y| {
-        (W - 12..W).any(|x| {
-            let p = buf[y * W + x];
-            (p.red, p.green, p.blue) != (bg.red, bg.green, bg.blue)
-        })
-    })
+    let inked = |x: usize, y: usize| {
+        let p = buf[y * W + x];
+        (p.red, p.green, p.blue) != (bg.red, bg.green, bg.blue)
+    };
+    (0..H).any(|y| !(inked(2, y) && inked(W / 2, y)) && (W - 12..W).any(|x| inked(x, y)))
 }
 
 #[test]
