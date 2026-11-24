@@ -4,6 +4,10 @@
 use crate::project_files::read_repo_file;
 use archguard_core::{SearchIndexUsage, ServiceEvidence, ServiceTopology};
 use archguard_flow_common::support::{Discovery, diagnostic, owners, relative, test_path};
+#[path = "service_elasticsearch_constants.rs"]
+mod constants;
+
+use constants::{Constants, GAP, Name, literal, short, site};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -17,8 +21,7 @@ const IMPORTS: [&str; 5] = [
     "using Nest.",
     "Elastic.Clients.Elasticsearch",
 ];
-const GAP: &str =
-    "Index name is not a literal (constant, variable or expression); the index stays unknown.";
+const LITERAL: &str = "Elasticsearch index named literally in source.";
 const SAME_DIR: &str = "Several services build from the same source directory; indices named in this file are attributed to none of them.";
 const UNREAD: &str = "Source file not read: larger than 1 MiB, not a regular file or not readable; its indices are unknown.";
 const WRITE: [&str; 14] = [
@@ -86,9 +89,9 @@ const CALLS: [Call; 7] = [
 /// Arguments matched by their own call; the outer call ignores them.
 const NESTED: [&str; 3] = ["Indices.Index(", "new IndexName(", "IndexCoordinates.of("];
 
-/// One mention; `name` is `None` when the argument is not a literal.
+/// One mention.
 struct Mention {
-    name: Option<String>,
+    name: Name,
     access: &'static str,
     line: u32,
     pointer: &'static str,
@@ -97,6 +100,7 @@ struct Mention {
 pub(super) fn augment(root: &Path, discovery: &Discovery, report: &mut ServiceTopology) {
     let mut found: BTreeMap<(String, String, &str), Vec<ServiceEvidence>> = BTreeMap::new();
     let mut files: BTreeMap<String, usize> = BTreeMap::new();
+    let mut constants = Constants::default();
     for entry in discovery.walk(root).flatten() {
         let rel = relative(root, entry.path());
         let ext = rel.rsplit('.').next().unwrap_or("");
@@ -121,37 +125,33 @@ pub(super) fn augment(root: &Path, discovery: &Discovery, report: &mut ServiceTo
             continue;
         };
         let text = String::from_utf8_lossy(&bytes);
+        let [service] = owners.as_slice() else {
+            if imports_client(&text, ext) {
+                owners
+                    .iter()
+                    .for_each(|s| diagnostic(report, &rel, Some(short(s)), SAME_DIR));
+            }
+            continue;
+        };
+        constants.collect(service, ext, &rel, &text);
         if !imports_client(&text, ext) {
             continue;
         }
-        let [service] = owners.as_slice() else {
-            owners
-                .iter()
-                .for_each(|s| diagnostic(report, &rel, Some(short(s)), SAME_DIR));
-            continue;
-        };
         let found_here = match ext {
             "py" => script_mentions(&text, true),
             "ts" | "tsx" => script_mentions(&text, false),
             _ => mentions(&text, ext),
         };
         for m in found_here {
-            let Some(name) = m.name else {
-                diagnostic(report, &rel, Some(short(service)), GAP);
-                continue;
+            let sink = Sink {
+                found: &mut found,
+                constants: &mut constants,
+                report,
             };
-            let evidence = ServiceEvidence {
-                file: rel.clone(),
-                pointer: m.pointer.into(),
-                line: Some(m.line),
-                description: "Elasticsearch index named literally in source.".into(),
-            };
-            found
-                .entry((service.clone(), name, m.access))
-                .or_default()
-                .push(evidence);
+            sink.take(m, service, ext, &rel);
         }
     }
+    constants.settle(&mut found, report);
     report.elasticsearch.usages.extend(found.into_iter().map(
         |((service, index, access), mut evidence)| {
             evidence.sort();
@@ -166,8 +166,28 @@ pub(super) fn augment(root: &Path, discovery: &Discovery, report: &mut ServiceTo
     ));
 }
 
-fn short(service: &str) -> &str {
-    service.rsplit(':').next().unwrap_or(service)
+/// Where mentions go: literal usages, references waiting for constants, or gaps.
+struct Sink<'a> {
+    found: &'a mut BTreeMap<(String, String, &'static str), Vec<ServiceEvidence>>,
+    constants: &'a mut Constants,
+    report: &'a mut ServiceTopology,
+}
+
+impl Sink<'_> {
+    fn take(self, m: Mention, service: &str, ext: &str, rel: &str) {
+        match m.name {
+            Name::Lit(name) => {
+                let evidence = site(rel, m.line, m.pointer, LITERAL);
+                let key = (service.to_owned(), name, m.access);
+                self.found.entry(key).or_default().push(evidence);
+            }
+            Name::Ref(r) => {
+                self.constants
+                    .defer(service, ext, rel, r, (m.access, m.line, m.pointer))
+            }
+            Name::Gap => diagnostic(self.report, rel, Some(short(service)), GAP),
+        }
+    }
 }
 
 /// Counts a file against a service's limit; reports the first file past it.
@@ -235,7 +255,7 @@ fn access(window: &str) -> &'static str {
 
 /// The index names of one call: `Some(name)` for a literal, `None` for a gap.
 /// Lambdas, nested name calls and request or document arguments are not names.
-fn names(c: &Call, text: &str, at: usize, open: usize) -> Vec<Option<String>> {
+fn names(c: &Call, text: &str, at: usize, open: usize) -> Vec<Name> {
     let window = &text[statement_start(text, at)..at];
     let builder = ["->", "=>", "Builder"].iter().any(|k| window.contains(k));
     let gaps = c.always || builder || window.ends_with("Indices") || builder_variable(text, at);
@@ -254,11 +274,11 @@ fn names(c: &Call, text: &str, at: usize, open: usize) -> Vec<Option<String>> {
             None => out.extend(name(arg)),
         }
     }
-    out.retain(|n| gaps || n.is_some());
+    out.retain(|n| gaps || matches!(n, Name::Lit(_)));
     out
 }
 
-fn name(arg: &str) -> Option<Option<String>> {
+fn name(arg: &str) -> Option<Name> {
     let skip = arg.is_empty()
         || arg.contains("->")
         || arg.contains("=>")
@@ -267,11 +287,10 @@ fn name(arg: &str) -> Option<Option<String>> {
         return None;
     }
     let inner = arg.strip_prefix('"').and_then(|a| a.strip_suffix('"'));
-    Some(
-        inner
-            .filter(|i| !i.is_empty() && !i.contains('"'))
-            .map(str::to_owned),
-    )
+    Some(match inner.filter(|i| !i.is_empty() && !i.contains('"')) {
+        Some(i) => Name::Lit(i.to_owned()),
+        None => constants::reference(arg),
+    })
 }
 
 /// The top-level arguments of the call whose `(` just ended `s`, trimmed.
@@ -443,22 +462,14 @@ fn keyed<'a>(arg: &'a str, key: &'a str, sep: char) -> Option<&'a str> {
 }
 
 /// A literal string or a list of them; every non-literal element is a gap (`None`).
-fn literals(value: &str) -> Vec<Option<String>> {
+fn literals(value: &str) -> Vec<Name> {
+    let name_of = |v: &str| literal(v).map_or_else(|| constants::reference(v), Name::Lit);
     match value.strip_prefix('[') {
         Some(list) => split_quoted(list, &['"', '\'', '`'])
             .into_iter()
             .filter(|a| !a.is_empty())
-            .map(literal)
+            .map(name_of)
             .collect(),
-        None => vec![literal(value)],
+        None => vec![name_of(value)],
     }
-}
-
-fn literal(value: &str) -> Option<String> {
-    let quote = value
-        .chars()
-        .next()
-        .filter(|c| matches!(c, '"' | '\'' | '`'))?;
-    let inner = value.strip_prefix(quote)?.strip_suffix(quote)?;
-    (!inner.is_empty() && !inner.contains(quote) && !inner.contains("${")).then(|| inner.to_owned())
 }

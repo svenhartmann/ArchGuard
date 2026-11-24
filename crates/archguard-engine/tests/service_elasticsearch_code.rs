@@ -242,3 +242,186 @@ fn many_call_matches_do_not_scan_the_rest_of_the_file_each() {
     assert!(start.elapsed().as_secs() < 10, "took {:?}", start.elapsed());
     assert!(usages(&report, "api").is_empty());
 }
+
+const TWO_SERVICES: &str = "services:\n  api:\n    build: ./api\n  web:\n    build: ./web\n";
+
+#[test]
+fn constants_of_the_same_service_name_the_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", TWO_SERVICES);
+    put(
+        root,
+        "api/Doc.java",
+        "class Doc {\n  public static final String INDEX_NAME = \"orders\";\n}\n",
+    );
+    put(
+        root,
+        "api/W.java",
+        "import org.elasticsearch.client.Client;\nclass W { void f() {\n  var r = new SearchRequest.Builder().index(Doc.INDEX_NAME);\n  var q = new SearchRequest.Builder().index(INDEX_NAME);\n} }\n",
+    );
+    put(
+        root,
+        "api/K.cs",
+        "class K { const string Index = \"b\"; }\n",
+    );
+    put(
+        root,
+        "api/R.cs",
+        "using Nest;\nclass R { void f() { client.Search<D>(s => s.Index(K.Index)); } }\n",
+    );
+    put(root, "web/consts.ts", "export const INDEX = 'c'\n");
+    put(
+        root,
+        "web/s.ts",
+        "import { Client } from '@elastic/elasticsearch'\nc.search({ index: INDEX })\n",
+    );
+    put(root, "web/consts.py", "INDEX = \"d\"\n");
+    put(
+        root,
+        "web/i.py",
+        "import elasticsearch\nes.get(index=INDEX, id=1)\n",
+    );
+    let report = analyze_services(root).unwrap();
+    assert_eq!(
+        usages(&report, "api"),
+        pairs(&[("b", "read"), ("orders", "read")])
+    );
+    assert_eq!(
+        usages(&report, "web"),
+        pairs(&[("c", "read"), ("d", "read")])
+    );
+    assert_eq!(gaps(&report), 0);
+    let orders = report
+        .elasticsearch
+        .usages
+        .iter()
+        .find(|u| u.index == "orders")
+        .unwrap();
+    let files: Vec<_> = orders.evidence.iter().map(|e| e.file.as_str()).collect();
+    assert_eq!(files, ["api/Doc.java", "api/W.java", "api/W.java"]); // declaration, two call sites
+    assert_eq!(orders.evidence[0].line, Some(2));
+}
+
+#[test]
+fn unresolvable_constants_stay_gaps() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", TWO_SERVICES);
+    // Same constant name in two services: neither resolves the other's.
+    put(
+        root,
+        "api/Doc.java",
+        "class Doc {\n  static final String X = \"api-x\";\n  static final String TWICE = \"t1\";\n  static final String EXPR = \"a\" + X;\n}\nclass Other { static final String TWICE = \"t2\"; }\n",
+    );
+    put(
+        root,
+        "web/Doc.java",
+        "class Doc {\n  static final String X = \"web-x\";\n  static final String ONLY_WEB = \"w\";\n}\n",
+    );
+    for (file, arg) in [
+        ("A", "Doc.TWICE"),
+        ("B", "Doc.EXPR"),
+        ("C", "Doc.MISSING"),
+        ("D", "Doc.ONLY_WEB"),
+        ("E", "Other.X"),
+    ] {
+        put(
+            root,
+            &format!("api/{file}.java"),
+            &format!(
+                "import org.elasticsearch.client.Client;\nclass {file} {{ var r = new SearchRequest.Builder().index({arg}); }}\n"
+            ),
+        );
+    }
+    put(
+        root,
+        "web/F.java",
+        "import org.elasticsearch.client.Client;\nclass F { var r = new SearchRequest.Builder().index(Doc.X); }\n",
+    );
+    let report = analyze_services(root).unwrap();
+    assert_eq!(usages(&report, "api"), pairs(&[]));
+    assert_eq!(usages(&report, "web"), pairs(&[("web-x", "read")]));
+    assert_eq!(gaps(&report), 5);
+}
+
+/// Usages of service `api` for one source file calling `.index(arg)` (Java) or the language's call.
+fn api_usages(files: &[(&str, &str)]) -> (Vec<(String, String)>, usize) {
+    let dir = tempfile::tempdir().unwrap();
+    put(
+        dir.path(),
+        "compose.yaml",
+        "services:\n  api:\n    build: ./api\n",
+    );
+    for (path, text) in files {
+        put(dir.path(), &format!("api/{path}"), text);
+    }
+    let report = analyze_services(dir.path()).unwrap();
+    (usages(&report, "api"), gaps(&report))
+}
+
+const JAVA_USE: &str = "import org.elasticsearch.client.Client;\nclass U { var r = new SearchRequest.Builder().index(Doc.IDX); }\n";
+
+#[test]
+fn class_literals_and_logger_fields_do_not_hide_the_owner() {
+    let doc = "class Doc {\n  private static final Logger log = LoggerFactory.getLogger(Doc.class);\n  static final String IDX = \"orders\";\n}\n";
+    let (u, g) = api_usages(&[("Doc.java", doc), ("U.java", JAVA_USE)]);
+    assert_eq!((u, g), (pairs(&[("orders", "read")]), 0));
+    // A nested class closes: the constant after it belongs to the outer class again.
+    let nested = "class Doc {\n  static class In { }\n  static final String IDX = \"outer\";\n}\n";
+    let (u, g) = api_usages(&[("Doc.java", nested), ("U.java", JAVA_USE)]);
+    assert_eq!((u, g), (pairs(&[("outer", "read")]), 0));
+}
+
+#[test]
+fn interface_constants_resolve_but_method_locals_do_not() {
+    let doc = "interface Doc {\n  String IDX = \"if-idx\";\n}\n";
+    let (u, g) = api_usages(&[("Doc.java", doc), ("U.java", JAVA_USE)]);
+    assert_eq!((u, g), (pairs(&[("if-idx", "read")]), 0));
+    let local = "interface Doc {\n  default void f() {\n    String IDX = \"local\";\n  }\n}\n";
+    let (u, g) = api_usages(&[("Doc.java", local), ("U.java", JAVA_USE)]);
+    assert_eq!((u, g), (pairs(&[]), 1));
+}
+
+#[test]
+fn only_module_level_python_and_static_csharp_constants_count() {
+    let py = "import elasticsearch\ndef f(es):\n    IDX = \"local\"\n    es.get(index=IDX, id=1)\n";
+    assert_eq!(api_usages(&[("a.py", py)]), (pairs(&[]), 1));
+    let cs = |decl: &str| {
+        format!(
+            "using Nest;\nclass K {{\n  {decl}\n  void f() {{ client.Search<D>(s => s.Index(K.IDX)); }}\n}}\n"
+        )
+    };
+    let inst = cs("readonly string IDX = \"inst\";");
+    assert_eq!(api_usages(&[("K.cs", &inst)]), (pairs(&[]), 1));
+    let stat = cs("static readonly string IDX = \"stat\";");
+    assert_eq!(
+        api_usages(&[("K.cs", &stat)]),
+        (pairs(&[("stat", "read")]), 0)
+    );
+}
+
+#[test]
+fn braces_in_literals_and_comments_do_not_move_the_owner() {
+    let use_outer = JAVA_USE.replace("Doc.IDX", "Outer.IDX");
+    let probes = [
+        "static class In { char c = '{'; }",
+        "static class In { char c = '}'; }",
+        "static class In { char c = '\\''; }\n  static class Jn { }",
+        "String t = \"\"\"\n    { } }\n    \"\"\";",
+        "String s = \"a\\\"}\";",
+        "static class In { } // {",
+        "static class In { } // }",
+        "/* } */ int y;",
+        "/*\n   }\n */ int y;",
+    ];
+    let mut broken = Vec::new();
+    for probe in probes {
+        let doc = format!("class Outer {{\n  {probe}\n  static final String IDX = \"v\";\n}}\n");
+        let (u, g) = api_usages(&[("Other.java", &doc), ("U.java", &use_outer)]);
+        if (u, g) != (pairs(&[("v", "read")]), 0) {
+            broken.push(probe);
+        }
+    }
+    assert!(broken.is_empty(), "owner lost for {broken:?}");
+}
