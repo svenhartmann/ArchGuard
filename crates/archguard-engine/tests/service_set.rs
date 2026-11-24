@@ -89,7 +89,10 @@ fn infra_and_adapter_remove_the_finding_and_merge_origins() {
         .map(|u| u.service.as_str())
         .collect();
     assert!(
-        !services.is_empty() && services.iter().all(|s| *s == "adapter:writer"),
+        !services.is_empty()
+            && services
+                .iter()
+                .all(|s| s.starts_with("adapter:") && s.ends_with("::writer")),
         "{services:?}"
     );
     assert!(
@@ -158,7 +161,7 @@ fn reversed_order_keeps_findings_and_swaps_the_prefix() {
         b.elasticsearch
             .usages
             .iter()
-            .all(|u| !u.service.contains(':'))
+            .all(|u| u.service.starts_with("compose.yaml::"))
     );
     let files: Vec<&str> = named(&b, "index", "orders")[0]
         .evidence
