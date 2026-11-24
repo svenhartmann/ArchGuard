@@ -3,13 +3,16 @@
 //! provider would evaluate (variables, locals, `each`, module outputs, functions) is a gap.
 use super::service_terraform::Resource;
 use super::service_terraform_hcl::{attr, block, get, literal, object};
-use archguard_core::{SearchArtifact, SearchReference, ServiceTopology};
+use archguard_core::{SearchArtifact, SearchReference, ServiceDiagnostic, ServiceTopology};
 use archguard_flow_common::support::diagnostic;
 use hcl_edit::expr::Expression;
 use hcl_edit::parser;
 use hcl_edit::structure::Body;
 
 const PREFIX: &str = "elasticstack_elasticsearch_";
+const KIBANA: &str = "elasticstack_kibana_";
+/// Rule types that keep their index in `params.index`; others have no index to read.
+const INDEX_RULES: [&str; 2] = [".es-query", ".index-threshold"];
 const NOTE: &str =
     "Declared Elasticsearch artifact read statically; no terraform run, state or cluster access.";
 /// Resource type suffix, artifact kind and the attribute holding its name.
@@ -29,6 +32,10 @@ const KINDS: [(&str, &str, &str); 10] = [
 /// Appends the artifacts of one module instance to `report.elasticsearch`.
 pub(super) fn augment(report: &mut ServiceTopology, scope: &str, resources: &[Resource]) {
     for r in resources {
+        if let Some(suffix) = r.kind.strip_prefix(KIBANA) {
+            kibana(report, scope, r, suffix);
+            continue;
+        }
         let Some(suffix) = r.kind.strip_prefix(PREFIX) else {
             continue;
         };
@@ -45,6 +52,35 @@ pub(super) fn augment(report: &mut ServiceTopology, scope: &str, resources: &[Re
         let out = read.out;
         report.elasticsearch.artifacts.extend(out);
     }
+}
+
+/// Kibana data views and alerting rules; saved-object imports are noted, not read.
+fn kibana(report: &mut ServiceTopology, scope: &str, r: &Resource, suffix: &str) {
+    if suffix == "import_saved_objects" {
+        // Not a gap: the import is out of scope, so `complete` stays untouched.
+        report.diagnostics.push(ServiceDiagnostic {
+            file: r.file.path.clone(),
+            service: None,
+            message: format!("{}: saved objects are not analyzed.", r.address),
+        });
+        return;
+    }
+    if !matches!(suffix, "data_view" | "alerting_rule") {
+        return;
+    }
+    let mut read = Read {
+        report,
+        r,
+        scope,
+        out: Vec::new(),
+    };
+    if suffix == "data_view" {
+        read.data_view();
+    } else {
+        read.alerting_rule();
+    }
+    let out = read.out;
+    report.elasticsearch.artifacts.extend(out);
 }
 
 struct Read<'x, 'a> {
@@ -115,6 +151,54 @@ impl Read<'_, '_> {
                 .as_ref()
                 .map_or(".alias".into(), |n| format!(".alias.{n}"));
             self.push("alias", name, &suffix, vec![], vec![target.clone()]);
+        }
+    }
+
+    fn data_view(&mut self) {
+        let body = &self.r.block.body;
+        let name = self.text("the data view name", field(body, "data_view", "name"));
+        let title = field(body, "data_view", "title");
+        let patterns = self
+            .texts("an index pattern", title)
+            .iter()
+            .flat_map(|t| t.split(','))
+            .map(str::trim)
+            .filter(|p| !p.is_empty() && !p.starts_with('-'))
+            .map(str::to_owned)
+            .collect();
+        self.push("data_view", name, "", patterns, vec![]);
+    }
+
+    fn alerting_rule(&mut self) {
+        let body = &self.r.block.body;
+        let name = self.text("the alerting rule name", attr(body, "name"));
+        let rule_type = self.text("the rule type", attr(body, "rule_type_id"));
+        let (mut found, mut gap) = (Vec::new(), false);
+        if let Some(p) = attr(body, "params") {
+            params_index(p, &mut found, &mut gap);
+        }
+        if gap {
+            self.text("the rule index", None);
+        } else if found.is_empty()
+            && rule_type
+                .as_deref()
+                .is_some_and(|t| INDEX_RULES.contains(&t))
+        {
+            let message = format!(
+                "{}: alerting rule has no top-level params index; its index comes from a data view or is unknown.",
+                self.r.address
+            );
+            diagnostic(self.report, &self.r.file.path, None, message);
+        }
+        let mut patterns = Vec::new();
+        for e in found {
+            patterns.extend(self.texts("an index pattern", Some(&e)));
+        }
+        self.push("alerting_rule", name, "", patterns, vec![]);
+        if let (Some(t), Some(a)) = (rule_type, self.out.last_mut()) {
+            a.evidence[0]
+                .description
+                .push_str(&format!(" rule_type_id: {t}."));
         }
     }
 
@@ -261,6 +345,25 @@ fn pipelines(e: &Expression, strict: bool, out: &mut Vec<Expression>, gap: &mut 
             }
             Some(_) => {}
             None => *gap |= strict,
+        },
+    }
+}
+
+/// The top-level `index` value of `params` given as `jsonencode(...)`, literal JSON or a plain
+/// object. Nested `index` keys (e.g. `searchConfiguration.index`) are data view ids, not patterns.
+/// Unreadable params (variable, function, malformed JSON) set `gap`.
+fn params_index(e: &Expression, out: &mut Vec<Expression>, gap: &mut bool) {
+    match e {
+        Expression::FuncCall(call) if call.name.name.as_str() == "jsonencode" => {
+            call.args.iter().for_each(|a| params_index(a, out, gap));
+        }
+        Expression::Object(_) => out.extend(get(e, "index").cloned()),
+        other => match literal(other).filter(|s| s.trim_start().starts_with('{')) {
+            Some(s) => match parser::parse_expr(s.trim()) {
+                Ok(parsed) => params_index(&parsed, out, gap),
+                Err(_) => *gap = true,
+            },
+            None => *gap = true,
         },
     }
 }
