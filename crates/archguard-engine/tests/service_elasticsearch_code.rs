@@ -528,22 +528,67 @@ fn every_gap_names_its_line() {
     assert_eq!(lines, [Some("3.".into()), Some("4.".into())]);
 }
 
-#[test]
-fn many_constant_references_cost_linear_time() {
+/// Fastest of three runs of the code reader over one file with `n` constant references.
+fn best_of_three(n: usize) -> std::time::Duration {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     put(root, "compose.yaml", API);
     let mut text = format!("{CLIENT}class Big {{ void f() {{\n");
-    for i in 0..15_000 {
+    for i in 0..n {
         text.push_str(&format!(
             "  var r{i} = new SearchRequest.Builder().index(C{i});\n"
         ));
     }
     text.push_str("} }\n");
     put(root, "api/Big.java", &text);
-    let start = std::time::Instant::now();
+    (0..3)
+        .map(|_| {
+            let start = std::time::Instant::now();
+            let report = analyze_services(root).unwrap();
+            assert_eq!(gaps(&report), n);
+            start.elapsed()
+        })
+        .min()
+        .unwrap()
+}
+
+#[test]
+fn many_references_cost_linear_time() {
+    // Doubling the input doubles a linear scan (ratio near 2) and quadruples a quadratic one.
+    let (small, large) = (best_of_three(5_000), best_of_three(10_000));
+    let ratio = large.as_secs_f64() / small.as_secs_f64();
+    eprintln!("{small:?} -> {large:?}, ratio {ratio:.2}");
+    assert!(ratio < 3.0, "{small:?} -> {large:?}, ratio {ratio:.2}");
+}
+
+#[test]
+fn long_generic_arguments_end_the_object_variable_but_normal_ones_hold() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", API);
+    // Type arguments without a nested `<`, wider than the 200-character window.
+    let wide = "A, ".repeat(100);
+    put(
+        root,
+        "api/U.java",
+        &format!(
+            "{CLIENT}class U {{ void f() {{\n  IndexRequest<Doc> near = build();\n  IndexRequest<{wide}> far = build();\n  client.bulk(b -> b.operations(op -> op.index(near)));\n}} }}\n"
+        ),
+    );
+    put(
+        root,
+        "api/V.java",
+        &format!(
+            "{CLIENT}class V {{ void f() {{\n  IndexRequest<{wide}> far = build();\n  client.bulk(b -> b.operations(op -> op.index(far)));\n}} }}\n"
+        ),
+    );
     let report = analyze_services(root).unwrap();
-    assert_eq!(gaps(&report), 15_000);
-    // The quadratic scan took ~29 s for 1 MiB in a debug build; linear is well under a second.
-    assert!(start.elapsed().as_secs() < 10, "{:?}", start.elapsed());
+    // `near` is an object (no gap); `far` is wider than the 200-char window: a gap, never a silent miss.
+    assert_eq!(gaps(&report), 1);
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|d| d.file.ends_with("V.java"))
+    );
 }

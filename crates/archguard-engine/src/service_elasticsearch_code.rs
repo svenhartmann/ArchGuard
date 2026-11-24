@@ -210,13 +210,14 @@ fn below_limit(
 
 fn mentions(text: &str, ext: &str) -> Vec<Mention> {
     let objects = object_variables(text);
+    let lines: Vec<usize> = text.match_indices('\n').map(|(i, _)| i).collect();
     let mut out = Vec::new();
     for c in CALLS.iter().filter(|c| c.ext == ext) {
         for (at, _) in text.match_indices(c.needle) {
             let open = at + c.needle.len();
             let end = if c.own { open } else { at };
             let access = access(&text[statement_start(text, at)..end]);
-            let line = text[..at].matches('\n').count() as u32 + 1;
+            let line = line_of(&lines, at);
             for name in names(c, text, at, open, &objects) {
                 out.push(Mention {
                     name,
@@ -228,6 +229,11 @@ fn mentions(text: &str, ext: &str) -> Vec<Mention> {
         }
     }
     out
+}
+
+/// Line of byte offset `at`, given the newline offsets built once per file (binary search per hit).
+fn line_of(newlines: &[usize], at: usize) -> u32 {
+    newlines.partition_point(|&n| n < at) as u32 + 1
 }
 
 fn statement_start(text: &str, at: usize) -> usize {
@@ -429,6 +435,7 @@ const METHODS: [(&str, &str); 9] = [
 
 /// Python (`index="x"`, `"_index": "x"` for bulk helpers) and TypeScript (`{ index: 'x' }`).
 fn script_mentions(text: &str, python: bool) -> Vec<Mention> {
+    let lines: Vec<usize> = text.match_indices('\n').map(|(i, _)| i).collect();
     let mut out = Vec::new();
     for (method, access) in METHODS {
         let needle = format!(".{method}(");
@@ -438,7 +445,7 @@ fn script_mentions(text: &str, python: bool) -> Vec<Mention> {
             out.extend(value.into_iter().flat_map(literals).map(|name| Mention {
                 name,
                 access,
-                line: text[..at].matches('\n').count() as u32 + 1,
+                line: line_of(&lines, at),
                 pointer: method,
             }));
         }
@@ -465,6 +472,7 @@ fn index_value<'a>(args: &[&'a str], python: bool) -> Option<&'a str> {
 
 /// `"_index": "x"` entries of bulk helper actions.
 fn bulk_helper_mentions(text: &str) -> Vec<Mention> {
+    let lines: Vec<usize> = text.match_indices('\n').map(|(i, _)| i).collect();
     let mut out = Vec::new();
     for (at, _) in text.match_indices("_index") {
         let rest = text[at + 6..].trim_start_matches(['"', '\'']).trim_start();
@@ -481,7 +489,7 @@ fn bulk_helper_mentions(text: &str) -> Vec<Mention> {
         out.extend(literals(value).into_iter().map(|name| Mention {
             name,
             access: "write",
-            line: text[..at].matches('\n').count() as u32 + 1,
+            line: line_of(&lines, at),
             pointer: "_index",
         }));
     }
