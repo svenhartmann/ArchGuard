@@ -19,8 +19,10 @@ struct Scene {
     links: Vec<Link>,
     /// Graph edge per link.
     edge_of: Vec<usize>,
-    /// Shown nodes per kind.
+    /// Shown nodes per kind (the group rows).
     shown: HashMap<String, usize>,
+    /// Shown declared nodes per kind: what presses a filter key, ghosts do not.
+    real: HashMap<String, usize>,
 }
 
 /// Shown nodes: the kind filter (ghosts always), or the focused node with its neighbours.
@@ -48,8 +50,12 @@ fn scene(s: &EsState) -> Scene {
     let shown = visible(s);
     let nodes = &s.graph.nodes;
     let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut real: HashMap<String, usize> = HashMap::new();
     for (n, _) in nodes.iter().zip(&shown).filter(|(_, v)| **v) {
         *counts.entry(n.kind.clone()).or_default() += 1;
+        if n.declared {
+            *real.entry(n.kind.clone()).or_default() += 1;
+        }
     }
     let mut out = Scene {
         nodes: Vec::new(),
@@ -58,6 +64,7 @@ fn scene(s: &EsState) -> Scene {
         links: Vec::new(),
         edge_of: Vec::new(),
         shown: counts,
+        real,
     };
     let mut group = HashMap::new();
     // Groups in the kinds' order; the layout sorts siblings by name, so the name is the rank.
@@ -111,7 +118,13 @@ pub fn build(s: &EsState) -> EsModel {
     }
     let sc = scene(s);
     let lay = layout::layout_fixed_roots(&sc.nodes, &sc.links, s.viewport);
-    let total = |kind: &str| s.graph.nodes.iter().filter(|n| n.kind == kind).count() as i32;
+    let total = |kind: &str, declared: bool| {
+        s.graph
+            .nodes
+            .iter()
+            .filter(|n| n.kind == kind && n.declared == declared)
+            .count() as i32
+    };
     EsModel {
         state: 1,
         rows: model(rows(s, &sc, &lay)),
@@ -128,8 +141,9 @@ pub fn build(s: &EsState) -> EsModel {
         zoom: s.zoom,
         kinds: model(s.kinds().iter().map(|k| EsKind {
             kind: k.as_str().into(),
-            count: total(k),
-            shown: sc.shown.get(k).copied().unwrap_or(0) as i32,
+            count: total(k, true),
+            shown: sc.real.get(k).copied().unwrap_or(0) as i32,
+            ghosts: total(k, false),
         })),
         focus: s
             .focus
@@ -333,6 +347,22 @@ mod tests {
     }
 
     #[test]
+    fn a_kind_key_is_pressed_by_real_nodes_only_ghosts_are_counted_apart() {
+        let mut t = ServiceTopology::default();
+        t.elasticsearch.artifacts = vec![artifact("ingest_pipeline", "pipe", &[])];
+        t.elasticsearch.usages = vec![usage("svc-a", "missing", "write")];
+        let mut s = build_from(std::sync::Arc::new(Ok(t)));
+        let k = |s: &EsState, kind: &str| build(s).kinds.iter().find(|k| k.kind == kind).unwrap();
+        // Only a ghost is behind `index`: the key is not pressed, the ghost has its own count.
+        let ix = k(&s, "index");
+        assert_eq!((ix.count, ix.shown, ix.ghosts), (0, 0, 1));
+        assert!(names(&build(&s)).contains(&"⚠ missing".into()));
+        s.toggle_kind(kind_at(&s, "ingest_pipeline"));
+        let p = k(&s, "ingest_pipeline");
+        assert_eq!((p.count, p.shown, p.ghosts), (1, 1, 0));
+    }
+
+    #[test]
     fn a_group_row_per_kind_comes_before_its_nodes() {
         let m = build(&state());
         let n = names(&m);
@@ -473,5 +503,23 @@ mod tests {
         let m = build(&build_from(std::sync::Arc::new(Ok(t))));
         let groups: Vec<String> = names(&m).into_iter().filter(|n| n.contains(" (")).collect();
         assert_eq!(groups, ["service (1)", "index (1)", "alias (1)"]);
+    }
+
+    #[test]
+    fn focus_keeps_the_group_order_of_the_kinds() {
+        let mut t = ServiceTopology::default();
+        t.elasticsearch.artifacts = vec![
+            artifact("alerting_rule", "r", &[("index", "i")]),
+            artifact("index", "i", &[]),
+        ];
+        t.elasticsearch.usages = vec![usage("svc", "i", "write")];
+        let mut s = build_from(std::sync::Arc::new(Ok(t)));
+        let at = row(&build(&s), "i").service as usize;
+        s.focus_on(at);
+        let groups: Vec<String> = names(&build(&s))
+            .into_iter()
+            .filter(|n| n.contains(" ("))
+            .collect();
+        assert_eq!(groups, ["service (1)", "index (1)", "alerting_rule (1)"]);
     }
 }
