@@ -161,7 +161,7 @@ fn reversed_order_keeps_findings_and_swaps_the_prefix() {
         b.elasticsearch
             .usages
             .iter()
-            .all(|u| u.service.starts_with("compose.yaml::"))
+            .all(|u| u.service == "compose.yaml::writer")
     );
     let files: Vec<&str> = named(&b, "index", "orders")[0]
         .evidence
@@ -245,5 +245,30 @@ fn merge_time_grows_linearly_with_the_number_of_artifacts() {
     assert!(
         ratio < 9.0,
         "4x artifacts took {ratio:.1}x as long; linear is about 4, quadratic 16"
+    );
+}
+
+#[test]
+fn a_member_with_an_es_gap_and_a_non_es_gap_reports_both() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tf = "resource \"elasticstack_elasticsearch_index\" \"x\" {\n  name = var.unknown\n}\n";
+    put(tmp.path(), "mixed/terraform/main.tf", tf);
+    put(
+        tmp.path(),
+        "mixed/compose.yaml",
+        "include:\n  - other.yaml\nservices:\n  s:\n    image: x\n",
+    );
+    let r = analyze_service_set(&[dir("infra"), tmp.path().join("mixed")]).unwrap();
+    assert!(
+        r.diagnostics
+            .iter()
+            .any(|d| d.file.starts_with("mixed:") && is_elasticsearch_gap(d))
+    );
+    assert!(
+        r.diagnostics
+            .iter()
+            .any(|d| d.file == "mixed" && d.message.contains("incomplete outside Elasticsearch")),
+        "{:?}",
+        r.diagnostics
     );
 }
