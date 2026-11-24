@@ -21,3 +21,6 @@ msgstr "Referenz"
 
 msgid "Unknown access (dashed)"
 msgstr "Zugriff unbekannt (gestrichelt)"
+
+msgid "Not declared in this project."
+msgstr "In diesem Projekt nicht deklariert."

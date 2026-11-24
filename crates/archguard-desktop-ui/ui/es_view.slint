@@ -1,11 +1,12 @@
 // Elasticsearch tab: the model of the search graph (src/es_ui.rs). The rows and arcs
 // are those of the Services tree (services_tree.slint).
 import { ScrollView } from "std-widgets.slint";
+import { Mono, Note } from "services_sections.slint";
 import { Theme } from "theme.slint";
 import { Button, ZoomControls, Legend, EmptyState } from "widgets.slint";
 import { Fmt } from "format.slint";
 import { ServicesTree, SvcRow, SvcEdge } from "services_tree.slint";
-import { SvcSearchDetail } from "services_search.slint";
+import { SvcSearchDetail, SearchDetailBody } from "services_search.slint";
 
 // One artifact kind of the filter: declared nodes of the kind, the declared ones shown, and ghosts apart.
 export struct EsKind {
@@ -43,6 +44,29 @@ export global ElasticsearchData {
     callback zoom-by(float);
     callback fit(float, float);
     callback resized(float);
+}
+
+// The focused node's details beside or below the tree; "Show all" closes it. A name that
+// no file declares has no declaration: its users and findings are what is known.
+component EsInspector inherits Rectangle {
+    in property <string> title;
+    in property <SvcSearchDetail> detail;
+    callback close();
+    background: Theme.panel;
+    Rectangle { y: 0; height: 1px; background: Theme.border; }
+    ScrollView {
+        VerticalLayout {
+            padding: 8px;
+            spacing: 6px;
+            HorizontalLayout {
+                spacing: 8px;
+                Mono { text: root.title; horizontal-stretch: 1; }
+                Button { text: @tr("Show all"); compact: true; clicked => { root.close(); } }
+            }
+            if root.detail.declaration.length == 0: Note { text: @tr("Not declared in this project."); }
+            SearchDetailBody { detail: root.detail; }
+        }
+    }
 }
 
 // The graph: kind filter, focus, zoom and legend above the Services tree. The
@@ -115,17 +139,35 @@ export component EsView inherits Rectangle {
                 : m.state == 2 ? @tr("The service topology is unavailable.")
                 : @tr("No Elasticsearch artifacts in this project.");
         }
-        tree := ServicesTree {
+        // The detail bar lies right of the tree, below it in a narrow pane.
+        Rectangle {
             vertical-stretch: root.ready ? 1 : 0;
-            rows: m.rows;
-            edges: m.edges;
-            hierarchy: m.hierarchy;
-            canvas-w: m.width;
-            canvas-h: m.height;
-            zoom: m.zoom;
-            select-service(i) => { ElasticsearchData.focus(i); }
-            resized(w) => { ElasticsearchData.resized(w); }
-            zoom-by(f) => { ElasticsearchData.zoom-by(f); }
+            property <bool> side: root.width >= 700px;
+            property <length> bar: !m.has-detail ? 0px : side ? 300px : min(220px, self.height * 0.5);
+            tree := ServicesTree {
+                x: 0px;
+                y: 0px;
+                width: parent.side ? parent.width - parent.bar : parent.width;
+                height: parent.side ? parent.height : parent.height - parent.bar;
+                rows: m.rows;
+                edges: m.edges;
+                hierarchy: m.hierarchy;
+                canvas-w: m.width;
+                canvas-h: m.height;
+                zoom: m.zoom;
+                select-service(i) => { ElasticsearchData.focus(i); }
+                resized(w) => { ElasticsearchData.resized(w); }
+                zoom-by(f) => { ElasticsearchData.zoom-by(f); }
+            }
+            if m.has-detail: EsInspector {
+                x: parent.side ? parent.width - parent.bar : 0px;
+                y: parent.side ? 0px : parent.height - parent.bar;
+                width: parent.side ? parent.bar : parent.width;
+                height: parent.side ? parent.height : parent.bar;
+                title: m.focus;
+                detail: m.detail;
+                close => { ElasticsearchData.clear-focus(); }
+            }
         }
     }
 }

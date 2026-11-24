@@ -4,9 +4,10 @@ use std::collections::HashMap;
 
 use super::state::EsState;
 use crate::services_ui::layout::{self, Link, Node};
-use crate::services_ui::{paths, view::shorten};
+use crate::services_ui::{paths, search, view::evidence, view::shorten};
 use crate::tab_support::model;
-use crate::ui::{EsKind, EsModel, SvcEdge, SvcRow};
+use crate::ui::{EsKind, EsModel, SvcEdge, SvcRow, SvcSearchDetail};
+use archguard_engine::core::SearchArtifact;
 
 /// The laid-out graph: layout nodes (groups first, one per kind with shown nodes) and
 /// what each stands for.
@@ -109,6 +110,33 @@ fn scene(s: &EsState) -> Scene {
     out
 }
 
+/// The focused node's detail, from the Services section's builder; a service has none, an
+/// undeclared name is an artifact with nothing but its name.
+fn detail(s: &EsState) -> Option<SvcSearchDetail> {
+    let n = &s.graph.nodes[s.focus?];
+    let t = (*s.topology).as_ref().ok()?;
+    if n.kind == "service" {
+        return None;
+    }
+    let ghost;
+    let a = match n.artifact {
+        Some(i) => t.elasticsearch.artifacts.get(i)?,
+        None => {
+            ghost = SearchArtifact {
+                kind: n.kind.clone(),
+                name: Some(n.title.clone()),
+                address: n.title.clone(),
+                scope: String::new(),
+                patterns: Vec::new(),
+                references: Vec::new(),
+                evidence: Vec::new(),
+            };
+            &ghost
+        }
+    };
+    Some(search::detail(a, t, evidence))
+}
+
 pub fn build(s: &EsState) -> EsModel {
     if (*s.topology).is_err() {
         return EsModel {
@@ -125,6 +153,7 @@ pub fn build(s: &EsState) -> EsModel {
             .filter(|n| n.kind == kind && n.declared == declared)
             .count() as i32
     };
+    let detail = detail(s);
     EsModel {
         state: 1,
         rows: model(rows(s, &sc, &lay)),
@@ -150,6 +179,8 @@ pub fn build(s: &EsState) -> EsModel {
             .map(|f| s.graph.nodes[f].title.as_str().into())
             .unwrap_or_default(),
         total: s.graph.nodes.len() as i32,
+        has_detail: detail.is_some(),
+        detail: detail.unwrap_or_default(),
         ..Default::default()
     }
 }
@@ -528,8 +559,9 @@ mod tests {
     #[test]
     fn focus_on_an_artifact_fills_the_detail_from_the_services_section() {
         let mut s = state();
-        let at = |s: &EsState, name: &str| row(&build(s), name).service as usize;
-        let a = at(&s, "idx-a");
+        let m = build(&s);
+        let at = |name: &str| row(&m, name).service as usize;
+        let (a, b, svc) = (at("idx-a"), at("⚠ idx-b"), at("svc-a"));
         s.focus_on(a);
         let m = build(&s);
         assert!(m.has_detail);
@@ -545,10 +577,8 @@ mod tests {
         );
         assert_eq!(m.detail.writers, same.writers);
         assert_eq!(m.detail.references.row_count(), same.references.row_count());
-        let b = at(&s, "⚠ idx-b");
         s.focus_on(b);
         assert_eq!(build(&s).detail.findings.row_count(), 1);
-        let svc = at(&s, "svc-a");
         s.focus_on(svc);
         assert!(!build(&s).has_detail);
         s.focus = None;
