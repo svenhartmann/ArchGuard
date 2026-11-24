@@ -11,6 +11,7 @@ mod follow;
 mod layout;
 mod paths;
 mod patterns;
+mod search;
 mod sections;
 #[cfg(test)]
 mod sections_check;

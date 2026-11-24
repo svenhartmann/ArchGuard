@@ -8,9 +8,10 @@ import { Icons, Button, Disclosure, ZoomControls, HelpTip, TipArea, EmptyState }
 import { Fmt } from "format.slint";
 import { ServicesTree, SvcRow, SvcEdge } from "services_tree.slint";
 import { ServicesInspector, SvcInspector, SvcEvidence, SvcLink } from "services_inspector.slint";
+import { SvcSearch, SvcSearchKind, SvcSearchRow, SvcSearchDetail, SvcSearchFinding, SvcSearchGap } from "services_search.slint";
 import { Note, PatternsSection, ContractsSection, SvcPatterns, SvcPattern, SvcPatternDetail, SvcRecord, SvcContracts, SvcContract, SvcContractDetail, SvcOperation, SvcChange } from "services_sections.slint";
 
-export { SvcRow, SvcEdge, SvcInspector, SvcEvidence, SvcLink, SvcPatterns, SvcPattern, SvcPatternDetail, SvcRecord, SvcContracts, SvcContract, SvcContractDetail, SvcOperation, SvcChange }
+export { SvcRow, SvcEdge, SvcInspector, SvcEvidence, SvcLink, SvcPatterns, SvcPattern, SvcPatternDetail, SvcRecord, SvcContracts, SvcContract, SvcContractDetail, SvcOperation, SvcChange, SvcSearch, SvcSearchKind, SvcSearchRow, SvcSearchDetail, SvcSearchFinding, SvcSearchGap }
 
 export struct SvcProject {
     path: string,
@@ -67,6 +68,8 @@ export struct ServicesModel {
     // Details → architecture pattern candidates and API contracts.
     patterns: SvcPatterns,
     contracts: SvcContracts,
+    // Details → Elasticsearch artifacts.
+    search: SvcSearch,
 }
 
 export global ServicesData {
@@ -103,6 +106,9 @@ export global ServicesData {
     callback select-contract(int);
     callback more-contracts();
     callback more-contract-details();
+    // Elasticsearch: open artifact (its index) and pages.
+    callback select-search(int);
+    callback more-search();
 
     // serviceKindLabel; index as the relation list.
     public pure function kind-label(k: int) -> string {
