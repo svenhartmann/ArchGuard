@@ -471,6 +471,10 @@ impl ArchguardTools {
                     .iter()
                     .map(|p| tools::resolve_root(&self.root, Some(p)))
                     .collect::<Result<Vec<_>, _>>()?;
+                let base = tools::resolve_root(&self.root, None)?;
+                let entries: Vec<_> = paths.iter().map(std::path::PathBuf::from).collect();
+                archguard_engine::resolve_project_dirs(&base, &entries)
+                    .map_err(tools::invalid_params)?;
                 archguard_engine::analyze_service_set(&roots)
             }
         }

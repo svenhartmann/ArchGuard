@@ -193,7 +193,7 @@ pub use performance::{
 };
 pub use pipeline::{Level, NamedGraph, SourceNames};
 pub use project_files::write_project_file;
-pub use project_set::{ProjectSet, read_project_set, write_project_set};
+pub use project_set::{ProjectSet, read_project_set, resolve_project_dirs, write_project_set};
 pub use quality_findings::{
     QualityFinding, QualityReport, import_quality_findings, quality_findings_fingerprint,
     read_quality_findings,
