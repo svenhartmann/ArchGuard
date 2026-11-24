@@ -218,3 +218,33 @@ fn alias_of_an_index_with_unknown_name_is_declared_and_keeps_its_own_name() {
     assert!(subjects(&r, "undeclared_index").is_empty());
     assert_eq!(subjects(&r, "shared_write_index"), ["orders"]);
 }
+
+#[test]
+fn alias_declared_on_a_known_and_an_unknown_index_keeps_its_own_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(
+        root,
+        "compose.yaml",
+        "services:\n  a:\n    build: ./a\n  b:\n    build: ./b\n",
+    );
+    put(
+        root,
+        "infra/main.tf",
+        "resource \"elasticstack_elasticsearch_index\" \"i\" {\n  name = local.n\n  alias {\n    name = \"orders\"\n  }\n}\nresource \"elasticstack_elasticsearch_index\" \"j\" {\n  name = \"o-v1\"\n  alias {\n    name = \"orders\"\n  }\n}\n",
+    );
+    let java = |name: &str| {
+        format!(
+            "import org.elasticsearch.client.Client;\nclass W {{ var r = new IndexRequest(\"{name}\"); }}\n"
+        )
+    };
+    put(root, "a/W.java", &java("orders"));
+    put(root, "b/W.java", &java("o-v1"));
+    let r = analyze_services(root).unwrap();
+    assert!(subjects(&r, "shared_write_index").is_empty());
+    assert!(
+        r.diagnostics
+            .iter()
+            .any(|d| d.message.contains("not a literal"))
+    );
+}
