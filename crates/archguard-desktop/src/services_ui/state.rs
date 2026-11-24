@@ -50,6 +50,7 @@ pub struct ServicesState {
     /// Details → pattern candidates and API contracts.
     pub(super) patterns: super::patterns::Patterns,
     pub(super) contracts: super::contracts::Contracts,
+    pub(super) search: super::search::Search,
 }
 
 pub fn build_from(topology: Topology) -> ServicesState {
@@ -80,6 +81,7 @@ pub fn build_from(topology: Topology) -> ServicesState {
         viewport: 0.0,
         patterns: Default::default(),
         contracts: Default::default(),
+        search: Default::default(),
     }
 }
 

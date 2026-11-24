@@ -63,6 +63,11 @@ fn wire_sections(ui: &AppWindow, d: &ServicesData, a: &Actions<ServicesState>) {
     d.on_select_contract(a.on(|s, _, i: i32| s.contracts.choose(index(i).unwrap_or(usize::MAX))));
     d.on_more_contracts(a.on0(|s, _| s.contracts.more()));
     d.on_more_contract_details(a.on0(|s, _| s.contracts.more_details()));
+    d.on_select_search(a.on(|s, _, i: i32| {
+        let len = s.topology().map_or(0, |t| t.elasticsearch.artifacts.len());
+        s.search.choose(index(i).unwrap_or(usize::MAX), len);
+    }));
+    d.on_more_search(a.on0(|s, _| s.search.more()));
     d.on_clear_pattern_highlight(a.on0(|s, ui| {
         s.patterns.highlighted = false;
         graph_ui::mark(ui, &[], &[]);
@@ -196,6 +201,10 @@ pub fn push(ui: &AppWindow, s: &ServicesState) {
     m.patterns.simulated = simulated();
     m.patterns.highlighted &= !m.patterns.simulated;
     m.contracts = s.contracts.model();
+    m.search = s
+        .topology()
+        .map(|t| s.search.model(t, view::evidence))
+        .unwrap_or_default();
     d.set_model(m);
 }
 
