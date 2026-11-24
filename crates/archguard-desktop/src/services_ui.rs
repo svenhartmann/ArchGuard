@@ -8,10 +8,10 @@
 mod contracts;
 mod export;
 mod follow;
-mod layout;
-mod paths;
+pub(crate) mod layout;
+pub(crate) mod paths;
 mod patterns;
-mod search;
+pub(crate) mod search;
 #[cfg(test)]
 mod search_check;
 mod sections;
@@ -21,7 +21,7 @@ mod state;
 mod sync;
 #[cfg(test)]
 mod tree_check;
-mod view;
+pub(crate) mod view;
 
 use std::path::Path;
 

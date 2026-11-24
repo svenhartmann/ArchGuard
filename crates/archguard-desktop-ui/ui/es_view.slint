@@ -1,0 +1,37 @@
+// Elasticsearch tab: the model of the search graph (src/es_ui.rs). The rows and arcs
+// are those of the Services tree (services_tree.slint); the component follows in ticket 22.
+import { SvcRow, SvcEdge } from "services_tree.slint";
+
+// One artifact kind of the filter: all nodes of the kind, and the ones shown.
+export struct EsKind {
+    kind: string,
+    count: int,
+    shown: int,
+}
+
+export struct EsModel {
+    // 0 loading, 1 ready (also without Elasticsearch data), 2 topology unavailable.
+    state: int,
+    rows: [SvcRow],
+    edges: [SvcEdge],
+    hierarchy: string,
+    width: float,
+    height: float,
+    zoom: float,
+    kinds: [EsKind],
+    // Full title of the focused node, empty without focus.
+    focus: string,
+    // All nodes of the graph, before the filter.
+    total: int,
+}
+
+export global ElasticsearchData {
+    in-out property <EsModel> model;
+    callback toggle-kind(int);
+    // The `service` field of a row (index of the graph node, -1 for a group row).
+    callback focus(int);
+    callback clear-focus();
+    callback zoom-by(float);
+    callback fit(float, float);
+    callback resized(float);
+}
