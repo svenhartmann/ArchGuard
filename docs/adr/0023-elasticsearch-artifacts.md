@@ -174,3 +174,4 @@ are code, but no analyzer measures them.
   (table entry in the code reader). An `alias` block of an index whose own name
   is unknown is still an alias artifact, with no target; Java operation objects
   made by a factory (`XOperation.of(...)`) are objects, not index names.
+- **2026-11-24:** Several projects can be merged into one Elasticsearch map; see [ADR 0024](0024-project-sets.md).
