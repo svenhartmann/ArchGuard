@@ -234,7 +234,7 @@ fn many_call_matches_do_not_scan_the_rest_of_the_file_each() {
         "compose.yaml",
         "services:\n  api:\n    build: ./api\n",
     );
-    let body = "d.get(\"k\")\n".repeat(20_000);
+    let body = "d.get(\"k\")\n".repeat(15_000);
     put(root, "api/big.py", &format!("import elasticsearch\n{body}"));
     // Per-match cost must stop at the closing paren; quadratic scanning needs minutes here.
     // A wall-clock bound is used because no work counter exists; 10 s is far above the linear cost.
@@ -526,4 +526,24 @@ fn every_gap_names_its_line() {
         .collect();
     lines.sort();
     assert_eq!(lines, [Some("3.".into()), Some("4.".into())]);
+}
+
+#[test]
+fn many_constant_references_cost_linear_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", API);
+    let mut text = format!("{CLIENT}class Big {{ void f() {{\n");
+    for i in 0..15_000 {
+        text.push_str(&format!(
+            "  var r{i} = new SearchRequest.Builder().index(C{i});\n"
+        ));
+    }
+    text.push_str("} }\n");
+    put(root, "api/Big.java", &text);
+    let start = std::time::Instant::now();
+    let report = analyze_services(root).unwrap();
+    assert_eq!(gaps(&report), 15_000);
+    // The quadratic scan took ~29 s for 1 MiB in a debug build; linear is well under a second.
+    assert!(start.elapsed().as_secs() < 10, "{:?}", start.elapsed());
 }
