@@ -204,5 +204,6 @@ fn the_header_scrolls_at_400_px() {
     let page = Page::new().expect("component");
     page.show().expect("shown");
     page.global::<ElasticsearchData>().set_model(model(true));
+    frame(&_window);
     assert!(page.get_scrolls(), "the header is wider than 400 px");
 }

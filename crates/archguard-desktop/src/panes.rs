@@ -14,13 +14,14 @@
 pub mod link;
 
 /// Every view of the view bar, in its order.
-pub const VIEWS: [&str; 12] = [
+pub const VIEWS: [&str; 13] = [
     "start",
     "architecture",
     "graph",
     "dsm",
     "calls",
     "services",
+    "elasticsearch",
     "runtime",
     "screens",
     "access",
@@ -42,7 +43,7 @@ pub const SETTINGS: &str = "settings";
 pub const COMPARE: &str = "compare";
 
 /// The order in which a pane that needs a view takes one not open yet.
-const FREE_ORDER: [&str; 12] = [
+const FREE_ORDER: [&str; 13] = [
     "dsm",
     "graph",
     "start",
@@ -50,6 +51,7 @@ const FREE_ORDER: [&str; 12] = [
     "quality",
     "calls",
     "services",
+    "elasticsearch",
     "runtime",
     "screens",
     "access",
