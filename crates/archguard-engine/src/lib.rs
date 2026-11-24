@@ -232,6 +232,7 @@ pub use security::{
 };
 pub use semantic_calls::{analyze_calls, semantic_fingerprints};
 pub use services::analyze_services;
+pub use services::{is_elasticsearch_gap, search_artifact_covers};
 pub use share_report::share_report;
 pub use snapshot::{
     Snapshot, SnapshotRow, latest_snapshot, read_snapshots, read_trend, snapshot_record,

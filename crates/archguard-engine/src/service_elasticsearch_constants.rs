@@ -380,10 +380,10 @@ pub(super) enum Name {
     Gap,
 }
 
+pub(crate) const GAP_HEAD: &str = "Index name is not a literal (constant, variable or expression); the index stays unknown. Source line ";
+
 pub(super) fn gap(line: u32) -> String {
-    format!(
-        "Index name is not a literal (constant, variable or expression); the index stays unknown. Source line {line}."
-    )
+    format!("{GAP_HEAD}{line}.")
 }
 
 pub(super) fn short(service: &str) -> &str {

@@ -5,9 +5,12 @@ use crate::project_files::read_repo_file;
 use archguard_core::{SearchIndexUsage, ServiceEvidence, ServiceTopology};
 use archguard_flow_common::support::{Discovery, diagnostic, owners, relative, test_path};
 #[path = "service_elasticsearch_constants.rs"]
-mod constants;
+pub(super) mod constants;
 
 use constants::{Constants, Name, gap, literal, short, site};
+
+pub(super) const SCAN_STOP_HEAD: &str = "Index scan of the service stopped after ";
+pub(super) const SCAN_STOP_TAIL: &str = " files; indices in later files are unknown.";
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
@@ -22,8 +25,8 @@ const IMPORTS: [&str; 5] = [
     "Elastic.Clients.Elasticsearch",
 ];
 const LITERAL: &str = "Elasticsearch index named literally in source.";
-const SAME_DIR: &str = "Several services build from the same source directory; indices named in this file are attributed to none of them.";
-const UNREAD: &str = "Source file not read: larger than 1 MiB, not a regular file or not readable; its indices are unknown.";
+pub(super) const SAME_DIR: &str = "Several services build from the same source directory; indices named in this file are attributed to none of them.";
+pub(super) const UNREAD: &str = "Source file not read: larger than 1 MiB, not a regular file or not readable; its indices are unknown.";
 const WRITE: [&str; 14] = [
     "IndexRequest",
     "IndexOperation",
@@ -201,9 +204,7 @@ fn below_limit(
     let n = files.entry(service.to_owned()).or_default();
     *n += 1;
     if *n == MAX_FILES + 1 {
-        let message = format!(
-            "Index scan of the service stopped after {MAX_FILES} files; indices in later files are unknown."
-        );
+        let message = format!("{SCAN_STOP_HEAD}{MAX_FILES}{SCAN_STOP_TAIL}");
         diagnostic(report, rel, Some(short(service)), message);
     }
     *n <= MAX_FILES

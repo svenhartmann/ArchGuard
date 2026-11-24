@@ -1,7 +1,10 @@
 //! Findings of the Elasticsearch map (ADR 0023, items 8 and 9): declared artifacts compared with
 //! code usages. Pure over the model; names that are unknown never produce a finding.
+use super::service_elasticsearch_code as code;
+use super::service_elasticsearch_tf as tf;
 use archguard_core::{
-    ElasticsearchModel, SearchArtifact, SearchFinding, ServiceEvidence, ServiceTopology,
+    ElasticsearchModel, SearchArtifact, SearchFinding, ServiceDiagnostic, ServiceEvidence,
+    ServiceTopology,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,7 +17,7 @@ pub(crate) fn augment(report: &mut ServiceTopology) {
     let incomplete = report
         .diagnostics
         .iter()
-        .any(|d| d.message.contains("Elasticsearch name is not a literal"))
+        .any(|d| d.message.contains(tf::NOT_LITERAL))
         || report
             .elasticsearch
             .artifacts
@@ -46,6 +49,36 @@ fn glob(pattern: &str, value: &str) -> bool {
 /// its `*` removed.
 fn covers(a: &str, b: &str) -> bool {
     glob(a, &b.replace('*', "")) || glob(b, &a.replace('*', ""))
+}
+
+/// Whether `a` names or matches the index `index`: indices and aliases by name, templates,
+/// data views and alerting rules by their patterns; every other kind covers nothing.
+pub fn search_artifact_covers(a: &SearchArtifact, index: &str) -> bool {
+    match a.kind.as_str() {
+        "index" | "alias" => a.name.as_deref() == Some(index),
+        "index_template" | "data_view" | "alerting_rule" => {
+            a.patterns.iter().any(|p| covers(p, index))
+        }
+        _ => false,
+    }
+}
+
+/// Whether the diagnostic comes from one of the Elasticsearch readers (fixed texts, or fixed
+/// head/tail around a name, a line or a count).
+pub fn is_elasticsearch_gap(d: &ServiceDiagnostic) -> bool {
+    let m = d.message.as_str();
+    [
+        code::SAME_DIR,
+        code::UNREAD,
+        tf::JSON_UNREAD,
+        tf::JSON_TOO_LARGE,
+    ]
+    .contains(&m)
+        || m.starts_with(code::constants::GAP_HEAD)
+        || (m.starts_with(code::SCAN_STOP_HEAD) && m.ends_with(code::SCAN_STOP_TAIL))
+        || m.ends_with(tf::SAVED_OBJECTS)
+        || m.ends_with(tf::NO_PARAMS_INDEX)
+        || m.contains(tf::NOT_LITERAL)
 }
 
 /// Names of declared indices and aliases plus template patterns.

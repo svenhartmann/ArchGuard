@@ -15,6 +15,13 @@ use hcl_edit::structure::Body;
 use std::collections::BTreeSet;
 use std::path::Path;
 
+pub(super) const JSON_UNREAD: &str =
+    "JSON file next to Terraform could not be read; search templates in it are unknown.";
+pub(super) const JSON_TOO_LARGE: &str = "JSON file next to Terraform is larger than 1 MiB and contains a mustache lang; it is not evaluated as a search template.";
+pub(super) const SAVED_OBJECTS: &str = ": saved objects are not analyzed.";
+pub(super) const NOT_LITERAL: &str = ": Elasticsearch name is not a literal; ";
+pub(super) const NO_PARAMS_INDEX: &str = ": alerting rule has no top-level params index; its index comes from a data view or is unknown.";
+
 const PREFIX: &str = "elasticstack_elasticsearch_";
 const KIBANA: &str = "elasticstack_kibana_";
 /// Rule types that keep their index in `params.index`; others have no index to read.
@@ -88,16 +95,14 @@ pub(super) fn search_templates(root: &Path, discovery: &Discovery, report: &mut 
             continue;
         }
         let Some((text, whole)) = read_json(root, &rel) else {
-            let message = "JSON file next to Terraform could not be read; search templates in it are unknown.";
-            archguard_flow_common::support::diagnostic(report, &rel, None, message);
+            diagnostic(report, &rel, None, JSON_UNREAD);
             continue;
         };
         let Some(at) = mustache_lang(&text) else {
             continue;
         };
         if !whole {
-            let message = "JSON file next to Terraform is larger than 1 MiB and contains a mustache lang; it is not evaluated as a search template.";
-            archguard_flow_common::support::diagnostic(report, &rel, None, message);
+            diagnostic(report, &rel, None, JSON_TOO_LARGE);
             continue;
         }
         let line = u32::try_from(text[..at].matches('\n').count() + 1).ok();
@@ -178,7 +183,7 @@ fn kibana(report: &mut ServiceTopology, scope: &str, r: &Resource, suffix: &str)
         report.diagnostics.push(ServiceDiagnostic {
             file: r.file.path.clone(),
             service: None,
-            message: format!("{}: saved objects are not analyzed.", r.address),
+            message: format!("{}{SAVED_OBJECTS}", r.address),
         });
         return;
     }
@@ -252,7 +257,7 @@ impl Read<'_, '_> {
         });
         if text.is_none() {
             let message = format!(
-                "{}: Elasticsearch name is not a literal; {what} is unknown (variables, locals, each, module outputs and function calls are not evaluated).",
+                "{}{NOT_LITERAL}{what} is unknown (variables, locals, each, module outputs and function calls are not evaluated).",
                 self.r.address
             );
             diagnostic(self.report, &self.r.file.path, None, message);
@@ -342,10 +347,7 @@ impl Read<'_, '_> {
                 .as_deref()
                 .is_some_and(|t| INDEX_RULES.contains(&t))
         {
-            let message = format!(
-                "{}: alerting rule has no top-level params index; its index comes from a data view or is unknown.",
-                self.r.address
-            );
+            let message = format!("{}{NO_PARAMS_INDEX}", self.r.address);
             diagnostic(self.report, &self.r.file.path, None, message);
         }
         let mut patterns = Vec::new();
