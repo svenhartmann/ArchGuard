@@ -49,6 +49,9 @@ fn resolve(file: &Path, base: &Path, entries: &[PathBuf]) -> Result<Vec<PathBuf>
     let mut out: Vec<PathBuf> = Vec::with_capacity(entries.len());
     for (i, entry) in entries.iter().enumerate() {
         let n = i + 1;
+        if entry.as_os_str().is_empty() {
+            return Err(fail(file, format!("project {n} is empty")));
+        }
         let dir = base
             .join(entry)
             .canonicalize()
@@ -66,6 +69,11 @@ fn resolve(file: &Path, base: &Path, entries: &[PathBuf]) -> Result<Vec<PathBuf>
 
 /// Reads and validates a set file; relative entries resolve against its folder and are canonicalised.
 pub fn read_project_set(path: &Path) -> Result<ProjectSet, ArchguardError> {
+    // Before open: a FIFO would block there; a symlinked set file is refused too.
+    let meta = std::fs::symlink_metadata(path).map_err(|e| fail(path, e.kind()))?;
+    if !meta.is_file() {
+        return Err(fail(path, "not a regular file"));
+    }
     let mut text = String::new();
     let opened = std::fs::File::open(path).map_err(|e| fail(path, e.kind()))?;
     opened
@@ -119,6 +127,9 @@ pub fn write_project_set(path: &Path, set: &ProjectSet) -> Result<(), ArchguardE
     .map_err(|e| fail(path, e))?;
     let mut temp = tempfile::NamedTempFile::new_in(base).map_err(|e| fail(path, e.kind()))?;
     temp.write_all(text.as_bytes())
+        .map_err(|e| fail(path, e.kind()))?;
+    temp.as_file()
+        .sync_all()
         .map_err(|e| fail(path, e.kind()))?;
     temp.persist(path).map_err(|e| fail(path, e.error.kind()))?;
     Ok(())
