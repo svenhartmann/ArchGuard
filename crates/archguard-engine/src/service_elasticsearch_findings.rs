@@ -1,7 +1,8 @@
 //! Findings of the Elasticsearch map (ADR 0023, items 8 and 9): declared artifacts compared with
 //! code usages. Pure over the model; names that are unknown never produce a finding.
 use archguard_core::{
-    ElasticsearchModel, SearchArtifact, SearchFinding, ServiceEvidence, ServiceTopology,
+    ElasticsearchModel, SearchArtifact, SearchFinding, ServiceDiagnostic, ServiceEvidence,
+    ServiceTopology,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,7 +15,7 @@ pub(crate) fn augment(report: &mut ServiceTopology) {
     let incomplete = report
         .diagnostics
         .iter()
-        .any(|d| d.message.contains("Elasticsearch name is not a literal"))
+        .any(|d| d.message.contains(EsGap::NotLiteral.text()))
         || report
             .elasticsearch
             .artifacts
@@ -46,6 +47,102 @@ fn glob(pattern: &str, value: &str) -> bool {
 /// its `*` removed.
 fn covers(a: &str, b: &str) -> bool {
     glob(a, &b.replace('*', "")) || glob(b, &a.replace('*', ""))
+}
+
+/// Whether `a` names or matches the index `index`: indices and aliases by name, templates,
+/// data views and alerting rules by their patterns; every other kind covers nothing.
+pub fn search_artifact_covers(a: &SearchArtifact, index: &str) -> bool {
+    match a.kind.as_str() {
+        "index" | "alias" => a.name.as_deref() == Some(index),
+        "index_template" | "data_view" | "alerting_rule" => {
+            a.patterns.iter().any(|p| covers(p, index))
+        }
+        _ => false,
+    }
+}
+
+/// The Elasticsearch reader gaps: the only way to create such a diagnostic is [`es_gap`], the
+/// only way to recognize one is [`is_elasticsearch_gap`]. One list defines the variants, `ALL`
+/// and their texts, so a variant cannot exist without being recognized.
+macro_rules! es_gaps {
+    ($($(#[$m:meta])* $name:ident => $text:expr,)+) => {
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        pub(super) enum EsGap { $($(#[$m])* $name,)+ }
+
+        impl EsGap {
+            pub(super) const ALL: &'static [EsGap] = &[$(EsGap::$name,)+];
+
+            /// The fixed text; for kinds with a dynamic part, the part next to it (see `render`).
+            pub(super) fn text(self) -> &'static str {
+                match self { $(EsGap::$name => $text,)+ }
+            }
+        }
+    };
+}
+
+es_gaps! {
+    SameDir => "Several services build from the same source directory; indices named in this file are attributed to none of them.",
+    Unread => "Source file not read: larger than 1 MiB, not a regular file or not readable; its indices are unknown.",
+    IndexNotLiteral => "Index name is not a literal (constant, variable or expression); the index stays unknown. Source line ",
+    ScanStop => "Index scan of the service stopped after ",
+    JsonUnread => "JSON file next to Terraform could not be read; search templates in it are unknown.",
+    JsonTooLarge => "JSON file next to Terraform is larger than 1 MiB and contains a mustache lang; it is not evaluated as a search template.",
+    SavedObjects => ": saved objects are not analyzed.",
+    NotLiteral => ": Elasticsearch name is not a literal; ",
+    NoParamsIndex => ": alerting rule has no top-level params index; its index comes from a data view or is unknown.",
+}
+
+const SCAN_STOP_TAIL: &str = " files; indices in later files are unknown.";
+const NOT_LITERAL_TAIL: &str =
+    " is unknown (variables, locals, each, module outputs and function calls are not evaluated).";
+
+impl EsGap {
+    /// `parts`: line number, file count, address, or address and what is unknown.
+    fn render(self, parts: &[&str]) -> String {
+        let (t, p) = (self.text(), |i: usize| {
+            parts.get(i).copied().unwrap_or_default()
+        });
+        match self {
+            Self::IndexNotLiteral => format!("{t}{}.", p(0)),
+            Self::ScanStop => format!("{t}{}{SCAN_STOP_TAIL}", p(0)),
+            Self::SavedObjects | Self::NoParamsIndex => format!("{}{t}", p(0)),
+            Self::NotLiteral => format!("{}{t}{}{NOT_LITERAL_TAIL}", p(0), p(1)),
+            _ => t.into(),
+        }
+    }
+
+    fn matches(self, m: &str) -> bool {
+        let t = self.text();
+        match self {
+            Self::IndexNotLiteral => m.starts_with(t),
+            Self::ScanStop => m.starts_with(t) && m.ends_with(SCAN_STOP_TAIL),
+            Self::SavedObjects | Self::NoParamsIndex => m.ends_with(t),
+            Self::NotLiteral => m.contains(t),
+            _ => m == t,
+        }
+    }
+}
+
+/// The one constructor of Elasticsearch diagnostics. Saved-object notes are no gap: the report
+/// stays complete.
+pub(super) fn es_gap(
+    report: &mut ServiceTopology,
+    kind: EsGap,
+    file: &str,
+    service: Option<&str>,
+    parts: &[&str],
+) {
+    report.complete &= kind == EsGap::SavedObjects;
+    report.diagnostics.push(ServiceDiagnostic {
+        file: file.into(),
+        service: service.map(str::to_owned),
+        message: kind.render(parts),
+    });
+}
+
+/// Whether the diagnostic comes from one of the Elasticsearch readers.
+pub fn is_elasticsearch_gap(d: &ServiceDiagnostic) -> bool {
+    EsGap::ALL.iter().any(|k| k.matches(&d.message))
 }
 
 /// Names of declared indices and aliases plus template patterns.
@@ -184,7 +281,8 @@ fn target(arts: &[SearchArtifact], name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{covers, glob};
+    use super::{EsGap, covers, es_gap, glob, is_elasticsearch_gap, search_artifact_covers};
+    use archguard_core::{SearchArtifact, ServiceDiagnostic};
 
     #[test]
     fn glob_edge_cases() {
@@ -196,5 +294,131 @@ mod tests {
         assert!(glob("a.b", "a.b") && !glob("a.b", "axb"));
         assert!(covers("logs-*", "logs-app-*") && covers("logs-app-*", "logs-*"));
         assert!(!covers("logs-*", "metrics-*"));
+    }
+
+    fn art(kind: &str, name: Option<&str>, patterns: &[&str]) -> SearchArtifact {
+        SearchArtifact {
+            kind: kind.into(),
+            name: name.map(String::from),
+            address: String::new(),
+            scope: String::new(),
+            patterns: patterns.iter().map(|p| p.to_string()).collect(),
+            references: vec![],
+            evidence: vec![],
+        }
+    }
+
+    #[test]
+    fn artifact_covers_by_kind() {
+        for kind in ["index", "alias"] {
+            assert!(search_artifact_covers(
+                &art(kind, Some("logs-a"), &[]),
+                "logs-a"
+            ));
+            assert!(!search_artifact_covers(
+                &art(kind, Some("logs-a"), &[]),
+                "logs-b"
+            ));
+            // a name is no glob, and a nameless artifact covers nothing
+            assert!(!search_artifact_covers(
+                &art(kind, Some("logs-*"), &[]),
+                "logs-a"
+            ));
+            assert!(!search_artifact_covers(
+                &art(kind, None, &["logs-*"]),
+                "logs-a"
+            ));
+        }
+        for kind in ["index_template", "data_view", "alerting_rule"] {
+            assert!(search_artifact_covers(
+                &art(kind, None, &["logs-*"]),
+                "logs-a"
+            ));
+            assert!(!search_artifact_covers(
+                &art(kind, None, &["logs-*"]),
+                "metrics-a"
+            ));
+            // the name does not count for pattern kinds
+            assert!(!search_artifact_covers(
+                &art(kind, Some("logs-a"), &[]),
+                "logs-a"
+            ));
+        }
+        assert!(!search_artifact_covers(
+            &art("ingest_pipeline", Some("p"), &["p"]),
+            "p"
+        ));
+    }
+
+    fn diag(message: &str) -> ServiceDiagnostic {
+        ServiceDiagnostic {
+            file: "f".into(),
+            service: None,
+            message: message.into(),
+        }
+    }
+
+    #[test]
+    fn gap_check_knows_elasticsearch_diagnostics() {
+        // every fixed text of the three producers
+        for m in [
+            "Several services build from the same source directory; indices named in this file are attributed to none of them.",
+            "Source file not read: larger than 1 MiB, not a regular file or not readable; its indices are unknown.",
+            "Index name is not a literal (constant, variable or expression); the index stays unknown. Source line 7.",
+            "Index scan of the service stopped after 500 files; indices in later files are unknown.",
+            "JSON file next to Terraform could not be read; search templates in it are unknown.",
+            "JSON file next to Terraform is larger than 1 MiB and contains a mustache lang; it is not evaluated as a search template.",
+            "a.b: Elasticsearch name is not a literal; the index is unknown (variables).",
+            "a.b: alerting rule has no top-level params index; its index comes from a data view or is unknown.",
+            "a.b: saved objects are not analyzed.",
+        ] {
+            assert!(is_elasticsearch_gap(&diag(m)), "{m}");
+        }
+    }
+
+    #[test]
+    fn gap_check_ignores_other_diagnostics() {
+        assert!(!is_elasticsearch_gap(&diag(
+            "Compose file could not be read; its services are unknown."
+        )));
+        assert!(!is_elasticsearch_gap(&diag("Index name is fine")));
+    }
+
+    #[test]
+    fn gap_texts_are_distinct() {
+        let texts: std::collections::BTreeSet<_> = EsGap::ALL.iter().map(|k| k.text()).collect();
+        assert_eq!(texts.len(), EsGap::ALL.len());
+    }
+
+    #[test]
+    fn every_gap_kind_is_recognized_with_its_dynamic_part() {
+        for &k in EsGap::ALL {
+            let mut r = archguard_core::ServiceTopology::default();
+            es_gap(&mut r, k, "f", None, &["7", "what"]);
+            es_gap(&mut r, k, "f", None, &[]);
+            assert!(r.diagnostics.iter().all(is_elasticsearch_gap), "{k:?}");
+        }
+    }
+
+    /// The constructor is the only place that builds a diagnostic: no other token sequence
+    /// `ServiceDiagnostic {` or `diagnostic (` in the three producers (whitespace and line
+    /// breaks do not matter).
+    #[test]
+    fn producers_build_diagnostics_only_through_es_gap() {
+        let files = [
+            ("code", include_str!("service_elasticsearch_code.rs")),
+            (
+                "constants",
+                include_str!("service_elasticsearch_constants.rs"),
+            ),
+            ("tf", include_str!("service_elasticsearch_tf.rs")),
+        ];
+        for (name, text) in files {
+            let text = text.split("#[cfg(test)]").next().unwrap();
+            let flat: String = text.split_whitespace().collect::<Vec<_>>().join("");
+            for bad in ["ServiceDiagnostic{", "diagnostic(", "diagnostics.push("] {
+                assert!(!flat.contains(bad), "{name}: `{bad}` outside es_gap");
+            }
+        }
     }
 }

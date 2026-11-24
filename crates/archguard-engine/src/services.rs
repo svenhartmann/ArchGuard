@@ -27,6 +27,7 @@ mod service_deployments;
 mod service_elasticsearch_code;
 #[path = "service_elasticsearch_findings.rs"]
 mod service_elasticsearch_findings;
+pub use service_elasticsearch_findings::{is_elasticsearch_gap, search_artifact_covers};
 #[path = "service_elasticsearch_tf.rs"]
 mod service_elasticsearch_tf;
 #[path = "service_spring.rs"]

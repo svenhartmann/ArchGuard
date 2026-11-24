@@ -2,11 +2,11 @@
 //! (ADR 0023). Names are read from literals, `jsonencode({...})` and, for a plain `var.x`, from a
 //! non-sensitive `string`/`list(string)` literal module argument or `default`; anything else the
 //! provider would evaluate (locals, `each`, module outputs, functions) is a gap.
+use super::service_elasticsearch_findings::{EsGap, es_gap};
 use super::service_terraform::{ModuleCtx, Resource, TfFile};
 use super::service_terraform_hcl::{attr, block, get, literal, object};
 use archguard_core::ServiceEvidence;
-use archguard_core::{SearchArtifact, SearchReference, ServiceDiagnostic, ServiceTopology};
-use archguard_flow_common::support::diagnostic;
+use archguard_core::{SearchArtifact, SearchReference, ServiceTopology};
 use archguard_flow_common::support::{Discovery, relative, test_path};
 use hcl_edit::Span;
 use hcl_edit::expr::{Expression, TraversalOperator};
@@ -88,16 +88,14 @@ pub(super) fn search_templates(root: &Path, discovery: &Discovery, report: &mut 
             continue;
         }
         let Some((text, whole)) = read_json(root, &rel) else {
-            let message = "JSON file next to Terraform could not be read; search templates in it are unknown.";
-            archguard_flow_common::support::diagnostic(report, &rel, None, message);
+            es_gap(report, EsGap::JsonUnread, &rel, None, &[]);
             continue;
         };
         let Some(at) = mustache_lang(&text) else {
             continue;
         };
         if !whole {
-            let message = "JSON file next to Terraform is larger than 1 MiB and contains a mustache lang; it is not evaluated as a search template.";
-            archguard_flow_common::support::diagnostic(report, &rel, None, message);
+            es_gap(report, EsGap::JsonTooLarge, &rel, None, &[]);
             continue;
         }
         let line = u32::try_from(text[..at].matches('\n').count() + 1).ok();
@@ -175,11 +173,13 @@ fn mustache_lang(text: &str) -> Option<usize> {
 fn kibana(report: &mut ServiceTopology, scope: &str, r: &Resource, suffix: &str) {
     if suffix == "import_saved_objects" {
         // Not a gap: the import is out of scope, so `complete` stays untouched.
-        report.diagnostics.push(ServiceDiagnostic {
-            file: r.file.path.clone(),
-            service: None,
-            message: format!("{}: saved objects are not analyzed.", r.address),
-        });
+        es_gap(
+            report,
+            EsGap::SavedObjects,
+            &r.file.path,
+            None,
+            &[&r.address],
+        );
         return;
     }
     if !matches!(suffix, "data_view" | "alerting_rule") {
@@ -251,11 +251,14 @@ impl Read<'_, '_> {
             (!found.list).then(|| found.values.into_iter().next())?
         });
         if text.is_none() {
-            let message = format!(
-                "{}: Elasticsearch name is not a literal; {what} is unknown (variables, locals, each, module outputs and function calls are not evaluated).",
-                self.r.address
+            let path = &self.r.file.path;
+            es_gap(
+                self.report,
+                EsGap::NotLiteral,
+                path,
+                None,
+                &[&self.r.address, what],
             );
-            diagnostic(self.report, &self.r.file.path, None, message);
         }
         text
     }
@@ -342,11 +345,14 @@ impl Read<'_, '_> {
                 .as_deref()
                 .is_some_and(|t| INDEX_RULES.contains(&t))
         {
-            let message = format!(
-                "{}: alerting rule has no top-level params index; its index comes from a data view or is unknown.",
-                self.r.address
+            let path = &self.r.file.path;
+            es_gap(
+                self.report,
+                EsGap::NoParamsIndex,
+                path,
+                None,
+                &[&self.r.address],
             );
-            diagnostic(self.report, &self.r.file.path, None, message);
         }
         let mut patterns = Vec::new();
         for e in found {

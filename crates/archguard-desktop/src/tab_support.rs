@@ -555,7 +555,7 @@ fn poll<T: 'static>(
 
 #[cfg(test)]
 #[path = "texts_check.rs"]
-mod texts_check;
+pub(crate) mod texts_check;
 
 #[cfg(test)]
 mod tests {

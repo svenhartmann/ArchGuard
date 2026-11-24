@@ -1,13 +1,15 @@
 //! Index names a service's Java, C#, Python and TypeScript source names literally, with the access the
 //! surrounding call implies (ADR 0023, items 6 and 7). Names that are not literals
 //! are reported as gaps; nothing is guessed from configuration.
+use super::service_elasticsearch_findings::{EsGap, es_gap};
 use crate::project_files::read_repo_file;
 use archguard_core::{SearchIndexUsage, ServiceEvidence, ServiceTopology};
-use archguard_flow_common::support::{Discovery, diagnostic, owners, relative, test_path};
+use archguard_flow_common::support::{Discovery, owners, relative, test_path};
 #[path = "service_elasticsearch_constants.rs"]
 mod constants;
 
-use constants::{Constants, Name, gap, literal, short, site};
+use constants::{Constants, Name, literal, short, site};
+
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
@@ -22,8 +24,6 @@ const IMPORTS: [&str; 5] = [
     "Elastic.Clients.Elasticsearch",
 ];
 const LITERAL: &str = "Elasticsearch index named literally in source.";
-const SAME_DIR: &str = "Several services build from the same source directory; indices named in this file are attributed to none of them.";
-const UNREAD: &str = "Source file not read: larger than 1 MiB, not a regular file or not readable; its indices are unknown.";
 const WRITE: [&str; 14] = [
     "IndexRequest",
     "IndexOperation",
@@ -122,7 +122,7 @@ pub(super) fn augment(root: &Path, discovery: &Discovery, report: &mut ServiceTo
         let Ok(bytes) = read_repo_file(root, Path::new(&rel), MAX_BYTES) else {
             owners
                 .iter()
-                .for_each(|s| diagnostic(report, &rel, Some(short(s)), UNREAD));
+                .for_each(|s| es_gap(report, EsGap::Unread, &rel, Some(short(s)), &[]));
             continue;
         };
         let text = String::from_utf8_lossy(&bytes);
@@ -130,7 +130,7 @@ pub(super) fn augment(root: &Path, discovery: &Discovery, report: &mut ServiceTo
             if imports_client(&text, ext) {
                 owners
                     .iter()
-                    .for_each(|s| diagnostic(report, &rel, Some(short(s)), SAME_DIR));
+                    .for_each(|s| es_gap(report, EsGap::SameDir, &rel, Some(short(s)), &[]));
             }
             continue;
         };
@@ -186,7 +186,13 @@ impl Sink<'_> {
                 self.constants
                     .defer(service, ext, rel, r, (m.access, m.line, m.pointer))
             }
-            Name::Gap => diagnostic(self.report, rel, Some(short(service)), gap(m.line)),
+            Name::Gap => es_gap(
+                self.report,
+                EsGap::IndexNotLiteral,
+                rel,
+                Some(short(service)),
+                &[&m.line.to_string()],
+            ),
         }
     }
 }
@@ -201,10 +207,8 @@ fn below_limit(
     let n = files.entry(service.to_owned()).or_default();
     *n += 1;
     if *n == MAX_FILES + 1 {
-        let message = format!(
-            "Index scan of the service stopped after {MAX_FILES} files; indices in later files are unknown."
-        );
-        diagnostic(report, rel, Some(short(service)), message);
+        let n = MAX_FILES.to_string();
+        es_gap(report, EsGap::ScanStop, rel, Some(short(service)), &[&n]);
     }
     *n <= MAX_FILES
 }
