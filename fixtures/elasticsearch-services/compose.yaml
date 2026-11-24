@@ -4,3 +4,7 @@ services:
     build: ./java-writer
   dotnet-reader:
     build: ./dotnet-reader
+  py-indexer:
+    build: ./py-indexer
+  ts-search:
+    build: ./ts-search
