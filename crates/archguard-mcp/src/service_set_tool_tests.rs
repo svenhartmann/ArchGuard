@@ -110,3 +110,19 @@ async fn a_large_set_reply_stays_within_the_budget() {
     assert_eq!(value["truncated"], true);
     assert_eq!(value["totals"]["elasticsearch_artifacts"], 800);
 }
+
+#[tokio::test]
+async fn empty_duplicate_and_file_entries_are_invalid() {
+    let tools = set_tools();
+    for paths in [
+        json!(["infra", "infra"]),
+        json!(["infra", "./infra"]),
+        json!(["infra", ""]),
+        json!(["infra", "search.archguard-set.toml"]),
+    ] {
+        let err = topology(&tools, json!({ "paths": paths }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS, "{paths}");
+    }
+}
