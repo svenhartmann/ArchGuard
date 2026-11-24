@@ -13,6 +13,7 @@ slint::slint! {
     export { ElasticsearchData, EsModel, EsKind, SvcRow, SvcEdge }
     export component Page inherits Window {
         out property <bool> scrolls: view.header-scrolls;
+        out property <bool> zoom-visible: view.zoom-visible;
         view := EsView {}
     }
 }
@@ -206,4 +207,15 @@ fn the_header_scrolls_at_400_px() {
     page.global::<ElasticsearchData>().set_model(model(true));
     frame(&_window);
     assert!(page.get_scrolls(), "the header is wider than 400 px");
+}
+
+/// Zoom and Fit stay reachable at 400 px: they do not scroll away with the kinds.
+#[test]
+fn zoom_and_fit_are_visible_at_400_px() {
+    let window = window();
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    page.global::<ElasticsearchData>().set_model(model(true));
+    frame(&window);
+    assert!(page.get_zoom_visible(), "zoom and Fit lie beyond the pane");
 }

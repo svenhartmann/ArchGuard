@@ -45,6 +45,8 @@ export global ElasticsearchData {
 export component EsView inherits Rectangle {
     property <EsModel> m: ElasticsearchData.model;
     property <bool> ready: m.state == 1 && m.total > 0;
+    // The zoom and Fit buttons lie inside the pane (the check at 400 px).
+    out property <bool> zoom-visible: root.ready && zoomc.absolute-position.x + zoomc.width <= root.absolute-position.x + root.width;
     out property <bool> header-scrolls: root.ready && filter.preferred-width + 16px > root.width;
     background: Theme.bg;
     min-width: 360px;
@@ -70,7 +72,7 @@ export component EsView inherits Rectangle {
                         compact: true;
                         clicked => { ElasticsearchData.toggle-kind(i); }
                     }
-                    ZoomControls {
+                    zoomc := ZoomControls {
                         zoom: m.zoom;
                         zoom-out => { ElasticsearchData.zoom-by(1 / 1.25); }
                         zoom-in => { ElasticsearchData.zoom-by(1.25); }
