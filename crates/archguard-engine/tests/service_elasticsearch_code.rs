@@ -223,3 +223,22 @@ fn script_non_literals_are_gaps_and_only_imports_and_name_positions_count() {
     assert_eq!(gaps(&report), 2);
     assert!(!report.complete);
 }
+
+#[test]
+fn many_call_matches_do_not_scan_the_rest_of_the_file_each() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(
+        root,
+        "compose.yaml",
+        "services:\n  api:\n    build: ./api\n",
+    );
+    let body = "d.get(\"k\")\n".repeat(20_000);
+    put(root, "api/big.py", &format!("import elasticsearch\n{body}"));
+    // Per-match cost must stop at the closing paren; quadratic scanning needs minutes here.
+    // A wall-clock bound is used because no work counter exists; 10 s is far above the linear cost.
+    let start = std::time::Instant::now();
+    let report = analyze_services(root).unwrap();
+    assert!(start.elapsed().as_secs() < 10, "took {:?}", start.elapsed());
+    assert!(usages(&report, "api").is_empty());
+}

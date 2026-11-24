@@ -281,12 +281,11 @@ fn split_args(s: &str) -> Vec<&str> {
 
 /// `split_args` where each of `quotes` opens a string that runs to the same character.
 fn split_quoted<'a>(s: &'a str, quotes: &[char]) -> Vec<&'a str> {
-    let inside = string_mask(s, quotes);
     let (mut out, mut depth, mut start) = (Vec::new(), 0usize, 0);
     for ((i, ch), _) in s
         .char_indices()
-        .zip(&inside)
-        .filter(|(_, in_str)| !**in_str)
+        .zip(string_mask(s, quotes))
+        .filter(|(_, in_str)| !*in_str)
     {
         match ch {
             '(' | '[' | '{' => depth += 1,
@@ -305,25 +304,23 @@ fn split_quoted<'a>(s: &'a str, quotes: &[char]) -> Vec<&'a str> {
     out
 }
 
-/// Per character: whether it belongs to a string, quotes included; `\` escapes.
-fn string_mask(s: &str, quotes: &[char]) -> Vec<bool> {
+/// Lazily, per character: whether it belongs to a string, quotes included; `\` escapes.
+fn string_mask<'a>(s: &'a str, quotes: &'a [char]) -> impl Iterator<Item = bool> + 'a {
     let (mut quote, mut escaped) = (None, false);
-    s.chars()
-        .map(|ch| match quote {
-            None if quotes.contains(&ch) => {
-                quote = Some(ch);
-                true
+    s.chars().map(move |ch| match quote {
+        None if quotes.contains(&ch) => {
+            quote = Some(ch);
+            true
+        }
+        None => false,
+        Some(q) => {
+            if !escaped && ch == q {
+                quote = None;
             }
-            None => false,
-            Some(q) => {
-                if !escaped && ch == q {
-                    quote = None;
-                }
-                escaped = !escaped && ch == '\\';
-                true
-            }
-        })
-        .collect()
+            escaped = !escaped && ch == '\\';
+            true
+        }
+    })
 }
 
 /// Whether the receiver of the call at `at` is a local declared with a builder type,
