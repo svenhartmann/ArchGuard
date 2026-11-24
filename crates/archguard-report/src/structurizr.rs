@@ -351,6 +351,7 @@ mod tests {
             traces: vec![],
             routes: vec![],
             resilience: vec![],
+            elasticsearch: Default::default(),
         }
     }
 

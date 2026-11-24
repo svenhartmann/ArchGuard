@@ -84,7 +84,7 @@ pub(crate) fn run(cli: &Cli, root: &Path, fail_on_found: bool) -> i32 {
                 let kind = kind_label(cycle.kind);
                 outln!("{kind} cyclic group: {}", cycle.nodes.join(", "));
             }
-            print_datastores(&topology.datastores);
+            print_datastores_and_search(&topology);
             for diagnostic in &topology.diagnostics {
                 outln!(
                     "coverage: {}{}: {}",
@@ -114,6 +114,14 @@ fn kind_label(kind: ServiceDependencyKind) -> &'static str {
         ServiceDependencyKind::GrpcCall => "gRPC client",
         ServiceDependencyKind::Event => "event flow (inferred)",
         ServiceDependencyKind::ConfiguredReference => "configured reference",
+    }
+}
+
+/// Datastores, then Elasticsearch lines; informational, never a gate.
+fn print_datastores_and_search(topology: &archguard_engine::core::ServiceTopology) {
+    print_datastores(&topology.datastores);
+    for line in elasticsearch_lines(&topology.elasticsearch) {
+        outln!("{line}");
     }
 }
 
@@ -205,6 +213,75 @@ fn print_projects(topology: &archguard_engine::core::ServiceTopology) {
                 .as_ref()
                 .map(|runtime| format!(" · {runtime}"))
                 .unwrap_or_default()
+        );
+    }
+}
+
+/// Elasticsearch artifacts, index usages and findings; nothing for an empty model.
+fn elasticsearch_lines(model: &archguard_engine::core::ElasticsearchModel) -> Vec<String> {
+    let artifacts = model.artifacts.iter().map(|a| {
+        format!(
+            "elasticsearch {}: {} ({})",
+            a.kind,
+            a.name.as_deref().unwrap_or("-"),
+            a.address
+        )
+    });
+    let usages = model
+        .usages
+        .iter()
+        .map(|u| format!("index use of {}: {} ({})", u.service, u.index, u.access));
+    let findings = model.findings.iter().map(|f| {
+        format!(
+            "elasticsearch finding {}: {} [{}]",
+            f.kind,
+            f.subject,
+            f.services.join(", ")
+        )
+    });
+    artifacts.chain(usages).chain(findings).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use archguard_engine::core::{
+        ElasticsearchModel, SearchArtifact, SearchFinding, SearchIndexUsage,
+    };
+
+    #[test]
+    fn elasticsearch_lines_cover_artifacts_usages_findings() {
+        assert!(elasticsearch_lines(&ElasticsearchModel::default()).is_empty());
+        let model = ElasticsearchModel {
+            artifacts: vec![SearchArtifact {
+                kind: "index_template".into(),
+                name: Some("t1".into()),
+                address: "es_index_template.t1".into(),
+                scope: "infra".into(),
+                patterns: vec![],
+                references: vec![],
+                evidence: vec![],
+            }],
+            usages: vec![SearchIndexUsage {
+                service: "api".into(),
+                index: "logs-a".into(),
+                access: "write".into(),
+                evidence: vec![],
+            }],
+            findings: vec![SearchFinding {
+                kind: "undeclared_index".into(),
+                subject: "logs-a".into(),
+                services: vec!["api".into(), "web".into()],
+                evidence: vec![],
+            }],
+        };
+        assert_eq!(
+            elasticsearch_lines(&model),
+            [
+                "elasticsearch index_template: t1 (es_index_template.t1)",
+                "index use of api: logs-a (write)",
+                "elasticsearch finding undeclared_index: logs-a [api, web]",
+            ]
         );
     }
 }

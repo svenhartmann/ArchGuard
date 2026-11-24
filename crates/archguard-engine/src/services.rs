@@ -23,6 +23,12 @@ mod service_datastore_settings;
 mod service_datastores;
 #[path = "service_deployments.rs"]
 mod service_deployments;
+#[path = "service_elasticsearch_code.rs"]
+mod service_elasticsearch_code;
+#[path = "service_elasticsearch_findings.rs"]
+mod service_elasticsearch_findings;
+#[path = "service_elasticsearch_tf.rs"]
+mod service_elasticsearch_tf;
 #[path = "service_spring.rs"]
 mod service_spring;
 #[path = "service_tables.rs"]
@@ -30,7 +36,7 @@ mod service_tables;
 #[path = "service_terraform.rs"]
 mod service_terraform;
 #[path = "service_terraform_hcl.rs"]
-mod service_terraform_hcl;
+pub(crate) mod service_terraform_hcl;
 #[path = "service_traces.rs"]
 mod service_traces;
 
@@ -93,7 +99,15 @@ pub(crate) fn analyze_services_with(
     parsed.sort_by(|a, b| a.service.id.cmp(&b.service.id));
     compose_dependencies(parsed, &mut report);
     crate::service_projects::augment(&root, &discovery, &mut report)?;
-    let terraform = service_terraform::deployments(&root, &discovery, &mut report);
+    let terraform = service_terraform::deployments(
+        &root,
+        &discovery,
+        &mut report,
+        &mut service_elasticsearch_tf::augment,
+    );
+    service_elasticsearch_tf::search_templates(&root, &discovery, &mut report);
+    let artifacts = &mut report.elasticsearch.artifacts;
+    artifacts.sort_by(|a, b| (&a.scope, &a.address).cmp(&(&b.scope, &b.address)));
     let (deployments, rendered) =
         service_deployments::augment(&root, &discovery, &mut report, tools, terraform);
     service_communications::augment(&root, &mut report);
@@ -101,6 +115,8 @@ pub(crate) fn analyze_services_with(
     service_clients::augment(&root, &mut report, &deployments);
     service_datastores::augment(&mut report, &deployments, &spring_datasources);
     service_tables::augment(&root, &discovery, &mut report);
+    service_elasticsearch_code::augment(&root, &discovery, &mut report);
+    service_elasticsearch_findings::augment(&mut report);
     service_traces::augment(&root, &mut report);
     crate::service_flows::augment(&root, &mut report);
     crate::graphql_contracts::augment(&root, &discovery, &mut report);

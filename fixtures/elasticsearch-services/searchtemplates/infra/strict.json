@@ -1,0 +1,6 @@
+{
+  "script": {
+    "lang": "mustache",
+    "source": { "query": { "match": { "title": "{{q}}" } } }
+  }
+}
