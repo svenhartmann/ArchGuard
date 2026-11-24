@@ -41,7 +41,7 @@ const WRITE: [&str; 14] = [
     "Bulk",
 ];
 const READ: [&str; 10] = [
-    "header", // `header(h -> h.index(X))` exists only in Msearch requests
+    "header", // `header(h -> h.index(X))` exists in the Java client only on Msearch request items
     "SearchRequest",
     "MsearchRequest",
     "MsearchTemplateRequest",
