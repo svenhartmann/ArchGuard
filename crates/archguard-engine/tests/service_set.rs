@@ -92,7 +92,7 @@ fn infra_and_adapter_remove_the_finding_and_merge_origins() {
         !services.is_empty()
             && services
                 .iter()
-                .all(|s| s.starts_with("adapter:") && s.ends_with("::writer")),
+                .all(|s| *s == "adapter:compose.yaml::writer"),
         "{services:?}"
     );
     assert!(
@@ -100,7 +100,7 @@ fn infra_and_adapter_remove_the_finding_and_merge_origins() {
             .usages
             .iter()
             .flat_map(|u| &u.evidence)
-            .all(|e| e.file.starts_with("adapter:"))
+            .all(|e| e.file == "adapter:writer/Writer.java")
     );
 }
 
@@ -138,7 +138,7 @@ fn foreign_es_gaps_carry_the_project_prefix() {
         .collect();
     assert!(!gaps.is_empty());
     assert!(
-        gaps.iter().all(|d| d.file.starts_with("gapped:")),
+        gaps.iter().all(|d| d.file == "gapped:terraform/main.tf"),
         "{gaps:?}"
     );
     assert!(!r.complete);
@@ -168,7 +168,10 @@ fn reversed_order_keeps_findings_and_swaps_the_prefix() {
         .iter()
         .map(|e| e.file.as_str())
         .collect();
-    assert!(files.iter().all(|f| f.starts_with("infra:")), "{files:?}");
+    assert!(
+        files.iter().all(|f| *f == "infra:terraform/main.tf"),
+        "{files:?}"
+    );
     assert_eq!(b.root, analyze_services(&dir("adapter")).unwrap().root);
 }
 
@@ -204,9 +207,7 @@ fn a_member_that_cannot_be_analysed_becomes_a_diagnostic() {
     let r = analyze_service_set(&[dir("infra"), missing]).unwrap();
     assert!(!r.complete);
     assert!(
-        r.diagnostics
-            .iter()
-            .any(|d| d.file.starts_with("does-not-exist")),
+        r.diagnostics.iter().any(|d| d.file == "does-not-exist"),
         "{:?}",
         r.diagnostics
     );
@@ -262,7 +263,7 @@ fn a_member_with_an_es_gap_and_a_non_es_gap_reports_both() {
     assert!(
         r.diagnostics
             .iter()
-            .any(|d| d.file.starts_with("mixed:") && is_elasticsearch_gap(d))
+            .any(|d| d.file == "mixed:terraform/main.tf" && is_elasticsearch_gap(d))
     );
     assert!(
         r.diagnostics
