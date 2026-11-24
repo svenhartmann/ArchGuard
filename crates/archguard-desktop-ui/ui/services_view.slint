@@ -78,6 +78,7 @@ export global ServicesData {
     // snapshot runs can open them: ARCHGUARD_DESKTOP_SVC_OPEN).
     in-out property <bool> patterns-open;
     in-out property <bool> contracts-open;
+    in-out property <bool> search-open;
 
     // Group name of a service without project and Compose file.
 
@@ -298,7 +299,7 @@ component Toolbar inherits Rectangle {
 
 export component ServicesView inherits Rectangle {
     property <ServicesModel> m: ServicesData.model;
-    property <bool> details-open;
+    in-out property <bool> details-open;
     property <bool> evidence-open;
     property <bool> projects-open;
     property <bool> workspace-open;

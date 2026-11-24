@@ -51,3 +51,10 @@ export struct SvcSearch {
     findings: [SvcSearchFinding],
     gaps: [SvcSearchGap],
 }
+
+// The section itself: a stub until the view is built.
+export component SearchSection inherits VerticalLayout {
+    in property <SvcSearch> data;
+    callback choose(int);
+    callback more();
+}
