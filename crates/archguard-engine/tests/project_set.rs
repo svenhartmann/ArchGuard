@@ -270,3 +270,20 @@ unsafe extern "C" {
     #[link_name = "mkfifo"]
     fn libc_mkfifo(path: *const std::ffi::c_char, mode: u32) -> i32;
 }
+
+#[cfg(unix)]
+#[test]
+fn symlinked_set_file_is_read_but_a_link_to_a_directory_is_refused() {
+    let t = tempfile::tempdir().unwrap();
+    dirs(t.path(), &["a", "b"]);
+    let real = set_file(t.path(), "name = \"s\"\nprojects = [\"a\", \"b\"]\n");
+    let link = t.path().join("link.archguard-set.toml");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    assert_eq!(read_project_set(&link).unwrap().name, "s");
+    let dir_link = t.path().join("dirlink.archguard-set.toml");
+    std::os::unix::fs::symlink(t.path().join("a"), &dir_link).unwrap();
+    match read_project_set(&dir_link) {
+        Err(ArchguardError::Config(m)) => assert!(m.contains("not a regular file"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}
