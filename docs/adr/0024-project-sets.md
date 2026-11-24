@@ -10,9 +10,8 @@ per project. Often the declarations (Terraform: cluster, indices, pipelines)
 live in an infrastructure repository and the code that uses the indices lives
 in other repositories. Analysed alone, the infrastructure repository shows
 declarations nobody uses and each adapter repository shows undeclared indices.
-The decisions of 2026-11-24 for requirement R10 are in
-`.scratch/es-indices/spec.md`, section `## Entscheidungen` (entries "Planer,
-R10"); this ADR is their permanent form.
+The user decided on 2026-11-24 to merge several projects into one map; this
+ADR records how.
 
 ## Decision
 
