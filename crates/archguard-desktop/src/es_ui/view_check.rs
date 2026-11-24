@@ -14,6 +14,7 @@ slint::slint! {
     export component Page inherits Window {
         out property <bool> scrolls: view.header-scrolls;
         out property <bool> zoom-visible: view.zoom-visible;
+        out property <bool> bar-packed: view.bar-packed;
         view := EsView {}
     }
 }
@@ -249,4 +250,17 @@ fn the_detail_bar_appears_with_the_focus_and_goes_without() {
     );
     data.set_model(with_detail(false));
     assert!(same(&frame(&window), &closed), "the bar is gone");
+}
+
+/// A short detail (an undeclared name) sits at the top of a bar taller than it; the entries are
+/// not spread over the bar's height.
+#[test]
+fn the_detail_entries_are_packed_at_the_top_of_a_tall_bar() {
+    let window = window();
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    page.global::<ElasticsearchData>()
+        .set_model(with_detail(true));
+    frame(&window);
+    assert!(page.get_bar_packed(), "the entries are spread over the bar");
 }

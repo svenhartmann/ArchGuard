@@ -52,6 +52,8 @@ component EsInspector inherits Rectangle {
     in property <string> title;
     in property <SvcSearchDetail> detail;
     callback close();
+    // The entries sit tightly at the top; spare height is not spread between them.
+    out property <bool> packed: body.height <= body.preferred-height + 1px;
     background: Theme.panel;
     Rectangle { y: 0; height: 1px; background: Theme.border; }
     ScrollView {
@@ -64,7 +66,7 @@ component EsInspector inherits Rectangle {
                 Button { text: @tr("Show all"); compact: true; clicked => { root.close(); } }
             }
             if root.detail.declaration.length == 0: Note { text: @tr("Not declared in this project."); }
-            SearchDetailBody { detail: root.detail; }
+            body := SearchDetailBody { detail: root.detail; }
         }
     }
 }
@@ -76,6 +78,7 @@ export component EsView inherits Rectangle {
     property <bool> ready: m.state == 1 && m.total > 0;
     // The zoom and Fit buttons lie inside the pane (the check at 400 px).
     out property <bool> zoom-visible: root.ready && zoomc.absolute-position.x + zoomc.width <= root.absolute-position.x + root.width + 1px;
+    out property <bool> bar-packed: insp.packed;
     out property <bool> header-scrolls: root.ready && filter.preferred-width + 16px > root.width;
     background: Theme.bg;
     min-width: 360px;
@@ -159,7 +162,8 @@ export component EsView inherits Rectangle {
                 resized(w) => { ElasticsearchData.resized(w); }
                 zoom-by(f) => { ElasticsearchData.zoom-by(f); }
             }
-            if m.has-detail: EsInspector {
+            insp := EsInspector {
+                visible: m.has-detail;
                 x: parent.side ? parent.width - parent.bar : 0px;
                 y: parent.side ? 0px : parent.height - parent.bar;
                 width: parent.side ? parent.bar : parent.width;
