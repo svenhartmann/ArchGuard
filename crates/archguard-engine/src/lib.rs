@@ -72,6 +72,7 @@ mod performance;
 mod php_calls;
 mod pipeline;
 mod project_files;
+mod project_set;
 mod python_calls;
 mod quality_findings;
 mod quality_gate;
@@ -192,6 +193,7 @@ pub use performance::{
 };
 pub use pipeline::{Level, NamedGraph, SourceNames};
 pub use project_files::write_project_file;
+pub use project_set::{ProjectSet, read_project_set, write_project_set};
 pub use quality_findings::{
     QualityFinding, QualityReport, import_quality_findings, quality_findings_fingerprint,
     read_quality_findings,
