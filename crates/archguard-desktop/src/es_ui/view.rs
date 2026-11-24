@@ -150,6 +150,7 @@ pub fn build(s: &EsState) -> EsModel {
             .map(|f| s.graph.nodes[f].title.as_str().into())
             .unwrap_or_default(),
         total: s.graph.nodes.len() as i32,
+        ..Default::default()
     }
 }
 
@@ -521,5 +522,49 @@ mod tests {
             .filter(|n| n.contains(" ("))
             .collect();
         assert_eq!(groups, ["service (1)", "index (1)", "alerting_rule (1)"]);
+    }
+
+    /// The detail bar of a focused artifact is the Services section's detail of that artifact.
+    #[test]
+    fn focus_on_an_artifact_fills_the_detail_from_the_services_section() {
+        let mut s = state();
+        let at = |s: &EsState, name: &str| row(&build(s), name).service as usize;
+        let a = at(&s, "idx-a");
+        s.focus_on(a);
+        let m = build(&s);
+        assert!(m.has_detail);
+        let t = (*s.topology).as_ref().unwrap();
+        let same = crate::services_ui::search::detail(
+            &t.elasticsearch.artifacts[0],
+            t,
+            crate::services_ui::view::evidence,
+        );
+        assert_eq!(
+            (m.detail.writers.as_str(), m.detail.readers.as_str()),
+            ("svc-a", "svc-b")
+        );
+        assert_eq!(m.detail.writers, same.writers);
+        assert_eq!(m.detail.references.row_count(), same.references.row_count());
+        let b = at(&s, "⚠ idx-b");
+        s.focus_on(b);
+        assert_eq!(build(&s).detail.findings.row_count(), 1);
+        let svc = at(&s, "svc-a");
+        s.focus_on(svc);
+        assert!(!build(&s).has_detail);
+        s.focus = None;
+        assert!(!build(&s).has_detail);
+    }
+
+    /// An undeclared name has no declaration: what is known is its users and findings.
+    #[test]
+    fn a_ghost_has_users_but_no_declaration() {
+        let mut s = state();
+        let g = row(&build(&s), "⚠ missing").service as usize;
+        s.focus_on(g);
+        let m = build(&s);
+        assert!(m.has_detail);
+        assert_eq!(m.detail.writers, "svc-b");
+        assert_eq!(m.detail.declaration.row_count(), 0);
+        assert_eq!(m.detail.scope, "");
     }
 }

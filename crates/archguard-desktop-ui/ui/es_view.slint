@@ -5,6 +5,7 @@ import { Theme } from "theme.slint";
 import { Button, ZoomControls, Legend, EmptyState } from "widgets.slint";
 import { Fmt } from "format.slint";
 import { ServicesTree, SvcRow, SvcEdge } from "services_tree.slint";
+import { SvcSearchDetail } from "services_search.slint";
 
 // One artifact kind of the filter: declared nodes of the kind, the declared ones shown, and ghosts apart.
 export struct EsKind {
@@ -28,6 +29,9 @@ export struct EsModel {
     focus: string,
     // All nodes of the graph, before the filter.
     total: int,
+    // The focused node's details (artifact or undeclared name); `has-detail` is false for a service.
+    detail: SvcSearchDetail,
+    has-detail: bool,
 }
 
 export global ElasticsearchData {

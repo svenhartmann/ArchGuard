@@ -141,7 +141,11 @@ impl Search {
     }
 }
 
-fn detail(a: &SearchArtifact, t: &ServiceTopology, evidence: Evidence) -> SvcSearchDetail {
+pub(crate) fn detail(
+    a: &SearchArtifact,
+    t: &ServiceTopology,
+    evidence: Evidence,
+) -> SvcSearchDetail {
     let es = &t.elasticsearch;
     let (mut writers, mut readers, mut others) =
         (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
