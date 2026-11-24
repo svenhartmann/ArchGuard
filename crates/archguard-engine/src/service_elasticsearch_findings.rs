@@ -1,7 +1,5 @@
 //! Findings of the Elasticsearch map (ADR 0023, items 8 and 9): declared artifacts compared with
 //! code usages. Pure over the model; names that are unknown never produce a finding.
-use super::service_elasticsearch_code as code;
-use super::service_elasticsearch_tf as tf;
 use archguard_core::{
     ElasticsearchModel, SearchArtifact, SearchFinding, ServiceDiagnostic, ServiceEvidence,
     ServiceTopology,
@@ -17,7 +15,7 @@ pub(crate) fn augment(report: &mut ServiceTopology) {
     let incomplete = report
         .diagnostics
         .iter()
-        .any(|d| d.message.contains(tf::NOT_LITERAL))
+        .any(|d| d.message.contains(EsGap::NotLiteral.text()))
         || report
             .elasticsearch
             .artifacts
@@ -63,22 +61,111 @@ pub fn search_artifact_covers(a: &SearchArtifact, index: &str) -> bool {
     }
 }
 
-/// Whether the diagnostic comes from one of the Elasticsearch readers (fixed texts, or fixed
-/// head/tail around a name, a line or a count).
+/// The Elasticsearch reader gaps: the only way to create such a diagnostic is [`es_gap`], the
+/// only way to recognize one is [`is_elasticsearch_gap`]; both go through this list.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum EsGap {
+    SameDir,
+    Unread,
+    IndexNotLiteral,
+    ScanStop,
+    JsonUnread,
+    JsonTooLarge,
+    SavedObjects,
+    NotLiteral,
+    NoParamsIndex,
+}
+
+const SCAN_STOP_TAIL: &str = " files; indices in later files are unknown.";
+const NOT_LITERAL_TAIL: &str =
+    " is unknown (variables, locals, each, module outputs and function calls are not evaluated).";
+
+impl EsGap {
+    pub(super) const ALL: [EsGap; 9] = [
+        Self::SameDir,
+        Self::Unread,
+        Self::IndexNotLiteral,
+        Self::ScanStop,
+        Self::JsonUnread,
+        Self::JsonTooLarge,
+        Self::SavedObjects,
+        Self::NotLiteral,
+        Self::NoParamsIndex,
+    ];
+
+    /// The fixed text; for kinds with a dynamic part, the part next to it (see `render`).
+    pub(super) fn text(self) -> &'static str {
+        match self {
+            Self::SameDir => {
+                "Several services build from the same source directory; indices named in this file are attributed to none of them."
+            }
+            Self::Unread => {
+                "Source file not read: larger than 1 MiB, not a regular file or not readable; its indices are unknown."
+            }
+            Self::IndexNotLiteral => {
+                "Index name is not a literal (constant, variable or expression); the index stays unknown. Source line "
+            }
+            Self::ScanStop => "Index scan of the service stopped after ",
+            Self::JsonUnread => {
+                "JSON file next to Terraform could not be read; search templates in it are unknown."
+            }
+            Self::JsonTooLarge => {
+                "JSON file next to Terraform is larger than 1 MiB and contains a mustache lang; it is not evaluated as a search template."
+            }
+            Self::SavedObjects => ": saved objects are not analyzed.",
+            Self::NotLiteral => ": Elasticsearch name is not a literal; ",
+            Self::NoParamsIndex => {
+                ": alerting rule has no top-level params index; its index comes from a data view or is unknown."
+            }
+        }
+    }
+
+    /// `parts`: line number, file count, address, or address and what is unknown.
+    fn render(self, parts: &[&str]) -> String {
+        let (t, p) = (self.text(), |i: usize| {
+            parts.get(i).copied().unwrap_or_default()
+        });
+        match self {
+            Self::IndexNotLiteral => format!("{t}{}.", p(0)),
+            Self::ScanStop => format!("{t}{}{SCAN_STOP_TAIL}", p(0)),
+            Self::SavedObjects | Self::NoParamsIndex => format!("{}{t}", p(0)),
+            Self::NotLiteral => format!("{}{t}{}{NOT_LITERAL_TAIL}", p(0), p(1)),
+            _ => t.into(),
+        }
+    }
+
+    fn matches(self, m: &str) -> bool {
+        let t = self.text();
+        match self {
+            Self::IndexNotLiteral => m.starts_with(t),
+            Self::ScanStop => m.starts_with(t) && m.ends_with(SCAN_STOP_TAIL),
+            Self::SavedObjects | Self::NoParamsIndex => m.ends_with(t),
+            Self::NotLiteral => m.contains(t),
+            _ => m == t,
+        }
+    }
+}
+
+/// The one constructor of Elasticsearch diagnostics. Saved-object notes are no gap: the report
+/// stays complete.
+pub(super) fn es_gap(
+    report: &mut ServiceTopology,
+    kind: EsGap,
+    file: &str,
+    service: Option<&str>,
+    parts: &[&str],
+) {
+    report.complete &= kind == EsGap::SavedObjects;
+    report.diagnostics.push(ServiceDiagnostic {
+        file: file.into(),
+        service: service.map(str::to_owned),
+        message: kind.render(parts),
+    });
+}
+
+/// Whether the diagnostic comes from one of the Elasticsearch readers.
 pub fn is_elasticsearch_gap(d: &ServiceDiagnostic) -> bool {
-    let m = d.message.as_str();
-    [
-        code::SAME_DIR,
-        code::UNREAD,
-        tf::JSON_UNREAD,
-        tf::JSON_TOO_LARGE,
-    ]
-    .contains(&m)
-        || m.starts_with(code::constants::GAP_HEAD)
-        || (m.starts_with(code::SCAN_STOP_HEAD) && m.ends_with(code::SCAN_STOP_TAIL))
-        || m.ends_with(tf::SAVED_OBJECTS)
-        || m.ends_with(tf::NO_PARAMS_INDEX)
-        || m.contains(tf::NOT_LITERAL)
+    EsGap::ALL.iter().any(|k| k.matches(&d.message))
 }
 
 /// Names of declared indices and aliases plus template patterns.
@@ -217,7 +304,7 @@ fn target(arts: &[SearchArtifact], name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{covers, glob, is_elasticsearch_gap, search_artifact_covers};
+    use super::{EsGap, covers, es_gap, glob, is_elasticsearch_gap, search_artifact_covers};
     use archguard_core::{SearchArtifact, ServiceDiagnostic};
 
     #[test]
@@ -320,72 +407,35 @@ mod tests {
         assert!(!is_elasticsearch_gap(&diag("Index name is fine")));
     }
 
-    /// `{CONST}` interpolation inside a format string.
-    fn interpolates_const(text: &str) -> bool {
-        text.split('{').skip(1).any(|r| {
-            r.split('}').next().is_some_and(|n| {
-                !n.is_empty() && n.chars().all(|c| c.is_ascii_uppercase() || c == '_')
-            })
-        })
+    #[test]
+    fn every_gap_kind_is_recognized_with_its_dynamic_part() {
+        for k in EsGap::ALL {
+            let mut r = archguard_core::ServiceTopology::default();
+            es_gap(&mut r, k, "f", None, &["7", "what"]);
+            es_gap(&mut r, k, "f", None, &[]);
+            assert!(r.diagnostics.iter().all(is_elasticsearch_gap), "{k:?}");
+        }
     }
 
-    /// Every diagnostic site of the three producers passes a constant, `gap(..)` or a message
-    /// built from a constant, so `is_elasticsearch_gap` can recognize it. A new fixed text needs
-    /// a constant and a clause in `is_elasticsearch_gap`.
+    /// The constructor is the only place that builds a diagnostic: no other token sequence
+    /// `ServiceDiagnostic {` or `diagnostic (` in the three producers (whitespace and line
+    /// breaks do not matter).
     #[test]
-    fn every_diagnostic_site_uses_a_constant() {
+    fn producers_build_diagnostics_only_through_es_gap() {
         let files = [
+            ("code", include_str!("service_elasticsearch_code.rs")),
             (
-                "service_elasticsearch_code.rs",
-                include_str!("service_elasticsearch_code.rs"),
-            ),
-            (
-                "service_elasticsearch_constants.rs",
+                "constants",
                 include_str!("service_elasticsearch_constants.rs"),
             ),
-            (
-                "service_elasticsearch_tf.rs",
-                include_str!("service_elasticsearch_tf.rs"),
-            ),
+            ("tf", include_str!("service_elasticsearch_tf.rs")),
         ];
-        let mut sites = 0;
         for (name, text) in files {
-            let lines: Vec<&str> = text
-                .lines()
-                .take_while(|l| !l.contains("#[cfg(test)]"))
-                .collect();
-            for (n, line) in lines.iter().enumerate() {
-                let at = format!("{name}:{} `{}`", n + 1, line.trim());
-                let window = lines[n..lines.len().min(n + 6)].join("\n");
-                let back = lines[n.saturating_sub(8)..n].join("\n");
-                if line.contains("ServiceDiagnostic {") && line.contains("push(") {
-                    sites += 1;
-                    assert!(
-                        interpolates_const(&window),
-                        "{at}: message without constant; see is_elasticsearch_gap"
-                    );
-                } else if line.contains("diagnostic(") && !line.contains("fn ") {
-                    sites += 1;
-                    let rest = line.split("diagnostic(").nth(1).unwrap();
-                    let arg = rest.splitn(4, ", ").nth(3).unwrap_or("");
-                    let ident: String = arg
-                        .chars()
-                        .take_while(|c| c.is_alphanumeric() || *c == '_')
-                        .collect();
-                    let ok = match ident.as_str() {
-                        "gap" => true,
-                        "message" => interpolates_const(back.rsplit("let message").next().unwrap()),
-                        id => {
-                            !id.is_empty() && id.chars().all(|c| c.is_ascii_uppercase() || c == '_')
-                        }
-                    };
-                    assert!(ok, "{at}: text is not a constant; see is_elasticsearch_gap");
-                }
+            let text = text.split("#[cfg(test)]").next().unwrap();
+            let flat: String = text.split_whitespace().collect::<Vec<_>>().join("");
+            for bad in ["ServiceDiagnostic{", "diagnostic(", "diagnostics.push("] {
+                assert!(!flat.contains(bad), "{name}: `{bad}` outside es_gap");
             }
         }
-        assert_eq!(
-            sites, 10,
-            "diagnostic sites changed; update is_elasticsearch_gap and this count"
-        );
     }
 }
