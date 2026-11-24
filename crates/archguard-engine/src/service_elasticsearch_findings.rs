@@ -159,16 +159,25 @@ fn findings(model: &ElasticsearchModel, incomplete: bool) -> Vec<SearchFinding> 
         .collect()
 }
 
-/// An alias with exactly one declared target counts as that target.
+/// An alias whose declarations all name exactly one index counts as that index; a declaration
+/// without a known index target may be the write index, so the alias keeps its own name.
 fn target(arts: &[SearchArtifact], name: &str) -> String {
-    let targets: BTreeSet<&str> = arts
+    let mut targets = BTreeSet::new();
+    let mut unknown = false;
+    for a in arts
         .iter()
         .filter(|a| a.kind == "alias" && a.name.as_deref() == Some(name))
-        .flat_map(|a| a.references.iter().filter(|r| r.kind == "index"))
-        .map(|r| r.name.as_str())
-        .collect();
+    {
+        targets.extend(
+            a.references
+                .iter()
+                .filter(|r| r.kind == "index")
+                .map(|r| r.name.as_str()),
+        );
+        unknown |= a.references.iter().all(|r| r.kind != "index");
+    }
     match targets.iter().next() {
-        Some(t) if targets.len() == 1 => (*t).into(),
+        Some(t) if targets.len() == 1 && !unknown => (*t).into(),
         _ => name.into(),
     }
 }

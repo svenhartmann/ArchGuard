@@ -90,7 +90,8 @@ are code, but no analyzer measures them.
    `index`, `create`, `update`, `delete`, `bulk`. `read`: `SearchRequest`,
    `MsearchRequest`, `MsearchTemplateRequest`, `SearchTemplateRequest`,
    `CountRequest`, `GetRequest`; C# `Search`, `Count`, `Get`; Python and TS
-   `search`, `count`, `get`, `msearch`. Anything else is `unknown`. One entry
+   `search`, `count`, `get`, `msearch`. Java `header` (`header(h -> h.index(X))`,
+   which exists only in Msearch requests) is `read`. Anything else is `unknown`. One entry
    per (service, index, access).
 8. **Findings** (computed from artifacts and usages, one per subject):
    - (a) `undeclared_pipeline`: a pipeline reference whose name is not a
@@ -169,3 +170,7 @@ are code, but no analyzer measures them.
 - **2026-11-23:** Decision 10 no longer lists the counting rules; the module
   documentation of `painless.rs` is their only place (the `while` of a do-while
   does not count again).
+- **2026-11-24:** Decision 7: Java `header(...)` in a Msearch request is `read`
+  (table entry in the code reader). An `alias` block of an index whose own name
+  is unknown is still an alias artifact, with no target; Java operation objects
+  made by a factory (`XOperation.of(...)`) are objects, not index names.

@@ -296,13 +296,19 @@ impl Read<'_, '_> {
     }
 
     /// Aliases declared in `alias` blocks of `body`, each pointing at `target`.
-    fn aliases(&mut self, body: &Body, target: &SearchReference) {
+    fn aliases(&mut self, body: &Body, target: Option<SearchReference>) {
         for b in body.get_blocks("alias") {
             let name = self.text("an alias name", attr(&b.body, "name"));
             let suffix = name
                 .as_ref()
                 .map_or(".alias".into(), |n| format!(".alias.{n}"));
-            self.push("alias", name, &suffix, vec![], vec![target.clone()]);
+            self.push(
+                "alias",
+                name,
+                &suffix,
+                vec![],
+                target.clone().into_iter().collect(),
+            );
         }
     }
 
@@ -385,15 +391,12 @@ impl Read<'_, '_> {
             let n = attr(body, key).map(|e| self.text(key, Some(e)));
             refs.extend(reference("ingest_pipeline", n.flatten()));
         }
-        if let Some(n) = name {
-            self.aliases(
-                body,
-                &SearchReference {
-                    kind: "index".into(),
-                    name: n.clone(),
-                },
-            );
-        }
+        // An alias of an index whose own name is unknown is still declared, with no target.
+        let target = name.as_ref().map(|n| SearchReference {
+            kind: "index".into(),
+            name: n.clone(),
+        });
+        self.aliases(body, target);
         refs
     }
 
@@ -414,10 +417,10 @@ impl Read<'_, '_> {
         if let (Some(template), Some(n)) = (block(body, "template"), name) {
             self.aliases(
                 template,
-                &SearchReference {
+                Some(SearchReference {
                     kind: kind.into(),
                     name: n.clone(),
-                },
+                }),
             );
         }
         refs

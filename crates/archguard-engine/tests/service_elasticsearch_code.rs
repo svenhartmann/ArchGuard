@@ -592,3 +592,40 @@ fn long_generic_arguments_end_the_object_variable_but_normal_ones_hold() {
             .any(|d| d.file.ends_with("V.java"))
     );
 }
+
+#[test]
+fn factory_operations_are_objects() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", API);
+    put(
+        root,
+        "api/F.java",
+        &format!(
+            "{CLIENT}class F {{ void f() {{\n  var op = IndexOperation.<Doc>of(b -> b.index(\"orders\").document(d));\n  var op2 = DeleteOperation.of(b -> b.id(\"1\"));\n  ingester.add(o -> o.index(op));\n  ingester.add(o -> o.delete(op2));\n}} }}\n"
+        ),
+    );
+    let report = analyze_services(root).unwrap();
+    assert_eq!(usages(&report, "api"), pairs(&[("orders", "write")]));
+    assert_eq!(gaps(&report), 0);
+}
+
+/// `header(h -> h.index(X))` exists in the Java client only on Msearch request items.
+#[test]
+fn msearch_headers_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", API);
+    put(
+        root,
+        "api/M.java",
+        &format!(
+            "{CLIENT}class M {{ void f() {{\n  client.msearch(m -> m.searches(s -> s.header(h -> h.index(\"items\"))));\n  var r = MsearchTemplateRequest.of(m -> m.searchTemplates(s -> s.header(h -> h.index(\"logs\"))));\n}} }}\n"
+        ),
+    );
+    let report = analyze_services(root).unwrap();
+    assert_eq!(
+        usages(&report, "api"),
+        pairs(&[("items", "read"), ("logs", "read")])
+    );
+}

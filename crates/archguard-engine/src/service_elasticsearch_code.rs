@@ -40,7 +40,8 @@ const WRITE: [&str; 14] = [
     "IndexMany",
     "Bulk",
 ];
-const READ: [&str; 9] = [
+const READ: [&str; 10] = [
+    "header", // `header(h -> h.index(X))` exists in the Java client only on Msearch request items
     "SearchRequest",
     "MsearchRequest",
     "MsearchTemplateRequest",
@@ -290,6 +291,17 @@ fn names(c: &Call, text: &str, at: usize, open: usize, objects: &HashSet<&str>) 
 /// `var x = new IndexOperation...`); `index(x)` passes such an object whole instead of naming an index.
 // shortcut: matched by name over the whole file, not by scope; upgrade if a shadowed name misleads.
 fn object_variables(text: &str) -> HashSet<&str> {
+    /// The type created by `= new X...` or by the factory `= X.of(` / `= X.<T>of(`.
+    fn created_type(after: &str) -> Option<&str> {
+        let word = |c: char| c.is_alphanumeric() || c == '_';
+        let a = after.strip_prefix('=')?.trim_start();
+        let factory = {
+            let rest = a.trim_start_matches(word);
+            rest.starts_with(".of(") || rest.starts_with(".<")
+        };
+        let a = a.strip_prefix("new ").or(factory.then_some(a))?;
+        a.split(|c: char| !word(c)).next()
+    }
     let object = |t: &str| t.ends_with("Request") || t.ends_with("Operation");
     let word = |c: char| c.is_alphanumeric() || c == '_';
     let mut out = HashSet::new();
@@ -308,10 +320,7 @@ fn object_variables(text: &str) -> HashSet<&str> {
                     None => before,
                 };
                 let ty = ty.rsplit(|c: char| !word(c)).next().unwrap_or("");
-                let created = after
-                    .strip_prefix('=')
-                    .and_then(|a| a.trim_start().strip_prefix("new "))
-                    .map(|a| a.split(|c: char| !word(c)).next().unwrap_or(""));
+                let created = created_type(after);
                 if object(ty) || (ty == "var" && created.is_some_and(object)) {
                     out.insert(&text[s..i]);
                 }
