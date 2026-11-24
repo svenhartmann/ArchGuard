@@ -181,7 +181,6 @@ pub fn build(s: &EsState) -> EsModel {
         total: s.graph.nodes.len() as i32,
         has_detail: detail.is_some(),
         detail: detail.unwrap_or_default(),
-        ..Default::default()
     }
 }
 
