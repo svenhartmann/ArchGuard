@@ -20,6 +20,7 @@ use crate::format::Locale;
 use crate::tree::Tree;
 use crate::ui::{AppWindow, Templates};
 
+mod topology;
 mod trace;
 pub(crate) use trace::traced;
 

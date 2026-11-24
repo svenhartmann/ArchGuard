@@ -455,6 +455,56 @@ mod tests {
         assert_eq!(status, Some(Status::Failed("second".into())));
     }
 
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/es-set")
+            .join(name)
+            .canonicalize()
+            .expect("fixture")
+    }
+
+    #[test]
+    fn a_set_file_is_a_set_and_a_folder_a_folder() {
+        let (set, infra) = (fixture("search.archguard-set.toml"), fixture("infra"));
+        assert_eq!(target(&infra), Ok(Target::Folder(infra.clone())));
+        assert_eq!(
+            target(&set),
+            Ok(Target::Set { file: set, primary: infra, name: "search".into() })
+        );
+    }
+
+    #[test]
+    fn a_broken_set_file_is_an_error_text_not_a_crash() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let bad = dir.path().join("bad.archguard-set.toml");
+        std::fs::write(&bad, "projects = 3").expect("write");
+        let Err(text) = target(&bad) else {
+            panic!("expected an error");
+        };
+        assert!(!text.is_empty());
+        assert!(target(&dir.path().join("missing.archguard-set.toml")).is_err());
+    }
+
+    #[test]
+    fn the_analysis_of_a_set_lists_its_members_as_projects() {
+        let (set, infra) = (fixture("search.archguard-set.toml"), fixture("infra"));
+        let (_, projects) = analyze(&infra, Some(&set), &Shared::new()).expect("analysis");
+        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["infra", "adapter"]);
+        assert_eq!(documents::project_root(&infra, &projects[1]), fixture("adapter"));
+    }
+
+    #[test]
+    fn the_session_and_recent_list_keep_the_set_file() {
+        let (set, infra) = (fixture("search.archguard-set.toml"), fixture("infra"));
+        let mut s = documents::Store::default();
+        s.open_set(&set, &infra, "search");
+        s.open(&infra);
+        let session = session_of(&s);
+        assert_eq!(session.documents, [set, infra]);
+        assert_eq!(session.active, 1);
+    }
+
     #[test]
     fn an_analysis_error_stays_the_error() {
         let result: Result<(), String> = guarded(|| Err("no config".into()));
@@ -477,7 +527,7 @@ mod tests {
         };
         for _ in 0..2 {
             let run = Run::start(id);
-            let analysis = analyze(dir.path(), &Shared::new()).expect("analysis");
+            let analysis = analyze(dir.path(), None, &Shared::new()).expect("analysis");
             assert_eq!(Run::land(id, run, Ok(analysis)), Some(true));
             flow();
             flow();

@@ -776,6 +776,38 @@ mod tests {
         }
     }
 
+    fn es_set(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/es-set")
+            .join(name)
+            .canonicalize()
+            .expect("fixture")
+    }
+
+    #[test]
+    fn a_set_opens_as_a_document_with_the_primary_as_root() {
+        let (set, infra) = (es_set("search.archguard-set.toml"), es_set("infra"));
+        let mut s = Store::default();
+        let (id, new) = s.open_set(&set, &infra, "search");
+        assert!(new);
+        let d = s.get(id).expect("document");
+        assert_eq!((d.root.as_path(), d.name.as_str()), (infra.as_path(), "search"));
+        assert_eq!(d.set.as_deref(), Some(set.as_path()));
+        assert_eq!(d.entry(), set.as_path());
+    }
+
+    #[test]
+    fn the_same_set_activates_and_the_folder_is_another_document() {
+        let (set, infra) = (es_set("search.archguard-set.toml"), es_set("infra"));
+        let mut s = Store::default();
+        let (a, _) = s.open_set(&set, &infra, "search");
+        let (folder, new) = s.open(&infra);
+        assert!(new && folder != a, "primary as folder is its own document");
+        assert_eq!(s.open_set(&set, &infra, "search"), (a, false));
+        assert_eq!(s.active().map(|d| d.id), Some(a));
+        assert_eq!(s.get(folder).expect("folder").entry(), infra.as_path());
+    }
+
     #[test]
     fn build_units_are_projects_and_build_contexts_without_the_root() {
         let t = topology(
