@@ -1,0 +1,228 @@
+//! The model of the tab: the search graph as rows and arcs of the Services tree.
+
+use super::state::EsState;
+use crate::ui::EsModel;
+
+pub fn build(_: &EsState) -> EsModel {
+    EsModel::default()
+}
+
+pub fn fit(_: &mut EsState, _: f32, _: f32) {}
+
+#[cfg(test)]
+mod tests {
+    use archguard_engine::core::{
+        SearchArtifact, SearchFinding, SearchIndexUsage, SearchReference, ServiceTopology,
+    };
+    use slint::Model;
+
+    use super::*;
+    use crate::es_ui::state::build_from;
+
+    fn artifact(kind: &str, name: &str, references: &[(&str, &str)]) -> SearchArtifact {
+        SearchArtifact {
+            kind: kind.into(),
+            name: Some(name.into()),
+            address: format!("res.{name}"),
+            scope: String::new(),
+            patterns: Vec::new(),
+            references: references
+                .iter()
+                .map(|(kind, name)| SearchReference {
+                    kind: (*kind).into(),
+                    name: (*name).into(),
+                })
+                .collect(),
+            evidence: Vec::new(),
+        }
+    }
+
+    fn usage(service: &str, index: &str, access: &str) -> SearchIndexUsage {
+        SearchIndexUsage {
+            service: service.into(),
+            index: index.into(),
+            access: access.into(),
+            evidence: Vec::new(),
+        }
+    }
+
+    /// svc-a writes idx-a and idx-b (unknown), svc-b reads idx-a and writes the
+    /// undeclared `missing`; idx-a uses pipe, idx-b has a finding.
+    fn state() -> EsState {
+        let mut t = ServiceTopology::default();
+        let es = &mut t.elasticsearch;
+        es.artifacts = vec![
+            artifact("index", "idx-a", &[("ingest_pipeline", "pipe")]),
+            artifact("index", "idx-b", &[]),
+            artifact("alias", "al", &[]),
+            artifact("ingest_pipeline", "pipe", &[]),
+        ];
+        es.usages = vec![
+            usage("svc-a", "idx-a", "write"),
+            usage("svc-a", "idx-b", "unknown"),
+            usage("svc-b", "idx-a", "read"),
+            usage("svc-b", "missing", "write"),
+        ];
+        es.findings = vec![SearchFinding {
+            kind: "undeclared_index".into(),
+            subject: "idx-b".into(),
+            services: Vec::new(),
+            evidence: Vec::new(),
+        }];
+        build_from(std::sync::Arc::new(Ok(t)))
+    }
+
+    fn names(m: &EsModel) -> Vec<String> {
+        m.rows.iter().map(|r| r.name.to_string()).collect()
+    }
+
+    fn row(m: &EsModel, name: &str) -> crate::ui::SvcRow {
+        m.rows
+            .iter()
+            .find(|r| r.name == name)
+            .unwrap_or_else(|| panic!("no row {name}: {:?}", names(m)))
+    }
+
+    fn kind_at(s: &EsState, kind: &str) -> usize {
+        s.kinds().iter().position(|k| k == kind).unwrap()
+    }
+
+    #[test]
+    fn the_default_shows_services_indices_and_ghosts_not_the_pipeline() {
+        let mut s = state();
+        let m = build(&s);
+        assert_eq!(m.state, 1);
+        assert_eq!(m.total, 8);
+        let n = names(&m);
+        assert!(n.contains(&"svc-a".into()) && n.contains(&"svc-b".into()), "{n:?}");
+        assert!(n.contains(&"⚠ missing".into()) && n.contains(&"al".into()), "{n:?}");
+        assert!(!n.iter().any(|x| x == "pipe"), "{n:?}");
+        // Hidden nodes are counted, not lost.
+        let k = m.kinds.iter().find(|k| k.kind == "ingest_pipeline").unwrap();
+        assert_eq!((k.count, k.shown), (1, 0));
+        let i = kind_at(&s, "ingest_pipeline");
+        s.toggle_kind(i);
+        let m = build(&s);
+        assert!(names(&m).contains(&"pipe".into()));
+        let k = m.kinds.iter().find(|k| k.kind == "ingest_pipeline").unwrap();
+        assert_eq!((k.count, k.shown), (1, 1));
+    }
+
+    #[test]
+    fn a_group_row_per_kind_comes_before_its_nodes() {
+        let m = build(&state());
+        let n = names(&m);
+        assert_eq!(
+            n,
+            [
+                "service (2)", "svc-a", "svc-b", "index (3)", "idx-a", "idx-b", "⚠ missing",
+                "alias (1)", "al"
+            ]
+        );
+        let groups: Vec<bool> = m.rows.iter().map(|r| r.context).collect();
+        assert_eq!(groups, [true, false, false, true, false, false, false, true, false]);
+        assert!(m.rows.iter().all(|r| r.context == (r.service < 0)));
+    }
+
+    #[test]
+    fn focus_shows_the_node_its_neighbours_and_their_groups_only() {
+        let mut s = state();
+        let a = row(&build(&s), "idx-b").service as usize;
+        s.focus_on(a);
+        let m = build(&s);
+        assert_eq!(names(&m), ["service (1)", "svc-a", "index (1)", "⚠ idx-b"]);
+        assert_eq!(m.focus, "idx-b");
+        assert!(row(&m, "⚠ idx-b").selected);
+        // A group row has no node, so nothing changes.
+        s.focus = None;
+        s.focus_on(usize::MAX);
+        assert_eq!(build(&s).rows.row_count(), 9);
+        s.focus_on(a);
+        s.focus = None;
+        assert_eq!(build(&s).focus, "");
+    }
+
+    #[test]
+    fn rows_carry_the_warning_and_the_visible_edge_counts() {
+        let m = build(&state());
+        let b = row(&m, "⚠ idx-b");
+        assert!(!b.in_cycle && !b.context);
+        assert_eq!((b.incoming, b.outgoing), (1, 0));
+        let a = row(&m, "idx-a");
+        assert_eq!((a.incoming, a.outgoing), (1, 1));
+        let svc = row(&m, "svc-a");
+        // idx-a (write) and idx-b (unknown).
+        assert_eq!((svc.incoming, svc.outgoing), (0, 2));
+    }
+
+    #[test]
+    fn edges_are_coloured_per_relation_and_unknown_is_dashed() {
+        let mut s = state();
+        let i = kind_at(&s, "ingest_pipeline");
+        s.toggle_kind(i);
+        let m = build(&s);
+        let by_color = |c: i32| m.edges.iter().filter(|e| e.color == c).count();
+        // write: svc-a→idx-a, svc-b→missing; read: idx-a→svc-b; reference idx-a→pipe;
+        // unknown svc-a→idx-b.
+        assert_eq!(by_color(2), 2);
+        assert_eq!(by_color(1), 1);
+        assert_eq!(by_color(0), 2);
+        let dashes = |e: &crate::ui::SvcEdge| e.line.matches('M').count();
+        let solid = m.edges.iter().find(|e| e.color == 2).unwrap();
+        let unknown = m.edges.iter().find(|e| e.color == 0 && dashes(e) > 1).unwrap();
+        assert_eq!(dashes(&solid), 1);
+        assert_eq!(m.edges.iter().filter(|e| dashes(e) > 1).count(), 1);
+        assert!(unknown.tip_y > 0.0);
+    }
+
+    #[test]
+    fn edges_only_join_shown_nodes() {
+        let m = build(&state());
+        // The reference to the hidden pipeline is not drawn.
+        assert_eq!(m.edges.row_count(), 4);
+    }
+
+    #[test]
+    fn covers_is_neutral() {
+        let mut s = state();
+        s.graph.edges.push(archguard_engine::SearchEdge {
+            from: 0,
+            to: 2,
+            relation: "covers",
+        });
+        let m = build(&s);
+        assert_eq!(m.edges.iter().filter(|e| e.color == 0).count(), 2);
+    }
+
+    #[test]
+    fn without_elasticsearch_data_the_tab_is_ready_and_empty() {
+        let m = build(&build_from(std::sync::Arc::new(Ok(ServiceTopology::default()))));
+        assert_eq!((m.state, m.total), (1, 0));
+        assert_eq!((m.rows.row_count(), m.edges.row_count()), (0, 0));
+    }
+
+    #[test]
+    fn a_large_graph_lays_out_in_linear_work() {
+        let mut t = ServiceTopology::default();
+        t.elasticsearch.artifacts = (0..3000)
+            .map(|i| artifact("index", &format!("idx-{i}"), &[]))
+            .collect();
+        t.elasticsearch.usages = (0..3000)
+            .map(|i| usage(&format!("svc-{}", i % 50), &format!("idx-{i}"), "write"))
+            .collect();
+        let began = std::time::Instant::now();
+        let m = build(&build_from(std::sync::Arc::new(Ok(t))));
+        assert_eq!(m.rows.row_count(), 3000 + 50 + 2);
+        assert!(began.elapsed().as_secs() < 20, "{:?}", began.elapsed());
+    }
+
+    #[test]
+    fn fit_scales_the_canvas_into_the_viewport() {
+        let mut s = state();
+        s.viewport = 1480.0;
+        let m = build(&s);
+        fit(&mut s, 600.0, 200.0);
+        let z = ((600.0f32 - 24.0) / m.width).min((200.0 - 24.0) / m.height);
+        assert!((s.zoom - z).abs() < 1e-4 && s.zoom < 1.0, "{}", s.zoom);
+    }
+}

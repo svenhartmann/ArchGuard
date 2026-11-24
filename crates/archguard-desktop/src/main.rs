@@ -21,6 +21,7 @@ mod diagram;
 mod documents;
 mod documents_ui;
 mod domain_ui;
+mod es_ui;
 mod editor;
 mod export;
 mod export_ui;

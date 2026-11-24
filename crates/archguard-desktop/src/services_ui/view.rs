@@ -344,7 +344,7 @@ pub fn place(sc: &Scope, s: &ServicesState, unmapped: &str) -> Placed {
 }
 
 /// `shorten(name, max(6, floor(labelWidth / 7.5)))`.
-fn shorten(text: &str, label_width: f32) -> String {
+pub(crate) fn shorten(text: &str, label_width: f32) -> String {
     let max = ((label_width / 7.5).floor() as usize).max(6);
     if text.chars().count() > max {
         text.chars().take(max - 1).chain(['…']).collect()

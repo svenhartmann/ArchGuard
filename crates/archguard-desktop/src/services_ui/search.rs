@@ -18,7 +18,7 @@ use crate::ui::{
 pub const PAGE: usize = 20;
 
 /// The kinds in the documentation order of `SearchArtifact`; unknown kinds follow.
-const KINDS: [&str; 14] = [
+pub(crate) const KINDS: [&str; 14] = [
     "index",
     "alias",
     "index_template",
