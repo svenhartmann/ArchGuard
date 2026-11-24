@@ -110,7 +110,7 @@ pub fn build(s: &EsState) -> EsModel {
         };
     }
     let sc = scene(s);
-    let lay = layout::layout(&sc.nodes, &sc.links, s.viewport);
+    let lay = layout::layout_fixed_roots(&sc.nodes, &sc.links, s.viewport);
     let total = |kind: &str| s.graph.nodes.iter().filter(|n| n.kind == kind).count() as i32;
     EsModel {
         state: 1,
@@ -212,7 +212,7 @@ fn arcs(s: &EsState, sc: &Scene, lay: &layout::Layout) -> Vec<SvcEdge> {
 /// `fitServices` for a viewport of `w` x `h`.
 pub fn fit(s: &mut EsState, w: f32, h: f32) {
     let sc = scene(s);
-    let lay = layout::layout(&sc.nodes, &sc.links, s.viewport);
+    let lay = layout::layout_fixed_roots(&sc.nodes, &sc.links, s.viewport);
     if lay.width > 0.0 && lay.height > 0.0 {
         let z = ((w - 24.0).max(1.0) / lay.width).min((h - 24.0).max(1.0) / lay.height);
         s.zoom = z.clamp(0.01, 3.0);
