@@ -7,8 +7,8 @@ use archguard_flow_common::support::{Discovery, diagnostic, owners, relative, te
 #[path = "service_elasticsearch_constants.rs"]
 mod constants;
 
-use constants::{Constants, GAP, Name, literal, short, site};
-use std::collections::BTreeMap;
+use constants::{Constants, Name, gap, literal, short, site};
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 const MAX_BYTES: u64 = 1 << 20;
@@ -185,7 +185,7 @@ impl Sink<'_> {
                 self.constants
                     .defer(service, ext, rel, r, (m.access, m.line, m.pointer))
             }
-            Name::Gap => diagnostic(self.report, rel, Some(short(service)), GAP),
+            Name::Gap => diagnostic(self.report, rel, Some(short(service)), gap(m.line)),
         }
     }
 }
@@ -209,14 +209,16 @@ fn below_limit(
 }
 
 fn mentions(text: &str, ext: &str) -> Vec<Mention> {
+    let objects = object_variables(text);
+    let lines: Vec<usize> = text.match_indices('\n').map(|(i, _)| i).collect();
     let mut out = Vec::new();
     for c in CALLS.iter().filter(|c| c.ext == ext) {
         for (at, _) in text.match_indices(c.needle) {
             let open = at + c.needle.len();
             let end = if c.own { open } else { at };
             let access = access(&text[statement_start(text, at)..end]);
-            let line = text[..at].matches('\n').count() as u32 + 1;
-            for name in names(c, text, at, open) {
+            let line = line_of(&lines, at);
+            for name in names(c, text, at, open, &objects) {
                 out.push(Mention {
                     name,
                     access,
@@ -227,6 +229,11 @@ fn mentions(text: &str, ext: &str) -> Vec<Mention> {
         }
     }
     out
+}
+
+/// Line of byte offset `at`, given the newline offsets built once per file (binary search per hit).
+fn line_of(newlines: &[usize], at: usize) -> u32 {
+    newlines.partition_point(|&n| n < at) as u32 + 1
 }
 
 fn statement_start(text: &str, at: usize) -> usize {
@@ -255,7 +262,7 @@ fn access(window: &str) -> &'static str {
 
 /// The index names of one call: `Some(name)` for a literal, `None` for a gap.
 /// Lambdas, nested name calls and request or document arguments are not names.
-fn names(c: &Call, text: &str, at: usize, open: usize) -> Vec<Name> {
+fn names(c: &Call, text: &str, at: usize, open: usize, objects: &HashSet<&str>) -> Vec<Name> {
     let window = &text[statement_start(text, at)..at];
     let builder = ["->", "=>", "Builder"].iter().any(|k| window.contains(k));
     let gaps = c.always || builder || window.ends_with("Indices") || builder_variable(text, at);
@@ -275,6 +282,43 @@ fn names(c: &Call, text: &str, at: usize, open: usize) -> Vec<Name> {
         }
     }
     out.retain(|n| gaps || matches!(n, Name::Lit(_)));
+    out.retain(|n| !matches!(n, Name::Ref(r) if objects.contains(r.as_str())));
+    out
+}
+
+/// The names declared once per file as request or operation objects (`IndexRequest<Doc> x`,
+/// `var x = new IndexOperation...`); `index(x)` passes such an object whole instead of naming an index.
+// shortcut: matched by name over the whole file, not by scope; upgrade if a shadowed name misleads.
+fn object_variables(text: &str) -> HashSet<&str> {
+    let object = |t: &str| t.ends_with("Request") || t.ends_with("Operation");
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = HashSet::new();
+    let mut start = None;
+    for (i, c) in text.char_indices().chain([(text.len(), ' ')]) {
+        match (start, word(c)) {
+            (None, true) => start = Some(i),
+            (Some(s), false) => {
+                start = None;
+                let (before, after) = (text[..s].trim_end(), text[i..].trim_start());
+                // Only the text next to the word matters; a lambda `->` must not scan back to a `<`.
+                let near = before.char_indices().rev().nth(200).map_or(0, |(k, _)| k);
+                let before = &before[near..];
+                let ty = match before.strip_suffix('>') {
+                    Some(g) => g.rsplit_once('<').map_or("", |(t, _)| t),
+                    None => before,
+                };
+                let ty = ty.rsplit(|c: char| !word(c)).next().unwrap_or("");
+                let created = after
+                    .strip_prefix('=')
+                    .and_then(|a| a.trim_start().strip_prefix("new "))
+                    .map(|a| a.split(|c: char| !word(c)).next().unwrap_or(""));
+                if object(ty) || (ty == "var" && created.is_some_and(object)) {
+                    out.insert(&text[s..i]);
+                }
+            }
+            _ => {}
+        }
+    }
     out
 }
 
@@ -391,6 +435,7 @@ const METHODS: [(&str, &str); 9] = [
 
 /// Python (`index="x"`, `"_index": "x"` for bulk helpers) and TypeScript (`{ index: 'x' }`).
 fn script_mentions(text: &str, python: bool) -> Vec<Mention> {
+    let lines: Vec<usize> = text.match_indices('\n').map(|(i, _)| i).collect();
     let mut out = Vec::new();
     for (method, access) in METHODS {
         let needle = format!(".{method}(");
@@ -400,7 +445,7 @@ fn script_mentions(text: &str, python: bool) -> Vec<Mention> {
             out.extend(value.into_iter().flat_map(literals).map(|name| Mention {
                 name,
                 access,
-                line: text[..at].matches('\n').count() as u32 + 1,
+                line: line_of(&lines, at),
                 pointer: method,
             }));
         }
@@ -427,6 +472,7 @@ fn index_value<'a>(args: &[&'a str], python: bool) -> Option<&'a str> {
 
 /// `"_index": "x"` entries of bulk helper actions.
 fn bulk_helper_mentions(text: &str) -> Vec<Mention> {
+    let lines: Vec<usize> = text.match_indices('\n').map(|(i, _)| i).collect();
     let mut out = Vec::new();
     for (at, _) in text.match_indices("_index") {
         let rest = text[at + 6..].trim_start_matches(['"', '\'']).trim_start();
@@ -443,7 +489,7 @@ fn bulk_helper_mentions(text: &str) -> Vec<Mention> {
         out.extend(literals(value).into_iter().map(|name| Mention {
             name,
             access: "write",
-            line: text[..at].matches('\n').count() as u32 + 1,
+            line: line_of(&lines, at),
             pointer: "_index",
         }));
     }

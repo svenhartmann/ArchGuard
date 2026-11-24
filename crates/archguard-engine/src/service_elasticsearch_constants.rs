@@ -73,12 +73,12 @@ impl Constants {
                     let key = (p.service.clone(), name, p.access);
                     found.entry(key).or_default().extend([call, declared]);
                 }
-                None => diagnostic(report, &p.rel, Some(short(&p.service)), GAP),
+                None => diagnostic(report, &p.rel, Some(short(&p.service)), gap(p.line)),
             }
         }
     }
 
-    /// The literal of the one constant the reference names in its service; any other count, a
+    /// The literal of the one constant the reference names in its service (qualified: in its class); any other count, a
     /// non-literal value or a qualifier that is not the declaring class (file stem) is a gap.
     fn resolve(&self, p: &Pending) -> Option<(String, ServiceEvidence)> {
         let (qualifier, name) = match p.reference.rsplit_once('.') {
@@ -86,11 +86,16 @@ impl Constants {
             None => (None, p.reference.as_str()),
         };
         let key = (p.service.clone(), p.ext, name.to_owned());
-        let [c] = self.declared.get(&key)?.as_slice() else {
+        // A qualified reference needs one declaration of (owner, name), not of the name alone.
+        let mut same = self
+            .declared
+            .get(&key)?
+            .iter()
+            .filter(|c| qualifier.is_none_or(|q| q == c.owner));
+        let (Some(c), None) = (same.next(), same.next()) else {
             return None;
         };
-        let owned = qualifier.is_none_or(|q| q == c.owner);
-        owned.then(|| c.value.clone().map(|v| (v, c.evidence.clone())))?
+        c.value.clone().map(|v| (v, c.evidence.clone()))
     }
 }
 
@@ -375,8 +380,11 @@ pub(super) enum Name {
     Gap,
 }
 
-pub(super) const GAP: &str =
-    "Index name is not a literal (constant, variable or expression); the index stays unknown.";
+pub(super) fn gap(line: u32) -> String {
+    format!(
+        "Index name is not a literal (constant, variable or expression); the index stays unknown. Source line {line}."
+    )
+}
 
 pub(super) fn short(service: &str) -> &str {
     service.rsplit(':').next().unwrap_or(service)
