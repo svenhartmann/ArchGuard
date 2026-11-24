@@ -11,7 +11,7 @@ import { StartView, StartData } from "start_view.slint";
 import { ArchitectureView, ArchitectureData, RichData } from "architecture_view.slint";
 import { CallsView, CallsData } from "calls_view.slint";
 import { ServicesView, ServicesData } from "services_view.slint";
-import { EsKind, EsModel, ElasticsearchData } from "es_view.slint";
+import { EsView, EsKind, EsModel, ElasticsearchData } from "es_view.slint";
 import { RuntimeView, RuntimeData } from "runtime_view.slint";
 import { QualityView, QualityData } from "quality_view.slint";
 import { SecurityView, SecurityData } from "security_view.slint";
@@ -252,6 +252,7 @@ export component AppWindow inherits Window {
         if view == "domain" && DomainData.model.state == 1 && DomainData.model.cards.length == 0 && DomainData.model.boxes.length == 0 { return @tr("No entities found."); }
         if view == "services" && (ServicesData.model.state >= 2 || (ServicesData.model.state == 1
                 && ServicesData.model.services + ServicesData.model.applications + ServicesData.model.containers == 0)) { return @tr("No services found in this project."); }
+        if view == "elasticsearch" && ElasticsearchData.model.state == 1 && ElasticsearchData.model.total == 0 { return @tr("No Elasticsearch artifacts in this project."); }
         return "";
     }
 
@@ -404,7 +405,7 @@ export component AppWindow inherits Window {
             }
             Menu {
                 title: @tr("Open in new tab");
-                for v in ["start", "architecture", "graph", "dsm", "calls", "services", "runtime", "screens", "access", "domain", "quality", "security"]: MenuItem {
+                for v in ["start", "architecture", "graph", "dsm", "calls", "services", "elasticsearch", "runtime", "screens", "access", "domain", "quality", "security"]: MenuItem {
                     title: Views.label(v);
                     enabled: root.ready;
                     activated => { root.open-view-tab(v); }
@@ -550,7 +551,7 @@ export component AppWindow inherits Window {
                 m-count := Button { compact: true; icon: Icons.package; text: Fmt.int(root.sub-projects.length); }
                 m-labels := Text {
                     text: Views.label("start") + Views.label("architecture") + Views.label("graph") + Views.label("dsm") + Views.label("calls")
-                        + Views.label("services") + Views.label("runtime") + Views.label("screens") + Views.label("access") + Views.label("domain") + Views.label("quality") + Views.label("security");
+                        + Views.label("services") + Views.label("elasticsearch") + Views.label("runtime") + Views.label("screens") + Views.label("access") + Views.label("domain") + Views.label("quality") + Views.label("security");
                     font-size: Theme.font-body;
                     font-weight: Theme.weight-strong;
                 }
@@ -610,6 +611,7 @@ export component AppWindow inherits Window {
                         ViewBarTab { pad: header.tab-pad; view: "dsm"; active: root.tab == "dsm"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "calls"; active: root.tab == "calls"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "services"; active: root.tab == "services"; empty-reason: root.empty-reason("services"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
+                        ViewBarTab { pad: header.tab-pad; view: "elasticsearch"; active: root.tab == "elasticsearch"; empty-reason: root.empty-reason("elasticsearch"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "runtime"; active: root.tab == "runtime"; empty-reason: root.empty-reason("runtime"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "screens"; active: root.tab == "screens"; empty-reason: root.empty-reason("screens"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "access"; active: root.tab == "access"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
@@ -824,6 +826,9 @@ export component AppWindow inherits Window {
                         vertical-stretch: 1;
                     }
                     if p.view == "services": ServicesView {
+                        vertical-stretch: 1;
+                    }
+                    if p.view == "elasticsearch": EsView {
                         vertical-stretch: 1;
                     }
                     if p.view == "runtime": RuntimeView {

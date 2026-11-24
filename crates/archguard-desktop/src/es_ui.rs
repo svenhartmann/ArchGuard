@@ -4,6 +4,8 @@
 
 mod state;
 mod view;
+#[cfg(test)]
+mod view_check;
 
 use slint::ComponentHandle;
 
@@ -50,6 +52,32 @@ impl TabState for EsState {
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
         let (root, slot) = (data.root.to_path_buf(), Shared::<Topology>::active());
-        move || state::build_from(tab_support::topology(&slot, &root))
+        move || {
+            let mut s = state::build_from(tab_support::topology(&slot, &root));
+            snapshot_overrides(&mut s);
+            s
+        }
     });
 }
+
+/// `ARCHGUARD_DESKTOP_ES_KINDS=index,alias,ingest_pipeline` shows exactly these kinds,
+/// `ARCHGUARD_DESKTOP_ES_FOCUS=<label>` focuses the node with that label (snapshot runs).
+#[cfg(feature = "snapshot")]
+fn snapshot_overrides(s: &mut EsState) {
+    if let Ok(list) = std::env::var("ARCHGUARD_DESKTOP_ES_KINDS") {
+        let want: Vec<&str> = list.split(',').collect();
+        for (i, kind) in s.kinds().into_iter().enumerate() {
+            if s.kind_shown(&kind) != want.contains(&kind.as_str()) {
+                s.toggle_kind(i);
+            }
+        }
+    }
+    if let Ok(label) = std::env::var("ARCHGUARD_DESKTOP_ES_FOCUS")
+        && let Some(i) = s.graph.nodes.iter().position(|n| n.label == label)
+    {
+        s.focus_on(i);
+    }
+}
+
+#[cfg(not(feature = "snapshot"))]
+fn snapshot_overrides(_: &mut EsState) {}

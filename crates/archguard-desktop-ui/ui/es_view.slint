@@ -1,6 +1,10 @@
 // Elasticsearch tab: the model of the search graph (src/es_ui.rs). The rows and arcs
-// are those of the Services tree (services_tree.slint); the component follows in ticket 22.
-import { SvcRow, SvcEdge } from "services_tree.slint";
+// are those of the Services tree (services_tree.slint).
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, ZoomControls, Legend, EmptyState } from "widgets.slint";
+import { Fmt } from "format.slint";
+import { ServicesTree, SvcRow, SvcEdge } from "services_tree.slint";
 
 // One artifact kind of the filter: all nodes of the kind, and the ones shown.
 export struct EsKind {
@@ -34,4 +38,89 @@ export global ElasticsearchData {
     callback zoom-by(float);
     callback fit(float, float);
     callback resized(float);
+}
+
+// The graph: kind filter, focus, zoom and legend above the Services tree. The
+// header scrolls sideways in a narrow pane.
+export component EsView inherits Rectangle {
+    property <EsModel> m: ElasticsearchData.model;
+    property <bool> ready: m.state == 1 && m.total > 0;
+    // The zoom and Fit buttons lie inside the pane (the check at 400 px).
+    out property <bool> zoom-visible: root.ready && zoomc.absolute-position.x + zoomc.width <= root.absolute-position.x + root.width + 1px;
+    out property <bool> header-scrolls: root.ready && filter.preferred-width + 16px > root.width;
+    background: Theme.bg;
+    min-width: 360px;
+    preferred-width: 1480px;
+    max-width: 100000px;
+    preferred-height: 860px;
+
+    VerticalLayout {
+        // Only the kinds, focus and legend scroll; zoom and Fit stay at the right edge.
+        HorizontalLayout {
+            height: root.ready ? col.preferred-height + 14px : 0px;
+            padding-right: 8px;
+            visible: root.ready;
+            head := ScrollView {
+                horizontal-stretch: 1;
+                content-width: max(filter.preferred-width + 16px, self.width);
+                content-height: col.preferred-height;
+                col := VerticalLayout {
+                    padding: 8px;
+                    spacing: 6px;
+                    filter := HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        for k[i] in m.kinds: Button {
+                            text: k.kind + " (" + Fmt.int(k.count) + ")";
+                            pressed-state: k.shown > 0;
+                            compact: true;
+                            clicked => { ElasticsearchData.toggle-kind(i); }
+                        }
+                    }
+                    if m.focus != "": HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        Text { text: @tr("Focus: {}", m.focus); color: Theme.text; font-size: Theme.font-small; vertical-alignment: center; }
+                        Button { text: @tr("Show all"); compact: true; clicked => { ElasticsearchData.clear-focus(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 14px;
+                        alignment: start;
+                        Legend { text: @tr("Writes"); swatch: Theme.outgoing; }
+                        Legend { text: @tr("Reads"); swatch: Theme.incoming; }
+                        Legend { text: @tr("Reference"); swatch: Theme.edge; }
+                        Legend { text: @tr("Unknown access (dashed)"); outline: true; outline-color: Theme.edge; }
+                    }
+                }
+            }
+            zoomc := ZoomControls {
+                horizontal-stretch: 0;
+                y: 8px;
+                zoom: m.zoom;
+                zoom-out => { ElasticsearchData.zoom-by(1 / 1.25); }
+                zoom-in => { ElasticsearchData.zoom-by(1.25); }
+                reset => { ElasticsearchData.zoom-by(0); }
+                fit => { ElasticsearchData.fit(tree.visible-width(), tree.visible-height()); }
+            }
+        }
+        if root.ready: Rectangle { height: 1px; background: Theme.border; }
+        if !root.ready: EmptyState {
+            vertical-stretch: 1;
+            title: m.state == 0 ? @tr("Reading the service topology …")
+                : m.state == 2 ? @tr("The service topology is unavailable.")
+                : @tr("No Elasticsearch artifacts in this project.");
+        }
+        tree := ServicesTree {
+            vertical-stretch: root.ready ? 1 : 0;
+            rows: m.rows;
+            edges: m.edges;
+            hierarchy: m.hierarchy;
+            canvas-w: m.width;
+            canvas-h: m.height;
+            zoom: m.zoom;
+            select-service(i) => { ElasticsearchData.focus(i); }
+            resized(w) => { ElasticsearchData.resized(w); }
+            zoom-by(f) => { ElasticsearchData.zoom-by(f); }
+        }
+    }
 }
