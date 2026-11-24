@@ -184,7 +184,8 @@ fn target(arts: &[SearchArtifact], name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{covers, glob};
+    use super::{covers, glob, is_elasticsearch_gap, search_artifact_covers};
+    use archguard_core::{SearchArtifact, ServiceDiagnostic};
 
     #[test]
     fn glob_edge_cases() {
@@ -196,5 +197,93 @@ mod tests {
         assert!(glob("a.b", "a.b") && !glob("a.b", "axb"));
         assert!(covers("logs-*", "logs-app-*") && covers("logs-app-*", "logs-*"));
         assert!(!covers("logs-*", "metrics-*"));
+    }
+
+    fn art(kind: &str, name: Option<&str>, patterns: &[&str]) -> SearchArtifact {
+        SearchArtifact {
+            kind: kind.into(),
+            name: name.map(String::from),
+            address: String::new(),
+            scope: String::new(),
+            patterns: patterns.iter().map(|p| p.to_string()).collect(),
+            references: vec![],
+            evidence: vec![],
+        }
+    }
+
+    #[test]
+    fn artifact_covers_by_kind() {
+        for kind in ["index", "alias"] {
+            assert!(search_artifact_covers(
+                &art(kind, Some("logs-a"), &[]),
+                "logs-a"
+            ));
+            assert!(!search_artifact_covers(
+                &art(kind, Some("logs-a"), &[]),
+                "logs-b"
+            ));
+            // a name is no glob, and a nameless artifact covers nothing
+            assert!(!search_artifact_covers(
+                &art(kind, Some("logs-*"), &[]),
+                "logs-a"
+            ));
+            assert!(!search_artifact_covers(
+                &art(kind, None, &["logs-*"]),
+                "logs-a"
+            ));
+        }
+        for kind in ["index_template", "data_view", "alerting_rule"] {
+            assert!(search_artifact_covers(
+                &art(kind, None, &["logs-*"]),
+                "logs-a"
+            ));
+            assert!(!search_artifact_covers(
+                &art(kind, None, &["logs-*"]),
+                "metrics-a"
+            ));
+            // the name does not count for pattern kinds
+            assert!(!search_artifact_covers(
+                &art(kind, Some("logs-a"), &[]),
+                "logs-a"
+            ));
+        }
+        assert!(!search_artifact_covers(
+            &art("ingest_pipeline", Some("p"), &["p"]),
+            "p"
+        ));
+    }
+
+    fn diag(message: &str) -> ServiceDiagnostic {
+        ServiceDiagnostic {
+            file: "f".into(),
+            service: None,
+            message: message.into(),
+        }
+    }
+
+    #[test]
+    fn gap_check_knows_elasticsearch_diagnostics() {
+        // every fixed text of the three producers
+        for m in [
+            "Several services build from the same source directory; indices named in this file are attributed to none of them.",
+            "Source file not read: larger than 1 MiB, not a regular file or not readable; its indices are unknown.",
+            "Index name is not a literal (constant, variable or expression); the index stays unknown. Source line 7.",
+            "Index scan of the service stopped after 500 files; indices in later files are unknown.",
+            "JSON file next to Terraform could not be read; search templates in it are unknown.",
+            "JSON file next to Terraform is larger than 1 MiB and contains a mustache lang; it is not evaluated as a search template.",
+            "a.b: Elasticsearch name is not a literal; the index is unknown (variables).",
+            "a.b: alerting rule has no top-level params index; its index comes from a data view or is unknown.",
+            "a.b: saved objects are not analyzed.",
+        ] {
+            assert!(is_elasticsearch_gap(&diag(m)), "{m}");
+        }
+    }
+
+    #[test]
+    fn gap_check_ignores_other_diagnostics() {
+        assert!(!is_elasticsearch_gap(&diag(
+            "Compose file could not be read; its services are unknown."
+        )));
+        assert!(!is_elasticsearch_gap(&diag("Index name is fine")));
     }
 }

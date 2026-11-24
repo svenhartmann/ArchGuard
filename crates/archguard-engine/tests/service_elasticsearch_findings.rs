@@ -1,5 +1,5 @@
 //! Findings of the Elasticsearch map (ADR 0023, items 8 and 9).
-use archguard_engine::{analyze_services, core::ServiceTopology};
+use archguard_engine::{analyze_services, core::ServiceTopology, is_elasticsearch_gap};
 use std::{fs, path::Path};
 
 fn put(root: &Path, path: &str, text: &str) {
@@ -247,4 +247,13 @@ fn alias_declared_on_a_known_and_an_unknown_index_keeps_its_own_name() {
             .iter()
             .any(|d| d.message.contains("not a literal"))
     );
+}
+
+#[test]
+fn gap_check_splits_elasticsearch_from_compose_diagnostics() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let es = analyze_services(&fixtures.join("elasticsearch-services")).unwrap();
+    assert!(es.diagnostics.iter().any(is_elasticsearch_gap));
+    let compose = analyze_services(&fixtures.join("compose-services")).unwrap();
+    assert!(!compose.diagnostics.iter().any(is_elasticsearch_gap));
 }
