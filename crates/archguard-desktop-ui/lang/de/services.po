@@ -387,3 +387,36 @@ msgstr "Nächste 20 Operationen und Änderungen"
 
 msgid "Show next 20 contracts"
 msgstr "Nächste 20 Verträge"
+
+msgid "Elasticsearch"
+msgstr "Elasticsearch"
+
+msgid "Artifacts: {}"
+msgstr "Artefakte: {}"
+
+msgid "Findings: {}"
+msgstr "Befunde: {}"
+
+msgid "Declaration"
+msgstr "Deklaration"
+
+msgid "References"
+msgstr "Referenzen"
+
+msgid "Written by: {}"
+msgstr "Schreiber: {}"
+
+msgid "Read by: {}"
+msgstr "Leser: {}"
+
+msgid "Other access: {}"
+msgstr "Sonstiger Zugriff: {}"
+
+msgid "Elasticsearch findings"
+msgstr "Elasticsearch-Befunde"
+
+msgid "Gaps ({})"
+msgstr "Lücken ({})"
+
+msgid "Show more Elasticsearch entries"
+msgstr "Weitere Elasticsearch-Einträge"

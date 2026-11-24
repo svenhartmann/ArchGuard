@@ -12,6 +12,8 @@ mod layout;
 mod paths;
 mod patterns;
 mod search;
+#[cfg(test)]
+mod search_check;
 mod sections;
 #[cfg(test)]
 mod sections_check;
@@ -139,12 +141,13 @@ pub fn wire(ui: &AppWindow) {
     }));
     d.on_resized(a.on(|s, _, w: f32| s.viewport = w.floor().max(0.0)));
     wire_sections(ui, &d, &a);
-    // `ARCHGUARD_DESKTOP_SVC_OPEN=patterns,contracts` opens those sections
+    // `ARCHGUARD_DESKTOP_SVC_OPEN=patterns,contracts,search` opens those sections
     // for snapshot runs (Details itself opens by a click).
     #[cfg(feature = "snapshot")]
     if let Ok(open) = std::env::var("ARCHGUARD_DESKTOP_SVC_OPEN") {
         d.set_patterns_open(open.contains("patterns"));
         d.set_contracts_open(open.contains("contracts"));
+        d.set_search_open(open.contains("search"));
     }
     follow::wire();
 }
@@ -223,9 +226,10 @@ pub fn export_data(ui: &AppWindow) -> Option<(crate::export::Snapshot, crate::ex
 
 /// `ARCHGUARD_DESKTOP_SVC_KIND=<index>`, `ARCHGUARD_DESKTOP_SVC_SERVICE=<name>`
 /// and `ARCHGUARD_DESKTOP_SVC_ROUTING=inout` set the view for snapshot runs;
-/// `ARCHGUARD_DESKTOP_SVC_PATTERN=<row>` and `ARCHGUARD_DESKTOP_SVC_CONTRACT=<row>`
-/// open a listed pattern assessment or API contract (its section opens
-/// with `ARCHGUARD_DESKTOP_SVC_OPEN`, see `wire`).
+/// `ARCHGUARD_DESKTOP_SVC_PATTERN=<row>`, `ARCHGUARD_DESKTOP_SVC_CONTRACT=<row>`
+/// and `ARCHGUARD_DESKTOP_SVC_SEARCH=<artifact>` open a listed pattern
+/// assessment, API contract or Elasticsearch artifact (its section opens
+/// with `ARCHGUARD_DESKTOP_SVC_OPEN=patterns,contracts,search`, see `wire`).
 #[cfg(feature = "snapshot")]
 fn snapshot_overrides(s: &mut ServicesState) {
     if let Some(k) = std::env::var("ARCHGUARD_DESKTOP_SVC_KIND")
@@ -253,6 +257,10 @@ fn snapshot_overrides(s: &mut ServicesState) {
     }
     if let Some(i) = row("ARCHGUARD_DESKTOP_SVC_CONTRACT") {
         s.contracts.choose(i);
+    }
+    if let Some(i) = row("ARCHGUARD_DESKTOP_SVC_SEARCH") {
+        let len = s.topology().map_or(0, |t| t.elasticsearch.artifacts.len());
+        s.search.choose(i, len);
     }
 }
 
