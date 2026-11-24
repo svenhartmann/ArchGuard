@@ -264,7 +264,40 @@ fn strip_modules(mut s: &str) -> &str {
     s
 }
 
-/// Equal labels of different scopes get ` (<scope>)`, then labels are cut to `MAX_LABEL`.
+/// `s` cut to `max` characters, the last one `…` when something was cut.
+fn shorten(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    s.chars().take(max.saturating_sub(1)).chain(['…']).collect()
+}
+
+/// The shortest tail of `/`-segments that tells the scopes of one label apart.
+fn scope_tails(scopes: &HashSet<String>) -> HashMap<String, String> {
+    let depth = scopes
+        .iter()
+        .map(|s| s.split('/').count())
+        .max()
+        .unwrap_or(1);
+    let tail = |s: &str, k: usize| {
+        let parts: Vec<&str> = s.split('/').collect();
+        parts[parts.len().saturating_sub(k)..].join("/")
+    };
+    let k = (1..=depth)
+        .find(|&k| {
+            scopes
+                .iter()
+                .map(|s| tail(s, k))
+                .collect::<HashSet<_>>()
+                .len()
+                == scopes.len()
+        })
+        .unwrap_or(depth);
+    scopes.iter().map(|s| (s.clone(), tail(s, k))).collect()
+}
+
+/// Labels unique per graph and within `MAX_LABEL`: equal labels of different scopes get
+/// ` (<tail>)` (the name is cut, never the suffix), what still collides gets ` #<n>`.
 fn relabel(nodes: &mut [SearchNode]) {
     let mut scopes: HashMap<String, HashSet<String>> = HashMap::new();
     for n in nodes.iter() {
@@ -273,12 +306,38 @@ fn relabel(nodes: &mut [SearchNode]) {
             .or_default()
             .insert(n.scope.clone());
     }
+    let tails: HashMap<_, _> = scopes
+        .iter()
+        .filter(|(_, v)| v.len() > 1)
+        .map(|(k, v)| (k.clone(), scope_tails(v)))
+        .collect();
+    let mut used = HashSet::new();
     for n in nodes.iter_mut() {
-        if scopes[&n.label].len() > 1 && !n.scope.is_empty() {
-            n.label = format!("{} ({})", n.label, n.scope);
-        }
-        if n.label.chars().count() > MAX_LABEL {
-            n.label = n.label.chars().take(MAX_LABEL - 1).chain(['…']).collect();
-        }
+        let suffix = match tails.get(&n.label) {
+            Some(t) if !n.scope.is_empty() => format!(" ({})", shorten_scope(&t[&n.scope])),
+            _ => String::new(),
+        };
+        let name = shorten(&n.label, MAX_LABEL - suffix.chars().count());
+        n.label = unique(&mut used, format!("{name}{suffix}"));
     }
+}
+
+/// At most 21 characters, keeping the end of the path.
+fn shorten_scope(s: &str) -> String {
+    let n = s.chars().count();
+    if n <= 21 {
+        return s.to_string();
+    }
+    std::iter::once('…').chain(s.chars().skip(n - 20)).collect()
+}
+
+fn unique(used: &mut HashSet<String>, label: String) -> String {
+    let mut out = label.clone();
+    let mut k = 2;
+    while !used.insert(out.clone()) {
+        let tag = format!(" #{k}");
+        out = format!("{}{tag}", shorten(&label, MAX_LABEL - tag.chars().count()));
+        k += 1;
+    }
+    out
 }
