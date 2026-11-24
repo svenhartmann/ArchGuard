@@ -25,7 +25,8 @@ pub fn wire(ui: &AppWindow) {
 
 impl TabState for EsState {
     fn push(&mut self, ui: &AppWindow) {
-        ui.global::<ElasticsearchData>().set_model(view::build(self));
+        ui.global::<ElasticsearchData>()
+            .set_model(view::build(self));
     }
 
     fn pending(ui: &AppWindow, error: Option<&str>) {

@@ -1,13 +1,223 @@
 //! The model of the tab: the search graph as rows and arcs of the Services tree.
 
-use super::state::EsState;
-use crate::ui::EsModel;
+use std::collections::HashMap;
 
-pub fn build(_: &EsState) -> EsModel {
-    EsModel::default()
+use super::state::EsState;
+use crate::services_ui::layout::{self, Link, Node};
+use crate::services_ui::{paths, view::shorten};
+use crate::tab_support::model;
+use crate::ui::{EsKind, EsModel, SvcEdge, SvcRow};
+
+/// The laid-out graph: layout nodes (groups first, one per kind with shown nodes) and
+/// what each stands for.
+struct Scene {
+    nodes: Vec<Node>,
+    /// Row text per layout node.
+    names: Vec<String>,
+    /// Graph node per layout node; `None` for a group.
+    graph: Vec<Option<usize>>,
+    links: Vec<Link>,
+    /// Graph edge per link.
+    edge_of: Vec<usize>,
+    /// Shown nodes per kind.
+    shown: HashMap<String, usize>,
 }
 
-pub fn fit(_: &mut EsState, _: f32, _: f32) {}
+/// Shown nodes: the kind filter (ghosts always), or the focused node with its neighbours.
+fn visible(s: &EsState) -> Vec<bool> {
+    let nodes = &s.graph.nodes;
+    let Some(f) = s.focus else {
+        return nodes
+            .iter()
+            .map(|n| !n.declared || s.kind_shown(&n.kind))
+            .collect();
+    };
+    let mut out = vec![false; nodes.len()];
+    out[f] = true;
+    for e in &s.graph.edges {
+        if e.from == f {
+            out[e.to] = true;
+        } else if e.to == f {
+            out[e.from] = true;
+        }
+    }
+    out
+}
+
+fn scene(s: &EsState) -> Scene {
+    let shown = visible(s);
+    let nodes = &s.graph.nodes;
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for (n, _) in nodes.iter().zip(&shown).filter(|(_, v)| **v) {
+        *counts.entry(n.kind.clone()).or_default() += 1;
+    }
+    let mut out = Scene {
+        nodes: Vec::new(),
+        names: Vec::new(),
+        graph: Vec::new(),
+        links: Vec::new(),
+        edge_of: Vec::new(),
+        shown: counts,
+    };
+    let mut group = HashMap::new();
+    // Groups in the kinds' order; the layout sorts siblings by name, so the name is the rank.
+    let kinds = s.kinds();
+    for (rank, kind) in kinds.iter().enumerate() {
+        let Some(&n) = out.shown.get(kind) else {
+            continue;
+        };
+        group.insert(kind.as_str(), out.nodes.len());
+        out.nodes.push(Node {
+            id: format!("g{rank}"),
+            name: format!("{rank:03}"),
+            parent: None,
+        });
+        out.names.push(format!("{kind} ({n})"));
+        out.graph.push(None);
+    }
+    let mut at = vec![None; nodes.len()];
+    for (i, n) in nodes.iter().enumerate().filter(|(i, _)| shown[*i]) {
+        let name = format!("{}{}", if n.warn { "⚠ " } else { "" }, n.label);
+        at[i] = Some(out.nodes.len());
+        out.nodes.push(Node {
+            id: format!("n{i}"),
+            name: name.clone(),
+            parent: group.get(n.kind.as_str()).copied(),
+        });
+        out.names.push(name);
+        out.graph.push(Some(i));
+    }
+    for (i, e) in s.graph.edges.iter().enumerate() {
+        if let (Some(from), Some(to)) = (at[e.from], at[e.to]) {
+            let key = format!("{i:09}");
+            out.links.push(Link {
+                from,
+                to,
+                key,
+                side: None,
+            });
+            out.edge_of.push(i);
+        }
+    }
+    out
+}
+
+pub fn build(s: &EsState) -> EsModel {
+    if (*s.topology).is_err() {
+        return EsModel {
+            state: 2,
+            ..Default::default()
+        };
+    }
+    let sc = scene(s);
+    let lay = layout::layout(&sc.nodes, &sc.links, s.viewport);
+    let total = |kind: &str| s.graph.nodes.iter().filter(|n| n.kind == kind).count() as i32;
+    EsModel {
+        state: 1,
+        rows: model(rows(s, &sc, &lay)),
+        edges: model(arcs(s, &sc, &lay)),
+        hierarchy: lay
+            .hierarchy
+            .iter()
+            .map(|p| paths::rounded(p, 6.0))
+            .collect::<Vec<_>>()
+            .join(" ")
+            .into(),
+        width: lay.width,
+        height: lay.height,
+        zoom: s.zoom,
+        kinds: model(s.kinds().iter().map(|k| EsKind {
+            kind: k.as_str().into(),
+            count: total(k),
+            shown: sc.shown.get(k).copied().unwrap_or(0) as i32,
+        })),
+        focus: s
+            .focus
+            .map(|f| s.graph.nodes[f].title.as_str().into())
+            .unwrap_or_default(),
+        total: s.graph.nodes.len() as i32,
+    }
+}
+
+fn rows(s: &EsState, sc: &Scene, lay: &layout::Layout) -> Vec<SvcRow> {
+    let (mut incoming, mut outgoing) = (vec![0; sc.nodes.len()], vec![0; sc.nodes.len()]);
+    for l in &sc.links {
+        outgoing[l.from] += 1;
+        incoming[l.to] += 1;
+    }
+    lay.rows
+        .iter()
+        .map(|r| {
+            let graph = sc.graph[r.node];
+            // Icon and padding, plus the In/Out column (bare counts when compact).
+            let counts = match (graph, lay.compact) {
+                (None, _) => 36.0,
+                (_, true) => 90.0,
+                _ => 145.0,
+            };
+            let label_width = lay.w - r.indent - counts;
+            SvcRow {
+                name: shorten(&sc.names[r.node], label_width).into(),
+                context: graph.is_none(),
+                service: graph.map_or(-1, |g| g as i32),
+                left: r.x - lay.w / 2.0,
+                y: r.y,
+                w: lay.w,
+                h: lay.h,
+                indent: r.indent,
+                label_width,
+                relation_x: lay.relation_x,
+                compact: lay.compact,
+                selected: graph.is_some() && graph == s.focus,
+                in_cycle: false,
+                incoming: incoming[r.node],
+                outgoing: outgoing[r.node],
+            }
+        })
+        .collect()
+}
+
+/// write = outgoing (2), read = incoming (1), the rest neutral; unknown is dashed.
+fn arcs(s: &EsState, sc: &Scene, lay: &layout::Layout) -> Vec<SvcEdge> {
+    lay.routes
+        .iter()
+        .map(|route| {
+            let i = sc.edge_of[route.link];
+            let e = &s.graph.edges[i];
+            let p = &route.points;
+            let line = if e.relation == "unknown" {
+                paths::dashed(p, 6.0, 3.0)
+            } else {
+                paths::curve(p)
+            };
+            SvcEdge {
+                line: line.into(),
+                head: paths::head(p[5], p[4]).into(),
+                color: match e.relation {
+                    "write" => 2,
+                    "read" => 1,
+                    _ => 0,
+                },
+                selected: false,
+                edge: i as i32,
+                tip_x: p[5].x,
+                tip_y: p[5].y,
+                top: p[0].y.min(p[5].y),
+                bottom: p[0].y.max(p[5].y),
+            }
+        })
+        .collect()
+}
+
+/// `fitServices` for a viewport of `w` x `h`.
+pub fn fit(s: &mut EsState, w: f32, h: f32) {
+    let sc = scene(s);
+    let lay = layout::layout(&sc.nodes, &sc.links, s.viewport);
+    if lay.width > 0.0 && lay.height > 0.0 {
+        let z = ((w - 24.0).max(1.0) / lay.width).min((h - 24.0).max(1.0) / lay.height);
+        s.zoom = z.clamp(0.01, 3.0);
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -92,19 +302,33 @@ mod tests {
         let mut s = state();
         let m = build(&s);
         assert_eq!(m.state, 1);
-        assert_eq!(m.total, 8);
+        assert_eq!(m.total, 7);
         let n = names(&m);
-        assert!(n.contains(&"svc-a".into()) && n.contains(&"svc-b".into()), "{n:?}");
-        assert!(n.contains(&"⚠ missing".into()) && n.contains(&"al".into()), "{n:?}");
+        assert!(
+            n.contains(&"svc-a".into()) && n.contains(&"svc-b".into()),
+            "{n:?}"
+        );
+        assert!(
+            n.contains(&"⚠ missing".into()) && n.contains(&"al".into()),
+            "{n:?}"
+        );
         assert!(!n.iter().any(|x| x == "pipe"), "{n:?}");
         // Hidden nodes are counted, not lost.
-        let k = m.kinds.iter().find(|k| k.kind == "ingest_pipeline").unwrap();
+        let k = m
+            .kinds
+            .iter()
+            .find(|k| k.kind == "ingest_pipeline")
+            .unwrap();
         assert_eq!((k.count, k.shown), (1, 0));
         let i = kind_at(&s, "ingest_pipeline");
         s.toggle_kind(i);
         let m = build(&s);
         assert!(names(&m).contains(&"pipe".into()));
-        let k = m.kinds.iter().find(|k| k.kind == "ingest_pipeline").unwrap();
+        let k = m
+            .kinds
+            .iter()
+            .find(|k| k.kind == "ingest_pipeline")
+            .unwrap();
         assert_eq!((k.count, k.shown), (1, 1));
     }
 
@@ -115,19 +339,29 @@ mod tests {
         assert_eq!(
             n,
             [
-                "service (2)", "svc-a", "svc-b", "index (3)", "idx-a", "idx-b", "⚠ missing",
-                "alias (1)", "al"
+                "service (2)",
+                "svc-a",
+                "svc-b",
+                "index (3)",
+                "idx-a",
+                "⚠ idx-b",
+                "⚠ missing",
+                "alias (1)",
+                "al"
             ]
         );
         let groups: Vec<bool> = m.rows.iter().map(|r| r.context).collect();
-        assert_eq!(groups, [true, false, false, true, false, false, false, true, false]);
+        assert_eq!(
+            groups,
+            [true, false, false, true, false, false, false, true, false]
+        );
         assert!(m.rows.iter().all(|r| r.context == (r.service < 0)));
     }
 
     #[test]
     fn focus_shows_the_node_its_neighbours_and_their_groups_only() {
         let mut s = state();
-        let a = row(&build(&s), "idx-b").service as usize;
+        let a = row(&build(&s), "⚠ idx-b").service as usize;
         s.focus_on(a);
         let m = build(&s);
         assert_eq!(names(&m), ["service (1)", "svc-a", "index (1)", "⚠ idx-b"]);
@@ -169,7 +403,11 @@ mod tests {
         assert_eq!(by_color(0), 2);
         let dashes = |e: &crate::ui::SvcEdge| e.line.matches('M').count();
         let solid = m.edges.iter().find(|e| e.color == 2).unwrap();
-        let unknown = m.edges.iter().find(|e| e.color == 0 && dashes(e) > 1).unwrap();
+        let unknown = m
+            .edges
+            .iter()
+            .find(|e| e.color == 0 && dashes(e) > 1)
+            .unwrap();
         assert_eq!(dashes(&solid), 1);
         assert_eq!(m.edges.iter().filter(|e| dashes(e) > 1).count(), 1);
         assert!(unknown.tip_y > 0.0);
@@ -196,7 +434,9 @@ mod tests {
 
     #[test]
     fn without_elasticsearch_data_the_tab_is_ready_and_empty() {
-        let m = build(&build_from(std::sync::Arc::new(Ok(ServiceTopology::default()))));
+        let m = build(&build_from(std::sync::Arc::new(Ok(
+            ServiceTopology::default(),
+        ))));
         assert_eq!((m.state, m.total), (1, 0));
         assert_eq!((m.rows.row_count(), m.edges.row_count()), (0, 0));
     }

@@ -21,8 +21,8 @@ mod diagram;
 mod documents;
 mod documents_ui;
 mod domain_ui;
-mod es_ui;
 mod editor;
+mod es_ui;
 mod export;
 mod export_ui;
 #[cfg(test)]

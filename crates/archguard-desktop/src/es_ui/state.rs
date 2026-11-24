@@ -22,10 +22,7 @@ pub struct EsState {
 }
 
 pub fn build_from(topology: Topology) -> EsState {
-    let graph = (*topology)
-        .as_ref()
-        .map(search_graph)
-        .unwrap_or_default();
+    let graph = (*topology).as_ref().map(search_graph).unwrap_or_default();
     EsState {
         topology,
         graph,
