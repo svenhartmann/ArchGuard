@@ -17,6 +17,8 @@
 
 # Local agent worktrees (managed separately with git worktree).
 /.claude/worktrees/
+# Temporary cargo target directories of agent runs.
+/.claude/es-target*/
 
 # Downloaded upstream sources for the reproducible analysis examples.
 /examples/checkouts/
