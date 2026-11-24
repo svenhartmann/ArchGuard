@@ -128,43 +128,120 @@ fn lang(ext: &str) -> &'static str {
     }
 }
 
+/// Where the scanner is in Java/C# text; kept across lines and across the two halves of one line.
+#[derive(Clone, Copy, PartialEq, Default)]
+enum Lex {
+    #[default]
+    Code,
+    Str,
+    Chr,
+    Text,
+    Block,
+    Line,
+}
+
 /// The type bodies a Java/C# file has open: (name, brace depth of the body, is interface).
+/// Braces count only in code: not in strings, char literals, text blocks or comments.
+// shortcut: C# verbatim `@"..\"` strings treat the backslash as an escape; upgrade if one hides a brace.
 #[derive(Default)]
 struct Scope {
     open: Vec<(String, usize, bool)>,
     depth: usize,
     waiting: Option<(String, bool)>,
     keyword: Option<bool>,
+    lex: Lex,
+    escaped: bool,
+    word: String,
+    prev: char,
 }
 
 impl Scope {
-    /// Follows the braces and type declarations of `code`; `.class` literals are not declarations.
     fn feed(&mut self, code: &str) {
-        let mut quoted = false;
-        let mut word = String::new();
-        let mut prev = ' ';
-        for ch in code.chars().chain([' ']) {
-            if ch.is_alphanumeric() || ch == '_' {
-                word.push(ch);
-                continue;
-            }
-            if !word.is_empty() && !quoted {
-                self.on_word(&word, prev);
-            }
-            if !word.is_empty() {
-                prev = 'a';
-                word.clear();
-            }
-            match ch {
-                '"' => quoted = !quoted,
-                '{' if !quoted => self.open_body(),
-                '}' if !quoted => self.close_body(),
-                _ => {}
-            }
-            if !ch.is_whitespace() {
-                prev = ch;
-            }
+        let cs: Vec<char> = code.chars().collect();
+        let mut i = 0;
+        while i < cs.len() {
+            i += self.step(&cs, i);
         }
+        self.flush_word();
+    }
+
+    /// Ends a line: a line comment ends, an unterminated string or char literal does too.
+    fn end_line(&mut self) {
+        if matches!(self.lex, Lex::Line | Lex::Str | Lex::Chr) {
+            self.lex = Lex::Code;
+        }
+        self.escaped = false;
+    }
+
+    /// Whether the line that starts now begins inside a comment or text block.
+    fn in_block(&self) -> bool {
+        matches!(self.lex, Lex::Block | Lex::Text)
+    }
+
+    /// Consumes the token at `i`; returns its length.
+    fn step(&mut self, cs: &[char], i: usize) -> usize {
+        let at = |k: usize| cs.get(i + k).copied().unwrap_or('\0');
+        let c = cs[i];
+        match self.lex {
+            Lex::Code => self.code(c, at(1), at(2)),
+            Lex::Str | Lex::Chr => self.quoted(c),
+            Lex::Text if c == '\\' => 2,
+            Lex::Text if c == '"' && at(1) == '"' && at(2) == '"' => self.leave(3),
+            Lex::Block if c == '*' && at(1) == '/' => self.leave(2),
+            Lex::Line => cs.len() - i,
+            Lex::Text | Lex::Block => 1,
+        }
+    }
+
+    /// Inside a string or char literal: a backslash escapes the next character.
+    fn quoted(&mut self, c: char) -> usize {
+        let end = if self.lex == Lex::Str { '"' } else { '\'' };
+        let escaped = self.escaped;
+        self.escaped = !escaped && c == '\\';
+        if !escaped && c == end {
+            self.lex = Lex::Code;
+        }
+        1
+    }
+
+    fn leave(&mut self, len: usize) -> usize {
+        self.lex = Lex::Code;
+        len
+    }
+
+    fn code(&mut self, c: char, n1: char, n2: char) -> usize {
+        if c.is_alphanumeric() || c == '_' {
+            self.word.push(c);
+            return 1;
+        }
+        self.flush_word();
+        let (lex, len) = match (c, n1, n2) {
+            ('"', '"', '"') => (Lex::Text, 3),
+            ('"', _, _) => (Lex::Str, 1),
+            ('\'', _, _) => (Lex::Chr, 1),
+            ('/', '/', _) => (Lex::Line, 2),
+            ('/', '*', _) => (Lex::Block, 2),
+            _ => (Lex::Code, 1),
+        };
+        self.lex = lex;
+        match c {
+            '{' if lex == Lex::Code => self.open_body(),
+            '}' if lex == Lex::Code => self.close_body(),
+            _ => {}
+        }
+        if !c.is_whitespace() {
+            self.prev = c;
+        }
+        len
+    }
+
+    fn flush_word(&mut self) {
+        if self.word.is_empty() {
+            return;
+        }
+        let word = std::mem::take(&mut self.word);
+        self.on_word(&word, self.prev);
+        self.prev = 'a';
     }
 
     /// A word after a type keyword names the type; `prev` is the character before this word.
@@ -238,7 +315,15 @@ fn declarations(text: &str, ext: &str, rel: &str) -> Vec<(String, Constant)> {
     let mut out = Vec::new();
     for (i, raw) in text.lines().enumerate() {
         let line = raw.trim();
-        if line.starts_with("//") || line.starts_with('*') || line.starts_with("/*") {
+        let comment = scope.in_block()
+            || line.starts_with("//")
+            || line.starts_with('*')
+            || line.starts_with("/*");
+        if comment {
+            if jvm_like {
+                scope.feed(line);
+                scope.end_line();
+            }
             continue;
         }
         let split = line
@@ -276,6 +361,7 @@ fn declarations(text: &str, ext: &str, rel: &str) -> Vec<(String, Constant)> {
         }
         if jvm_like {
             scope.feed(after);
+            scope.end_line();
         }
     }
     out

@@ -400,3 +400,28 @@ fn only_module_level_python_and_static_csharp_constants_count() {
         (pairs(&[("stat", "read")]), 0)
     );
 }
+
+#[test]
+fn braces_in_literals_and_comments_do_not_move_the_owner() {
+    let use_outer = JAVA_USE.replace("Doc.IDX", "Outer.IDX");
+    let probes = [
+        "static class In { char c = '{'; }",
+        "static class In { char c = '}'; }",
+        "static class In { char c = '\\''; }\n  static class Jn { }",
+        "String t = \"\"\"\n    { } }\n    \"\"\";",
+        "String s = \"a\\\"}\";",
+        "static class In { } // {",
+        "static class In { } // }",
+        "/* } */ int y;",
+        "/*\n   }\n */ int y;",
+    ];
+    let mut broken = Vec::new();
+    for probe in probes {
+        let doc = format!("class Outer {{\n  {probe}\n  static final String IDX = \"v\";\n}}\n");
+        let (u, g) = api_usages(&[("Other.java", &doc), ("U.java", &use_outer)]);
+        if (u, g) != (pairs(&[("v", "read")]), 0) {
+            broken.push(probe);
+        }
+    }
+    assert!(broken.is_empty(), "owner lost for {broken:?}");
+}
