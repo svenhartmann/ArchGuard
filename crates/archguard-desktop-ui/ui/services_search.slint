@@ -1,0 +1,53 @@
+// Services → Elasticsearch: the model of the section (the view follows).
+import { SvcEvidence } from "services_inspector.slint";
+
+// One declared artifact; `index` is its position in the topology's list.
+export struct SvcSearchRow {
+    index: int,
+    title: string,
+    // A finding names this artifact.
+    warn: bool,
+    open: bool,
+}
+
+// Artifacts of one raw kind identifier.
+export struct SvcSearchKind {
+    kind: string,
+    count: int,
+    rows: [SvcSearchRow],
+}
+
+export struct SvcSearchFinding {
+    kind: string,
+    subject: string,
+    services: string,
+    evidence: [SvcEvidence],
+}
+
+export struct SvcSearchGap {
+    file: string,
+    service: string,
+    message: string,
+}
+
+// The open artifact.
+export struct SvcSearchDetail {
+    declaration: [SvcEvidence],
+    scope: string,
+    patterns: [string],
+    references: [string],
+    writers: string,
+    readers: string,
+    // Access `unknown`.
+    others: string,
+    findings: [SvcSearchFinding],
+}
+
+export struct SvcSearch {
+    total: int,
+    kinds: [SvcSearchKind],
+    more: bool,
+    detail: SvcSearchDetail,
+    findings: [SvcSearchFinding],
+    gaps: [SvcSearchGap],
+}
