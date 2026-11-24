@@ -144,6 +144,7 @@ fn merge_gaps(
     diagnostics: Vec<ServiceDiagnostic>,
     complete: bool,
 ) {
+    let other = diagnostics.iter().any(|d| !is_elasticsearch_gap(d));
     let mut gaps = 0;
     for mut d in diagnostics.into_iter().filter(is_elasticsearch_gap) {
         d.file = prefixed(name, &d.file);
@@ -153,7 +154,9 @@ fn merge_gaps(
     }
     if gaps > 0 {
         base.complete = false;
-    } else if !complete {
+    }
+    // shortcut: any non-ES diagnostic of an incomplete member counts, informational ones too.
+    if !complete && (gaps == 0 || other) {
         diagnostic(
             base,
             name,
