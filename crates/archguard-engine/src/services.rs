@@ -105,6 +105,7 @@ pub(crate) fn analyze_services_with(
         &mut report,
         &mut service_elasticsearch_tf::augment,
     );
+    service_elasticsearch_tf::search_templates(&root, &discovery, &mut report);
     let artifacts = &mut report.elasticsearch.artifacts;
     artifacts.sort_by(|a, b| (&a.scope, &a.address).cmp(&(&b.scope, &b.address)));
     let (deployments, rendered) =

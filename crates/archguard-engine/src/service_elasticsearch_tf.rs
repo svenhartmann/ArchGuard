@@ -4,12 +4,16 @@
 //! provider would evaluate (locals, `each`, module outputs, functions) is a gap.
 use super::service_terraform::{ModuleCtx, Resource, TfFile};
 use super::service_terraform_hcl::{attr, block, get, literal, object};
+use archguard_core::ServiceEvidence;
 use archguard_core::{SearchArtifact, SearchReference, ServiceDiagnostic, ServiceTopology};
 use archguard_flow_common::support::diagnostic;
+use archguard_flow_common::support::{Discovery, relative};
 use hcl_edit::Span;
 use hcl_edit::expr::{Expression, TraversalOperator};
 use hcl_edit::parser;
 use hcl_edit::structure::Body;
+use std::collections::BTreeSet;
+use std::path::Path;
 
 const PREFIX: &str = "elasticstack_elasticsearch_";
 const KIBANA: &str = "elasticstack_kibana_";
@@ -55,6 +59,90 @@ pub(super) fn augment(report: &mut ServiceTopology, scope: &str, resources: &[Re
         let out = read.finish();
         report.elasticsearch.artifacts.extend(out);
     }
+}
+
+/// Search templates in `*.json` files below directories that contain `.tf` files (ADR 0023).
+/// Detection is a text match of `"lang": "mustache"`, not a JSON parse: templates with mustache
+/// sections are not strict JSON. The name is assumed from the file name.
+pub(super) fn search_templates(root: &Path, discovery: &Discovery, report: &mut ServiceTopology) {
+    let (mut tf_dirs, mut jsons) = (BTreeSet::new(), Vec::new());
+    for entry in discovery.walk(root).flatten() {
+        let path = entry.path();
+        if !entry.file_type().is_some_and(|t| t.is_file())
+            || path.components().any(|c| c.as_os_str() == ".terraform")
+        {
+            continue;
+        }
+        let rel = relative(root, path);
+        match path.extension().and_then(|x| x.to_str()) {
+            Some("tf") => {
+                tf_dirs.insert(parent(&rel).to_owned());
+            }
+            Some("json") => jsons.push(rel),
+            _ => {}
+        }
+    }
+    jsons.sort();
+    for rel in jsons {
+        if !under(&tf_dirs, &rel) {
+            continue;
+        }
+        let Ok(text) = crate::project_files::read_manifest(root, Path::new(&rel)) else {
+            let message = "JSON file next to Terraform could not be read or is larger than 1 MiB; search templates in it are unknown.";
+            archguard_flow_common::support::diagnostic(report, &rel, None, message);
+            continue;
+        };
+        let Some(at) = mustache_lang(&text) else {
+            continue;
+        };
+        let line = u32::try_from(text[..at].matches('\n').count() + 1).ok();
+        let name = Path::new(&rel)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(str::to_owned);
+        report.elasticsearch.artifacts.push(SearchArtifact {
+            kind: "search_template".into(),
+            name,
+            address: rel.clone(),
+            scope: "json".into(),
+            patterns: vec![],
+            references: vec![],
+            evidence: vec![ServiceEvidence {
+                file: rel.clone(),
+                pointer: "/script/lang".into(),
+                line,
+                description: format!(
+                    "Search template declared in JSON file {rel}; name assumed from file name. Read as text; no cluster access."
+                ),
+            }],
+        });
+    }
+}
+
+/// Whether a directory of `path` (or the root) holds a `.tf` file.
+fn under(tf_dirs: &BTreeSet<String>, path: &str) -> bool {
+    let mut dir = parent(path);
+    while !tf_dirs.contains(dir) {
+        if dir.is_empty() {
+            return false;
+        }
+        dir = parent(dir);
+    }
+    true
+}
+
+fn parent(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(dir, _)| dir)
+}
+
+/// Byte offset of the first `"lang"\s*:\s*"mustache"`.
+fn mustache_lang(text: &str) -> Option<usize> {
+    text.match_indices("\"lang\"")
+        .map(|(at, key)| (at, &text[at + key.len()..]))
+        .find_map(|(at, rest)| {
+            let rest = rest.trim_start().strip_prefix(':')?.trim_start();
+            rest.starts_with("\"mustache\"").then_some(at)
+        })
 }
 
 /// Kibana data views and alerting rules; saved-object imports are noted, not read.

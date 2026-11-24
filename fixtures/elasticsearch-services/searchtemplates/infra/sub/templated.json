@@ -1,0 +1,7 @@
+{
+  "script": {
+    "lang"  :  "mustache",
+    "source": "{ \"query\": {{#toJson}}query{{/toJson}} }"
+  },
+  "params": {{#toJson}}p{{/toJson}}
+}
