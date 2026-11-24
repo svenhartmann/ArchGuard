@@ -115,6 +115,7 @@ mod elasticsearch_tests {
                 name: "p1".into(),
             }],
             evidence: vec![],
+            origins: vec![],
         });
         t.elasticsearch.usages.push(SearchIndexUsage {
             service: "api".into(),
@@ -131,6 +132,47 @@ mod elasticsearch_tests {
         let json = serde_json::to_string(&t).unwrap();
         assert!(json.contains("elasticsearch"));
         assert_eq!(serde_json::from_str::<ServiceTopology>(&json).unwrap(), t);
+        assert!(!json.contains("origins") && !json.contains("projects"));
+    }
+
+    fn art(origins: &[&str]) -> SearchArtifact {
+        SearchArtifact {
+            kind: "index".into(),
+            name: Some("audit".into()),
+            address: "a".into(),
+            scope: "s".into(),
+            patterns: vec![],
+            references: vec![],
+            evidence: vec![],
+            origins: origins.iter().map(|o| o.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn origins_and_projects_round_trip_and_are_skipped_when_empty() {
+        let mut m = ElasticsearchModel::default();
+        m.artifacts.push(art(&["infra", "adapter"]));
+        m.projects = vec!["infra".into(), "adapter".into()];
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"origins\":[\"infra\",\"adapter\"]"));
+        assert!(json.contains("\"projects\":[\"infra\",\"adapter\"]"));
+        assert_eq!(serde_json::from_str::<ElasticsearchModel>(&json).unwrap(), m);
+        let plain = serde_json::to_string(&art(&[])).unwrap();
+        assert!(!plain.contains("origins"));
+        assert!(serde_json::from_str::<SearchArtifact>(&plain).unwrap().origins.is_empty());
+        let only_projects = ElasticsearchModel { projects: vec!["a".into()], ..Default::default() };
+        assert!(!only_projects.is_empty());
+    }
+
+    #[test]
+    fn foreign_and_primary() {
+        assert!(!art(&[]).foreign("infra"));
+        assert!(!art(&["infra", "adapter"]).foreign("infra"));
+        assert!(art(&["adapter"]).foreign("infra"));
+        let mut m = ElasticsearchModel::default();
+        assert_eq!(m.primary(), None);
+        m.projects = vec!["infra".into(), "adapter".into()];
+        assert_eq!(m.primary(), Some("infra"));
     }
 }
 
