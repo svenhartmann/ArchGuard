@@ -1,8 +1,8 @@
 //! String constants a service declares and the index references they resolve (ADR 0023, Q1).
 //! One declaration in the service, a literal value and a matching qualifier resolve; every
 //! other case stays a gap.
+use super::super::service_elasticsearch_findings::{EsGap, es_gap};
 use archguard_core::{ServiceEvidence, ServiceTopology};
-use archguard_flow_common::support::diagnostic;
 use std::collections::BTreeMap;
 
 /// A string constant with its owner (Java/C# class, else file stem); `value` is `None` when not a literal.
@@ -73,7 +73,13 @@ impl Constants {
                     let key = (p.service.clone(), name, p.access);
                     found.entry(key).or_default().extend([call, declared]);
                 }
-                None => diagnostic(report, &p.rel, Some(short(&p.service)), gap(p.line)),
+                None => es_gap(
+                    report,
+                    EsGap::IndexNotLiteral,
+                    &p.rel,
+                    Some(short(&p.service)),
+                    &[&p.line.to_string()],
+                ),
             }
         }
     }
@@ -378,12 +384,6 @@ pub(super) enum Name {
     Lit(String),
     Ref(String),
     Gap,
-}
-
-pub(super) fn gap(line: u32) -> String {
-    format!(
-        "Index name is not a literal (constant, variable or expression); the index stays unknown. Source line {line}."
-    )
 }
 
 pub(super) fn short(service: &str) -> &str {
