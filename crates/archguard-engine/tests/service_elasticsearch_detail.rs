@@ -301,3 +301,237 @@ fn names_still_do_not_read_locals() {
             .any(|d| d.message.contains("name_local"))
     );
 }
+
+fn chains() -> ServiceTopology {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/es-index-detail/chains/terraform");
+    analyze_services(&root).unwrap()
+}
+
+fn analyzers(a: &SearchArtifact) -> Vec<String> {
+    a.detail
+        .as_ref()
+        .map(|d| d.analysis.iter().map(|x| x.name.clone()).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn merge_concat_and_chains_up_to_depth_three_are_read() {
+    let r = chains();
+    // shallow merge: the right `properties` wins as a whole
+    assert_eq!(fields(art(&r, "index", "merged")), ["b:text"]);
+    let f = &art(&r, "index", "concat").detail.as_ref().unwrap().analysis[0];
+    assert_eq!(f.definition, r#"{"type":"stop","stopwords":["a","b"]}"#);
+    assert_eq!(fields(art(&r, "index", "local-chain")), ["c:date"]);
+    for name in ["a", "b", "c"] {
+        assert_eq!(analyzers(art(&r, "index", name)), ["std"], "{name}");
+    }
+}
+
+#[test]
+fn deeper_chains_cycles_and_non_literals_are_one_gap_each() {
+    let r = chains();
+    let gaps: Vec<_> = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("not read:"))
+        .map(|d| d.message.as_str())
+        .collect();
+    for (address, attr) in [
+        ("elasticstack_elasticsearch_index.d", "analysis_analyzer"),
+        ("cyc_x", "analysis_analyzer"),
+        ("cyc_y", "analysis_analyzer"),
+        ("local_cycle", "mappings"),
+        ("from_var", "refresh_interval"),
+        ("conditional", "refresh_interval"),
+        ("elasticstack_elasticsearch_index.each", "refresh_interval"),
+        ("merge_var", "mappings"),
+    ] {
+        let hits: Vec<_> = gaps.iter().filter(|m| m.contains(address)).collect();
+        assert_eq!(hits.len(), 1, "{address}: {gaps:#?}");
+        assert!(hits[0].contains(attr), "{address}: {}", hits[0]);
+    }
+    assert_eq!(gaps.len(), 8, "{gaps:#?}");
+}
+
+fn access() -> ServiceTopology {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/es-index-detail/access/terraform");
+    analyze_services(&root).unwrap()
+}
+
+#[test]
+fn attribute_and_index_access_on_literal_values_is_read() {
+    let r = access();
+    assert_eq!(
+        fields(art(&r, "index", "decoded-attr")),
+        ["a:keyword", "z:long"]
+    );
+    assert_eq!(fields(art(&r, "index", "key-access")), ["b:text"]);
+    assert_eq!(fields(art(&r, "index", "list-access")), ["c:date"]);
+}
+
+#[test]
+fn access_to_a_missing_or_non_literal_key_is_one_gap() {
+    let r = access();
+    let gaps: Vec<_> = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("not read:"))
+        .map(|d| d.message.as_str())
+        .collect();
+    for address in ["missing_key", "var_key"] {
+        let hits: Vec<_> = gaps.iter().filter(|m| m.contains(address)).collect();
+        assert_eq!(hits.len(), 1, "{address}: {gaps:#?}");
+        assert!(hits[0].contains("mappings"), "{address}: {}", hits[0]);
+    }
+    assert_eq!(gaps.len(), 2, "{gaps:#?}");
+}
+
+fn for_fixture() -> ServiceTopology {
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/es-index-detail/for/terraform");
+    analyze_services(&root).unwrap()
+}
+
+#[test]
+fn for_expressions_over_literal_collections_are_read() {
+    let r = for_fixture();
+    assert_eq!(
+        fields(art(&r, "index", "obj-for")),
+        ["id:keyword", "skip:keyword", "title:text"]
+    );
+    assert_eq!(
+        fields(art(&r, "index", "filtered")),
+        ["id:keyword", "title:text"]
+    );
+    assert_eq!(
+        fields(art(&r, "index", "key-var")),
+        ["x:keyword", "y:keyword"]
+    );
+    let f = &art(&r, "index", "list-for")
+        .detail
+        .as_ref()
+        .unwrap()
+        .analysis[0];
+    assert_eq!(f.definition, r#"{"type":"stop","stopwords":["a","c"]}"#);
+    // Terraform iterates a map in lexical key order
+    let m = &art(&r, "index", "map-order")
+        .detail
+        .as_ref()
+        .unwrap()
+        .analysis[0];
+    assert_eq!(m.definition, r#"{"type":"stop","stopwords":["a","b"]}"#);
+}
+
+#[test]
+fn for_over_non_literal_collections_or_with_grouping_is_one_gap() {
+    let r = for_fixture();
+    let gaps: Vec<_> = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("not read:"))
+        .map(|d| d.message.as_str())
+        .collect();
+    for address in ["var_for", "each_for", "group_for", "unbound"] {
+        let hits: Vec<_> = gaps.iter().filter(|m| m.contains(address)).collect();
+        assert_eq!(hits.len(), 1, "{address}: {gaps:#?}");
+        assert!(hits[0].contains("mappings"), "{address}: {}", hits[0]);
+    }
+    assert_eq!(gaps.len(), 4, "{gaps:#?}");
+}
+
+fn cap_fixture(outer: usize, inner: usize) -> ServiceTopology {
+    let dir =
+        std::env::temp_dir().join(format!("es-for-cap-{}-{outer}-{inner}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let list = |n: usize, p: &str| {
+        (0..n)
+            .map(|i| format!("\"{p}{i}\""))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let tf = format!(
+        "locals {{\n  outer = [{}]\n  inner = [{}]\n}}\nresource \"elasticstack_elasticsearch_index\" \"cap\" {{\n  name = \"cap\"\n  mappings = jsonencode({{ properties = {{ for a in local.outer : a => {{ type = \"object\", properties = {{ for b in local.inner : b => {{ type = \"keyword\" }} }} }} }} }})\n}}\n",
+        list(outer, "o"),
+        list(inner, "i")
+    );
+    std::fs::write(dir.join("main.tf"), tf).unwrap();
+    let r = analyze_services(&dir).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    r
+}
+
+#[test]
+fn for_over_more_than_ten_thousand_elements_is_a_gap() {
+    // 100 outer + 100 * 99 inner = 10 000 elements: read; one more outer element: gap
+    let ok = cap_fixture(100, 99);
+    assert_eq!(
+        art(&ok, "index", "cap")
+            .detail
+            .as_ref()
+            .unwrap()
+            .fields
+            .len(),
+        100 * 100
+    );
+    let over = cap_fixture(101, 99);
+    assert!(
+        over.diagnostics
+            .iter()
+            .any(|d| d.message.contains("cap") && d.message.contains("not read: mappings")),
+        "{:#?}",
+        over.diagnostics
+    );
+}
+
+fn interp() -> ServiceTopology {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/es-index-detail/interp/terraform");
+    analyze_services(&root).unwrap()
+}
+
+#[test]
+fn templates_of_resolved_values_are_literal() {
+    let r = interp();
+    assert_eq!(
+        fields(art(&r, "index", "key-interp")),
+        ["id_raw:keyword", "title_raw:text"]
+    );
+    assert_eq!(
+        fields(art(&r, "index", "value-interp")),
+        ["a:text(analyzer an_a)", "b:text(analyzer an_b)"]
+    );
+    assert_eq!(fields(art(&r, "index", "number-interp")), ["x:keyword"]);
+}
+
+#[test]
+fn templates_with_var_each_or_directives_are_one_gap() {
+    let r = interp();
+    let gaps: Vec<_> = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("not read:"))
+        .map(|d| d.message.as_str())
+        .collect();
+    for address in ["var_interp", "each_interp", "directive"] {
+        let hits: Vec<_> = gaps.iter().filter(|m| m.contains(address)).collect();
+        assert_eq!(hits.len(), 1, "{address}: {gaps:#?}");
+    }
+    assert_eq!(gaps.len(), 3, "{gaps:#?}");
+}
+
+#[test]
+fn nested_jsonencode_sorts_keys_like_terraform_and_direct_keeps_written_order() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/es-index-detail/sorted/terraform");
+    let r = analyze_services(&root).unwrap();
+    for name in ["via-local", "decoded"] {
+        assert_eq!(
+            fields(art(&r, "index", name)),
+            ["a:keyword", "b:text"],
+            "{name}"
+        );
+    }
+    assert_eq!(fields(art(&r, "index", "direct")), ["b:text", "a:keyword"]);
+}

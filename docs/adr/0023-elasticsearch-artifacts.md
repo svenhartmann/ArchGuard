@@ -209,3 +209,25 @@ are code, but no analyzer measures them.
   literal stays a gap; so does a resource or local of another module). Names,
   aliases and pipelines still do not read locals. See
   [ADR 0015](0015-terraform-deployment-evidence.md).
+- **2026-11-25:** Chains and `merge`/`concat` (ticket 45, after probe 44). The
+  lookup above follows references through up to two further hops (index,
+  local or sibling, local or sibling: depth 3; a fourth link is a gap), with a
+  visited set so a cycle is a gap and never loops. `merge()` of literal objects
+  (shallow, the rightmost value wins) and `concat()` of literal lists are
+  evaluated; one non-literal argument keeps the whole attribute unread. `var.*`,
+  conditionals, `each.*`, `file()` and other modules still give a gap.
+- **2026-11-25:** `for` and access (ticket 45, after the user decision "nach 45
+  r1"). `for` expressions over literal lists and maps (also with an `if`
+  filter using `==`, `!=`, `&&`, `||`, `!`) and attribute or index access
+  (`.a`, `["k"]`, `[0]`, `jsondecode(...).a`) on resolved literal values are
+  evaluated. A non-literal collection (`var.*`, `each.*`), grouping (`...`),
+  duplicate keys and more than 10 000 iterated elements per attribute remain
+  gaps. Depth and cycle protection apply. Templates (`"${k}_raw"`) are
+  literal when every interpolation is a resolved string or number (also `for`
+  variables and locals); `var.*`, `each.*` and `%{ }` directives stay gaps.
+- **2026-11-25:** Key order (ticket 45). A `jsonencode(<literal>)` nested in a
+  value or reached through a `local.*` reference is evaluated as the text
+  Terraform sends: object keys sorted (byte order) at every level, so fields
+  read through it appear sorted, parents before children. A `jsonencode`
+  written directly in the index attribute and all other paths keep the written
+  order.

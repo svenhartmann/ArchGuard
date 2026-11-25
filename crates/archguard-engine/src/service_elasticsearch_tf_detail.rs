@@ -1,11 +1,11 @@
 //! Literal mapping, settings and analysis of an `elasticstack_elasticsearch_index` (ADR 0023).
 //! All or nothing per attribute: one non-literal part and the attribute is not read.
-use super::service_elasticsearch_tf_locals::lookup;
+use super::service_elasticsearch_tf_eval::value;
+pub(super) use super::service_elasticsearch_tf_eval::{Json, json_attr};
 use super::service_terraform::ModuleCtx;
-use super::service_terraform_hcl::{attr, literal};
+use super::service_terraform_hcl::attr;
 use archguard_core::{SearchAnalysis, SearchField, SearchIndexDetail};
-use hcl_edit::expr::{Expression, ObjectKey};
-use hcl_edit::parser;
+use hcl_edit::expr::Expression;
 use hcl_edit::structure::Body;
 
 /// Scalar and set attributes of provider elasticstack v0.11.13 that are index settings:
@@ -75,101 +75,8 @@ const ANALYSIS: &[(&str, &str)] = &[
     ("analysis_tokenizer", "tokenizer"),
 ];
 
-/// A fully literal value; objects keep the written order.
-pub(super) enum Json {
-    Null,
-    Bool(bool),
-    Num(String),
-    Str(String),
-    Arr(Vec<Json>),
-    Obj(Vec<(String, Json)>),
-}
-
-impl Json {
-    pub(super) fn compact(&self) -> String {
-        let quote = |s: &str| serde_json::to_string(s).unwrap_or_default();
-        match self {
-            Json::Null => "null".into(),
-            Json::Bool(b) => b.to_string(),
-            Json::Num(n) => n.clone(),
-            Json::Str(s) => quote(s),
-            Json::Arr(a) => format!(
-                "[{}]",
-                a.iter().map(Json::compact).collect::<Vec<_>>().join(",")
-            ),
-            Json::Obj(o) => format!(
-                "{{{}}}",
-                o.iter()
-                    .map(|(k, v)| format!("{}:{}", quote(k), v.compact()))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-        }
-    }
-
-    pub(super) fn get(&self, key: &str) -> Option<&Json> {
-        match self {
-            Json::Obj(o) => o.iter().find(|(k, _)| k == key).map(|(_, v)| v),
-            _ => None,
-        }
-    }
-
-    pub(super) fn str(&self, key: &str) -> Option<String> {
-        match self.get(key)? {
-            Json::Str(s) => Some(s.clone()),
-            _ => None,
-        }
-    }
-}
-
-fn object(o: &hcl_edit::expr::Object, ctx: Option<&ModuleCtx>) -> Option<Vec<(String, Json)>> {
-    o.iter()
-        .map(|(k, v)| {
-            let key = match k {
-                ObjectKey::Ident(i) => i.as_str().to_owned(),
-                ObjectKey::Expression(k) => literal(k)?,
-            };
-            Some((key, tree(v.expr(), ctx)?))
-        })
-        .collect()
-}
-
-fn tree(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<Json> {
-    Some(match e {
-        Expression::Null(_) => Json::Null,
-        Expression::Bool(b) => Json::Bool(*b.value()),
-        Expression::Number(n) => Json::Num(n.value().to_string()),
-        Expression::String(_) | Expression::StringTemplate(_) | Expression::HeredocTemplate(_) => {
-            Json::Str(literal(e)?)
-        }
-        Expression::Array(a) => Json::Arr(a.iter().map(|x| tree(x, ctx)).collect::<Option<_>>()?),
-        Expression::Object(o) => Json::Obj(object(o, ctx)?),
-        Expression::Traversal(_) => return tree(lookup(ctx?, e)?, None),
-        _ => return None,
-    })
-}
-
-/// `jsonencode(<literal>)` or a literal JSON text (string or heredoc). JSON is read as HCL,
-/// whose object syntax accepts it; `file()`, `local.*`, `var.*` and references are not literal.
-pub(super) fn json_attr(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<Json> {
-    if let Expression::Traversal(_) = e {
-        return json_attr(lookup(ctx?, e)?, None);
-    }
-    if let Expression::FuncCall(c) = e {
-        let mut args = c.args.iter();
-        return match (c.name.name.as_str(), args.next(), args.next()) {
-            ("jsonencode", Some(a), None) => tree(a, ctx),
-            ("jsondecode", Some(a), None) => json_attr(a, ctx),
-            _ => None,
-        };
-    }
-    let text = literal(e).filter(|_| !matches!(e, Expression::Number(_) | Expression::Bool(_)))?;
-    let body = parser::parse_body(&format!("x = {text}")).ok()?;
-    tree(attr(&body, "x")?, None)
-}
-
 fn setting(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<String> {
-    match tree(e, ctx)? {
+    match value(e, ctx)? {
         Json::Str(s) => Some(s),
         Json::Null | Json::Obj(_) => None,
         other => Some(other.compact()),

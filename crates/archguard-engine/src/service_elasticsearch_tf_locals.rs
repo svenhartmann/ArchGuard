@@ -1,11 +1,11 @@
-//! One-level lookup of `local.<name>[.<key>…]` and `<index resource>.<name>.<attr>` inside the
-//! module instance of an index (ADR 0023). The found expression is read as a literal; whatever it
-//! references itself is not followed, so a local that uses another local is a gap.
+//! Single-step lookup of `local.<name>[.<key>…]` and `<index resource>.<name>.<attr>` inside the
+//! module instance of an index (ADR 0023). The caller follows what the found expression
+//! references itself, bounded by depth and a cycle check.
 use super::service_terraform::ModuleCtx;
 use super::service_terraform_hcl::{attr, get};
 use hcl_edit::expr::{Expression, TraversalOperator};
 
-fn local<'a>(ctx: &ModuleCtx<'a>, name: &str) -> Option<&'a Expression> {
+pub(super) fn local<'a>(ctx: &ModuleCtx<'a>, name: &str) -> Option<&'a Expression> {
     ctx.locals.iter().find_map(|b| attr(&b.body, name))
 }
 

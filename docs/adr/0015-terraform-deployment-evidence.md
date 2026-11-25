@@ -95,3 +95,11 @@ contains secrets. ArchGuard must not do any of that.
   `local.*` values and `elasticstack_elasticsearch_index.<r>.<attr>` of the
   same module instance, one level deep. Workloads, datastores, names, aliases
   and pipelines still do not read locals.
+- **2026-11-25:** For Elasticsearch index detail the lookup of `local.*` and
+  sibling index attributes is extended to depth 3 (index, then up to two
+  references) with cycle protection, and `merge()` of literal objects and
+  `concat()` of literal lists are evaluated ([ADR 0023](0023-elasticsearch-artifacts.md)).
+  `var.*`, conditionals and `each.*` stay unknown.
+- **2026-11-25:** For Elasticsearch index detail, `for` expressions over
+  literal collections and access on resolved literal values are evaluated too
+  ([ADR 0023](0023-elasticsearch-artifacts.md)); nothing else in this ADR changes.
