@@ -231,6 +231,17 @@ fn covers_edges_go_from_patterns_to_declared_indices_and_aliases() {
 }
 
 #[test]
+fn a_watch_pattern_covers_matching_indices_only() {
+    let mut w = art("watch", Some("w"), "x.w", "");
+    w.patterns = vec!["logs-*".into()];
+    let t = topo(&[], vec![w, index("logs-a"), index("other")], vec![]);
+    assert_eq!(
+        edges(&search_graph(&t)),
+        [("w".into(), "logs-a".into(), "covers")]
+    );
+}
+
+#[test]
 fn warn_follows_subject_against_name_pattern_or_reference_but_not_lookalikes() {
     let mut tpl = art("index_template", Some("t1"), "x.t1", "");
     tpl.patterns = vec!["logs-*".into()];
