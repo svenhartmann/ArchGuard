@@ -294,6 +294,7 @@ mod tests {
                 references: vec![],
                 evidence: vec![],
                 origins: vec![],
+                detail: None,
             }],
             usages: vec![SearchIndexUsage {
                 service: "api".into(),

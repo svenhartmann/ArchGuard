@@ -349,6 +349,7 @@ mod origin {
             references: vec![],
             evidence: vec![],
             origins: vec!["a · b".into()],
+            detail: None,
         }];
         t.elasticsearch.usages = vec![SearchIndexUsage {
             service: "a · b:compose.yaml::w".into(),

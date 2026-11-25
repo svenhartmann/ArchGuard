@@ -1,6 +1,7 @@
 //! Static service topology. Configured endpoints are evidence of configuration,
 //! never evidence that a request ran or that an endpoint exists.
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServiceTopology {
@@ -82,6 +83,45 @@ pub struct SearchArtifact {
     /// Projects of a project set that declare this artifact; empty outside a set.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub origins: Vec<String>,
+    /// Mapping, settings and analysis of an index or template, when all literal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<SearchIndexDetail>,
+}
+
+/// Mapping, settings and analysis of an index or template (ADR 0023). A
+/// resource whose attribute is not fully literal carries no detail at all.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchIndexDetail {
+    /// Dotted paths, parents before children; a multi-field is `a.raw`; an
+    /// object without `type` is `object`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<SearchField>,
+    /// Keys without the `index.` prefix, values as written.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub settings: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub analysis: Vec<SearchAnalysis>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchField {
+    pub path: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analyzer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_analyzer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normalizer: Option<String>,
+}
+
+/// One analysis component; `kind` is `analyzer`, `tokenizer`, `filter`,
+/// `char_filter` or `normalizer`, `definition` is compact JSON.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchAnalysis {
+    pub kind: String,
+    pub name: String,
+    pub definition: String,
 }
 
 impl SearchArtifact {
@@ -138,6 +178,7 @@ mod elasticsearch_tests {
             }],
             evidence: vec![],
             origins: vec![],
+            detail: None,
         });
         t.elasticsearch.usages.push(SearchIndexUsage {
             service: "api".into(),
@@ -167,6 +208,7 @@ mod elasticsearch_tests {
             references: vec![],
             evidence: vec![],
             origins: origins.iter().map(|o| o.to_string()).collect(),
+            detail: None,
         }
     }
 

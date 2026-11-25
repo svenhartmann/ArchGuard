@@ -120,6 +120,9 @@ fn merge_artifact(into: &mut SearchArtifact, from: SearchArtifact, name: &str) {
     if !into.origins.iter().any(|o| o == name) {
         into.origins.push(name.to_owned());
     }
+    if into.detail.is_none() {
+        into.detail = from.detail;
+    }
     for e in from.evidence {
         if !into.evidence.contains(&e) {
             into.evidence.push(e);
