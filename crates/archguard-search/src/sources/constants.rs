@@ -1,7 +1,7 @@
 //! String constants a service declares and the index references they resolve (ADR 0023, Q1).
 //! One declaration in the service, a literal value and a matching qualifier resolve; every
 //! other case stays a gap.
-use super::super::service_elasticsearch_findings::{EsGap, es_gap};
+use crate::findings::{EsGap, es_gap};
 use archguard_core::{ServiceEvidence, ServiceTopology};
 use std::collections::BTreeMap;
 

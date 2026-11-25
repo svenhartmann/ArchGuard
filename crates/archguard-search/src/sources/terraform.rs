@@ -2,18 +2,16 @@
 //! (ADR 0023). Names are read from literals, `jsonencode({...})` and, for a plain `var.x`, from a
 //! non-sensitive `string`/`list(string)` literal module argument or `default`; anything else the
 //! provider would evaluate (locals, `each`, module outputs, functions) is a gap.
-use super::service_elasticsearch_findings::{EsGap, es_gap};
-use archguard_core::ServiceEvidence;
+use crate::context::SearchContext;
+use crate::context::SourceOutput;
+use crate::findings::{EsGap, es_gap};
 use archguard_core::{SearchArtifact, SearchIndexDetail, SearchReference, ServiceTopology};
-use archguard_flow_common::support::{Discovery, relative, test_path};
 use archguard_terraform::hcl::{attr, block, get, literal, object};
 use archguard_terraform::module::{ModuleCtx, Resource, TfFile};
 use hcl_edit::Span;
 use hcl_edit::expr::{Expression, TraversalOperator};
 use hcl_edit::parser;
 use hcl_edit::structure::Body;
-use std::collections::BTreeSet;
-use std::path::Path;
 
 const PREFIX: &str = "elasticstack_elasticsearch_";
 const KIBANA: &str = "elasticstack_kibana_";
@@ -35,8 +33,22 @@ const KINDS: [(&str, &str, &str); 10] = [
     ("script", "stored_script", "script_id"),
 ];
 
+/// Walks every Terraform module instance (a second parse next to the engine's deployment walk;
+/// duplicate parse diagnostics are removed by the final sort and dedup of the report).
+pub(crate) fn extract_with(ctx: &SearchContext) -> SourceOutput {
+    let mut scratch = ServiceTopology::default();
+    archguard_terraform::module::walk(
+        ctx.root,
+        ctx.discovery,
+        &mut scratch,
+        ctx.read,
+        &mut augment,
+    );
+    SourceOutput::from_scratch(scratch)
+}
+
 /// Appends the artifacts of one module instance to `report.elasticsearch`.
-pub(super) fn augment(report: &mut ServiceTopology, scope: &str, resources: &[Resource]) {
+fn augment(report: &mut ServiceTopology, scope: &str, resources: &[Resource]) {
     for r in resources {
         if let Some(suffix) = r.kind.strip_prefix(KIBANA) {
             kibana(report, scope, r, suffix);
@@ -60,116 +72,6 @@ pub(super) fn augment(report: &mut ServiceTopology, scope: &str, resources: &[Re
         let out = read.finish();
         report.elasticsearch.artifacts.extend(out);
     }
-}
-
-/// Search templates in `*.json` files below directories that contain `.tf` files (ADR 0023).
-/// Detection is a text match of `"lang": "mustache"`, not a JSON parse: templates with mustache
-/// sections are not strict JSON. The name is assumed from the file name.
-pub(super) fn search_templates(root: &Path, discovery: &Discovery, report: &mut ServiceTopology) {
-    let (mut tf_dirs, mut jsons) = (BTreeSet::new(), Vec::new());
-    for entry in discovery.walk(root).flatten() {
-        let path = entry.path();
-        if !entry.file_type().is_some_and(|t| t.is_file())
-            || path.components().any(|c| c.as_os_str() == ".terraform")
-        {
-            continue;
-        }
-        let rel = relative(root, path);
-        match path.extension().and_then(|x| x.to_str()) {
-            Some("tf") => {
-                tf_dirs.insert(parent(&rel).to_owned());
-            }
-            Some("json") => jsons.push(rel),
-            _ => {}
-        }
-    }
-    jsons.sort();
-    for rel in jsons {
-        if test_path(&rel) || !under(&tf_dirs, &rel) {
-            continue;
-        }
-        let Some((text, whole)) = read_json(root, &rel) else {
-            es_gap(report, EsGap::JsonUnread, &rel, None, &[]);
-            continue;
-        };
-        let Some(at) = mustache_lang(&text) else {
-            continue;
-        };
-        if !whole {
-            es_gap(report, EsGap::JsonTooLarge, &rel, None, &[]);
-            continue;
-        }
-        let line = u32::try_from(text[..at].matches('\n').count() + 1).ok();
-        let name = Path::new(&rel)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(str::to_owned);
-        report.elasticsearch.artifacts.push(SearchArtifact {
-            kind: "search_template".into(),
-            name,
-            address: rel.clone(),
-            scope: "json".into(),
-            patterns: vec![],
-            references: vec![],
-            evidence: vec![ServiceEvidence {
-                file: rel.clone(),
-                pointer: "/script/lang".into(),
-                line,
-                description: format!(
-                    "Search template declared in JSON file {rel}; name assumed from file name. Read as text; no cluster access."
-                ),
-            }],
-            origins: vec![],
-            detail: None,
-        });
-    }
-}
-
-/// Whether a directory of `path` (or the root) holds a `.tf` file.
-fn under(tf_dirs: &BTreeSet<String>, path: &str) -> bool {
-    let mut dir = parent(path);
-    while !tf_dirs.contains(dir) {
-        if dir.is_empty() {
-            return false;
-        }
-        dir = parent(dir);
-    }
-    true
-}
-
-/// Text of a JSON file and whether it is complete. A file over 1 MiB yields its first 1 MiB only.
-// shortcut: a pattern beyond the first 1 MiB of a larger file is not seen; stream when a repo needs it.
-fn read_json(root: &Path, rel: &str) -> Option<(String, bool)> {
-    if let Ok(text) = crate::project_files::read_manifest(root, Path::new(rel)) {
-        return Some((text, true));
-    }
-    use std::io::Read;
-    let path = root.join(rel);
-    let meta = std::fs::symlink_metadata(&path).ok()?;
-    if !meta.is_file() || meta.len() <= 1024 * 1024 {
-        return None;
-    }
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .ok()?
-        .take(1024 * 1024)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    Some((String::from_utf8_lossy(&bytes).into_owned(), false))
-}
-
-fn parent(path: &str) -> &str {
-    path.rsplit_once('/').map_or("", |(dir, _)| dir)
-}
-
-/// Byte offset of the first `"lang"\s*:\s*"mustache"`.
-fn mustache_lang(text: &str) -> Option<usize> {
-    text.match_indices("\"lang\"")
-        .map(|(at, key)| (at, &text[at + key.len()..]))
-        .find_map(|(at, rest)| {
-            let rest = rest.trim_start().strip_prefix(':')?.trim_start();
-            rest.starts_with("\"mustache\"").then_some(at)
-        })
 }
 
 /// Kibana data views and alerting rules; saved-object imports are noted, not read.
@@ -412,9 +314,8 @@ impl Read<'_, '_> {
             name: n.clone(),
         });
         self.aliases(body, target);
-        let (mut detail, mut missed) =
-            super::service_elasticsearch_tf_detail::read(body, &self.r.module);
-        let (legacy, bad) = super::service_elasticsearch_tf_links::legacy_settings(body);
+        let (mut detail, mut missed) = super::terraform_detail::read(body, &self.r.module);
+        let (legacy, bad) = super::terraform_links::legacy_settings(body);
         if !legacy.is_empty() {
             detail.get_or_insert_default().settings.extend(legacy);
         }
@@ -437,7 +338,7 @@ impl Read<'_, '_> {
             let parts = [self.r.address.as_str(), &missed.join(", ")];
             es_gap(self.report, EsGap::DetailNotLiteral, path, None, &parts);
         }
-        let ilm = super::service_elasticsearch_tf_links::ilm(detail.as_ref());
+        let ilm = super::terraform_links::ilm(detail.as_ref());
         self.detail = detail;
         ilm
     }
@@ -457,7 +358,7 @@ impl Read<'_, '_> {
             }
         }
         if let Some(template) = block(body, "template") {
-            let read = super::service_elasticsearch_tf_detail::read_template(template);
+            let read = super::terraform_detail::read_template(template);
             refs.extend(self.detail(read.0, &read.1));
         }
         if let (Some(template), Some(n)) = (block(body, "template"), name) {
@@ -505,7 +406,7 @@ impl Read<'_, '_> {
     }
 
     fn watch(&mut self, body: &Body, patterns: &mut Vec<String>) -> Vec<SearchReference> {
-        let (names, found, bad) = super::service_elasticsearch_tf_links::watch_indices(body);
+        let (names, found, bad) = super::terraform_links::watch_indices(body);
         if bad {
             self.detail(None, &["input"]);
         }

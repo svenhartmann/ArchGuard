@@ -141,6 +141,10 @@ pub use api_contracts::{
 pub use arc42::{arc42_document, arc42_from_evidence};
 /// Source-root stripping, as module names spell project paths (ADR 0010).
 pub use archguard_extract::strip_root;
+pub use archguard_search::{
+    SearchEdge, SearchGraph, SearchNode, is_detail_gap, is_elasticsearch_gap,
+    search_artifact_covers, search_graph, short_scope,
+};
 pub use architecture::architecture_context;
 pub use cache::{
     fingerprint, load_graph_if_fresh, save_graph, source_content_fingerprint, source_fingerprint,
@@ -233,10 +237,6 @@ pub use security::{
     scan_security, security_fingerprint,
 };
 pub use semantic_calls::{analyze_calls, semantic_fingerprints};
-pub use services::{
-    SearchEdge, SearchGraph, SearchNode, is_detail_gap, is_elasticsearch_gap,
-    search_artifact_covers, search_graph, short_scope,
-};
 pub use services::{analyze_service_set, analyze_services};
 pub use share_report::share_report;
 pub use snapshot::{

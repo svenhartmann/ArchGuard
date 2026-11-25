@@ -1,14 +1,13 @@
 //! Index names a service's Java, C#, Python and TypeScript source names literally, with the access the
 //! surrounding call implies (ADR 0023, items 6 and 7). Names that are not literals
 //! are reported as gaps; nothing is guessed from configuration.
-use super::service_elasticsearch_findings::{EsGap, es_gap};
-use crate::project_files::read_repo_file;
+use super::constants::{Constants, Name, literal, short, site};
+use crate::context::SearchContext;
+use crate::context::SourceOutput;
+use crate::findings::{EsGap, es_gap};
 use archguard_core::{SearchIndexUsage, ServiceEvidence, ServiceTopology};
-use archguard_flow_common::support::{Discovery, owners, relative, test_path};
-#[path = "service_elasticsearch_constants.rs"]
-mod constants;
-
-use constants::{Constants, Name, literal, short, site};
+use archguard_flow_common::repo_file::read_repo_file;
+use archguard_flow_common::support::{owners, relative, test_path};
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -98,7 +97,10 @@ struct Mention {
     pointer: &'static str,
 }
 
-pub(super) fn augment(root: &Path, discovery: &Discovery, report: &mut ServiceTopology) {
+pub(crate) fn extract_with(ctx: &SearchContext) -> SourceOutput {
+    let mut scratch = ServiceTopology::default();
+    let report = &mut scratch;
+    let (root, discovery) = (ctx.root, ctx.discovery);
     let mut found: BTreeMap<(String, String, &str), Vec<ServiceEvidence>> = BTreeMap::new();
     let mut files: BTreeMap<String, usize> = BTreeMap::new();
     let mut constants = Constants::default();
@@ -111,7 +113,7 @@ pub(super) fn augment(root: &Path, discovery: &Discovery, report: &mut ServiceTo
         {
             continue;
         }
-        let owners = owners(report, &rel);
+        let owners = owners(ctx.topology, &rel);
         let below = owners
             .iter()
             .filter(|s| below_limit(&mut files, s, &rel, report))
@@ -165,6 +167,7 @@ pub(super) fn augment(root: &Path, discovery: &Discovery, report: &mut ServiceTo
             }
         },
     ));
+    SourceOutput::from_scratch(scratch)
 }
 
 /// Where mentions go: literal usages, references waiting for constants, or gaps.
@@ -346,7 +349,7 @@ fn name(arg: &str) -> Option<Name> {
     let inner = arg.strip_prefix('"').and_then(|a| a.strip_suffix('"'));
     Some(match inner.filter(|i| !i.is_empty() && !i.contains('"')) {
         Some(i) => Name::Lit(i.to_owned()),
-        None => constants::reference(arg),
+        None => super::constants::reference(arg),
     })
 }
 
@@ -522,7 +525,7 @@ fn keyed<'a>(arg: &'a str, key: &'a str, sep: char) -> Option<&'a str> {
 
 /// A literal string or a list of them; every non-literal element is a gap (`None`).
 fn literals(value: &str) -> Vec<Name> {
-    let name_of = |v: &str| literal(v).map_or_else(|| constants::reference(v), Name::Lit);
+    let name_of = |v: &str| literal(v).map_or_else(|| super::constants::reference(v), Name::Lit);
     match value.strip_prefix('[') {
         Some(list) => split_quoted(list, &['"', '\'', '`'])
             .into_iter()

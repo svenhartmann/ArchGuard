@@ -1,7 +1,7 @@
 //! Evaluates the literal part of Terraform expressions for index detail (ADR 0023): literals,
 //! `merge()`/`concat()`, `local.*` and sibling-index references up to depth 3 with cycle
 //! protection, and attribute/index access on resolved values. Everything else is `None`.
-use super::service_elasticsearch_tf_locals::{local, lookup};
+use super::terraform_locals::{local, lookup};
 use archguard_terraform::hcl::{attr, literal};
 use archguard_terraform::module::ModuleCtx;
 use hcl_edit::expr::{
