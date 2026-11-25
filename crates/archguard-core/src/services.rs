@@ -83,7 +83,7 @@ pub struct SearchArtifact {
     /// Projects of a project set that declare this artifact; empty outside a set.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub origins: Vec<String>,
-    /// Mapping, settings and analysis of an index or template, when all literal.
+    /// Mapping, settings and analysis of an index or template; each attribute is read only when literal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<SearchIndexDetail>,
 }
