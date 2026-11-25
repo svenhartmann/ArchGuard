@@ -59,12 +59,14 @@ pub(super) fn index_parts(index: &str) -> impl Iterator<Item = &str> {
 }
 
 /// Whether `a` names or matches a name of the usage's index list `index`: indices and aliases
-/// by name, templates, data views and alerting rules by their patterns; every other kind
+/// by name, templates, data views, alerting rules and watches by their patterns; every other kind
 /// covers nothing.
 pub fn search_artifact_covers(a: &SearchArtifact, index: &str) -> bool {
     index_parts(index).any(|p| match a.kind.as_str() {
         "index" | "alias" => a.name.as_deref() == Some(p),
-        "index_template" | "data_view" | "alerting_rule" => a.patterns.iter().any(|q| covers(q, p)),
+        "index_template" | "data_view" | "alerting_rule" | "watch" => {
+            a.patterns.iter().any(|q| covers(q, p))
+        }
         _ => false,
     })
 }
@@ -153,6 +155,13 @@ pub(super) fn es_gap(
 /// Whether the diagnostic comes from one of the Elasticsearch readers.
 pub fn is_elasticsearch_gap(d: &ServiceDiagnostic) -> bool {
     EsGap::ALL.iter().any(|k| k.matches(&d.message))
+}
+
+/// Whether `d` is the [`EsGap::DetailNotLiteral`] gap of the resource at `address`.
+pub fn is_detail_gap(d: &ServiceDiagnostic, address: &str) -> bool {
+    d.message
+        .strip_prefix(address)
+        .is_some_and(|r| r.starts_with(EsGap::DetailNotLiteral.text()))
 }
 
 /// Names of declared indices and aliases plus template patterns.

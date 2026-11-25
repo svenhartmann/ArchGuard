@@ -5,7 +5,7 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 use archguard_engine::core::{SearchArtifact, SearchIndexDetail, ServiceTopology};
-use archguard_engine::{SearchNode, is_elasticsearch_gap, search_artifact_covers};
+use archguard_engine::{SearchNode, is_detail_gap, search_artifact_covers};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct IndexPage {
@@ -118,10 +118,7 @@ pub fn index_page(t: &ServiceTopology, node: &SearchNode) -> IndexPage {
     match &a.detail {
         Some(d) => detail(&mut page, d),
         None => {
-            let read_gap = t
-                .diagnostics
-                .iter()
-                .any(|d| is_elasticsearch_gap(d) && d.message.contains(&a.address));
+            let read_gap = t.diagnostics.iter().any(|d| is_detail_gap(d, &a.address));
             page.note = Some(if read_gap {
                 DetailNote::NotRead
             } else {
@@ -202,14 +199,7 @@ fn links(
             "index_template" => a.kind == "index" && search_artifact_covers(x, name),
             "transform" | "enrich_policy" | "snapshot_lifecycle" => refers_to(x, names),
             "data_view" | "alerting_rule" => names.iter().any(|n| search_artifact_covers(x, n)),
-            // The engine covers no watch pattern; ask as a data view.
-            "watch" => {
-                let as_view = SearchArtifact {
-                    kind: "data_view".into(),
-                    ..x.clone()
-                };
-                refers_to(x, names) || names.iter().any(|n| search_artifact_covers(&as_view, n))
-            }
+            "watch" => refers_to(x, names) || names.iter().any(|n| search_artifact_covers(x, n)),
             _ => false,
         };
         if hit {
