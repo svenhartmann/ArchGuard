@@ -276,13 +276,14 @@ fn unresolvable_references_are_one_gap_with_the_attribute_names() {
         ("second_level", "mappings"),
         ("each", "mappings"),
         ("other_module", "refresh_interval"),
+        ("other_type", "refresh_interval"),
         ("lookalike", "mappings"),
     ] {
         let hits: Vec<_> = gaps.iter().filter(|m| m.contains(address)).collect();
         assert_eq!(hits.len(), 1, "{address}: {gaps:#?}");
         assert!(hits[0].contains(attr), "{address}: {}", hits[0]);
     }
-    assert_eq!(gaps.len(), 4, "{gaps:#?}");
+    assert_eq!(gaps.len(), 5, "{gaps:#?}");
 }
 
 #[test]

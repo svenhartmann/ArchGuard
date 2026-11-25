@@ -55,3 +55,13 @@ resource "elasticstack_elasticsearch_index" "name_local" {
   name     = local.n
   mappings = local.m
 }
+
+resource "elasticstack_elasticsearch_index_template" "tpl" {
+  name           = "tpl"
+  index_patterns = ["tpl-*"]
+}
+
+resource "elasticstack_elasticsearch_index" "other_type" {
+  name             = "other-type"
+  refresh_interval = elasticstack_elasticsearch_index_template.tpl.name
+}
