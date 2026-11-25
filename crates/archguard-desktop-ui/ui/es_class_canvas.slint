@@ -54,6 +54,163 @@ export struct EsClassEdge {
     ly: float,
 }
 
+// Compartment titles by index; -1 has none. Raw words are not translated.
+global ClassText {
+public pure function title(t: int) -> string {
+    return t == 0 ? @tr("Fields")
+        : t == 1 ? @tr("Settings" => "Settings")
+        : t == 2 ? @tr("Analysis")
+        : t == 3 ? @tr("Chain")
+        : t == 4 ? @tr("Parameters")
+        : t == 5 ? @tr("Used by")
+        : t == 6 ? @tr("Points to")
+        : t == 7 ? @tr("Access")
+        : t == 8 ? @tr("Patterns")
+        : "";
+}
+
+// prefix 0 none, 1 "+" (field), 2 multi-field mark.
+public pure function mark(p: int) -> string {
+    return p == 1 ? "+ " : p == 2 ? "\u{2442} " : "";
+}
+}
+
+// Row of a compartment: a field, setting or parameter; `summary` > 0 stands for
+// that many collapsed fields, < 0 for that many more.
+component ClassLine inherits HorizontalLayout {
+    in property <EsClassLine> l;
+    in property <float> zoom;
+    spacing: 6px * zoom;
+    padding-left: l.depth * 12px * zoom;
+    Text {
+        text: l.summary > 0 ? @tr("{0} fields", l.summary) : l.summary < 0 ? @tr("{0} more", -l.summary) : ClassText.mark(l.prefix) + l.text + (l.kind != "" ? " : " + l.kind : "");
+        color: l.summary != 0 ? Theme.muted : Theme.text;
+        font-family: Theme.mono-family;
+        font-size: max(6px, Theme.font-mono * zoom);
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    if l.note != "": Text {
+        text: l.note;
+        color: Theme.analysis;
+        font-family: Theme.mono-family;
+        font-size: max(6px, Theme.font-mono * zoom);
+        vertical-alignment: center;
+    }
+}
+
+component ClassChip inherits Rectangle {
+    in property <EsClassChip> chip;
+    in property <float> zoom;
+    x: chip.x * 1px * zoom;
+    y: chip.y * 1px * zoom;
+    width: chip.w * 1px * zoom;
+    height: 14px * zoom;
+    border-radius: 7px * zoom;
+    border-width: 1px;
+    // stage 0 char filter, 1 tokenizer, 2 filter; class 1 is built in (not declared).
+    border-color: chip.stage == 1 ? Theme.priority : chip.stage == 2 ? Theme.analysis : Theme.muted;
+    background: chip.class == 1 ? transparent : self.border-color.with-alpha(0.15);
+    Text {
+        text: chip.text;
+        color: Theme.text;
+        font-family: Theme.mono-family;
+        font-size: max(6px, Theme.font-micro * zoom);
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+component ClassBox inherits Rectangle {
+    in property <EsClassBox> box;
+    in property <float> zoom;
+    callback clicked();
+    // kind 4: an analysis building block.
+    property <bool> analysis: box.kind == 4;
+    property <length> rh: 16px * zoom;
+    x: box.x * 1px * zoom;
+    y: box.y * 1px * zoom;
+    width: box.w * 1px * zoom;
+    height: box.h * 1px * zoom;
+    border-radius: 6px * zoom;
+    background: box.ghost ? transparent : Theme.panel;
+    border-width: box.ghost ? 0px : box.selected ? 2px : 1px;
+    border-color: box.selected ? Theme.accent : analysis ? Theme.analysis : Theme.border;
+    // A ghost's dashed outline comes from the model.
+    if box.ghost: Path {
+        width: root.width;
+        height: root.height;
+        viewbox-width: box.w;
+        viewbox-height: box.h;
+        commands: box.border;
+        fill: transparent;
+        stroke: box.selected ? Theme.accent : Theme.muted;
+        stroke-width: (box.selected ? 2px : 1px) * zoom;
+    }
+    Rectangle {
+        height: 3 * rh;
+        background: box.ghost ? transparent : analysis ? Theme.analysis.with-alpha(0.12) : Theme.panel-2;
+        VerticalLayout {
+            Text {
+                text: "\u{AB}" + box.stereotype + "\u{BB}";
+                color: Theme.muted;
+                font-size: max(6px, Theme.font-caption * zoom);
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                text: (box.warn ? "\u{26A0} " : "") + box.name;
+                color: box.warn ? Theme.warning : Theme.text;
+                font-size: max(7px, Theme.font-body * zoom);
+                font-weight: Theme.weight-strong;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                text: box.root != "" ? box.root : box.ghost ? @tr("not declared") : "";
+                color: Theme.muted;
+                font-size: max(6px, Theme.font-caption * zoom);
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+    for c in box.compartments: Rectangle {
+        y: c.y * 1px * zoom;
+        width: parent.width;
+        height: rh * (1 + c.lines.length) + 1px;
+        Rectangle { height: 1px; background: Theme.border; }
+        Text {
+            y: 1px;
+            x: 8px * zoom;
+            text: ClassText.title(c.title);
+            color: Theme.muted;
+            font-size: max(6px, Theme.font-micro * zoom);
+            font-weight: Theme.weight-strong;
+        }
+        for ln[i] in c.lines: ClassLine {
+            x: 8px * zoom;
+            y: rh * (1 + i);
+            width: parent.width - 16px * zoom;
+            height: rh;
+            l: ln;
+            zoom: zoom;
+        }
+        for ch in c.chips: ClassChip {
+            chip: ch;
+            zoom: zoom;
+        }
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 export component EsClassCanvas inherits Rectangle {
     in property <[EsClassBox]> boxes;
     in property <[EsClassEdge]> edges;
@@ -63,4 +220,70 @@ export component EsClassCanvas inherits Rectangle {
     callback select(int);
     callback zoom-by(float);
     callback fit(float, float);
+
+    flick := Flickable {
+        content-width: max(self.width, root.canvas-w * root.zoom * 1px);
+        content-height: max(self.height, root.canvas-h * root.zoom * 1px);
+        Rectangle {
+            width: root.canvas-w * root.zoom * 1px;
+            height: root.canvas-h * root.zoom * 1px;
+            for e in root.edges: Rectangle {
+                property <color> tone: e.style == 1 ? Theme.outgoing : e.style == 2 ? Theme.incoming : Theme.edge;
+                Path {
+                    width: root.canvas-w * root.zoom * 1px;
+                    height: root.canvas-h * root.zoom * 1px;
+                    viewbox-width: root.canvas-w;
+                    viewbox-height: root.canvas-h;
+                    commands: e.line;
+                    fill: transparent;
+                    stroke: tone;
+                    stroke-width: 1.4px * root.zoom;
+                }
+                // shape 0 open arrow, 1 filled head, 2 hollow triangle, 3 diamond.
+                Path {
+                    width: root.canvas-w * root.zoom * 1px;
+                    height: root.canvas-h * root.zoom * 1px;
+                    viewbox-width: root.canvas-w;
+                    viewbox-height: root.canvas-h;
+                    commands: e.head;
+                    fill: e.shape == 1 ? tone : e.shape == 0 ? transparent : Theme.panel;
+                    stroke: tone;
+                    stroke-width: 1.4px * root.zoom;
+                }
+                if e.label != "": Text {
+                    x: e.lx * 1px * root.zoom;
+                    y: e.ly * 1px * root.zoom;
+                    text: e.label;
+                    color: Theme.muted;
+                    font-size: max(6px, Theme.font-micro * root.zoom);
+                }
+            }
+            for b[i] in root.boxes: ClassBox {
+                box: b;
+                zoom: root.zoom;
+                clicked => { root.select(i); }
+            }
+        }
+    }
+
+    Rectangle {
+        x: 16px;
+        y: parent.height - self.height - 16px;
+        width: bar.preferred-width;
+        height: 44px;
+        border-radius: Theme.radius;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.border;
+        bar := HorizontalLayout {
+            padding: 6px;
+            ZoomControls {
+                zoom: root.zoom;
+                zoom-out => { root.zoom-by(1.0 / 1.25); }
+                zoom-in => { root.zoom-by(1.25); }
+                reset => { root.zoom-by(1.0 / root.zoom); }
+                fit => { root.fit(flick.width / 1px, flick.height / 1px); }
+            }
+        }
+    }
 }
