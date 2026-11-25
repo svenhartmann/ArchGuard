@@ -182,8 +182,11 @@ are code, but no analyzer measures them.
   `settings` (keys without the `index.` prefix, values as written) and
   `analysis` (`kind`, `name`, compact JSON `definition`); empty lists and maps
   are skipped. A project-set merge keeps the first project's detail. Reading is
-  all or nothing per attribute: if one attribute of a resource is not literal,
-  that resource gets no detail and one gap `DetailNotLiteral`. `file()` is
-  allowed under the project root but not built; this is the limit for later.
+  all or nothing per attribute (mapping, settings, analysis): only a
+  non-literal attribute is not read, the others are read, and one gap
+  `DetailNotLiteral` per resource names the attributes that were not read.
+  `file()` is allowed only for a canonical path under the project root and at
+  most 1 MiB, otherwise a gap; it is not built (YAGNI), this is the limit for
+  later.
   MCP `service_topology` drops `detail` (4 KiB pages; the mapping is desktop
   content); CLI text is unchanged and CLI JSON carries `detail`.

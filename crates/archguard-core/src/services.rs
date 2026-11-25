@@ -89,7 +89,7 @@ pub struct SearchArtifact {
 }
 
 /// Mapping, settings and analysis of an index or template (ADR 0023). A
-/// resource whose attribute is not fully literal carries no detail at all.
+/// attribute that is not fully literal is not read; the others are.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchIndexDetail {
     /// Dotted paths, parents before children; a multi-field is `a.raw`; an
