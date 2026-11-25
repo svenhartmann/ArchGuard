@@ -175,3 +175,18 @@ are code, but no analyzer measures them.
   is unknown is still an alias artifact, with no target; Java operation objects
   made by a factory (`XOperation.of(...)`) are objects, not index names.
 - **2026-11-24:** Several projects can be merged into one Elasticsearch map; see [ADR 0024](0024-project-sets.md).
+- **2026-11-25:** Mapping/Settings im Scope (R12). `SearchArtifact.detail:
+  Option<SearchIndexDetail>` (skipped when `None`) carries `fields` (dotted
+  path, parents before children, multi-fields as `a.raw`, an object without
+  `type` is `object`; `kind`, `analyzer`, `search_analyzer`, `normalizer`),
+  `settings` (keys without the `index.` prefix, values as written) and
+  `analysis` (`kind`, `name`, compact JSON `definition`); empty lists and maps
+  are skipped. A project-set merge keeps the first project's detail. Reading is
+  all or nothing per attribute (mapping, settings, analysis): only a
+  non-literal attribute is not read, the others are read, and one gap
+  `DetailNotLiteral` per resource names the attributes that were not read.
+  `file()` is allowed only for a canonical path under the project root and at
+  most 1 MiB, otherwise a gap; it is not built (YAGNI), this is the limit for
+  later.
+  MCP `service_topology` drops `detail` (4 KiB pages; the mapping is desktop
+  content); CLI text is unchanged and CLI JSON carries `detail`.

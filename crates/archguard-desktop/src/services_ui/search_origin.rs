@@ -54,6 +54,7 @@ mod tests {
             references: vec![],
             evidence: vec![],
             origins: origins.iter().map(|o| o.to_string()).collect(),
+            detail: None,
         }
     }
 

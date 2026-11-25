@@ -1110,12 +1110,27 @@ pub struct HotspotsParams {
     pub level: Option<String>,
 }
 
+/// The mapping is desktop content; it would only eat the 4 KiB budget.
+fn drop_es_detail(value: &mut Value) {
+    let artifacts = value.pointer_mut("/elasticsearch/artifacts");
+    for a in artifacts
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(o) = a.as_object_mut() {
+            o.remove("detail");
+        }
+    }
+}
+
 /// Preserve exact totals independently of the bounded evidence samples. A
 /// service graph has several lists, so the common single-list guard alone
 /// cannot bound it. Shrink the largest list first, keeping its stable prefix.
 fn service_topology_value(topology: &archguard_engine::core::ServiceTopology) -> Value {
     use archguard_engine::core::{ServiceDependencyKind, SharedDatastoreScope};
     let mut value = serde_json::to_value(topology).expect("service topology serializes");
+    drop_es_detail(&mut value);
     // (total name, JSON pointer) of every list that may be sampled.
     let lists = [
         ("projects", "/projects"),
@@ -3048,6 +3063,17 @@ links = ["docs/adr/1.md"]
         assert_eq!(value["truncated"], true);
         assert!(value.to_string().len() <= tools::MAX_RESPONSE_BYTES);
         assert!(value["elasticsearch"]["findings"].as_array().unwrap().len() < 300);
+    }
+
+    #[test]
+    fn service_topology_omits_the_elasticsearch_detail() {
+        let topology: archguard_engine::core::ServiceTopology = serde_json::from_value(json!({"schema_version":1,"root":"/project","monorepo":false,"monorepo_reason":"","compose_files":[],"projects":[],"services":[],"dependencies":[],"cycles":[],"diagnostics":[],"complete":true,
+            "elasticsearch":{"artifacts":[{"kind":"index","name":"a","address":"x","scope":"s","patterns":[],"references":[],"evidence":[],
+                "detail":{"fields":[{"path":"a.b","kind":"keyword"}],"settings":{"number_of_shards":"1"}}}],"usages":[],"findings":[]}})).unwrap();
+        assert!(topology.elasticsearch.artifacts[0].detail.is_some());
+        let value = service_topology_value(&topology);
+        assert_eq!(value["totals"]["elasticsearch_artifacts"], 1);
+        assert!(!value.to_string().contains("\"detail\""));
     }
 
     #[test]

@@ -119,6 +119,7 @@ pub(super) fn search_templates(root: &Path, discovery: &Discovery, report: &mut 
                 ),
             }],
             origins: vec![],
+            detail: None,
         });
     }
 }
@@ -297,6 +298,7 @@ impl Read<'_, '_> {
             references,
             evidence: vec![r.evidence(r.line(), "", NOTE)],
             origins: vec![],
+            detail: None,
         });
     }
 
