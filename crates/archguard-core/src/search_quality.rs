@@ -132,16 +132,20 @@ pub struct SearchQualityConfig {
     /// Finding rules switched off everywhere.
     pub disabled: Vec<String>,
     /// Elastic "Mapping limit settings": `index.mapping.total_fields.limit`, default 1000.
+    /// <https://www.elastic.co/guide/en/elasticsearch/reference/8.19/mapping-settings-limit.html>
     pub total_fields_limit: u64,
     /// Elastic "Mapping limit settings": `index.mapping.depth.limit`, default 20.
+    /// <https://www.elastic.co/guide/en/elasticsearch/reference/8.19/mapping-settings-limit.html>
     pub depth_limit: u64,
     /// Elastic 8.19 "Mapping limit settings": `index.mapping.nested_fields.limit`,
     /// default 50 (9.x: 100; projects on 9.x set 100).
+    /// <https://www.elastic.co/guide/en/elasticsearch/reference/8.19/mapping-settings-limit.html>
     pub nested_fields_limit: u64,
     /// ArchGuard starting value, not from Elastic: a finding fires at this
     /// share of each of the three limits.
     pub limit_ratio: f64,
     /// Elastic "Index modules": `index.refresh_interval` defaults to `1s`.
+    /// <https://www.elastic.co/guide/en/elasticsearch/reference/8.19/index-modules.html>
     pub min_refresh_interval: String,
 }
 
