@@ -112,14 +112,18 @@ fn topology() -> ServiceTopology {
     t.diagnostics.push(ServiceDiagnostic {
         file: "main.tf".into(),
         service: None,
-        message: "res.computed: mappings, number_of_shards are not literal".into(),
+        message: "res.computed: Elasticsearch name is not a literal; mappings is unknown.".into(),
     });
     t
 }
 
 fn page(t: &ServiceTopology, title: &str) -> IndexPage {
     let g = search_graph(t);
-    let n = g.nodes.iter().find(|n| n.title == title).expect(title);
+    let n = g
+        .nodes
+        .iter()
+        .find(|n| n.title == title || n.title.starts_with(&format!("{title} ·")))
+        .expect(title);
     index_page(t, n)
 }
 
