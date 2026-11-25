@@ -163,9 +163,18 @@ fn model(arcs: bool) -> EsModel {
 
 #[test]
 fn es_texts_are_translated() {
-    let texts = tr_texts(include_str!(
+    let mut texts = tr_texts(include_str!(
         "../../../archguard-desktop-ui/ui/es_view.slint"
     ));
+    let page = include_str!("../../../archguard-desktop-ui/ui/es_index_page.slint");
+    texts.extend(tr_texts(page));
+    // `po_de` has no context entries: "Settings" and "Links" are the Settings tab's own.
+    let settings = include_str!("../../../archguard-desktop-ui/lang/de/settings_view.po");
+    for t in ["Settings", "Links"] {
+        assert!(page.contains(&format!("@tr(\"Settings\" => \"{t}\")")));
+        assert!(settings.contains(&format!("msgctxt \"Settings\"\nmsgid \"{t}\"")));
+    }
+    texts.retain(|t| t != "Settings");
     assert!(!texts.is_empty(), "the view has translatable texts");
     let po = crate::tab_support::texts_check::po_de();
     let missing: Vec<_> = texts
