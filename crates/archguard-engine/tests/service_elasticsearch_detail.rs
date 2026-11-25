@@ -513,3 +513,18 @@ fn templates_with_var_each_or_directives_are_one_gap() {
     }
     assert_eq!(gaps.len(), 3, "{gaps:#?}");
 }
+
+#[test]
+fn nested_jsonencode_sorts_keys_like_terraform_and_direct_keeps_written_order() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/es-index-detail/sorted/terraform");
+    let r = analyze_services(&root).unwrap();
+    for name in ["via-local", "decoded"] {
+        assert_eq!(
+            fields(art(&r, "index", name)),
+            ["a:keyword", "b:text"],
+            "{name}"
+        );
+    }
+    assert_eq!(fields(art(&r, "index", "direct")), ["b:text", "a:keyword"]);
+}
