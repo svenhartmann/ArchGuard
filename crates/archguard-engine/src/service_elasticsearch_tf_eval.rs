@@ -4,7 +4,9 @@
 use super::service_elasticsearch_tf_locals::{local, lookup};
 use super::service_terraform::ModuleCtx;
 use super::service_terraform_hcl::{attr, literal};
-use hcl_edit::expr::{Expression, ObjectKey, Traversal, TraversalOperator};
+use hcl_edit::expr::{
+    BinaryOperator, Expression, ForExpr, ObjectKey, Traversal, TraversalOperator, UnaryOperator,
+};
 use hcl_edit::parser;
 
 /// A fully literal value; objects keep the written order.
@@ -58,11 +60,18 @@ impl Json {
 /// Reference hops allowed from an attribute: index -> local -> local is depth 3.
 const MAX_HOPS: usize = 2;
 
-/// Module instance and the addresses of the expressions followed so far; the path length is the
-/// depth, a repeat is a cycle.
+/// Elements one attribute may iterate over in `for` expressions before it is a gap.
+const MAX_FOR: usize = 10_000;
+
+/// Module instance, the addresses of the expressions followed so far (the path length is the
+/// depth, a repeat is a cycle), the variables bound by enclosing `for` expressions and the
+/// number of `for` elements evaluated.
+#[derive(Default)]
 struct Cx<'a, 'c> {
     ctx: Option<&'c ModuleCtx<'a>>,
     path: Vec<usize>,
+    env: Vec<(String, Json)>,
+    used: usize,
 }
 
 fn object(o: &hcl_edit::expr::Object, cx: &mut Cx) -> Option<Vec<(String, Json)>> {
@@ -159,10 +168,88 @@ fn access(t: &Traversal, cx: &mut Cx) -> Option<Json> {
             let found = local(cx.ctx?, n.as_str())?;
             guard(found, cx, tree)?
         }
-        Expression::Variable(_) => return None,
         other => tree(other, cx)?,
     };
     ops.try_fold(base, |j, o| step(j, o.value(), cx))
+}
+
+/// `==`, `!=`, `&&`, `||` and `!` on resolved values, enough for `for ... if` filters.
+fn op(e: &Expression, cx: &mut Cx) -> Option<Json> {
+    match e {
+        Expression::UnaryOp(u) if matches!(u.operator.value(), UnaryOperator::Not) => {
+            match tree(&u.expr, cx)? {
+                Json::Bool(b) => Some(Json::Bool(!b)),
+                _ => None,
+            }
+        }
+        Expression::BinaryOp(b) => {
+            let (l, r) = (tree(&b.lhs_expr, cx)?, tree(&b.rhs_expr, cx)?);
+            Some(Json::Bool(match (b.operator.value(), l, r) {
+                (BinaryOperator::Eq, l, r) => l.compact() == r.compact(),
+                (BinaryOperator::NotEq, l, r) => l.compact() != r.compact(),
+                (BinaryOperator::And, Json::Bool(x), Json::Bool(y)) => x && y,
+                (BinaryOperator::Or, Json::Bool(x), Json::Bool(y)) => x || y,
+                _ => return None,
+            }))
+        }
+        _ => None,
+    }
+}
+
+/// One element of a `for`: `Some(None)` when the `if` filter drops it, `None` when not literal.
+fn entry(f: &ForExpr, cx: &mut Cx) -> Option<Option<(String, Json)>> {
+    if let Some(c) = &f.cond {
+        match tree(&c.expr, cx)? {
+            Json::Bool(true) => {}
+            Json::Bool(false) => return Some(None),
+            _ => return None,
+        }
+    }
+    let key = match f.key_expr.as_ref().map(|k| tree(k, cx)) {
+        None => String::new(),
+        Some(Some(Json::Str(s) | Json::Num(s))) => s,
+        Some(_) => return None,
+    };
+    Some(Some((key, tree(&f.value_expr, cx)?)))
+}
+
+/// `[for x in <literal> : v if c]` or `{for k, v in <literal> : k => e if c}`; grouping (`...`),
+/// duplicate keys and more than `MAX_FOR` elements are gaps.
+fn for_expr(f: &ForExpr, cx: &mut Cx) -> Option<Json> {
+    let items: Vec<(Json, Json)> = match tree(&f.intro.collection_expr, cx)? {
+        Json::Obj(o) => o.into_iter().map(|(k, v)| (Json::Str(k), v)).collect(),
+        Json::Arr(a) => a
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| (Json::Num(i.to_string()), v))
+            .collect(),
+        _ => return None,
+    };
+    cx.used += items.len();
+    if f.grouping || cx.used > MAX_FOR {
+        return None;
+    }
+    let (mark, mut out) = (cx.env.len(), vec![]);
+    for (k, v) in items {
+        if let Some(kv) = &f.intro.key_var {
+            cx.env.push((kv.as_str().to_owned(), k));
+        }
+        cx.env.push((f.intro.value_var.as_str().to_owned(), v));
+        let r = entry(f, cx);
+        cx.env.truncate(mark);
+        match r? {
+            None => {}
+            Some(e) if f.key_expr.is_some() && out.iter().any(|x: &(String, Json)| x.0 == e.0) => {
+                return None;
+            }
+            Some(e) => out.push(e),
+        }
+    }
+    Some(if f.key_expr.is_some() {
+        Json::Obj(out)
+    } else {
+        Json::Arr(out.into_iter().map(|e| e.1).collect())
+    })
 }
 
 fn scalar(e: &Expression) -> Option<Json> {
@@ -194,19 +281,38 @@ fn tree(e: &Expression, cx: &mut Cx) -> Option<Json> {
         Expression::Parenthesis(p) => tree(p.inner(), cx),
         Expression::FuncCall(c) => func(c, cx),
         Expression::Traversal(t) => follow(e, cx, tree).or_else(|| access(t, cx)),
+        Expression::Variable(v) => cx
+            .env
+            .iter()
+            .rfind(|x| x.0 == v.as_str())
+            .map(|x| x.1.clone()),
+        Expression::ForExpr(f) => for_expr(f, cx),
+        Expression::UnaryOp(_) | Expression::BinaryOp(_) => op(e, cx),
         _ => scalar(e),
     }
 }
 
 /// The literal value of `e` (no JSON text parsing), `None` when any part is not literal.
 pub(super) fn value(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<Json> {
-    tree(e, &mut Cx { ctx, path: vec![] })
+    tree(
+        e,
+        &mut Cx {
+            ctx,
+            ..Cx::default()
+        },
+    )
 }
 
 /// `jsonencode(<literal>)` or a literal JSON text (string or heredoc). JSON is read as HCL,
 /// whose object syntax accepts it; `file()`, `var.*` and unresolved references are not literal.
 pub(super) fn json_attr(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<Json> {
-    json_at(e, &mut Cx { ctx, path: vec![] })
+    json_at(
+        e,
+        &mut Cx {
+            ctx,
+            ..Cx::default()
+        },
+    )
 }
 
 fn json_at(e: &Expression, cx: &mut Cx) -> Option<Json> {
@@ -223,11 +329,5 @@ fn json_at(e: &Expression, cx: &mut Cx) -> Option<Json> {
     }
     let text = literal(e).filter(|_| !matches!(e, Expression::Number(_) | Expression::Bool(_)))?;
     let body = parser::parse_body(&format!("x = {text}")).ok()?;
-    tree(
-        attr(&body, "x")?,
-        &mut Cx {
-            ctx: None,
-            path: vec![],
-        },
-    )
+    tree(attr(&body, "x")?, &mut Cx::default())
 }
