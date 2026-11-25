@@ -74,7 +74,7 @@ const ANALYSIS: &[(&str, &str)] = &[
 ];
 
 /// A fully literal value; objects keep the written order.
-enum Json {
+pub(super) enum Json {
     Null,
     Bool(bool),
     Num(String),
@@ -84,7 +84,7 @@ enum Json {
 }
 
 impl Json {
-    fn compact(&self) -> String {
+    pub(super) fn compact(&self) -> String {
         let quote = |s: &str| serde_json::to_string(s).unwrap_or_default();
         match self {
             Json::Null => "null".into(),
@@ -105,14 +105,14 @@ impl Json {
         }
     }
 
-    fn get(&self, key: &str) -> Option<&Json> {
+    pub(super) fn get(&self, key: &str) -> Option<&Json> {
         match self {
             Json::Obj(o) => o.iter().find(|(k, _)| k == key).map(|(_, v)| v),
             _ => None,
         }
     }
 
-    fn str(&self, key: &str) -> Option<String> {
+    pub(super) fn str(&self, key: &str) -> Option<String> {
         match self.get(key)? {
             Json::Str(s) => Some(s.clone()),
             _ => None,
@@ -146,7 +146,7 @@ fn tree(e: &Expression) -> Option<Json> {
 
 /// `jsonencode(<literal>)` or a literal JSON text (string or heredoc). JSON is read as HCL,
 /// whose object syntax accepts it; `file()`, `local.*`, `var.*` and references are not literal.
-fn json_attr(e: &Expression) -> Option<Json> {
+pub(super) fn json_attr(e: &Expression) -> Option<Json> {
     if let Expression::FuncCall(c) = e {
         let mut args = c.args.iter();
         return match (c.name.name.as_str(), args.next(), args.next()) {
@@ -186,20 +186,75 @@ fn fields(props: &Json, prefix: &str, out: &mut Vec<SearchField>) {
     }
 }
 
+/// Reads `mappings` into `detail.fields`; true when read.
+fn mapping(body: &Body, detail: &mut SearchIndexDetail, missed: &mut Vec<&'static str>) -> bool {
+    let Some(e) = attr(body, "mappings") else {
+        return false;
+    };
+    let Some(m) = json_attr(e) else {
+        missed.push("mappings");
+        return false;
+    };
+    m.get("properties")
+        .iter()
+        .for_each(|p| fields(p, "", &mut detail.fields));
+    true
+}
+
+/// Settings object of a template flattened to dotted keys without `index.`; `analysis` becomes
+/// analysis entries. Arrays and numbers keep their compact JSON, nulls are dropped.
+fn flatten(prefix: &str, o: &[(String, Json)], d: &mut SearchIndexDetail) {
+    for (k, v) in o {
+        let path = if prefix.is_empty() {
+            k.clone()
+        } else {
+            format!("{prefix}.{k}")
+        };
+        let key = path.strip_prefix("index.").unwrap_or(&path);
+        match (v, key) {
+            (Json::Obj(kinds), "analysis") => {
+                for (kind, names) in kinds {
+                    let Json::Obj(names) = names else { continue };
+                    d.analysis
+                        .extend(names.iter().map(|(name, def)| SearchAnalysis {
+                            kind: kind.clone(),
+                            name: name.clone(),
+                            definition: def.compact(),
+                        }));
+                }
+            }
+            (Json::Obj(inner), _) => flatten(&path, inner, d),
+            (Json::Null, _) => {}
+            (Json::Str(s), _) => {
+                d.settings.insert(key.into(), s.clone());
+            }
+            (other, _) => {
+                d.settings.insert(key.into(), other.compact());
+            }
+        }
+    }
+}
+
+/// The detail of a `template { mappings, settings }` block and the attributes not read.
+pub(super) fn read_template(body: &Body) -> (Option<SearchIndexDetail>, Vec<&'static str>) {
+    let (mut detail, mut missed) = (SearchIndexDetail::default(), vec![]);
+    let mut any = mapping(body, &mut detail, &mut missed);
+    if let Some(e) = attr(body, "settings") {
+        match json_attr(e) {
+            Some(Json::Obj(o)) => {
+                any = true;
+                flatten("", &o, &mut detail);
+            }
+            _ => missed.push("settings"),
+        }
+    }
+    (any.then_some(detail), missed)
+}
+
 /// The detail of an index body and the attributes that were present but not read.
 pub(super) fn read(body: &Body) -> (Option<SearchIndexDetail>, Vec<&'static str>) {
     let (mut detail, mut missed, mut any) = (SearchIndexDetail::default(), vec![], false);
-    if let Some(e) = attr(body, "mappings") {
-        match json_attr(e) {
-            Some(m) => {
-                any = true;
-                m.get("properties")
-                    .iter()
-                    .for_each(|p| fields(p, "", &mut detail.fields));
-            }
-            None => missed.push("mappings"),
-        }
-    }
+    any |= mapping(body, &mut detail, &mut missed);
     for (key, kind) in ANALYSIS {
         let Some(e) = attr(body, key) else { continue };
         match json_attr(e) {
