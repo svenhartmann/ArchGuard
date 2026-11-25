@@ -35,6 +35,8 @@ pub use service_elasticsearch_graph::{SearchEdge, SearchGraph, SearchNode, searc
 mod service_elasticsearch_tf;
 #[path = "service_elasticsearch_tf_detail.rs"]
 mod service_elasticsearch_tf_detail;
+#[path = "service_elasticsearch_tf_eval.rs"]
+mod service_elasticsearch_tf_eval;
 #[path = "service_elasticsearch_tf_links.rs"]
 mod service_elasticsearch_tf_links;
 #[path = "service_elasticsearch_tf_locals.rs"]

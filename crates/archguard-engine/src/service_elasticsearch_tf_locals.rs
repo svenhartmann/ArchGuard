@@ -5,7 +5,7 @@ use super::service_terraform::ModuleCtx;
 use super::service_terraform_hcl::{attr, get};
 use hcl_edit::expr::{Expression, TraversalOperator};
 
-fn local<'a>(ctx: &ModuleCtx<'a>, name: &str) -> Option<&'a Expression> {
+pub(super) fn local<'a>(ctx: &ModuleCtx<'a>, name: &str) -> Option<&'a Expression> {
     ctx.locals.iter().find_map(|b| attr(&b.body, name))
 }
 
