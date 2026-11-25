@@ -131,3 +131,109 @@ fn detail_gap_is_recognized_as_elasticsearch_gap() {
             .any(|d| d.message.contains("not read:") && is_elasticsearch_gap(d))
     );
 }
+
+fn templates() -> ServiceTopology {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/es-index-detail/templates/terraform");
+    analyze_services(&root).unwrap()
+}
+
+fn art<'a>(r: &'a ServiceTopology, kind: &str, name: &str) -> &'a SearchArtifact {
+    r.elasticsearch
+        .artifacts
+        .iter()
+        .find(|a| a.kind == kind && a.name.as_deref() == Some(name))
+        .unwrap_or_else(|| panic!("{kind} {name} missing"))
+}
+
+fn refs(a: &SearchArtifact) -> Vec<String> {
+    a.references
+        .iter()
+        .map(|x| format!("{}/{}", x.kind, x.name))
+        .collect()
+}
+
+#[test]
+fn index_template_reads_mappings_settings_analysis_and_ilm() {
+    let r = templates();
+    let a = art(&r, "index_template", "logs");
+    assert_eq!(fields(a), ["msg:text"]);
+    let d = a.detail.as_ref().unwrap();
+    let settings: Vec<_> = d.settings.iter().map(|(k, v)| format!("{k}:{v}")).collect();
+    assert_eq!(
+        settings,
+        [
+            "lifecycle.name:hot-warm",
+            "number_of_shards:2",
+            "refresh_interval:5s"
+        ]
+    );
+    let analysis: Vec<_> = d
+        .analysis
+        .iter()
+        .map(|x| format!("{}/{}", x.kind, x.name))
+        .collect();
+    assert_eq!(analysis, ["analyzer/a1"]);
+    assert!(refs(a).contains(&"ilm_policy/hot-warm".to_string()));
+}
+
+#[test]
+fn component_template_reads_literal_json_string() {
+    let r = templates();
+    assert_eq!(fields(art(&r, "component_template", "base")), ["ts:date"]);
+}
+
+#[test]
+fn legacy_settings_block_gives_setting_and_ilm() {
+    let r = templates();
+    let a = art(&r, "index", "legacy");
+    assert_eq!(a.detail.as_ref().unwrap().settings["lifecycle.name"], "p9");
+    assert!(refs(a).contains(&"ilm_policy/p9".to_string()));
+}
+
+#[test]
+fn watch_indices_are_references_and_patterns() {
+    let r = templates();
+    let w = art(&r, "watch", "w1");
+    assert_eq!(refs(w), ["index/orders"]);
+    assert_eq!(w.patterns, ["logs-*"]);
+    assert!(refs(art(&r, "watch", "w3")).is_empty());
+    assert!(refs(art(&r, "watch", "w2")).is_empty());
+}
+
+#[test]
+fn non_literal_template_and_watch_are_one_gap_each() {
+    let r = templates();
+    let gaps: Vec<_> = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("not read:"))
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(gaps.len(), 2, "{gaps:#?}");
+    assert!(
+        gaps.iter()
+            .any(|m| m.contains("index_template.dyn") && m.contains("mappings"))
+    );
+    assert!(
+        gaps.iter()
+            .any(|m| m.contains("watch.dynamic") && m.contains("input"))
+    );
+}
+
+#[test]
+fn ilm_reference_is_an_edge_to_a_ghost_without_finding() {
+    let r = templates();
+    let g = archguard_engine::search_graph(&r);
+    let ghost = g
+        .nodes
+        .iter()
+        .position(|n| n.kind == "ilm_policy" && n.label == "hot-warm")
+        .expect("ghost");
+    assert!(!g.nodes[ghost].declared && !g.nodes[ghost].warn);
+    assert!(
+        g.edges
+            .iter()
+            .any(|e| e.to == ghost && e.relation == "reference")
+    );
+}

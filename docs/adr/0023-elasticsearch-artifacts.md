@@ -190,3 +190,14 @@ are code, but no analyzer measures them.
   later.
   MCP `service_topology` drops `detail` (4 KiB pages; the mapping is desktop
   content); CLI text is unchanged and CLI JSON carries `detail`.
+- **2026-11-25:** Templates, ILM and watches (ticket 38). The `template {}`
+  block of `index_template` and `component_template` carries `detail` like an
+  index: `mappings` as before, `settings` (JSON) flattened to dotted keys
+  without `index.`; `analysis` inside it becomes analysis entries. The
+  deprecated `settings { setting { name value } }` block of an index is read
+  into `settings` as well. The setting `lifecycle.name` is the reference
+  `ilm_policy` (graph: edge, a ghost policy carries no warning). A watch gives
+  the references `index` from a literal `input.search.request.indices`; entries
+  with `*` become the watch's `patterns`. A non-literal `input` is one
+  `DetailNotLiteral` gap; other inputs (`http`) and `indices` elsewhere (e.g.
+  in `actions`) give nothing.

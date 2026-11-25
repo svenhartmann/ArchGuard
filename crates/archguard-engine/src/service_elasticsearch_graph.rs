@@ -160,7 +160,8 @@ impl<'a> Build<'a> {
             return i;
         }
         let mut n = node(kind, name, name, "");
-        n.warn = true;
+        // ILM policies are often managed outside Terraform: a ghost policy is no finding.
+        n.warn = kind != "ilm_policy";
         n.declared = false;
         self.nodes.push(n);
         self.ghosts.insert(key, self.nodes.len() - 1);
