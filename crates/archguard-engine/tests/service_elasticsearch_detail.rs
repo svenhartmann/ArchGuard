@@ -387,3 +387,77 @@ fn access_to_a_missing_or_non_literal_key_is_one_gap() {
     }
     assert_eq!(gaps.len(), 2, "{gaps:#?}");
 }
+
+fn for_fixture() -> ServiceTopology {
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/es-index-detail/for/terraform");
+    analyze_services(&root).unwrap()
+}
+
+#[test]
+fn for_expressions_over_literal_collections_are_read() {
+    let r = for_fixture();
+    assert_eq!(
+        fields(art(&r, "index", "obj-for")),
+        ["id:keyword", "title:text", "skip:keyword"]
+    );
+    assert_eq!(
+        fields(art(&r, "index", "filtered")),
+        ["id:keyword", "title:text"]
+    );
+    assert_eq!(
+        fields(art(&r, "index", "key-var")),
+        ["x:keyword", "y:keyword"]
+    );
+    let f = &art(&r, "index", "list-for")
+        .detail
+        .as_ref()
+        .unwrap()
+        .analysis[0];
+    assert_eq!(f.definition, r#"{"type":"stop","stopwords":["a","c"]}"#);
+}
+
+#[test]
+fn for_over_non_literal_collections_or_with_grouping_is_one_gap() {
+    let r = for_fixture();
+    let gaps: Vec<_> = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("not read:"))
+        .map(|d| d.message.as_str())
+        .collect();
+    for address in ["var_for", "each_for", "group_for", "unbound"] {
+        let hits: Vec<_> = gaps.iter().filter(|m| m.contains(address)).collect();
+        assert_eq!(hits.len(), 1, "{address}: {gaps:#?}");
+        assert!(hits[0].contains("mappings"), "{address}: {}", hits[0]);
+    }
+    assert_eq!(gaps.len(), 4, "{gaps:#?}");
+}
+
+#[test]
+fn for_over_more_than_ten_thousand_elements_is_a_gap() {
+    let dir = std::env::temp_dir().join(format!("es-for-cap-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let list = |n: usize| {
+        (0..n)
+            .map(|i| format!("\"k{i}\""))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let tf = |name: &str, n: usize| {
+        format!(
+            "locals {{ l{n} = [{}] }}\nresource \"elasticstack_elasticsearch_index\" \"{name}\" {{\n  name = \"{name}\"\n  mappings = jsonencode({{ properties = {{ for k in local.l{n} : k => {{ type = \"keyword\" }} }} }})\n}}\n",
+            list(n)
+        )
+    };
+    std::fs::write(dir.join("main.tf"), tf("cap", 10_001)).unwrap();
+    let r = analyze_services(&dir).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(
+        r.diagnostics
+            .iter()
+            .any(|d| d.message.contains("cap") && d.message.contains("not read: mappings")),
+        "{:#?}",
+        r.diagnostics
+    );
+}
