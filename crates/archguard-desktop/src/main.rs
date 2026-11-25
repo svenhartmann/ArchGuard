@@ -51,6 +51,9 @@ mod pane_store;
 mod panes;
 mod panes_ui;
 mod platform;
+#[cfg(test)]
+mod project_set_check;
+mod project_set_ui;
 mod quality_ui;
 mod rating;
 mod reanalyze_ui;
