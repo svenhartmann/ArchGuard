@@ -32,6 +32,11 @@ pub(super) fn engine_of(engine: &Option<String>) -> &str {
 }
 
 /// Elasticsearch, then the relational engines, then the others (each by name), unknown last.
+/// Engines whose datastores hold tables (the Services tab's table analysis, ADR 0012).
+pub fn is_relational(name: &str) -> bool {
+    rank(name) == 1
+}
+
 fn rank(name: &str) -> u8 {
     match name {
         ES => 0,
@@ -73,7 +78,10 @@ fn joined<'a>(items: impl Iterator<Item = &'a str>) -> String {
     seen.join(", ")
 }
 
-pub(super) fn used<'a>(t: &'a ServiceTopology, id: &'a str) -> impl Iterator<Item = &'a DatastoreUsage> {
+pub(super) fn used<'a>(
+    t: &'a ServiceTopology,
+    id: &'a str,
+) -> impl Iterator<Item = &'a DatastoreUsage> {
     t.datastores
         .usages
         .iter()

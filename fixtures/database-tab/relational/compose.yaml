@@ -1,0 +1,14 @@
+# Static example only. No containers are started by archguard.
+services:
+  orders:
+    build: ./orders
+    environment:
+      DATABASE_URL: postgresql://app@postgres:5432/shop
+    depends_on: [postgres]
+  billing:
+    build: ./billing
+    environment:
+      DATABASE_URL: postgresql://app@postgres:5432/shop
+    depends_on: [postgres]
+  postgres:
+    image: postgres:16

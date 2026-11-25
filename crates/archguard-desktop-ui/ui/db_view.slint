@@ -11,6 +11,8 @@ export struct DbEngine {
     // The raw engine name, as the topology has it.
     name: string,
     count: int,
+    // The sub-item "tables without datastore": no engine name.
+    orphan: bool,
 }
 
 export struct DbRow {
@@ -20,6 +22,17 @@ export struct DbRow {
     database: string,
 }
 
+export struct DbRel {
+    // 0 datastore, 1 service (detail: database name), 2 table (file:line evidence),
+    // 3 shared table, 4 shared database, 5 shared server (detail: the services).
+    kind: int,
+    text: string,
+    detail: string,
+    file: string,
+    line: int,
+    clickable: bool,
+}
+
 export struct DbModel {
     // 0 loading, 1 ready (also without datastores), 2 topology unavailable.
     state: int,
@@ -27,12 +40,18 @@ export struct DbModel {
     active: int,
     // The active sub-item is Elasticsearch: the graph instead of the list.
     es: bool,
+    // The active sub-item is relational: `rel` instead of `rows`.
+    relational: bool,
+    rel: [DbRel],
+    // Why the editor did not open.
+    problem: string,
     rows: [DbRow],
 }
 
 export global DatabaseData {
     in-out property <DbModel> model;
     callback select(int);
+    callback open(string, int);
 }
 
 component Cell inherits Mono {
@@ -61,10 +80,47 @@ component DbLine inherits HorizontalLayout {
     Cell { head: root.head; text: root.database; horizontal-stretch: 2; }
 }
 
+component RelLine inherits HorizontalLayout {
+    in property <DbRel> r;
+    spacing: 12px;
+    padding-left: 8px;
+    padding-right: 8px;
+    padding-top: 3px;
+    padding-bottom: 3px;
+    Mono {
+        text: r.kind == 0 ? r.text
+            : r.kind == 1 ? "  " + r.text + (r.detail != "" ? " · " + r.detail : "")
+            : r.kind == 2 ? "      " + r.text
+            : r.kind == 3 ? "  ⚠ " + @tr("table {}: {}", r.text, r.detail)
+            : r.kind == 4 ? "  ⚠ " + @tr("database {}: {}", r.text, r.detail)
+            : "  ⚠ " + @tr("same server: {}", r.detail);
+        color: r.kind == 0 ? Theme.text : r.kind >= 3 ? Theme.warning : Theme.muted;
+        font-weight: r.kind == 0 ? Theme.weight-strong : Theme.weight-regular;
+        horizontal-stretch: 3;
+        preferred-width: 1px;
+        min-width: 0;
+    }
+    if r.kind == 2: Rectangle {
+        horizontal-stretch: 2;
+        preferred-width: 1px;
+        min-width: 0;
+        Mono {
+            width: parent.width;
+            text: r.file + (r.line > 0 ? ":" + Fmt.int(r.line) : "");
+            color: r.clickable ? Theme.accent : Theme.muted;
+        }
+        TouchArea {
+            enabled: r.clickable;
+            mouse-cursor: r.clickable ? pointer : default;
+            clicked => { DatabaseData.open(r.file, r.line); }
+        }
+    }
+}
+
 export component DbView inherits Rectangle {
     property <DbModel> m: DatabaseData.model;
     // The list is shown: not Elasticsearch, and there is a sub-item.
-    out property <bool> listed: !m.es && m.engines.length > 0;
+    out property <bool> listed: !m.es && !m.relational && m.engines.length > 0;
     background: Theme.bg;
     min-width: 360px;
     preferred-width: 1480px;
@@ -77,7 +133,7 @@ export component DbView inherits Rectangle {
             spacing: 2px;
             alignment: start;
             for e[i] in m.engines: Tab {
-                text: e.name + " (" + Fmt.int(e.count) + ")";
+                text: (e.orphan ? @tr("Tables without datastore") : e.name) + " (" + Fmt.int(e.count) + ")";
                 active: i == m.active;
                 clicked => { DatabaseData.select(i); }
             }
@@ -90,6 +146,15 @@ export component DbView inherits Rectangle {
                 : @tr("No datastores in this project.");
         }
         if m.es: EsView { vertical-stretch: 1; }
+        if m.problem != "": Mono { text: m.problem; color: Theme.warning; }
+        if m.relational: ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                padding: 8px;
+                for r in m.rel: RelLine { r: r; }
+            }
+        }
         if root.listed: ScrollView {
             vertical-stretch: 1;
             VerticalLayout {

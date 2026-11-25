@@ -2,7 +2,7 @@
 //! the shared datastores as warnings, and the tables no single datastore can be named for.
 //! Everything is read from `ServiceTopology.datastores`; nothing is recomputed.
 
-use archguard_engine::core::{ServiceTopology, SharedDatastoreScope};
+use archguard_engine::core::{ServiceTopology, SharedDatastore, SharedDatastoreScope};
 
 use super::model::{Engine, engine_of, name, used};
 
@@ -37,11 +37,128 @@ pub struct Block {
     pub warnings: Vec<Warn>,
 }
 
+fn table(t: &ServiceTopology, service: &str, name: &str) -> Table {
+    let e = t
+        .datastores
+        .tables
+        .iter()
+        .find(|x| x.service == service && x.name == name)
+        .and_then(|x| x.evidence.first());
+    let file = e.map(|e| e.file.clone()).unwrap_or_default();
+    Table {
+        name: name.into(),
+        line: e.and_then(|e| e.line).unwrap_or(0),
+        clickable: !file.is_empty() && !file.contains(':'),
+        file,
+    }
+}
+
+fn svc(t: &ServiceTopology, service: &str, database: String, names: &[String]) -> Svc {
+    let mut names = names.to_vec();
+    names.sort();
+    Svc {
+        name: name(t, service).into(),
+        database,
+        tables: names.iter().map(|n| table(t, service, n)).collect(),
+    }
+}
+
+fn warn(t: &ServiceTopology, s: &SharedDatastore) -> Warn {
+    let mut names: Vec<&str> = s.services.iter().map(|id| name(t, id)).collect();
+    names.sort();
+    let services = names.join(", ");
+    match s.scope {
+        SharedDatastoreScope::Table => Warn::Table {
+            tables: s.tables.join(", "),
+            services,
+        },
+        SharedDatastoreScope::Database => Warn::Database {
+            database: s.database.clone().unwrap_or_default(),
+            services,
+        },
+        SharedDatastoreScope::Server => Warn::Server { services },
+    }
+}
+
 /// The datastores of `engine` with their services and warnings.
-pub fn blocks(_t: &ServiceTopology, _engine: &str) -> Vec<Block> {
-    let _ = (engine_of(&None), name, used);
-    let _ = SharedDatastoreScope::Table;
-    Vec::new()
+pub fn blocks(t: &ServiceTopology, engine: &str) -> Vec<Block> {
+    t.datastores
+        .nodes
+        .iter()
+        .filter(|n| engine_of(&n.engine) == engine)
+        .map(|n| Block {
+            id: n.id.clone(),
+            services: used(t, &n.id)
+                .map(|u| {
+                    svc(
+                        t,
+                        &u.service,
+                        u.database.clone().unwrap_or_default(),
+                        &u.tables,
+                    )
+                })
+                .collect(),
+            warnings: t
+                .datastores
+                .shared
+                .iter()
+                .filter(|s| s.datastore == n.id)
+                .map(|s| warn(t, s))
+                .collect(),
+        })
+        .collect()
+}
+
+/// One display line of the sub-item, flat for the view.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Line {
+    /// 0 datastore, 1 service, 2 table, 3 shared table, 4 shared database, 5 shared server.
+    pub kind: i32,
+    pub text: String,
+    pub detail: String,
+    pub file: String,
+    pub line: i32,
+    pub clickable: bool,
+}
+
+fn line(kind: i32, text: &str, detail: &str) -> Line {
+    Line {
+        kind,
+        text: text.into(),
+        detail: detail.into(),
+        file: String::new(),
+        line: 0,
+        clickable: false,
+    }
+}
+
+fn service_lines(s: &Svc, out: &mut Vec<Line>) {
+    out.push(line(1, &s.name, &s.database));
+    out.extend(s.tables.iter().map(|t| Line {
+        file: t.file.clone(),
+        line: t.line as i32,
+        clickable: t.clickable,
+        ..line(2, &t.name, "")
+    }));
+}
+
+/// The lines of the active sub-item: the engine's datastores, or the tables without datastore.
+pub fn lines(t: &ServiceTopology, engine: &Engine) -> Vec<Line> {
+    let mut out = Vec::new();
+    if engine.orphan {
+        orphans(t).iter().for_each(|s| service_lines(s, &mut out));
+        return out;
+    }
+    for b in blocks(t, &engine.name) {
+        out.push(line(0, &b.id, ""));
+        b.services.iter().for_each(|s| service_lines(s, &mut out));
+        out.extend(b.warnings.iter().map(|w| match w {
+            Warn::Table { tables, services } => line(3, tables, services),
+            Warn::Database { database, services } => line(4, database, services),
+            Warn::Server { services } => line(5, "", services),
+        }));
+    }
+    out
 }
 
 /// The sub-item "tables without datastore", when there are such tables.
@@ -55,8 +172,36 @@ pub fn sub_item(t: &ServiceTopology) -> Option<Engine> {
 }
 
 /// Services with tables whose datastore is not unique: their tables, no database.
-pub fn orphans(_t: &ServiceTopology) -> Vec<Svc> {
-    Vec::new()
+pub fn orphans(t: &ServiceTopology) -> Vec<Svc> {
+    let mut ids: Vec<&str> = t
+        .datastores
+        .tables
+        .iter()
+        .map(|x| x.service.as_str())
+        .collect();
+    ids.dedup();
+    let mut seen: Vec<&str> = Vec::new();
+    let mut out = Vec::new();
+    for id in ids {
+        let placed = t
+            .datastores
+            .usages
+            .iter()
+            .any(|u| u.service == id && !u.tables.is_empty());
+        if placed || seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        let names: Vec<String> = t
+            .datastores
+            .tables
+            .iter()
+            .filter(|x| x.service == id)
+            .map(|x| x.name.clone())
+            .collect();
+        out.push(svc(t, id, String::new(), &names));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -156,7 +301,10 @@ mod tests {
         let [orders, billing] = &b[0].services[..] else {
             panic!("two services: {:?}", b[0].services)
         };
-        assert_eq!((orders.name.as_str(), orders.database.as_str()), ("orders", "shop"));
+        assert_eq!(
+            (orders.name.as_str(), orders.database.as_str()),
+            ("orders", "shop")
+        );
         let names: Vec<_> = orders.tables.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(names, ["lines", "orders"]);
         assert_eq!(
@@ -170,7 +318,10 @@ mod tests {
         );
         assert_eq!(billing.name, "billing");
         assert_eq!(billing.tables.len(), 1);
-        assert!(!billing.tables[0].clickable, "a project prefix is not an editor path");
+        assert!(
+            !billing.tables[0].clickable,
+            "a project prefix is not an editor path"
+        );
     }
 
     #[test]
@@ -195,6 +346,23 @@ mod tests {
             [Warn::Server {
                 services: "billing, orders".into()
             }]
+        );
+    }
+
+    #[test]
+    fn lines_flatten_the_blocks_for_the_view() {
+        let t = topology(SharedDatastoreScope::Table);
+        let e = Engine {
+            name: "postgresql".into(),
+            count: 1,
+            orphan: false,
+        };
+        let kinds: Vec<_> = lines(&t, &e).iter().map(|l| l.kind).collect();
+        assert_eq!(kinds, [0, 1, 2, 2, 1, 2, 3]);
+        let l = &lines(&t, &e)[3];
+        assert_eq!(
+            (l.file.as_str(), l.line, l.clickable),
+            ("orders/Order.java", 7, true)
         );
     }
 
