@@ -43,6 +43,18 @@ impl Json {
         }
     }
 
+    /// Object keys in byte order at every level, as Terraform's `jsonencode` writes them.
+    fn sorted(self) -> Json {
+        match self {
+            Json::Obj(mut o) => {
+                o.sort_by(|a, b| a.0.cmp(&b.0));
+                Json::Obj(o.into_iter().map(|(k, v)| (k, v.sorted())).collect())
+            }
+            Json::Arr(a) => Json::Arr(a.into_iter().map(Json::sorted).collect()),
+            other => other,
+        }
+    }
+
     pub(super) fn get(&self, key: &str) -> Option<&Json> {
         match self {
             Json::Obj(o) => o.iter().find(|(k, _)| k == key).map(|(_, v)| v),
@@ -283,6 +295,7 @@ fn func(c: &hcl_edit::expr::FuncCall, cx: &mut Cx) -> Option<Json> {
     match (c.name.name.as_str(), c.args.iter().next()) {
         ("merge" | "concat", _) => call(c, cx),
         ("jsondecode", Some(a)) => json_at(a, cx),
+        ("jsonencode", Some(a)) => Some(Json::Str(tree(a, cx)?.sorted().compact())),
         _ => None,
     }
 }
@@ -334,7 +347,15 @@ pub(super) fn json_attr(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<Json>
 
 fn json_at(e: &Expression, cx: &mut Cx) -> Option<Json> {
     if let Expression::Traversal(t) = e {
-        return follow(e, cx, json_at).or_else(|| access(t, cx));
+        // a `jsonencode` reached through a reference is the text Terraform would send: sorted
+        let read = |f: &Expression, cx: &mut Cx| {
+            let j = json_at(f, cx)?;
+            Some(match f {
+                Expression::FuncCall(c) if c.name.name.as_str() == "jsonencode" => j.sorted(),
+                _ => j,
+            })
+        };
+        return follow(e, cx, read).or_else(|| access(t, cx));
     }
     if let Expression::FuncCall(c) = e {
         let mut args = c.args.iter();

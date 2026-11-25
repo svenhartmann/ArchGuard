@@ -222,3 +222,9 @@ are code, but no analyzer measures them.
   gaps. Depth and cycle protection apply. Templates (`"${k}_raw"`) are
   literal when every interpolation is a resolved string or number (also `for`
   variables and locals); `var.*`, `each.*` and `%{ }` directives stay gaps.
+- **2026-11-25:** Key order (ticket 45). A `jsonencode(<literal>)` nested in a
+  value or reached through a `local.*` reference is evaluated as the text
+  Terraform sends: object keys sorted (byte order) at every level, so fields
+  read through it appear sorted, parents before children. A `jsonencode`
+  written directly in the index attribute and all other paths keep the written
+  order.
