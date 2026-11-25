@@ -546,7 +546,39 @@ pub(crate) fn validate_runtime(
 pub(crate) fn validate_search_quality(
     config: &archguard_core::SearchQualityConfig,
 ) -> Result<(), ArchguardError> {
-    let _ = config;
+    let invalid = |field: &str, message: &str| {
+        ArchguardError::Config(format!("search_quality.{field}: {message}"))
+    };
+    for (field, value) in [
+        ("total_fields_limit", config.total_fields_limit),
+        ("depth_limit", config.depth_limit),
+        ("nested_fields_limit", config.nested_fields_limit),
+    ] {
+        if value == 0 {
+            return Err(invalid(field, "must be greater than zero"));
+        }
+    }
+    if !(config.limit_ratio > 0.0 && config.limit_ratio <= 1.0) {
+        return Err(invalid("limit_ratio", "must be in (0, 1]"));
+    }
+    if archguard_core::parse_es_duration_ms(&config.min_refresh_interval).is_none() {
+        return Err(invalid(
+            "min_refresh_interval",
+            "must be an Elasticsearch time value such as \"1s\"",
+        ));
+    }
+    for (field, ids) in [("errors", &config.errors), ("disabled", &config.disabled)] {
+        for id in ids {
+            let known = archguard_core::search_rule(id)
+                .is_some_and(|rule| rule.kind == archguard_core::RuleKind::Finding);
+            if !known {
+                return Err(invalid(field, &format!("`{id}` is not a finding rule")));
+            }
+        }
+    }
+    if !config.check && !config.errors.is_empty() {
+        return Err(invalid("errors", "needs `check = true`"));
+    }
     Ok(())
 }
 

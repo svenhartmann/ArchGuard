@@ -57,7 +57,35 @@ use Severity::{Info, Warning};
 
 /// Every rule, in spec order. Search emits only these ids; the engine reads
 /// severity, `errors` and `disabled` from here, goals read the attribute.
-pub const SEARCH_RULES: &[SearchRule] = &[];
+pub const SEARCH_RULES: &[SearchRule] = &[
+    finding("total_fields_limit", Warning, R, "mapping"),
+    finding("depth_limit", Warning, R, "mapping"),
+    finding("nested_fields_limit", Warning, R, "mapping"),
+    finding("source_disabled", Warning, M, "declared"),
+    kpi("dynamic_mode", "declared"),
+    kpi("text_without_keyword", "mapping"),
+    finding("analysis_drift", Info, M, "analysis"),
+    finding("unused_analysis", Info, M, "analysis"),
+    finding("environment_drift", Warning, M, "drift"),
+    finding("zero_replicas", Warning, R, "lifecycle"),
+    finding("refresh_interval_low", Warning, P, "lifecycle"),
+    finding("time_series_without_ilm", Info, R, "declared"),
+    finding("deletion_protection_off", Warning, R, "declared"),
+    finding("write_bypasses_alias", Info, M, "routing"),
+    finding("alias_without_write_index", Warning, R, "declared"),
+    finding("template_covers_nothing", Info, M, "routing"),
+    finding("template_priority_conflict", Warning, R, "declared"),
+    finding("unused_pipeline", Info, M, "routing"),
+    finding("undeclared_index", Info, M, "existing"),
+    finding("uncovered_pattern", Info, M, "existing"),
+    finding("alert_undeclared_index", Info, M, "existing"),
+    finding("undeclared_pipeline", Warning, R, "existing"),
+    finding("shared_write_index", Warning, M, "existing"),
+    kpi("reader_fan_in", "coupling"),
+    kpi("cross_project_access", "coupling"),
+    kpi("readable_share", "coupling"),
+    kpi("painless_complexity", "coupling"),
+];
 
 /// The rule with this id.
 pub fn search_rule(id: &str) -> Option<&'static SearchRule> {
@@ -135,8 +163,20 @@ impl Default for SearchQualityConfig {
 /// An Elasticsearch time value in milliseconds (d, h, m, s, ms, micros,
 /// nanos); `-1` and anything unreadable give `None`.
 pub fn parse_es_duration_ms(text: &str) -> Option<f64> {
-    let _ = text;
-    None
+    let text = text.trim();
+    let split = text.find(|c: char| !c.is_ascii_digit() && c != '.')?;
+    let number: f64 = text[..split].parse().ok()?;
+    let unit_ms = match &text[split..] {
+        "d" => 86_400_000.0,
+        "h" => 3_600_000.0,
+        "m" => 60_000.0,
+        "s" => 1000.0,
+        "ms" => 1.0,
+        "micros" => 0.001,
+        "nanos" => 0.000_001,
+        _ => return None,
+    };
+    Some(number * unit_ms)
 }
 
 #[cfg(test)]
