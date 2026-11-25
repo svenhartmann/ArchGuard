@@ -350,7 +350,7 @@ pub fn snapshot_hook(ui: &AppWindow) {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use archguard_engine::{ProjectSet, read_project_set, resolve_project_dirs, write_project_set};
+    use archguard_engine::{ProjectSet, read_project_set, write_project_set};
 
     use super::{Block, Dialog, file_name, relative, write};
     use crate::documents_set::{Target, target};
