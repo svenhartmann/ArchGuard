@@ -23,7 +23,7 @@ pub fn wire(ui: &AppWindow) {
     let a = Actions::<EsState>::new(ui);
     d.on_toggle_kind(a.on(|s, _, i: i32| s.toggle_kind(index(i).unwrap_or(usize::MAX))));
     d.on_focus(a.on(|s, _, i: i32| s.focus_on(index(i).unwrap_or(usize::MAX))));
-    d.on_clear_focus(a.on0(|s, _| s.focus = None));
+    d.on_clear_focus(a.on0(|s, _| s.clear_focus()));
     d.on_zoom_by(a.on(|s, _, f: f32| s.zoom_by(f)));
     d.on_fit(a.on2(|s, _, w: f32, h: f32| view::fit(s, w, h)));
     d.on_open(a.on2(|s, _, file: slint::SharedString, line: i32| {

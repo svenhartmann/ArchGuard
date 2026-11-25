@@ -76,6 +76,11 @@ impl EsState {
         }
     }
 
+    /// "Show all": no focus.
+    pub(super) fn clear_focus(&mut self) {
+        self.focus = None;
+    }
+
     pub(super) fn zoom_by(&mut self, factor: f32) {
         self.zoom = if factor == 0.0 {
             1.0

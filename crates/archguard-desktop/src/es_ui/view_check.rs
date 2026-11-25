@@ -520,6 +520,22 @@ mod page {
         assert!(m.page.links.iter().any(|l| l.value == "p1"));
     }
 
+    /// An editor error belongs to the page it was shown on.
+    #[test]
+    fn an_editor_error_goes_with_the_focus() {
+        let mut s = state("orders");
+        let other = s.graph.nodes.iter().position(|n| n.label == "p1").unwrap();
+        s.problem = "no editor".into();
+        s.focus_on(other);
+        assert_eq!(s.problem, "", "a new focus");
+        s.problem = "no editor".into();
+        s.clear_focus();
+        assert_eq!(s.problem, "", "Show all");
+        s.problem = "no editor".into();
+        s.toggle_kind(0);
+        assert_eq!(s.problem, "", "a kind toggle drops the focus");
+    }
+
     #[test]
     fn another_kind_keeps_the_bar_without_a_page() {
         let m = build(&state("p1"));
