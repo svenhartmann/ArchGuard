@@ -102,7 +102,9 @@ pub fn rows(t: &ServiceTopology, engine: &str) -> Vec<Row> {
 
 #[cfg(test)]
 mod tests {
-    use archguard_engine::core::{Datastore, DatastoreUsage, SearchArtifact, ServiceTopology};
+    use archguard_engine::core::{
+        Datastore, DatastoreUsage, SearchArtifact, Service, ServiceTopology,
+    };
 
     use super::*;
 
@@ -140,8 +142,24 @@ mod tests {
         }
     }
 
+    fn service(id: &str, name: &str) -> Service {
+        Service {
+            id: id.into(),
+            name: name.into(),
+            compose_file: "compose.yaml".into(),
+            build_context: None,
+            networks: vec![],
+            profiles: vec![],
+            project: None,
+        }
+    }
+
     fn topology() -> ServiceTopology {
         let mut t = ServiceTopology::default();
+        t.services = vec![
+            service("compose.yaml::orders", "orders"),
+            service("compose.yaml::billing", "billing"),
+        ];
         t.elasticsearch.artifacts = vec![artifact()];
         t.datastores.nodes = vec![
             store("pg", Some("postgresql"), Some("db.local"), Some(5432)),
@@ -150,9 +168,9 @@ mod tests {
             store("mystery", None, None, None),
         ];
         t.datastores.usages = vec![
-            usage("orders", "pg", Some("shop")),
-            usage("billing", "pg", None),
-            usage("orders", "cache", None),
+            usage("compose.yaml::orders", "pg", Some("shop")),
+            usage("compose.yaml::billing", "pg", None),
+            usage("compose.yaml::orders", "cache", None),
         ];
         t
     }
@@ -188,7 +206,7 @@ mod tests {
 
     #[test]
     fn list_rows_carry_id_endpoint_services_and_database() {
-        let t = topology();
+        let mut t = topology();
         let pg = rows(&t, "postgresql");
         assert_eq!(
             pg,
@@ -199,6 +217,13 @@ mod tests {
                 database: "shop".into(),
             }]
         );
+        // A datastore running in the topology has no host: the address stays empty, not its id.
+        let mut running = store("compose.yaml::redis", Some("redis"), None, None);
+        running.service = Some("compose.yaml::redis".into());
+        t.datastores.nodes.push(running);
+        let redis = rows(&t, "redis");
+        assert_eq!(redis[1].endpoint, "");
+        assert_eq!(redis[0].services, "orders");
         let docs = rows(&t, "mongodb");
         assert_eq!(docs[0].endpoint, "mongo.local");
         let unknown = rows(&t, "unknown");

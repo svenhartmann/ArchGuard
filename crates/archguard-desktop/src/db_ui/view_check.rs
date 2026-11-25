@@ -86,7 +86,10 @@ fn db_texts_are_translated() {
         .skip(1)
         .filter_map(|rest| rest.split('"').next())
         .collect();
-    assert!(texts.len() >= 5, "the view has translatable texts");
+    assert!(
+        texts.len() >= 5 && texts.contains(&"Database name"),
+        "the view has translatable texts"
+    );
     let po = crate::tab_support::texts_check::po_de();
     let missing: Vec<_> = texts
         .iter()
