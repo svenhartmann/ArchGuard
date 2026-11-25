@@ -1,0 +1,66 @@
+// The Elasticsearch class diagram canvas (layout: src/es_ui/class/).
+import { Theme } from "theme.slint";
+import { ZoomControls } from "widgets.slint";
+
+export struct EsClassLine {
+    depth: int,
+    prefix: int,
+    text: string,
+    kind: string,
+    note: string,
+    summary: int,
+}
+
+export struct EsClassChip {
+    text: string,
+    stage: int,
+    class: int,
+    x: float,
+    y: float,
+    w: float,
+}
+
+export struct EsClassCompartment {
+    title: int,
+    y: float,
+    lines: [EsClassLine],
+    chips: [EsClassChip],
+}
+
+export struct EsClassBox {
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    kind: int,
+    stereotype: string,
+    name: string,
+    root: string,
+    ghost: bool,
+    warn: bool,
+    selected: bool,
+    border: string,
+    compartments: [EsClassCompartment],
+}
+
+export struct EsClassEdge {
+    line: string,
+    head: string,
+    shape: int,
+    dashed: bool,
+    style: int,
+    label: string,
+    lx: float,
+    ly: float,
+}
+
+export component EsClassCanvas inherits Rectangle {
+    in property <[EsClassBox]> boxes;
+    in property <[EsClassEdge]> edges;
+    in property <float> canvas-w;
+    in property <float> canvas-h;
+    in property <float> zoom: 1.0;
+    callback select(int);
+    callback zoom-by(float);
+    callback fit(float, float);
+}
