@@ -6,7 +6,7 @@ use super::service_elasticsearch_findings::{EsGap, es_gap};
 use super::service_terraform::{ModuleCtx, Resource, TfFile};
 use super::service_terraform_hcl::{attr, block, get, literal, object};
 use archguard_core::ServiceEvidence;
-use archguard_core::{SearchArtifact, SearchReference, ServiceTopology};
+use archguard_core::{SearchArtifact, SearchIndexDetail, SearchReference, ServiceTopology};
 use archguard_flow_common::support::{Discovery, relative, test_path};
 use hcl_edit::Span;
 use hcl_edit::expr::{Expression, TraversalOperator};
@@ -54,6 +54,7 @@ pub(super) fn augment(report: &mut ServiceTopology, scope: &str, resources: &[Re
             scope,
             out: Vec::new(),
             sources: Vec::new(),
+            detail: None,
         };
         read.resource(kind, name_key);
         let out = read.finish();
@@ -193,6 +194,7 @@ fn kibana(report: &mut ServiceTopology, scope: &str, r: &Resource, suffix: &str)
         scope,
         out: Vec::new(),
         sources: Vec::new(),
+        detail: None,
     };
     if suffix == "data_view" {
         read.data_view();
@@ -210,6 +212,8 @@ struct Read<'x, 'a> {
     out: Vec<SearchArtifact>,
     /// Where names came from when read through `var.x`; attached to the evidence.
     sources: Vec<String>,
+    /// Detail of the index being read, taken over by the next `push`.
+    detail: Option<SearchIndexDetail>,
 }
 
 /// Values read through a variable, and where they came from.
@@ -298,7 +302,7 @@ impl Read<'_, '_> {
             references,
             evidence: vec![r.evidence(r.line(), "", NOTE)],
             origins: vec![],
-            detail: None,
+            detail: self.detail.take(),
         });
     }
 
@@ -407,6 +411,13 @@ impl Read<'_, '_> {
             name: n.clone(),
         });
         self.aliases(body, target);
+        let (detail, missed) = super::service_elasticsearch_tf_detail::read(body);
+        if !missed.is_empty() {
+            let path = &self.r.file.path;
+            let parts = [self.r.address.as_str(), &missed.join(", ")];
+            es_gap(self.report, EsGap::DetailNotLiteral, path, None, &parts);
+        }
+        self.detail = detail;
         refs
     }
 
