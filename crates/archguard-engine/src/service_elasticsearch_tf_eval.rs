@@ -8,6 +8,7 @@ use hcl_edit::expr::{
     BinaryOperator, Expression, ForExpr, ObjectKey, Traversal, TraversalOperator, UnaryOperator,
 };
 use hcl_edit::parser;
+use hcl_edit::template::{Element, Template};
 
 /// A fully literal value; objects keep the written order.
 #[derive(Clone)]
@@ -252,14 +253,28 @@ fn for_expr(f: &ForExpr, cx: &mut Cx) -> Option<Json> {
     })
 }
 
+/// A template whose interpolations are all resolved strings or numbers; directives are gaps.
+fn template(t: &Template, cx: &mut Cx) -> Option<Json> {
+    let mut out = String::new();
+    for el in t.iter() {
+        match el {
+            Element::Literal(l) => out.push_str(l.as_str()),
+            Element::Interpolation(i) => match tree(&i.expr, cx)? {
+                Json::Str(s) | Json::Num(s) => out.push_str(&s),
+                _ => return None,
+            },
+            Element::Directive(_) => return None,
+        }
+    }
+    Some(Json::Str(out))
+}
+
 fn scalar(e: &Expression) -> Option<Json> {
     Some(match e {
         Expression::Null(_) => Json::Null,
         Expression::Bool(b) => Json::Bool(*b.value()),
         Expression::Number(n) => Json::Num(n.value().to_string()),
-        Expression::String(_) | Expression::StringTemplate(_) | Expression::HeredocTemplate(_) => {
-            Json::Str(literal(e)?)
-        }
+        Expression::String(s) => Json::Str(s.value().clone()),
         _ => return None,
     })
 }
@@ -278,6 +293,8 @@ fn tree(e: &Expression, cx: &mut Cx) -> Option<Json> {
             a.iter().map(|x| tree(x, cx)).collect::<Option<_>>()?,
         )),
         Expression::Object(o) => Some(Json::Obj(object(o, cx)?)),
+        Expression::StringTemplate(t) => template(t, cx),
+        Expression::HeredocTemplate(h) => template(&h.template, cx),
         Expression::Parenthesis(p) => tree(p.inner(), cx),
         Expression::FuncCall(c) => func(c, cx),
         Expression::Traversal(t) => follow(e, cx, tree).or_else(|| access(t, cx)),

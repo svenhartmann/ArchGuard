@@ -218,5 +218,7 @@ are code, but no analyzer measures them.
   filter using `==`, `!=`, `&&`, `||`, `!`) and attribute or index access
   (`.a`, `["k"]`, `[0]`, `jsondecode(...).a`) on resolved literal values are
   evaluated. A non-literal collection (`var.*`, `each.*`), grouping (`...`),
-  duplicate keys, a string with interpolation and more than 10 000 iterated
-  elements per attribute remain gaps. Depth and cycle protection apply.
+  duplicate keys and more than 10 000 iterated elements per attribute remain
+  gaps. Depth and cycle protection apply. Templates (`"${k}_raw"`) are
+  literal when every interpolation is a resolved string or number (also `for`
+  variables and locals); `var.*`, `each.*` and `%{ }` directives stay gaps.
