@@ -2,9 +2,9 @@
 //! All or nothing per attribute: one non-literal part and the attribute is not read.
 use super::service_elasticsearch_tf_eval::value;
 pub(super) use super::service_elasticsearch_tf_eval::{Json, json_attr};
-use super::service_terraform::ModuleCtx;
-use super::service_terraform_hcl::attr;
 use archguard_core::{SearchAnalysis, SearchField, SearchIndexDetail};
+use archguard_terraform::hcl::attr;
+use archguard_terraform::module::ModuleCtx;
 use hcl_edit::expr::Expression;
 use hcl_edit::structure::Body;
 

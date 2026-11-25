@@ -380,6 +380,7 @@ dependencies = [
  "archguard-flow-web",
  "archguard-report",
  "archguard-store",
+ "archguard-terraform",
  "globset",
  "hcl-edit",
  "ignore",
@@ -552,6 +553,16 @@ dependencies = [
  "archguard-core",
  "lbug",
  "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "archguard-terraform"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-flow-common",
+ "hcl-edit",
  "tempfile",
 ]
 

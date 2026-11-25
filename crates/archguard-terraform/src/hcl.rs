@@ -4,16 +4,16 @@ use hcl_edit::structure::Body;
 use hcl_edit::visit::{self, Visit};
 use std::collections::BTreeMap;
 
-pub(super) fn attr<'b>(body: &'b Body, key: &str) -> Option<&'b Expression> {
+pub fn attr<'b>(body: &'b Body, key: &str) -> Option<&'b Expression> {
     body.get_attribute(key).map(|a| &a.value)
 }
 
-pub(super) fn block<'b>(body: &'b Body, ident: &'b str) -> Option<&'b Body> {
+pub fn block<'b>(body: &'b Body, ident: &'b str) -> Option<&'b Body> {
     body.get_blocks(ident).next().map(|b| &b.body)
 }
 
 /// A literal string, number or bool, or a template without interpolation.
-pub(crate) fn literal(expr: &Expression) -> Option<String> {
+pub fn literal(expr: &Expression) -> Option<String> {
     match expr {
         Expression::String(s) => Some(s.value().clone()),
         Expression::Number(n) => Some(n.value().to_string()),
@@ -32,7 +32,7 @@ pub(crate) fn literal(expr: &Expression) -> Option<String> {
 }
 
 /// Entries of an object expression with literal keys.
-pub(crate) fn object(expr: &Expression) -> Vec<(String, &Expression)> {
+pub fn object(expr: &Expression) -> Vec<(String, &Expression)> {
     let Expression::Object(object) = expr else {
         return vec![];
     };
@@ -48,14 +48,14 @@ pub(crate) fn object(expr: &Expression) -> Vec<(String, &Expression)> {
         .collect()
 }
 
-pub(crate) fn get<'e>(expr: &'e Expression, key: &str) -> Option<&'e Expression> {
+pub fn get<'e>(expr: &'e Expression, key: &str) -> Option<&'e Expression> {
     object(expr)
         .into_iter()
         .find(|(k, _)| k == key)
         .map(|(_, v)| v)
 }
 
-pub(super) fn labels(expr: Option<&Expression>) -> BTreeMap<String, String> {
+pub fn labels(expr: Option<&Expression>) -> BTreeMap<String, String> {
     expr.map(object)
         .unwrap_or_default()
         .into_iter()
@@ -65,7 +65,7 @@ pub(super) fn labels(expr: Option<&Expression>) -> BTreeMap<String, String> {
 
 /// Paths of the references in an expression, e.g. `["aws_db_instance", "orders", "address"]`.
 #[derive(Default)]
-pub(super) struct References(pub Vec<Vec<String>>);
+pub struct References(pub Vec<Vec<String>>);
 
 impl Visit for References {
     fn visit_traversal(&mut self, node: &Traversal) {
@@ -81,7 +81,7 @@ impl Visit for References {
     }
 }
 
-pub(super) fn http(expr: &Expression) -> bool {
+pub fn http(expr: &Expression) -> bool {
     let start = match expr {
         Expression::StringTemplate(t) => t
             .iter()
