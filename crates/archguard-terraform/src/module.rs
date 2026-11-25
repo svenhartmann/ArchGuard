@@ -19,7 +19,7 @@ pub struct TfFile {
     pub path: String,
     /// Byte offset of each line start.
     line_at: Vec<usize>,
-    pub body: Body,
+    body: Body,
 }
 
 impl TfFile {
@@ -43,14 +43,14 @@ pub struct Resource<'a> {
 /// One module instance: its `variable` blocks, the `module` block that called it and the
 /// caller's context. Lets readers resolve `var.x` without a second parse.
 pub struct ModuleCtx<'a> {
-    pub variables: Vec<(&'a Block, &'a TfFile)>,
+    variables: Vec<(&'a Block, &'a TfFile)>,
     /// `locals` blocks and `resource` blocks of this instance only; read by ES detail (ADR 0023).
     pub locals: Vec<&'a Block>,
     pub resources: Vec<&'a Block>,
     call: Option<(&'a Block, &'a TfFile)>,
     parent: Option<Rc<ModuleCtx<'a>>>,
     /// Module nesting level; the root is 0.
-    pub depth: usize,
+    depth: usize,
 }
 
 impl<'a> ModuleCtx<'a> {
@@ -172,7 +172,7 @@ fn parse(
     modules
 }
 
-pub fn blocks<'a>(file: &'a TfFile, ident: &'a str) -> impl Iterator<Item = &'a Block> {
+fn blocks<'a>(file: &'a TfFile, ident: &'a str) -> impl Iterator<Item = &'a Block> {
     file.body
         .blocks()
         .filter(move |b| b.ident.as_str() == ident)
@@ -301,7 +301,6 @@ fn instance<'a>(
     out.push(resources);
 }
 
-/// Environment entries and images anywhere in a workload body: `env` blocks
 #[cfg(test)]
 mod tests {
     use super::*;
