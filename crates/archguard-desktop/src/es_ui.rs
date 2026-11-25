@@ -2,6 +2,9 @@
 //! (`archguard_engine::search_graph`) as the Services tree's rows and arcs. The
 //! topology is the Services tab's, read once per document.
 
+mod index_page;
+#[cfg(test)]
+mod index_page_check;
 mod state;
 mod view;
 #[cfg(test)]
