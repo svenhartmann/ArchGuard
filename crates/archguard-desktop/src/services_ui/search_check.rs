@@ -208,10 +208,13 @@ mod origin {
     #[test]
     fn the_list_marks_what_the_primary_project_does_not_declare() {
         let infra = titles(&set("infra", "adapter"));
-        assert!(infra.iter().all(|t| !t.contains('↧')), "{infra:?}");
+        assert!(infra.iter().all(|t| !t.starts_with('[')), "{infra:?}");
         let adapter = titles(&set("adapter", "infra"));
-        assert!(adapter.contains(&"↧ orders".to_string()), "{adapter:?}");
-        assert!(adapter.contains(&"↧ p1".to_string()), "{adapter:?}");
+        assert!(
+            adapter.contains(&"[infra] orders".to_string()),
+            "{adapter:?}"
+        );
+        assert!(adapter.contains(&"[infra] p1".to_string()), "{adapter:?}");
         // `audit` is declared in both projects: one artifact, no marker.
         assert_eq!(adapter.iter().filter(|t| t.contains("audit")).count(), 1);
         assert!(adapter.contains(&"audit".to_string()), "{adapter:?}");

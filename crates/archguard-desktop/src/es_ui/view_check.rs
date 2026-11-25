@@ -290,34 +290,31 @@ mod origin {
     }
 
     #[test]
-    fn a_foreign_service_carries_the_marker_the_primary_ones_do_not() {
+    fn a_foreign_service_carries_its_project_the_primary_ones_do_not() {
         let n = names(&state("infra", "adapter"));
+        // The engine's label of the service (ticket 30) behind the project.
         assert!(
-            n.iter()
-                .any(|x| x.starts_with("↧ ") && x.ends_with("writer")),
+            n.contains(&"[adapter] compose.yaml::writer".to_string()),
             "{n:?}"
         );
         assert!(
             n.contains(&"orders".to_string()) && n.contains(&"audit".to_string()),
             "{n:?}"
         );
-        assert!(
-            !n.iter()
-                .any(|x| x.contains("↧ orders") || x.contains("↧ audit")),
-            "{n:?}"
-        );
+        assert!(!n.iter().any(|x| x.contains("[infra]")), "{n:?}");
     }
 
     #[test]
-    fn with_the_other_primary_project_the_declarations_carry_it() {
+    fn with_the_other_primary_project_the_declarations_carry_theirs() {
         let mut s = state("adapter", "infra");
         let n = names(&s);
         assert!(
-            n.contains(&"↧ orders".to_string()) && n.contains(&"audit".to_string()),
+            n.contains(&"[infra] orders".to_string()) && n.contains(&"audit".to_string()),
             "{n:?}"
         );
         assert!(
-            !n.iter().any(|x| x.contains("writer") && x.contains('↧')),
+            !n.iter()
+                .any(|x| x.contains("writer") && x.contains("[adapter]")),
             "{n:?}"
         );
         let pipe = s
@@ -326,37 +323,36 @@ mod origin {
             .position(|k| k == "ingest_pipeline")
             .unwrap();
         s.toggle_kind(pipe);
-        assert!(names(&s).contains(&"↧ p1".to_string()));
+        assert!(names(&s).contains(&"[infra] p1".to_string()));
     }
 
     #[test]
-    fn a_warning_comes_before_the_marker_and_the_label_stays_within_32() {
+    fn a_warning_comes_before_the_project_and_the_label_stays_within_32() {
         let mut s = state("infra", "adapter");
+        s.viewport = 1480.0;
         let at = s.graph.nodes.iter().position(|n| n.foreign).unwrap();
         s.graph.nodes[at].warn = true;
         s.graph.nodes[at].label = "y".repeat(40);
         let n = names(&s);
-        let row = n
-            .iter()
-            .find(|x| x.starts_with("⚠ ↧ "))
-            .unwrap_or_else(|| panic!("{n:?}"));
-        assert!(row.chars().count() <= 32, "{row}");
+        let want = format!("⚠ [adapter] {}…", "y".repeat(19));
+        assert!(n.contains(&want), "{n:?}");
+        assert_eq!(want.chars().count(), 32);
     }
 
     #[test]
-    fn without_a_set_no_row_has_the_marker() {
+    fn without_a_set_no_row_has_a_project() {
         let t = archguard_engine::analyze_services(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/es-set/adapter"),
         )
         .expect("single");
         let s = build_from(Arc::new(Ok(t)));
-        assert!(names(&s).iter().all(|x| !x.contains('↧')));
+        assert!(names(&s).iter().all(|x| !x.contains('[')));
     }
 }
 
-/// A row of a foreign node renders (the marker adds ink next to the label).
+/// A row with a project prefix renders (the prefix adds ink next to the label).
 #[test]
-fn a_foreign_row_renders_with_the_marker() {
+fn a_foreign_row_renders_with_its_project() {
     let window = window();
     let page = Page::new().expect("component");
     page.show().expect("shown");
@@ -368,6 +364,6 @@ fn a_foreign_row_renders_with_the_marker() {
     };
     data.set_model(with("idx"));
     let plain = frame(&window);
-    data.set_model(with("↧ idx"));
-    assert!(!same(&frame(&window), &plain), "the marker is drawn");
+    data.set_model(with("[infra] idx"));
+    assert!(!same(&frame(&window), &plain), "the prefix is drawn");
 }
