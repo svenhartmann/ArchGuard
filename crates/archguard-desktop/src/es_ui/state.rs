@@ -66,19 +66,21 @@ impl EsState {
         if !self.toggled.remove(&kind) {
             self.toggled.insert(kind);
         }
-        self.focus = None;
+        self.clear_focus();
     }
 
     /// A group row (no node) has no focus.
     pub(super) fn focus_on(&mut self, node: usize) {
         if node < self.graph.nodes.len() {
             self.focus = Some(node);
+            self.problem.clear();
         }
     }
 
     /// "Show all": no focus.
     pub(super) fn clear_focus(&mut self) {
         self.focus = None;
+        self.problem.clear();
     }
 
     pub(super) fn zoom_by(&mut self, factor: f32) {
