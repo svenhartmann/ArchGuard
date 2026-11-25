@@ -163,11 +163,13 @@ mod tests {
     }
 
     fn topology() -> ServiceTopology {
-        let mut t = ServiceTopology::default();
-        t.services = vec![
-            service("compose.yaml::orders", "orders"),
-            service("compose.yaml::billing", "billing"),
-        ];
+        let mut t = ServiceTopology {
+            services: vec![
+                service("compose.yaml::orders", "orders"),
+                service("compose.yaml::billing", "billing"),
+            ],
+            ..Default::default()
+        };
         t.elasticsearch.artifacts = vec![artifact()];
         t.datastores.nodes = vec![
             store("pg", Some("postgresql"), Some("db.local"), Some(5432)),
