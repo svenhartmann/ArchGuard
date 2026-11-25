@@ -301,3 +301,55 @@ fn names_still_do_not_read_locals() {
             .any(|d| d.message.contains("name_local"))
     );
 }
+
+fn chains() -> ServiceTopology {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/es-index-detail/chains/terraform");
+    analyze_services(&root).unwrap()
+}
+
+fn analyzers(a: &SearchArtifact) -> Vec<String> {
+    a.detail
+        .as_ref()
+        .map(|d| d.analysis.iter().map(|x| x.name.clone()).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn merge_concat_and_chains_up_to_depth_three_are_read() {
+    let r = chains();
+    // shallow merge: the right `properties` wins as a whole
+    assert_eq!(fields(art(&r, "index", "merged")), ["b:text"]);
+    let f = &art(&r, "index", "concat").detail.as_ref().unwrap().analysis[0];
+    assert_eq!(f.definition, r#"{"type":"stop","stopwords":["a","b"]}"#);
+    assert_eq!(fields(art(&r, "index", "local-chain")), ["c:date"]);
+    for name in ["a", "b", "c"] {
+        assert_eq!(analyzers(art(&r, "index", name)), ["std"], "{name}");
+    }
+}
+
+#[test]
+fn deeper_chains_cycles_and_non_literals_are_one_gap_each() {
+    let r = chains();
+    let gaps: Vec<_> = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("not read:"))
+        .map(|d| d.message.as_str())
+        .collect();
+    for (address, attr) in [
+        ("elasticstack_elasticsearch_index.d", "analysis_analyzer"),
+        ("cyc_x", "analysis_analyzer"),
+        ("cyc_y", "analysis_analyzer"),
+        ("local_cycle", "mappings"),
+        ("from_var", "refresh_interval"),
+        ("conditional", "refresh_interval"),
+        ("elasticstack_elasticsearch_index.each", "refresh_interval"),
+        ("merge_var", "mappings"),
+    ] {
+        let hits: Vec<_> = gaps.iter().filter(|m| m.contains(address)).collect();
+        assert_eq!(hits.len(), 1, "{address}: {gaps:#?}");
+        assert!(hits[0].contains(attr), "{address}: {}", hits[0]);
+    }
+    assert_eq!(gaps.len(), 8, "{gaps:#?}");
+}
