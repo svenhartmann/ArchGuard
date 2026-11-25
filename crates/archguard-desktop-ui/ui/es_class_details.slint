@@ -1,0 +1,68 @@
+// The right column of the Elasticsearch class diagram (model: src/es_ui/class/details.rs).
+import { SvcSearchDetail } from "services_search.slint";
+
+export struct EsDetailHead {
+    title: string,
+    // Stereotype and Terraform root.
+    subtitle: string,
+    // `file:line` of the declaration.
+    location: string,
+}
+
+export struct EsDetailField {
+    name: string,
+    kind: string,
+    // Index and search analyzer, as text.
+    analysis: string,
+}
+
+// One row of an analysis chain. stage 0 char filter, 1 tokenizer, 2 filter (`n` counts from 1);
+// class 0 declared (`params` is its parameter line), 1 built in, 2 not declared.
+export struct EsDetailRow {
+    stage: int,
+    n: int,
+    chip: string,
+    class: int,
+    params: string,
+}
+
+// Static note about differing index and search analyzers; empty `field`: none.
+export struct EsDetailHint {
+    field: string,
+    search-only: string,
+    index-only: string,
+}
+
+export struct EsDetailPair {
+    key: string,
+    value: string,
+}
+
+export struct EsDetailUse {
+    text: string,
+    file: string,
+    line: int,
+    clickable: bool,
+}
+
+export struct EsDetails {
+    // 0 index, 1 building block, 2 other (`other`).
+    mode: int,
+    head: EsDetailHead,
+    fields: [EsDetailField],
+    chain-name: string,
+    chain: [EsDetailRow],
+    hint: EsDetailHint,
+    settings: [EsDetailPair],
+    links: [EsDetailPair],
+    usages: [EsDetailUse],
+    params: [EsDetailPair],
+    used-by: [string],
+    definition: string,
+    other: SvcSearchDetail,
+}
+
+export component EsClassDetails inherits Rectangle {
+    in property <EsDetails> details;
+    callback open(string, int);
+}
