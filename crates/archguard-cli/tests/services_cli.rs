@@ -175,3 +175,120 @@ fn services_text_reports_shared_databases_without_failing_the_gate() {
     assert!(text.contains("do not prove runtime use"), "{text}");
     assert!(!text.contains("hunter2"), "{text}");
 }
+
+fn run_services(args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_archguard"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .arg("services")
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+const ES_INFRA: &str = "../../fixtures/es-set/infra";
+const ES_ADAPTER: &str = "../../fixtures/es-set/adapter";
+const ES_SET: &str = "../../fixtures/es-set/search.archguard-set.toml";
+
+fn stdout_of(args: &[&str]) -> String {
+    let out = run_services(args);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap()
+}
+
+#[test]
+fn services_two_paths_merge_the_search_model_with_origins_in_text() {
+    let text = stdout_of(&[ES_INFRA, ES_ADAPTER]);
+    assert!(text.contains("project set: infra, adapter"), "{text}");
+    assert!(text.contains(" [from infra]"), "{text}");
+    assert!(text.contains(" [from infra, adapter]"), "{text}");
+    assert!(!text.contains("undeclared_index"), "{text}");
+}
+
+#[test]
+fn services_two_paths_merge_the_search_model_with_origins_in_json() {
+    let out = stdout_of(&["--format", "json", ES_INFRA, ES_ADAPTER]);
+    let value: Value = serde_json::from_str(&out).unwrap();
+    let es = &value["elasticsearch"];
+    assert_eq!(es["projects"], serde_json::json!(["infra", "adapter"]));
+    assert!(
+        es["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a.get("origins").is_some())
+    );
+    assert!(!out.contains("undeclared_index"));
+}
+
+#[test]
+fn services_set_file_equals_the_path_list() {
+    for format in ["text", "json"] {
+        let paths = stdout_of(&["--format", format, ES_INFRA, ES_ADAPTER]);
+        let set = stdout_of(&["--format", format, "--set", ES_SET]);
+        // The root line differs by construction; everything else must match.
+        let strip = |s: &str| {
+            s.lines()
+                .filter(|l| !l.contains("\"root\"") && !l.contains("/fixtures/"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert_eq!(strip(&paths), strip(&set), "{format}");
+    }
+}
+
+#[test]
+fn services_set_with_paths_is_a_usage_error() {
+    for args in [
+        &["--set", ES_SET, ES_INFRA][..],
+        &[ES_INFRA, "--set", ES_SET][..],
+    ] {
+        let out = run_services(args);
+        assert_eq!(out.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("--set"));
+    }
+}
+
+#[test]
+fn services_invalid_sets_report_errors_without_file_contents() {
+    let dir = tempfile::tempdir().unwrap();
+    let bad = dir.path().join("bad.archguard-set.toml");
+    fs::write(&bad, "name = \"SECRET-VALUE\"\nbogus = [\n").unwrap();
+    let one = dir.path().join("one.archguard-set.toml");
+    fs::write(&one, "name = \"SECRET-VALUE\"\nprojects = [\".\"]\n").unwrap();
+    for file in [bad, one, dir.path().join("missing.toml")] {
+        let out = run_services(&["--set", file.to_str().unwrap()]);
+        assert_eq!(out.status.code(), Some(3));
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains(file.file_name().unwrap().to_str().unwrap()),
+            "{err}"
+        );
+        assert!(!err.contains("SECRET-VALUE"), "{err}");
+    }
+}
+
+#[test]
+fn services_single_path_output_has_no_set_markers() {
+    let text = stdout_of(&[ES_ADAPTER]);
+    assert!(
+        !text.contains("project set:") && !text.contains("[from "),
+        "{text}"
+    );
+}
+
+#[test]
+fn services_help_shows_paths_and_set() {
+    let text = stdout_of_help();
+    assert!(text.contains("[PFAD]..."), "{text}");
+    assert!(text.contains("--set <DATEI>"), "{text}");
+}
+
+fn stdout_of_help() -> String {
+    let out = run_services(&["--help"]);
+    String::from_utf8(out.stdout).unwrap()
+}
