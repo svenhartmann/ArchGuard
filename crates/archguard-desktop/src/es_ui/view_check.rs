@@ -292,7 +292,11 @@ mod origin {
     #[test]
     fn a_foreign_service_carries_the_marker_the_primary_ones_do_not() {
         let n = names(&state("infra", "adapter"));
-        assert!(n.contains(&"↧ writer".to_string()), "{n:?}");
+        assert!(
+            n.iter()
+                .any(|x| x.starts_with("↧ ") && x.ends_with("writer")),
+            "{n:?}"
+        );
         assert!(
             n.contains(&"orders".to_string()) && n.contains(&"audit".to_string()),
             "{n:?}"

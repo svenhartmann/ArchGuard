@@ -105,7 +105,7 @@ impl Search {
                 let a = &es.artifacts[i];
                 SvcSearchRow {
                     index: i as i32,
-                    title: a.name.as_deref().unwrap_or(&a.address).into(),
+                    title: super::search_origin::title(a, es.primary()).into(),
                     warn: names(a).any(|n| subjects.contains(n)),
                     open: self.open == Some(i),
                 }

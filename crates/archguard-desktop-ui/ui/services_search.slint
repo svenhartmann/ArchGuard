@@ -80,6 +80,7 @@ export component SearchDetailBody inherits VerticalLayout {
     in property <SvcSearchDetail> detail;
     spacing: 3px;
     if detail.scope != "": Mono { text: detail.scope; }
+    if detail.projects != "": Note { text: @tr("Projects: {}", detail.projects); }
     if detail.declaration.length > 0: Heading { text: @tr("Declaration"); }
     for e in detail.declaration: VerticalLayout {
         Mono { text: e.location; }

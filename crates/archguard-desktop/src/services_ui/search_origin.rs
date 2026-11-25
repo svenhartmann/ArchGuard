@@ -3,23 +3,34 @@
 
 use archguard_engine::core::SearchArtifact;
 
-/// The marker of a node from another project.
-pub(crate) const FOREIGN: &str = "↧";
+/// The most characters of a node's row text.
+const MAX: usize = 32;
 
 /// The row text of a graph node: `⚠ ` for a finding, `↧ ` for a foreign project, then the label;
 /// a foreign node keeps all of it within 32 characters.
 pub(crate) fn node_label(label: &str, warn: bool, foreign: bool) -> String {
-    format!("{}{label}", if warn { "⚠ " } else { "" })
+    let prefix = format!(
+        "{}{}",
+        if warn { "⚠ " } else { "" },
+        if foreign { "↧ " } else { "" }
+    );
+    let room = MAX.saturating_sub(prefix.chars().count());
+    if !foreign || label.chars().count() <= room {
+        return format!("{prefix}{label}");
+    }
+    let cut: String = label.chars().take(room.saturating_sub(1)).collect();
+    format!("{prefix}{cut}…")
 }
 
 /// The title of an artifact in the list: `↧ ` first when it is not declared in the primary project.
 pub(crate) fn title(a: &SearchArtifact, primary: Option<&str>) -> String {
-    a.name.as_deref().unwrap_or(&a.address).to_string()
+    let name = a.name.as_deref().unwrap_or(&a.address);
+    node_label(name, false, primary.is_some_and(|p| a.foreign(p)))
 }
 
 /// The projects an artifact is declared in, comma separated; empty outside a set.
 pub(crate) fn projects(a: &SearchArtifact) -> String {
-    String::new()
+    a.origins.join(", ")
 }
 
 #[cfg(test)]
