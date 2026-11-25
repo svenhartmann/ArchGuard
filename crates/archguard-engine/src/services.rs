@@ -37,6 +37,8 @@ mod service_elasticsearch_tf;
 mod service_elasticsearch_tf_detail;
 #[path = "service_elasticsearch_tf_links.rs"]
 mod service_elasticsearch_tf_links;
+#[path = "service_elasticsearch_tf_locals.rs"]
+mod service_elasticsearch_tf_locals;
 #[path = "service_set.rs"]
 mod service_set;
 #[path = "service_spring.rs"]

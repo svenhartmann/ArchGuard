@@ -412,7 +412,8 @@ impl Read<'_, '_> {
             name: n.clone(),
         });
         self.aliases(body, target);
-        let (mut detail, mut missed) = super::service_elasticsearch_tf_detail::read(body);
+        let (mut detail, mut missed) =
+            super::service_elasticsearch_tf_detail::read(body, &self.r.module);
         let (legacy, bad) = super::service_elasticsearch_tf_links::legacy_settings(body);
         if !legacy.is_empty() {
             detail.get_or_insert_default().settings.extend(legacy);

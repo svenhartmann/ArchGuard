@@ -38,7 +38,7 @@ pub(super) fn watch_indices(body: &Body) -> (Vec<String>, Vec<String>, bool) {
     let Some(e) = attr(body, "input") else {
         return Default::default();
     };
-    let Some(input) = json_attr(e) else {
+    let Some(input) = json_attr(e, None) else {
         return (vec![], vec![], true);
     };
     let indices = input

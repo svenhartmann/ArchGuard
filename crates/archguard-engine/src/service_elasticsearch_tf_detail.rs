@@ -1,5 +1,7 @@
 //! Literal mapping, settings and analysis of an `elasticstack_elasticsearch_index` (ADR 0023).
 //! All or nothing per attribute: one non-literal part and the attribute is not read.
+use super::service_elasticsearch_tf_locals::lookup;
+use super::service_terraform::ModuleCtx;
 use super::service_terraform_hcl::{attr, literal};
 use archguard_core::{SearchAnalysis, SearchField, SearchIndexDetail};
 use hcl_edit::expr::{Expression, ObjectKey};
@@ -120,7 +122,19 @@ impl Json {
     }
 }
 
-fn tree(e: &Expression) -> Option<Json> {
+fn object(o: &hcl_edit::expr::Object, ctx: Option<&ModuleCtx>) -> Option<Vec<(String, Json)>> {
+    o.iter()
+        .map(|(k, v)| {
+            let key = match k {
+                ObjectKey::Ident(i) => i.as_str().to_owned(),
+                ObjectKey::Expression(k) => literal(k)?,
+            };
+            Some((key, tree(v.expr(), ctx)?))
+        })
+        .collect()
+}
+
+fn tree(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<Json> {
     Some(match e {
         Expression::Null(_) => Json::Null,
         Expression::Bool(b) => Json::Bool(*b.value()),
@@ -128,39 +142,34 @@ fn tree(e: &Expression) -> Option<Json> {
         Expression::String(_) | Expression::StringTemplate(_) | Expression::HeredocTemplate(_) => {
             Json::Str(literal(e)?)
         }
-        Expression::Array(a) => Json::Arr(a.iter().map(tree).collect::<Option<_>>()?),
-        Expression::Object(o) => Json::Obj(
-            o.iter()
-                .map(|(k, v)| {
-                    let key = match k {
-                        ObjectKey::Ident(i) => i.as_str().to_owned(),
-                        ObjectKey::Expression(k) => literal(k)?,
-                    };
-                    Some((key, tree(v.expr())?))
-                })
-                .collect::<Option<_>>()?,
-        ),
+        Expression::Array(a) => Json::Arr(a.iter().map(|x| tree(x, ctx)).collect::<Option<_>>()?),
+        Expression::Object(o) => Json::Obj(object(o, ctx)?),
+        Expression::Traversal(_) => return tree(lookup(ctx?, e)?, None),
         _ => return None,
     })
 }
 
 /// `jsonencode(<literal>)` or a literal JSON text (string or heredoc). JSON is read as HCL,
 /// whose object syntax accepts it; `file()`, `local.*`, `var.*` and references are not literal.
-pub(super) fn json_attr(e: &Expression) -> Option<Json> {
+pub(super) fn json_attr(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<Json> {
+    if let Expression::Traversal(_) = e {
+        return json_attr(lookup(ctx?, e)?, None);
+    }
     if let Expression::FuncCall(c) = e {
         let mut args = c.args.iter();
         return match (c.name.name.as_str(), args.next(), args.next()) {
-            ("jsonencode", Some(a), None) => tree(a),
+            ("jsonencode", Some(a), None) => tree(a, ctx),
+            ("jsondecode", Some(a), None) => json_attr(a, ctx),
             _ => None,
         };
     }
     let text = literal(e).filter(|_| !matches!(e, Expression::Number(_) | Expression::Bool(_)))?;
     let body = parser::parse_body(&format!("x = {text}")).ok()?;
-    tree(attr(&body, "x")?)
+    tree(attr(&body, "x")?, None)
 }
 
-fn setting(e: &Expression) -> Option<String> {
-    match tree(e)? {
+fn setting(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<String> {
+    match tree(e, ctx)? {
         Json::Str(s) => Some(s),
         Json::Null | Json::Obj(_) => None,
         other => Some(other.compact()),
@@ -187,11 +196,16 @@ fn fields(props: &Json, prefix: &str, out: &mut Vec<SearchField>) {
 }
 
 /// Reads `mappings` into `detail.fields`; true when read.
-fn mapping(body: &Body, detail: &mut SearchIndexDetail, missed: &mut Vec<&'static str>) -> bool {
+fn mapping(
+    body: &Body,
+    ctx: Option<&ModuleCtx>,
+    detail: &mut SearchIndexDetail,
+    missed: &mut Vec<&'static str>,
+) -> bool {
     let Some(e) = attr(body, "mappings") else {
         return false;
     };
-    let Some(m) = json_attr(e) else {
+    let Some(m) = json_attr(e, ctx) else {
         missed.push("mappings");
         return false;
     };
@@ -238,9 +252,9 @@ fn flatten(prefix: &str, o: &[(String, Json)], d: &mut SearchIndexDetail) {
 /// The detail of a `template { mappings, settings }` block and the attributes not read.
 pub(super) fn read_template(body: &Body) -> (Option<SearchIndexDetail>, Vec<&'static str>) {
     let (mut detail, mut missed) = (SearchIndexDetail::default(), vec![]);
-    let mut any = mapping(body, &mut detail, &mut missed);
+    let mut any = mapping(body, None, &mut detail, &mut missed);
     if let Some(e) = attr(body, "settings") {
-        match json_attr(e) {
+        match json_attr(e, None) {
             Some(Json::Obj(o)) => {
                 any = true;
                 flatten("", &o, &mut detail);
@@ -252,12 +266,12 @@ pub(super) fn read_template(body: &Body) -> (Option<SearchIndexDetail>, Vec<&'st
 }
 
 /// The detail of an index body and the attributes that were present but not read.
-pub(super) fn read(body: &Body) -> (Option<SearchIndexDetail>, Vec<&'static str>) {
+pub(super) fn read(body: &Body, ctx: &ModuleCtx) -> (Option<SearchIndexDetail>, Vec<&'static str>) {
     let (mut detail, mut missed, mut any) = (SearchIndexDetail::default(), vec![], false);
-    any |= mapping(body, &mut detail, &mut missed);
+    any |= mapping(body, Some(ctx), &mut detail, &mut missed);
     for (key, kind) in ANALYSIS {
         let Some(e) = attr(body, key) else { continue };
-        match json_attr(e) {
+        match json_attr(e, Some(ctx)) {
             Some(Json::Obj(items)) => {
                 any = true;
                 detail
@@ -273,7 +287,7 @@ pub(super) fn read(body: &Body) -> (Option<SearchIndexDetail>, Vec<&'static str>
     }
     for key in SETTINGS {
         let Some(e) = attr(body, key) else { continue };
-        match setting(e) {
+        match setting(e, Some(ctx)) {
             Some(v) => {
                 any = true;
                 detail.settings.insert((*key).into(), v);
