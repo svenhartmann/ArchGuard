@@ -502,6 +502,29 @@ fn foreign_services_keep_short_unique_labels() {
     assert!(foreign.title.ends_with(" · adapter"));
 }
 
+#[test]
+fn a_foreign_service_shows_its_name_not_its_compose_id() {
+    let mut t = set_topo(&["infra", "adapter"]);
+    t.elasticsearch.usages = vec![use_("adapter:compose.yaml::writer", "orders", "write")];
+    let g = search_graph(&t);
+    let n = g.nodes.iter().find(|n| n.kind == "service").unwrap();
+    assert_eq!((n.label.as_str(), n.foreign), ("writer", true));
+    assert_eq!(n.projects, ["adapter"]);
+}
+
+#[test]
+fn projects_are_the_origins_and_the_service_prefix_even_with_a_separator_in_the_name() {
+    let mut t = set_topo(&["infra", "a · b"]);
+    t.elasticsearch.artifacts = vec![from(&["a · b"], index("x")), index("plain")];
+    t.elasticsearch.usages = vec![use_("a · b:compose.yaml::w", "x", "write")];
+    let g = search_graph(&t);
+    assert_eq!(node(&g, "x").1.projects, ["a · b"]);
+    assert_eq!(node(&g, "w").1.projects, ["a · b"]);
+    assert!(node(&g, "plain").1.projects.is_empty());
+    let g = search_graph(&set_topo(&["infra", "adapter"]));
+    assert_eq!(node(&g, "audit").1.projects, ["infra", "adapter"]);
+}
+
 /// Counts only, no names; the path comes from the environment (spec `## Abnahme-Probe`).
 #[test]
 #[ignore]

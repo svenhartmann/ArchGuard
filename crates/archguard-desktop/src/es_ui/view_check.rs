@@ -292,11 +292,7 @@ mod origin {
     #[test]
     fn a_foreign_service_carries_its_project_the_primary_ones_do_not() {
         let n = names(&state("infra", "adapter"));
-        // The engine's label of the service (ticket 30) behind the project.
-        assert!(
-            n.contains(&"[adapter] compose.yaml::writer".to_string()),
-            "{n:?}"
-        );
+        assert!(n.contains(&"[adapter] writer".to_string()), "{n:?}");
         assert!(
             n.contains(&"orders".to_string()) && n.contains(&"audit".to_string()),
             "{n:?}"
@@ -337,6 +333,32 @@ mod origin {
         let want = format!("⚠ [adapter] {}…", "y".repeat(19));
         assert!(n.contains(&want), "{n:?}");
         assert_eq!(want.chars().count(), 32);
+    }
+
+    #[test]
+    fn a_project_name_with_a_separator_is_shown_whole() {
+        use archguard_engine::core::{SearchArtifact, SearchIndexUsage, ServiceTopology};
+        let mut t = ServiceTopology::default();
+        t.elasticsearch.projects = vec!["infra".into(), "a · b".into()];
+        t.elasticsearch.artifacts = vec![SearchArtifact {
+            kind: "index".into(),
+            name: Some("x".into()),
+            address: "i.x".into(),
+            scope: String::new(),
+            patterns: vec![],
+            references: vec![],
+            evidence: vec![],
+            origins: vec!["a · b".into()],
+        }];
+        t.elasticsearch.usages = vec![SearchIndexUsage {
+            service: "a · b:compose.yaml::w".into(),
+            index: "x".into(),
+            access: "write".into(),
+            evidence: vec![],
+        }];
+        let n = names(&build_from(Arc::new(Ok(t))));
+        assert!(n.contains(&"[a · b] x".to_string()), "{n:?}");
+        assert!(n.contains(&"[a · b] w".to_string()), "{n:?}");
     }
 
     #[test]

@@ -20,6 +20,9 @@ pub struct SearchNode {
     pub declared: bool,
     /// Comes from a project of a set other than the primary one.
     pub foreign: bool,
+    /// Projects of a set the node comes from (an artifact's origins, a foreign service's project);
+    /// empty outside a set and for the primary project's services.
+    pub projects: Vec<String>,
 }
 
 /// `relation` is `write`, `read`, `unknown`, `reference` or `covers`.
@@ -85,6 +88,7 @@ fn node(kind: &str, label: &str, title: &str, scope: &str) -> SearchNode {
         warn: false,
         declared: true,
         foreign: false,
+        projects: Vec::new(),
     }
 }
 
