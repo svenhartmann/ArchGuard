@@ -352,7 +352,7 @@ mod tests {
 
     use archguard_engine::{ProjectSet, read_project_set, write_project_set};
 
-    use super::{Block, Dialog, file_name, relative, write};
+    use super::{Block, Dialog, file_name, folder_name, relative, write};
     use crate::documents_set::{Target, target};
 
     fn dir(root: &Path, name: &str) -> PathBuf {
@@ -459,6 +459,13 @@ mod tests {
             relative(far, Path::new("/home/me/p/a")),
             Path::new("/home/me/p/a")
         );
+    }
+
+    #[test]
+    fn a_row_leads_with_the_folder_name() {
+        assert_eq!(folder_name(Path::new("/p/deep/infra")), "infra");
+        assert_eq!(folder_name(Path::new("/p/deep/infra/")), "infra");
+        assert_eq!(folder_name(Path::new("/")), "/");
     }
 
     #[test]

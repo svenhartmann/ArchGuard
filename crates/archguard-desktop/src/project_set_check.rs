@@ -39,6 +39,16 @@ fn key(window: &MinimalSoftwareWindow, k: Key) {
     window.dispatch_event(WindowEvent::KeyReleased { text });
 }
 
+fn with_alt(window: &MinimalSoftwareWindow, f: impl Fn(&MinimalSoftwareWindow)) {
+    window.dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Alt.into(),
+    });
+    f(window);
+    window.dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Alt.into(),
+    });
+}
+
 /// One test: the platform is set once per thread.
 #[test]
 fn the_dialog_draws_closes_on_escape_and_saves_only_when_allowed() {
@@ -52,6 +62,10 @@ fn the_dialog_draws_closes_on_escape_and_saves_only_when_allowed() {
         "/p/infra".into(),
         "/p/adapter".into(),
     ])));
+    data.set_names(slint::ModelRc::new(slint::VecModel::from(vec![
+        "infra".into(),
+        "adapter".into(),
+    ])));
     data.set_reason(0);
     let (saved, closed) = (
         Rc::new(std::cell::Cell::new(0)),
@@ -61,6 +75,13 @@ fn the_dialog_draws_closes_on_escape_and_saves_only_when_allowed() {
     data.on_save(move || s.set(s.get() + 1));
     let c = closed.clone();
     data.on_close(move || c.set(c.get() + 1));
+    let log = Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let l = log.clone();
+    data.on_up(move |i| l.borrow_mut().push(format!("up {i}")));
+    let l = log.clone();
+    data.on_remove(move |i| l.borrow_mut().push(format!("remove {i}")));
+    let l = log.clone();
+    data.on_add(move || l.borrow_mut().push("add".into()));
     page.show().expect("shown");
     window.dispatch_event(WindowEvent::WindowActiveChanged(true));
 
@@ -78,6 +99,23 @@ fn the_dialog_draws_closes_on_escape_and_saves_only_when_allowed() {
 
     key(&window, Key::Return);
     assert_eq!(saved.get(), 1, "Enter in the name field saves");
+    // Tab leaves the name field for the list; its keys then work.
+    key(&window, Key::Tab);
+    key(&window, Key::DownArrow);
+    assert_eq!(data.get_selected(), 0, "Down selects the first row");
+    key(&window, Key::DownArrow);
+    key(&window, Key::DownArrow);
+    assert_eq!(data.get_selected(), 1, "Down stops at the last row");
+    key(&window, Key::UpArrow);
+    assert_eq!(data.get_selected(), 0, "Up selects the row above");
+    key(&window, Key::DownArrow);
+    with_alt(&window, |w| key(w, Key::UpArrow));
+    key(&window, Key::Delete);
+    key(&window, Key::Insert);
+    assert_eq!(*log.borrow(), ["up 1", "remove 1", "add"]);
+    key(&window, Key::Return);
+    assert_eq!(saved.get(), 2, "Enter in the list saves too");
+    saved.set(1);
     data.set_reason(2);
     key(&window, Key::Return);
     assert_eq!(saved.get(), 1, "blocked: no save");
