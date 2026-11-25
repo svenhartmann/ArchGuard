@@ -1,6 +1,20 @@
 //! The topology of a document: the one switch between a single project and a
 //! project set (ADR 0024); `tab_support::topology` caches it per document.
-//! Tests only for now.
+
+use std::path::{Path, PathBuf};
+
+use archguard_engine::core::ServiceTopology;
+use archguard_engine::{analyze_service_set, analyze_services, read_project_set};
+
+/// The topology of `root`; with a set file the combined picture of its
+/// members (ES model only, the rest is the primary project's).
+pub(super) fn read(root: &Path, set: Option<&Path>) -> Result<ServiceTopology, String> {
+    let Some(set) = set else {
+        return analyze_services(root).map_err(|e| e.to_string());
+    };
+    let members: Vec<PathBuf> = read_project_set(set).map_err(|e| e.to_string())?.projects;
+    analyze_service_set(&members).map_err(|e| e.to_string())
+}
 
 #[cfg(test)]
 mod tests {
@@ -23,7 +37,12 @@ mod tests {
         let t = read(&fixture("infra"), Some(&set_file()));
         let t = t.as_ref().expect("topology");
         assert_eq!(t.elasticsearch.projects, ["infra", "adapter"]);
-        assert!(t.elasticsearch.findings.iter().all(|f| f.kind != "undeclared_index"));
+        assert!(
+            t.elasticsearch
+                .findings
+                .iter()
+                .all(|f| f.kind != "undeclared_index")
+        );
         let audit: Vec<_> = t
             .elasticsearch
             .artifacts
@@ -46,7 +65,12 @@ mod tests {
         let t = read(&fixture("adapter"), None);
         let t = t.as_ref().expect("topology");
         assert!(t.elasticsearch.projects.is_empty());
-        assert!(t.elasticsearch.findings.iter().any(|f| f.kind == "undeclared_index"));
+        assert!(
+            t.elasticsearch
+                .findings
+                .iter()
+                .any(|f| f.kind == "undeclared_index")
+        );
     }
 
     #[test]

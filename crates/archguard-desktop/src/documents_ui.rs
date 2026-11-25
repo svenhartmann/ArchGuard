@@ -15,7 +15,8 @@ use archguard_engine::{Level, analyze_run_quiet, collect_review_sources, load_co
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::{Analysis, Loaded};
-use crate::documents::{self, DocId, Status, SubProject, with_store};
+use crate::documents::{self, DocId, Status, Store, SubProject, with_store};
+use crate::documents_set::{self, Target, target};
 use crate::graph_ui;
 use crate::panes::Layout;
 use crate::panes_ui;
@@ -94,17 +95,38 @@ pub fn index(i: i32) -> usize {
     usize::try_from(i).unwrap_or(usize::MAX)
 }
 
-/// Open `root` as the active document; analyse it if it is new.
-pub fn open(ui: &AppWindow, root: PathBuf) {
+/// Open a project folder, or a project set file, as the active document;
+/// analyse it if it is new. A set file that is not valid is a notice.
+pub fn open(ui: &AppWindow, path: PathBuf) {
     crate::settings_view_ui::flush_typing();
-    let root = root.canonicalize().unwrap_or(root);
+    let target = match target(&path) {
+        Ok(t) => t,
+        Err(e) => {
+            ui.set_notice_kind(2);
+            ui.set_notice(e.into());
+            return;
+        }
+    };
     save_view(ui);
-    let (id, new) = with_store(|s| s.open(&root));
+    let (id, new, root, entry) = with_store(|s| match target {
+        Target::Folder(root) => {
+            let (id, new) = s.open(&root);
+            (id, new, root.clone(), root)
+        }
+        Target::Set {
+            file,
+            primary,
+            name,
+        } => {
+            let (id, new) = s.open_set(&file, &primary, &name);
+            (id, new, primary, file)
+        }
+    });
     if new {
-        seed_view(id, &root);
-        spawn_analysis(ui, id, root.clone());
+        seed_view(id, &entry);
+        spawn_analysis(ui, id, root);
     }
-    settings_file::edit(|s| s.add_recent(&root));
+    settings_file::edit(|s| s.add_recent(&entry));
     record_session();
     push_recent(ui);
     refresh(ui);
@@ -124,12 +146,17 @@ fn seed_view(id: DocId, root: &Path) {
     documents::set_state(id, layout);
 }
 
+/// The open documents as the session; a set is its file.
+fn session_of(s: &Store) -> Session {
+    Session {
+        documents: s.docs().iter().map(|d| d.entry().to_path_buf()).collect(),
+        active: s.active_index().unwrap_or(0),
+    }
+}
+
 /// Store the open documents as the session.
 fn record_session() {
-    let session = with_store(|s| Session {
-        documents: s.docs().iter().map(|d| d.root.clone()).collect(),
-        active: s.active_index().unwrap_or(0),
-    });
+    let session = with_store(|s| session_of(s));
     settings_file::update(|s| s.session = Some(session));
 }
 
@@ -206,6 +233,7 @@ fn pick_folder(ui: &AppWindow) {
 /// sub-projects. Blocking: runs on a worker thread.
 fn analyze(
     root: &Path,
+    set: Option<&Path>,
     topology: &Shared<Topology>,
 ) -> Result<(Analysis, Vec<SubProject>), String> {
     let loaded = load_config(None, root).map_err(|e| e.to_string())?;
@@ -216,9 +244,12 @@ fn analyze(
     let sources = collect_review_sources(root, &run.config, named, &run.config.review.git_since)
         .unwrap_or_default();
     // Read once per document; the Services tab reuses the same slot.
-    let projects = match &*tab_support::topology(topology, root) {
-        Ok(t) => documents::build_units(t),
-        Err(_) => Vec::new(),
+    let projects = match (&*tab_support::topology(topology, root, set), set) {
+        (Ok(_), Some(set)) => archguard_engine::read_project_set(set)
+            .map(|s| documents_set::members(&s.projects))
+            .unwrap_or_default(),
+        (Ok(t), None) => documents::build_units(t),
+        (Err(_), _) => Vec::new(),
     };
     let analysis = Analysis {
         root: root.to_path_buf(),
@@ -281,7 +312,8 @@ fn spawn_analysis(ui: &AppWindow, id: DocId, root: PathBuf) {
     let weak = ui.as_weak();
     let name = "desktop: analyze project";
     let at = root.clone();
-    let work = tab_support::traced(&at, name, move || analyze(&root, &topology));
+    let set = documents_set::active_set_of(id);
+    let work = tab_support::traced(&at, name, move || analyze(&root, set.as_deref(), &topology));
     std::thread::spawn(move || {
         // Taken first, so edits during the analysis count as changes.
         let baseline = reanalyze_ui::fingerprint(&at);
@@ -322,7 +354,7 @@ fn finished(ui: &AppWindow, id: DocId, run: u64, (result, baseline): Landing) {
 /// settings; `display` and `explorer_tab` are those of the Graph the view
 /// bar shows (each Graph tab keeps its own, see `pane_store`).
 pub fn save_view(_ui: &AppWindow) {
-    let Some(root) = with_store(|s| s.active().map(|d| d.root.clone())) else {
+    let Some(root) = with_store(|s| s.active().map(|d| d.entry().to_path_buf())) else {
         return;
     };
     let layout = panes_ui::layout();
@@ -469,7 +501,11 @@ mod tests {
         assert_eq!(target(&infra), Ok(Target::Folder(infra.clone())));
         assert_eq!(
             target(&set),
-            Ok(Target::Set { file: set, primary: infra, name: "search".into() })
+            Ok(Target::Set {
+                file: set,
+                primary: infra,
+                name: "search".into()
+            })
         );
     }
 
@@ -491,7 +527,10 @@ mod tests {
         let (_, projects) = analyze(&infra, Some(&set), &Shared::new()).expect("analysis");
         let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["infra", "adapter"]);
-        assert_eq!(documents::project_root(&infra, &projects[1]), fixture("adapter"));
+        assert_eq!(
+            documents::project_root(&infra, &projects[1]),
+            fixture("adapter")
+        );
     }
 
     #[test]

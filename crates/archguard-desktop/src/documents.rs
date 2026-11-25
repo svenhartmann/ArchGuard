@@ -78,6 +78,9 @@ pub struct Document {
     pub status: Status,
     pub analysis: Option<Arc<Analysis>>,
     pub projects: Vec<SubProject>,
+    /// The project set file when this document opens a set; `root` is then
+    /// its primary project.
+    pub set: Option<PathBuf>,
     states: HashMap<TypeId, Rc<dyn Any>>,
     /// Counts [`Document::forget_derived`]: a worker's result for an older
     /// analysis is dropped ([`generation`]).
@@ -104,11 +107,17 @@ impl Document {
             status: Status::Loading,
             analysis: None,
             projects: Vec::new(),
+            set: None,
             states: HashMap::new(),
             generation: 0,
             unsaved: Vec::new(),
             save_hooks: HashMap::new(),
         }
+    }
+
+    /// What opens this document again: the set file, else the folder.
+    pub fn entry(&self) -> &Path {
+        self.set.as_deref().unwrap_or(&self.root)
     }
 
     fn cell<T: 'static>(&self) -> Option<Rc<dyn Any>> {
@@ -159,14 +168,36 @@ impl Store {
     /// Open `root` as a new active document, or activate the document that
     /// already shows it. Returns its id and whether it is new.
     pub fn open(&mut self, root: &Path) -> (DocId, bool) {
-        if let Some(i) = self.docs.iter().position(|d| d.root == root) {
+        if let Some(i) = self
+            .docs
+            .iter()
+            .position(|d| d.root == root && d.set.is_none())
+        {
             self.active = Some(i);
             return (self.docs[i].id, false);
         }
+        self.open_new(root)
+    }
+
+    fn open_new(&mut self, root: &Path) -> (DocId, bool) {
         self.next += 1;
         self.docs.push(Document::new(self.next, root.to_path_buf()));
         self.active = Some(self.docs.len() - 1);
         (self.next, true)
+    }
+
+    /// As [`Store::open`] for the project set in file `set` with primary
+    /// project `primary`, shown as `name`.
+    pub fn open_set(&mut self, set: &Path, primary: &Path, name: &str) -> (DocId, bool) {
+        if let Some(i) = self.docs.iter().position(|d| d.set.as_deref() == Some(set)) {
+            self.active = Some(i);
+            return (self.docs[i].id, false);
+        }
+        let (id, _) = self.open_new(primary);
+        let doc = &mut self.docs[self.active.expect("just opened")];
+        doc.set = Some(set.to_path_buf());
+        doc.name = name.to_string();
+        (id, true)
     }
 
     /// Activate the document at tab `index`; false if there is none.
@@ -791,7 +822,10 @@ mod tests {
         let (id, new) = s.open_set(&set, &infra, "search");
         assert!(new);
         let d = s.get(id).expect("document");
-        assert_eq!((d.root.as_path(), d.name.as_str()), (infra.as_path(), "search"));
+        assert_eq!(
+            (d.root.as_path(), d.name.as_str()),
+            (infra.as_path(), "search")
+        );
         assert_eq!(d.set.as_deref(), Some(set.as_path()));
         assert_eq!(d.entry(), set.as_path());
     }

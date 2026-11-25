@@ -183,10 +183,11 @@ impl TabState for ServicesState {
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
         let (root, slot) = (data.root.to_path_buf(), Shared::<Topology>::active());
+        let set = crate::documents_set::active_set();
         let analysis = documents::with_store(|s| s.active()?.analysis.clone());
         let calls = Calls::of(data);
         move || {
-            let topology = tab_support::topology(&slot, &root);
+            let topology = tab_support::topology(&slot, &root, set.as_deref());
             let run = analysis
                 .as_ref()
                 .map(|a| (root.as_path(), &a.run, calls.get()));
