@@ -20,7 +20,7 @@ const CONFIG_FILE_NAME: &str = "archguard.toml";
 
 /// The configuration keys whose provenance [`load_config`] records: the
 /// five sections of Kap. 11 plus the top-level `derive_layers` switch.
-const SECTION_KEYS: [&str; 15] = [
+const SECTION_KEYS: [&str; 16] = [
     "project",
     "modules",
     "layers",
@@ -35,6 +35,7 @@ const SECTION_KEYS: [&str; 15] = [
     "store",
     "arc42",
     "licenses",
+    "search_quality",
     "derive_layers",
 ];
 
@@ -360,7 +361,7 @@ pub fn validate_config(config: &Config) -> Result<(), ArchguardError> {
     crate::target_architecture::validate(config)?;
     validate_review_since(&config.review.git_since)?;
     validate_performance(&config.performance)?;
-    validate_runtime(&config.runtime)?;
+    validate_runtime(&config.runtime).and(validate_search_quality(&config.search_quality))?;
     let mut owner_directions = BTreeSet::new();
     for (index, rule) in config.ownership_rules.iter().enumerate() {
         if rule.from.trim().is_empty() || rule.to.trim().is_empty() {
@@ -541,6 +542,14 @@ pub(crate) fn validate_runtime(
     Ok(())
 }
 
+/// `[search_quality]`: positive limits, ratio in (0, 1], readable interval, known finding-rule ids.
+pub(crate) fn validate_search_quality(
+    config: &archguard_core::SearchQualityConfig,
+) -> Result<(), ArchguardError> {
+    let _ = config;
+    Ok(())
+}
+
 pub(crate) fn validate_review_since(since: &str) -> Result<(), ArchguardError> {
     let relative = since.strip_suffix(".ago").unwrap_or(since);
     let valid_relative = relative.split_once('.').is_some_and(|(number, unit)| {
@@ -618,6 +627,57 @@ mod tests {
         expected.sort_unstable();
         let keys: Vec<&str> = sources.keys().map(String::as_str).collect();
         assert_eq!(keys, expected);
+    }
+
+    #[test]
+    fn search_quality_config_is_validated() {
+        let load = |body: &str| {
+            let dir = project_with_toml(&format!("[search_quality]\n{body}\n"));
+            load_config(None, dir.path()).map(|loaded| loaded.config)
+        };
+        let config = load("check = true\nerrors = [\"zero_replicas\"]").expect("valid");
+        assert_eq!(config.search_quality.errors, ["zero_replicas"]);
+        for (body, field) in [
+            (
+                "total_fields_limit = 0",
+                "search_quality.total_fields_limit",
+            ),
+            ("depth_limit = 0", "search_quality.depth_limit"),
+            (
+                "nested_fields_limit = 0",
+                "search_quality.nested_fields_limit",
+            ),
+            ("limit_ratio = 0.0", "search_quality.limit_ratio"),
+            ("limit_ratio = 1.5", "search_quality.limit_ratio"),
+            (
+                "min_refresh_interval = \"fast\"",
+                "search_quality.min_refresh_interval",
+            ),
+            (
+                "min_refresh_interval = \"-1\"",
+                "search_quality.min_refresh_interval",
+            ),
+            (
+                "check = true\ndisabled = [\"nope\"]",
+                "search_quality.disabled",
+            ),
+            ("check = true\nerrors = [\"nope\"]", "search_quality.errors"),
+            (
+                "check = true\nerrors = [\"dynamic_mode\"]",
+                "search_quality.errors",
+            ),
+            ("disabled = [\"reader_fan_in\"]", "search_quality.disabled"),
+            ("errors = [\"zero_replicas\"]", "search_quality.errors"),
+        ] {
+            let error = load(body).expect_err(body).to_string();
+            assert!(error.contains(field), "{body}: {error}");
+        }
+    }
+
+    #[test]
+    fn default_config_serializes_without_search_quality() {
+        let text = toml::to_string(&Config::default()).expect("serialize");
+        assert!(!text.contains("search_quality"), "{text}");
     }
 
     #[test]

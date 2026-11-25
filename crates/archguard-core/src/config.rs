@@ -12,6 +12,7 @@ use crate::performance::PerformanceConfig;
 use crate::review::ReviewConfig;
 use crate::rules::{DependencyRule, OwnershipRule};
 use crate::runtime::RuntimeConfig;
+use crate::search_quality::SearchQualityConfig;
 use crate::settings::{LayerConfig, ModulesConfig, ProjectConfig, RulesConfig, StoreConfig};
 
 // ------------------------------------------------------- configuration (Kap. 11)
@@ -48,6 +49,13 @@ pub struct Config {
     /// `[views]`: conventions `check` enforces on the UI-flow and domain
     /// views (ADR 0021 and 0022, decision 6); none by default.
     pub views: ViewsConfig,
+    /// `[search_quality]`: Elasticsearch definition checks; absent = defaults, not serialized.
+    #[serde(skip_serializing_if = "is_default_search_quality")]
+    pub search_quality: SearchQualityConfig,
+}
+
+fn is_default_search_quality(value: &SearchQualityConfig) -> bool {
+    *value == SearchQualityConfig::default()
 }
 
 impl Default for Config {
@@ -69,6 +77,7 @@ impl Default for Config {
             arc42: Arc42Config::default(),
             licenses: LicensesConfig::default(),
             views: ViewsConfig::default(),
+            search_quality: SearchQualityConfig::default(),
         }
     }
 }
