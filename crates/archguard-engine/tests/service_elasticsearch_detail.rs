@@ -237,3 +237,66 @@ fn ilm_reference_is_an_edge_to_a_ghost_without_finding() {
             .any(|e| e.to == ghost && e.relation == "reference")
     );
 }
+
+fn locals() -> ServiceTopology {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/es-index-detail/locals/terraform");
+    analyze_services(&root).unwrap()
+}
+
+fn setting(a: &SearchArtifact, key: &str) -> Option<String> {
+    a.detail.as_ref()?.settings.get(key).cloned()
+}
+
+#[test]
+fn locals_and_sibling_resources_of_one_module_instance_are_read() {
+    let r = locals();
+    let a = art(&r, "index", "via-body");
+    assert_eq!(fields(a), ["a:keyword"]);
+    assert_eq!(setting(a, "number_of_shards").as_deref(), Some("3"));
+    assert_eq!(fields(art(&r, "index", "text-local")), ["b:text"]);
+    assert_eq!(fields(art(&r, "index", "decoded")), ["b:text"]);
+    let b = art(&r, "index", "second");
+    assert_eq!(setting(b, "refresh_interval").as_deref(), Some("7s"));
+    assert_eq!(b.detail.as_ref().unwrap().analysis[0].name, "a1");
+    // the child module reads its own local
+    assert_eq!(fields(art(&r, "index", "inner")), ["c:date"]);
+}
+
+#[test]
+fn unresolvable_references_are_one_gap_with_the_attribute_names() {
+    let r = locals();
+    let gaps: Vec<_> = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("not read:"))
+        .map(|d| d.message.as_str())
+        .collect();
+    for (address, attr) in [
+        ("second_level", "mappings"),
+        ("each", "mappings"),
+        ("other_module", "refresh_interval"),
+        ("lookalike", "mappings"),
+    ] {
+        let hits: Vec<_> = gaps.iter().filter(|m| m.contains(address)).collect();
+        assert_eq!(hits.len(), 1, "{address}: {gaps:#?}");
+        assert!(hits[0].contains(attr), "{address}: {}", hits[0]);
+    }
+    assert_eq!(gaps.len(), 4, "{gaps:#?}");
+}
+
+#[test]
+fn names_still_do_not_read_locals() {
+    let r = locals();
+    assert!(
+        r.elasticsearch
+            .artifacts
+            .iter()
+            .all(|a| a.name.as_deref() != Some("named"))
+    );
+    assert!(
+        r.diagnostics
+            .iter()
+            .any(|d| d.message.contains("name_local"))
+    );
+}
