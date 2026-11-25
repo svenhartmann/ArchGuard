@@ -72,7 +72,8 @@ pub fn search_artifact_covers(a: &SearchArtifact, index: &str) -> bool {
 }
 
 /// The Elasticsearch reader gaps: the only way to create such a diagnostic is [`es_gap`], the
-/// only way to recognize one is [`is_elasticsearch_gap`]. One list defines the variants, `ALL`
+/// only ways to recognize one are [`is_elasticsearch_gap`] and, for the detail gap of one
+/// resource, [`is_detail_gap`]. One list defines the variants, `ALL`
 /// and their texts, so a variant cannot exist without being recognized.
 macro_rules! es_gaps {
     ($($(#[$m:meta])* $name:ident => $text:expr,)+) => {
