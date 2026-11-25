@@ -398,16 +398,16 @@ fn suffix(name_len: usize, floor: usize, parts: &[(&str, &str, String)]) -> Stri
     parts.iter().zip(lens).map(|(p, n)| cut(p, n)).collect()
 }
 
+/// A scope as the graph labels show it: the root path without the `terraform:` prefix.
+pub fn short_scope(scope: &str) -> &str {
+    scope.strip_prefix("terraform:").unwrap_or(scope)
+}
+
 /// Labels unique per graph and within `MAX_LABEL`: equal labels of different roots get
 /// ` (<folder tail>)`, of different module instances in one root ` · <instance>`, of different
 /// kinds in one instance ` [<kind>]` (the name is cut, never the suffix); `#<n>` is the last resort.
 fn relabel(nodes: &mut [SearchNode], artifacts: &[SearchArtifact]) {
-    let scope_of = |n: &SearchNode| {
-        n.scope
-            .strip_prefix("terraform:")
-            .unwrap_or(&n.scope)
-            .to_string()
-    };
+    let scope_of = |n: &SearchNode| short_scope(&n.scope).to_string();
     let instance = |n: &SearchNode| {
         n.artifact
             .map_or(String::new(), |i| instance_of(&artifacts[i].address))

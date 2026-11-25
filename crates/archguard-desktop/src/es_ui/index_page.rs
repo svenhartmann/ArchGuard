@@ -3,7 +3,7 @@
 //! `search_artifact_covers`.
 
 use archguard_engine::core::{SearchArtifact, SearchIndexDetail, ServiceTopology};
-use archguard_engine::{SearchNode, is_detail_gap, search_artifact_covers};
+use archguard_engine::{SearchNode, is_detail_gap, search_artifact_covers, short_scope};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct IndexPage {
@@ -105,7 +105,7 @@ pub fn index_page(t: &ServiceTopology, node: &SearchNode) -> IndexPage {
     let mut page = IndexPage {
         overview: Overview {
             declaration: a.evidence.first().map(|e| (e.file.clone(), e.line)),
-            scope: a.scope.clone(),
+            scope: short_scope(&a.scope).to_string(),
             address: a.address.clone(),
             origins: a.origins.clone(),
         },

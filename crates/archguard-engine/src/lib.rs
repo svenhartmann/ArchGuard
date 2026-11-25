@@ -235,7 +235,7 @@ pub use security::{
 pub use semantic_calls::{analyze_calls, semantic_fingerprints};
 pub use services::{
     SearchEdge, SearchGraph, SearchNode, is_detail_gap, is_elasticsearch_gap,
-    search_artifact_covers, search_graph,
+    search_artifact_covers, search_graph, short_scope,
 };
 pub use services::{analyze_service_set, analyze_services};
 pub use share_report::share_report;

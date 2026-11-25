@@ -62,10 +62,22 @@ export component EsIndexPage inherits Rectangle {
             if root.page.problem != "": Text { text: root.page.problem; color: Theme.danger; font-size: Theme.font-small; wrap: word-wrap; }
 
             SectionHeading { label: @tr("Overview"); }
-            if root.page.declaration != "": Mono { text: root.page.declaration; }
-            if root.page.declaration == "": Note { text: @tr("Not declared in this project."); }
-            if root.page.scope != "": Mono { text: root.page.scope; }
-            Mono { text: root.page.address; }
+            HorizontalLayout {
+                spacing: 8px;
+                Note { text: @tr("Declaration"); width: 110px; }
+                if root.page.declaration != "": Mono { text: root.page.declaration; horizontal-stretch: 1; }
+                if root.page.declaration == "": Note { text: @tr("Not declared in this project."); horizontal-stretch: 1; }
+            }
+            if root.page.scope != "": HorizontalLayout {
+                spacing: 8px;
+                Note { text: @tr("Settings" => "Scope"); width: 110px; }
+                Mono { text: root.page.scope; horizontal-stretch: 1; }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Note { text: @tr("Address"); width: 110px; }
+                Mono { text: root.page.address; horizontal-stretch: 1; }
+            }
             if root.page.origins != "": Note { text: @tr("Projects: {}", root.page.origins); }
 
             SectionHeading { label: @tr("Mapping"); }
@@ -73,20 +85,25 @@ export component EsIndexPage inherits Rectangle {
             if root.page.note == 2: Note { text: @tr("Not declared in this project."); }
             if root.page.mapping.length > 0: HorizontalLayout {
                 spacing: 8px;
-                Note { text: @tr("Field"); horizontal-stretch: 1; }
-                Note { text: @tr("Type"); width: 80px; }
-                Note { text: @tr("Analyzer"); width: 140px; }
+                Note { text: @tr("Field"); width: 320px; }
+                Note { text: @tr("Type"); width: 90px; }
+                Note { text: @tr("Analyzer"); horizontal-stretch: 1; }
             }
+            if root.page.mapping.length == 0 && root.page.note == 0: Note { text: @tr("none"); }
             for f in root.page.mapping: HorizontalLayout {
                 spacing: 8px;
-                Rectangle { width: f.depth * 14px; }
-                if f.parent: Heading { text: f.name; horizontal-stretch: 1; }
-                if !f.parent: Mono { text: f.name; horizontal-stretch: 1; }
-                Mono { text: f.kind; width: 80px; }
-                Mono { text: f.analyzers; width: 140px; }
+                HorizontalLayout {
+                    width: 320px;
+                    Rectangle { width: f.depth * 14px; }
+                    if f.parent: Heading { text: f.name; horizontal-stretch: 1; }
+                    if !f.parent: Mono { text: f.name; horizontal-stretch: 1; }
+                }
+                Mono { text: f.kind; width: 90px; }
+                Mono { text: f.analyzers; horizontal-stretch: 1; }
             }
 
             SectionHeading { label: @tr("Settings" => "Settings"); }
+            if root.page.settings.length == 0 && root.page.analysis.length == 0 && root.page.note == 0: Note { text: @tr("none"); }
             for s in root.page.settings: HorizontalLayout {
                 spacing: 8px;
                 Mono { text: s.key; width: 180px; }
@@ -99,6 +116,7 @@ export component EsIndexPage inherits Rectangle {
             }
 
             SectionHeading { label: @tr("Settings" => "Links"); }
+            if root.page.links.length == 0: Note { text: @tr("none"); }
             for l in root.page.links: HorizontalLayout {
                 spacing: 8px;
                 Mono { text: l.key; width: 140px; }
@@ -106,6 +124,7 @@ export component EsIndexPage inherits Rectangle {
             }
 
             SectionHeading { label: @tr("Usage in code"); }
+            if root.page.usages.length == 0: Note { text: @tr("none"); }
             for u in root.page.usages: Text {
                 text: u.text;
                 color: u.clickable ? (touch.has-hover ? Theme.accent.darker(0.2) : Theme.accent) : Theme.muted;
