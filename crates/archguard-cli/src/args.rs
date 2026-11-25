@@ -403,8 +403,12 @@ pub(crate) enum Command {
     },
     /// Discover monorepo projects, applications and Compose HTTP/startup dependency cycles.
     Services {
+        /// Project folders; several merge their Elasticsearch model (default: current directory).
         #[arg(value_name = "PFAD")]
-        path: Option<PathBuf>,
+        paths: Vec<PathBuf>,
+        /// Project set file (.archguard-set.toml) instead of PFAD arguments.
+        #[arg(long, value_name = "DATEI", conflicts_with = "paths")]
+        set: Option<PathBuf>,
         /// Exit 1 for configured HTTP cycles; startup cycles are reported separately.
         #[arg(long)]
         fail_on_found: bool,
@@ -808,7 +812,6 @@ impl Command {
             | Command::Architecture { path, .. }
             | Command::Patterns { path, .. }
             | Command::Evaluate { path, .. }
-            | Command::Services { path, .. }
             | Command::Runtime { path }
             | Command::Domain { path, .. }
             | Command::Workspace { path, .. }
@@ -833,6 +836,7 @@ impl Command {
                 DbAction::Query { .. } => None,
             },
             Command::AccessLayers { path, .. } => path.as_deref(),
+            Command::Services { paths, .. } => paths.first().map(PathBuf::as_path),
             Command::UiFlow { path, action, .. } => action
                 .as_ref()
                 .map_or(path.as_deref(), |action| action.path()),

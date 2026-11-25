@@ -174,3 +174,60 @@ are code, but no analyzer measures them.
   (table entry in the code reader). An `alias` block of an index whose own name
   is unknown is still an alias artifact, with no target; Java operation objects
   made by a factory (`XOperation.of(...)`) are objects, not index names.
+- **2026-11-24:** Several projects can be merged into one Elasticsearch map; see [ADR 0024](0024-project-sets.md).
+- **2026-11-25:** Mapping/Settings im Scope (R12). `SearchArtifact.detail:
+  Option<SearchIndexDetail>` (skipped when `None`) carries `fields` (dotted
+  path, parents before children, multi-fields as `a.raw`, an object without
+  `type` is `object`; `kind`, `analyzer`, `search_analyzer`, `normalizer`),
+  `settings` (keys without the `index.` prefix, values as written) and
+  `analysis` (`kind`, `name`, compact JSON `definition`); empty lists and maps
+  are skipped. A project-set merge keeps the first project's detail. Reading is
+  all or nothing per attribute (mapping, settings, analysis): only a
+  non-literal attribute is not read, the others are read, and one gap
+  `DetailNotLiteral` per resource names the attributes that were not read.
+  `file()` is allowed only for a canonical path under the project root and at
+  most 1 MiB, otherwise a gap; it is not built (YAGNI), this is the limit for
+  later.
+  MCP `service_topology` drops `detail` (4 KiB pages; the mapping is desktop
+  content); CLI text is unchanged and CLI JSON carries `detail`.
+- **2026-11-25:** Templates, ILM and watches (ticket 38). The `template {}`
+  block of `index_template` and `component_template` carries `detail` like an
+  index: `mappings` as before, `settings` (JSON) flattened to dotted keys
+  without `index.`; `analysis` inside it becomes analysis entries. The
+  deprecated `settings { setting { name value } }` block of an index is read
+  into `settings` as well. The setting `lifecycle.name` is the reference
+  `ilm_policy` (graph: edge, a ghost policy carries no warning). A watch gives
+  the references `index` from a literal `input.search.request.indices`; entries
+  with `*` become the watch's `patterns`. A non-literal `input` is one
+  `DetailNotLiteral` gap; other inputs (`http`) and `indices` elsewhere (e.g.
+  in `actions`) give nothing.
+- **2026-11-25:** Locals and sibling indices (ticket 39). Index `mappings`,
+  settings and `analysis_*` are also read through `local.<name>[.<key>]` and
+  `elasticstack_elasticsearch_index.<r>.<attr>` of the same module instance,
+  one level: the found value must itself be literal (a local that uses another
+  local, `var.`, `each` or a function other than `jsonencode`/`jsondecode` of a
+  literal stays a gap; so does a resource or local of another module). Names,
+  aliases and pipelines still do not read locals. See
+  [ADR 0015](0015-terraform-deployment-evidence.md).
+- **2026-11-25:** Chains and `merge`/`concat` (ticket 45, after probe 44). The
+  lookup above follows references through up to two further hops (index,
+  local or sibling, local or sibling: depth 3; a fourth link is a gap), with a
+  visited set so a cycle is a gap and never loops. `merge()` of literal objects
+  (shallow, the rightmost value wins) and `concat()` of literal lists are
+  evaluated; one non-literal argument keeps the whole attribute unread. `var.*`,
+  conditionals, `each.*`, `file()` and other modules still give a gap.
+- **2026-11-25:** `for` and access (ticket 45, after the user decision "nach 45
+  r1"). `for` expressions over literal lists and maps (also with an `if`
+  filter using `==`, `!=`, `&&`, `||`, `!`) and attribute or index access
+  (`.a`, `["k"]`, `[0]`, `jsondecode(...).a`) on resolved literal values are
+  evaluated. A non-literal collection (`var.*`, `each.*`), grouping (`...`),
+  duplicate keys and more than 10 000 iterated elements per attribute remain
+  gaps. Depth and cycle protection apply. Templates (`"${k}_raw"`) are
+  literal when every interpolation is a resolved string or number (also `for`
+  variables and locals); `var.*`, `each.*` and `%{ }` directives stay gaps.
+- **2026-11-25:** Key order (ticket 45). A `jsonencode(<literal>)` nested in a
+  value or reached through a `local.*` reference is evaluated as the text
+  Terraform sends: object keys sorted (byte order) at every level, so fields
+  read through it appear sorted, parents before children. A `jsonencode`
+  written directly in the index attribute and all other paths keep the written
+  order.

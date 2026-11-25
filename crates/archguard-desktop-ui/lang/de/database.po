@@ -1,0 +1,23 @@
+msgid "No datastores in this project."
+msgstr "Keine Datastores in diesem Projekt."
+
+msgid "Datastore"
+msgstr "Datastore"
+
+msgid "Address"
+msgstr "Adresse"
+
+msgid "Database name"
+msgstr "Datenbankname"
+
+msgid "Tables without datastore"
+msgstr "Tabellen ohne Datastore"
+
+msgid "table {}: {}"
+msgstr "Tabelle {}: {}"
+
+msgid "database {}: {}"
+msgstr "Datenbank {}: {}"
+
+msgid "same server: {}"
+msgstr "gleicher Server: {}"

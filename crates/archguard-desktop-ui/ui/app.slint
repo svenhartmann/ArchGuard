@@ -11,6 +11,9 @@ import { StartView, StartData } from "start_view.slint";
 import { ArchitectureView, ArchitectureData, RichData } from "architecture_view.slint";
 import { CallsView, CallsData } from "calls_view.slint";
 import { ServicesView, ServicesData } from "services_view.slint";
+import { EsKind, EsModel, ElasticsearchData } from "es_view.slint";
+import { EsPage, EsMapRow, EsPair, EsUse } from "es_index_page.slint";
+import { DbView, DbEngine, DbRow, DbModel, DatabaseData } from "db_view.slint";
 import { RuntimeView, RuntimeData } from "runtime_view.slint";
 import { QualityView, QualityData } from "quality_view.slint";
 import { SecurityView, SecurityData } from "security_view.slint";
@@ -23,6 +26,7 @@ import { SaveDialog, NoticeBar } from "shell_dialog.slint";
 import { ReviewDecisionsDialog, ReviewDecisionsData, DecisionRow } from "review_decisions.slint";
 import { CompareView, CompareData, CompareRow, CompareRelation, CompareCounts } from "compare_view.slint";
 import { CompareDialog } from "compare_dialog.slint";
+import { ProjectSetDialog, ProjectSetData } from "project_set_dialog.slint";
 import { HelpDialog, HelpData, HelpBlock } from "help_dialog.slint";
 import { UpdateNotice, UpdateBar } from "update_notice.slint";
 import { PaneItem, TabItem, PaneStrip, ViewBarTab, Views } from "panes.slint";
@@ -34,6 +38,7 @@ export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowI
 export { GraphData, Crumb, Hit, CycleItem, Neighbor, MatrixData, FileData, NodeDep }
 // Per-tab data globals, set from src/<tab>_ui.rs.
 export { RichData }
+export { ElasticsearchData, EsKind, EsModel, EsPage, EsMapRow, EsPair, EsUse, DatabaseData, DbEngine, DbRow, DbModel }
 export { StartData, ArchitectureData, CallsData, ServicesData, RuntimeData, QualityData, SecurityData, ScreensData, ScreensNote, DomainData, AccessData }
 export { SettingsData, SettingsEdit, SettingsModel }
 // Templates for text the Rust side composes (`tab_support::Texts`).
@@ -48,6 +53,8 @@ export { UpdateNotice }
 export { ReviewDecisionsData, DecisionRow }
 // File → Compare architecture… (src/compare_ui.rs).
 export { CompareData, CompareRow, CompareRelation, CompareCounts }
+// File → Compose projects… and Open project set… (src/project_set_ui.rs).
+export { ProjectSetData }
 export { HelpData, HelpBlock }
 // The Graph panels' widths (src/graph_panels_ui.rs).
 export { GraphPanels } from "graph_panels.slint";
@@ -84,7 +91,7 @@ export component AppWindow inherits Window {
     // App shell: menu, recent projects, settings, the save prompt
     // (src/shell_ui.rs).
     in property <[RecentItem]> recent;
-    // Shown until dismissed; notice-kind 1: settings unreadable, 2: save failed.
+    // Shown until dismissed; notice-kind 1: settings unreadable, 2: save failed, 16: open failed.
     in-out property <string> notice;
     in property <int> notice-kind;
     in property <bool> prompt-open;
@@ -238,6 +245,7 @@ export component AppWindow inherits Window {
         if root.notice-kind == 13 { return @tr("Not analyzed again: the Graph has simulated changes. Clear them first."); }
         if root.notice-kind == 14 { return @tr("Not analyzed again: save or discard the unsaved changes first ({}).", root.notice); }
         if root.notice-kind == 15 { return @tr("Analyzing again; the views update when it is done."); }
+        if root.notice-kind == 16 { return @tr("Could not open: {}", root.notice); }
         return @tr("Could not save the changes: {}", root.notice);
     }
 
@@ -250,6 +258,7 @@ export component AppWindow inherits Window {
         if view == "domain" && DomainData.model.state == 1 && DomainData.model.cards.length == 0 && DomainData.model.boxes.length == 0 { return @tr("No entities found."); }
         if view == "services" && (ServicesData.model.state >= 2 || (ServicesData.model.state == 1
                 && ServicesData.model.services + ServicesData.model.applications + ServicesData.model.containers == 0)) { return @tr("No services found in this project."); }
+        if view == "database" && DatabaseData.model.state == 1 && DatabaseData.model.engines.length == 0 { return @tr("No datastores in this project."); }
         return "";
     }
 
@@ -284,6 +293,10 @@ export component AppWindow inherits Window {
                 shortcut: @keys(Control + O);
                 activated => { root.add-doc(); }
             }
+            MenuItem {
+                title: @tr("Open project set…");
+                activated => { ProjectSetData.open-set(); }
+            }
             Menu {
                 title: @tr("Open recent");
                 for r[i] in root.recent: MenuItem {
@@ -307,6 +320,10 @@ export component AppWindow inherits Window {
                 title: @tr("Compare architecture…");
                 enabled: root.has-doc;
                 activated => { CompareData.show(); }
+            }
+            MenuItem {
+                title: @tr("Compose projects…");
+                activated => { ProjectSetData.show(); }
             }
             MenuSeparator { }
             Menu {
@@ -402,7 +419,7 @@ export component AppWindow inherits Window {
             }
             Menu {
                 title: @tr("Open in new tab");
-                for v in ["start", "architecture", "graph", "dsm", "calls", "services", "runtime", "screens", "access", "domain", "quality", "security"]: MenuItem {
+                for v in ["start", "architecture", "graph", "dsm", "calls", "services", "database", "runtime", "screens", "access", "domain", "quality", "security"]: MenuItem {
                     title: Views.label(v);
                     enabled: root.ready;
                     activated => { root.open-view-tab(v); }
@@ -548,7 +565,7 @@ export component AppWindow inherits Window {
                 m-count := Button { compact: true; icon: Icons.package; text: Fmt.int(root.sub-projects.length); }
                 m-labels := Text {
                     text: Views.label("start") + Views.label("architecture") + Views.label("graph") + Views.label("dsm") + Views.label("calls")
-                        + Views.label("services") + Views.label("runtime") + Views.label("screens") + Views.label("access") + Views.label("domain") + Views.label("quality") + Views.label("security");
+                        + Views.label("services") + Views.label("database") + Views.label("runtime") + Views.label("screens") + Views.label("access") + Views.label("domain") + Views.label("quality") + Views.label("security");
                     font-size: Theme.font-body;
                     font-weight: Theme.weight-strong;
                 }
@@ -608,6 +625,7 @@ export component AppWindow inherits Window {
                         ViewBarTab { pad: header.tab-pad; view: "dsm"; active: root.tab == "dsm"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "calls"; active: root.tab == "calls"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "services"; active: root.tab == "services"; empty-reason: root.empty-reason("services"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
+                        ViewBarTab { pad: header.tab-pad; view: "database"; active: root.tab == "database"; empty-reason: root.empty-reason("database"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "runtime"; active: root.tab == "runtime"; empty-reason: root.empty-reason("runtime"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "screens"; active: root.tab == "screens"; empty-reason: root.empty-reason("screens"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { pad: header.tab-pad; view: "access"; active: root.tab == "access"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
@@ -824,6 +842,9 @@ export component AppWindow inherits Window {
                     if p.view == "services": ServicesView {
                         vertical-stretch: 1;
                     }
+                    if p.view == "database": DbView {
+                        vertical-stretch: 1;
+                    }
                     if p.view == "runtime": RuntimeView {
                         vertical-stretch: 1;
                     }
@@ -911,6 +932,7 @@ export component AppWindow inherits Window {
 
     if ReviewDecisionsData.open: ReviewDecisionsDialog { }
     if CompareData.dialog: CompareDialog { }
+    if ProjectSetData.dialog: ProjectSetDialog { }
     if HelpData.open: HelpDialog { }
 
     // Tooltips above everything else, menus and the save prompt included.

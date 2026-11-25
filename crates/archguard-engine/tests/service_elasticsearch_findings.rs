@@ -1,5 +1,9 @@
 //! Findings of the Elasticsearch map (ADR 0023, items 8 and 9).
-use archguard_engine::{analyze_services, core::ServiceTopology, is_elasticsearch_gap};
+use archguard_engine::{
+    analyze_services,
+    core::{SearchArtifact, ServiceTopology},
+    is_elasticsearch_gap, search_artifact_covers,
+};
 use std::{fs, path::Path};
 
 fn put(root: &Path, path: &str, text: &str) {
@@ -256,4 +260,23 @@ fn gap_check_splits_elasticsearch_from_compose_diagnostics() {
     assert!(es.diagnostics.iter().any(is_elasticsearch_gap));
     let compose = analyze_services(&fixtures.join("compose-services")).unwrap();
     assert!(!compose.diagnostics.iter().any(is_elasticsearch_gap));
+}
+
+#[test]
+fn artifact_covers_comma_lists_like_the_findings_logic() {
+    let art = |name: &str| SearchArtifact {
+        kind: "index".into(),
+        name: Some(name.into()),
+        address: String::new(),
+        scope: String::new(),
+        patterns: vec![],
+        references: vec![],
+        evidence: vec![],
+        origins: vec![],
+        detail: None,
+    };
+    assert!(search_artifact_covers(&art("a"), "a,b"));
+    assert!(search_artifact_covers(&art("b"), "a, b"));
+    assert!(search_artifact_covers(&art("a"), "a,-b"));
+    assert!(!search_artifact_covers(&art("b"), "a,-b"));
 }

@@ -18,7 +18,7 @@ use crate::ui::{
 pub const PAGE: usize = 20;
 
 /// The kinds in the documentation order of `SearchArtifact`; unknown kinds follow.
-const KINDS: [&str; 14] = [
+pub(crate) const KINDS: [&str; 14] = [
     "index",
     "alias",
     "index_template",
@@ -105,7 +105,7 @@ impl Search {
                 let a = &es.artifacts[i];
                 SvcSearchRow {
                     index: i as i32,
-                    title: a.name.as_deref().unwrap_or(&a.address).into(),
+                    title: super::search_origin::title(a, es.primary()).into(),
                     warn: names(a).any(|n| subjects.contains(n)),
                     open: self.open == Some(i),
                 }
@@ -141,7 +141,11 @@ impl Search {
     }
 }
 
-fn detail(a: &SearchArtifact, t: &ServiceTopology, evidence: Evidence) -> SvcSearchDetail {
+pub(crate) fn detail(
+    a: &SearchArtifact,
+    t: &ServiceTopology,
+    evidence: Evidence,
+) -> SvcSearchDetail {
     let es = &t.elasticsearch;
     let (mut writers, mut readers, mut others) =
         (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
@@ -161,6 +165,7 @@ fn detail(a: &SearchArtifact, t: &ServiceTopology, evidence: Evidence) -> SvcSea
     SvcSearchDetail {
         declaration: evidence(&a.evidence),
         scope: a.scope.as_str().into(),
+        projects: super::search_origin::projects(a).into(),
         patterns: model(a.patterns.iter().map(|p| p.as_str().into())),
         references: model(
             a.references
@@ -213,6 +218,8 @@ mod tests {
                 })
                 .collect(),
             evidence: vec![ev("main.tf", 3)],
+            origins: vec![],
+            detail: None,
         }
     }
 

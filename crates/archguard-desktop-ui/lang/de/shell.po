@@ -58,6 +58,9 @@ msgstr "Einstellungen waren nicht lesbar, eine Kopie liegt hier: {}"
 msgid "Could not save the changes: {}"
 msgstr "Änderungen konnten nicht gespeichert werden: {}"
 
+msgid "Could not open: {}"
+msgstr "Konnte nicht geöffnet werden: {}"
+
 msgid "Show or hide the explorer"
 msgstr "Navigator ein- oder ausblenden"
 

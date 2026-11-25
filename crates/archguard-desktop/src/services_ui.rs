@@ -8,12 +8,13 @@
 mod contracts;
 mod export;
 mod follow;
-mod layout;
-mod paths;
+pub(crate) mod layout;
+pub(crate) mod paths;
 mod patterns;
-mod search;
+pub(crate) mod search;
 #[cfg(test)]
 mod search_check;
+pub(crate) mod search_origin;
 mod sections;
 #[cfg(test)]
 mod sections_check;
@@ -21,7 +22,7 @@ mod state;
 mod sync;
 #[cfg(test)]
 mod tree_check;
-mod view;
+pub(crate) mod view;
 
 use std::path::Path;
 
@@ -183,10 +184,11 @@ impl TabState for ServicesState {
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
         let (root, slot) = (data.root.to_path_buf(), Shared::<Topology>::active());
+        let set = crate::documents_set::active_set();
         let analysis = documents::with_store(|s| s.active()?.analysis.clone());
         let calls = Calls::of(data);
         move || {
-            let topology = tab_support::topology(&slot, &root);
+            let topology = tab_support::topology(&slot, &root, set.as_deref());
             let run = analysis
                 .as_ref()
                 .map(|a| (root.as_path(), &a.run, calls.get()));

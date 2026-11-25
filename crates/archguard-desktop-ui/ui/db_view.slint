@@ -1,0 +1,168 @@
+// Database tab: one sub-item per datastore engine (src/db_ui.rs). Elasticsearch embeds the
+// unchanged EsView; every other engine lists its datastores.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Tab, EmptyState } from "widgets.slint";
+import { Fmt } from "format.slint";
+import { EsView } from "es_view.slint";
+import { Mono } from "services_sections.slint";
+
+export struct DbEngine {
+    // The raw engine name, as the topology has it.
+    name: string,
+    count: int,
+    // The sub-item "tables without datastore": no engine name.
+    orphan: bool,
+}
+
+export struct DbRow {
+    id: string,
+    endpoint: string,
+    services: string,
+    database: string,
+}
+
+export struct DbRel {
+    // 0 datastore, 1 service (detail: database name), 2 table (file:line evidence),
+    // 3 shared table, 4 shared database, 5 shared server (detail: the services).
+    kind: int,
+    text: string,
+    detail: string,
+    file: string,
+    line: int,
+    clickable: bool,
+}
+
+export struct DbModel {
+    // 0 loading, 1 ready (also without datastores), 2 topology unavailable.
+    state: int,
+    engines: [DbEngine],
+    active: int,
+    // The active sub-item is Elasticsearch: the graph instead of the list.
+    es: bool,
+    // The active sub-item is relational: `rel` instead of `rows`.
+    relational: bool,
+    rel: [DbRel],
+    // Why the editor did not open.
+    problem: string,
+    rows: [DbRow],
+}
+
+export global DatabaseData {
+    in-out property <DbModel> model;
+    callback select(int);
+    callback open(string, int);
+}
+
+component Cell inherits Mono {
+    in property <bool> head;
+    color: head ? Theme.text : Theme.muted;
+    font-weight: head ? Theme.weight-strong : Theme.weight-regular;
+    // The same split in every row: stretch by share from a near-zero width.
+    preferred-width: 1px;
+    min-width: 0;
+}
+
+component DbLine inherits HorizontalLayout {
+    in property <string> id;
+    in property <string> endpoint;
+    in property <string> services;
+    in property <string> database;
+    in property <bool> head;
+    spacing: 12px;
+    padding-left: 8px;
+    padding-right: 8px;
+    padding-top: 3px;
+    padding-bottom: 3px;
+    Cell { head: root.head; text: root.id; horizontal-stretch: 2; }
+    Cell { head: root.head; text: root.endpoint; horizontal-stretch: 2; }
+    Cell { head: root.head; text: root.services; horizontal-stretch: 3; }
+    Cell { head: root.head; text: root.database; horizontal-stretch: 2; }
+}
+
+component RelLine inherits HorizontalLayout {
+    in property <DbRel> r;
+    spacing: 12px;
+    padding-left: 8px;
+    padding-right: 8px;
+    padding-top: 3px;
+    padding-bottom: 3px;
+    Mono {
+        text: r.kind == 0 ? r.text
+            : r.kind == 1 ? "  " + r.text + (r.detail != "" ? " · " + r.detail : "")
+            : r.kind == 2 ? "      " + r.text
+            : r.kind == 3 ? "  ⚠ " + @tr("table {}: {}", r.text, r.detail)
+            : r.kind == 4 ? "  ⚠ " + @tr("database {}: {}", r.text, r.detail)
+            : "  ⚠ " + @tr("same server: {}", r.detail);
+        color: r.kind == 0 ? Theme.text : r.kind >= 3 ? Theme.warning : Theme.muted;
+        font-weight: r.kind == 0 ? Theme.weight-strong : Theme.weight-regular;
+        horizontal-stretch: 3;
+        preferred-width: 1px;
+        min-width: 0;
+    }
+    if r.kind == 2: Rectangle {
+        horizontal-stretch: 2;
+        preferred-width: 1px;
+        min-width: 0;
+        Mono {
+            width: parent.width;
+            text: r.file + (r.line > 0 ? ":" + Fmt.int(r.line) : "");
+            color: r.clickable ? Theme.accent : Theme.muted;
+        }
+        TouchArea {
+            enabled: r.clickable;
+            mouse-cursor: r.clickable ? pointer : default;
+            clicked => { DatabaseData.open(r.file, r.line); }
+        }
+    }
+}
+
+export component DbView inherits Rectangle {
+    property <DbModel> m: DatabaseData.model;
+    // The list is shown: not Elasticsearch, and there is a sub-item.
+    out property <bool> listed: !m.es && !m.relational && m.engines.length > 0;
+    background: Theme.bg;
+    min-width: 360px;
+    preferred-width: 1480px;
+    max-width: 100000px;
+    preferred-height: 860px;
+
+    VerticalLayout {
+        if m.engines.length > 0: HorizontalLayout {
+            padding: 8px;
+            spacing: 2px;
+            alignment: start;
+            for e[i] in m.engines: Tab {
+                text: (e.orphan ? @tr("Tables without datastore") : e.name) + " (" + Fmt.int(e.count) + ")";
+                active: i == m.active;
+                clicked => { DatabaseData.select(i); }
+            }
+        }
+        if m.engines.length > 0: Rectangle { height: 1px; background: Theme.border; }
+        if m.engines.length == 0: EmptyState {
+            vertical-stretch: 1;
+            title: m.state == 0 ? @tr("Reading the service topology …")
+                : m.state == 2 ? @tr("The service topology is unavailable.")
+                : @tr("No datastores in this project.");
+        }
+        if m.es: EsView { vertical-stretch: 1; }
+        if m.problem != "": Mono { text: m.problem; color: Theme.warning; }
+        if m.relational: ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                padding: 8px;
+                for r in m.rel: RelLine { r: r; }
+            }
+        }
+        if root.listed: ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                padding: 8px;
+                DbLine { head: true; id: @tr("Datastore"); endpoint: @tr("Address"); services: @tr("Services"); database: @tr("Database name"); }
+                for r in m.rows: DbLine { id: r.id; endpoint: r.endpoint; services: r.services; database: r.database; }
+            }
+        }
+    }
+}

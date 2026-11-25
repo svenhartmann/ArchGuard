@@ -403,6 +403,9 @@ msgstr "Deklaration"
 msgid "References"
 msgstr "Referenzen"
 
+msgid "Projects: {}"
+msgstr "Projekte: {}"
+
 msgid "Written by: {}"
 msgstr "Schreiber: {}"
 

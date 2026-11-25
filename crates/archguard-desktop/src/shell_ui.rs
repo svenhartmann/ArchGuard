@@ -134,7 +134,7 @@ fn open_recent(ui: &AppWindow, i: usize) {
     let Some(root) = settings_file::get(|s| s.recent.get(i).cloned()) else {
         return;
     };
-    if root.is_dir() {
+    if crate::documents_set::openable(&root) {
         documents_ui::open(ui, root);
         return;
     }

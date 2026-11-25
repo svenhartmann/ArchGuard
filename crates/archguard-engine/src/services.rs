@@ -27,9 +27,26 @@ mod service_deployments;
 mod service_elasticsearch_code;
 #[path = "service_elasticsearch_findings.rs"]
 mod service_elasticsearch_findings;
-pub use service_elasticsearch_findings::{is_elasticsearch_gap, search_artifact_covers};
+pub use service_elasticsearch_findings::{
+    is_detail_gap, is_elasticsearch_gap, search_artifact_covers,
+};
+#[path = "service_elasticsearch_graph.rs"]
+mod service_elasticsearch_graph;
+pub use service_elasticsearch_graph::{
+    SearchEdge, SearchGraph, SearchNode, search_graph, short_scope,
+};
 #[path = "service_elasticsearch_tf.rs"]
 mod service_elasticsearch_tf;
+#[path = "service_elasticsearch_tf_detail.rs"]
+mod service_elasticsearch_tf_detail;
+#[path = "service_elasticsearch_tf_eval.rs"]
+mod service_elasticsearch_tf_eval;
+#[path = "service_elasticsearch_tf_links.rs"]
+mod service_elasticsearch_tf_links;
+#[path = "service_elasticsearch_tf_locals.rs"]
+mod service_elasticsearch_tf_locals;
+#[path = "service_set.rs"]
+mod service_set;
 #[path = "service_spring.rs"]
 mod service_spring;
 #[path = "service_tables.rs"]
@@ -68,6 +85,10 @@ struct ParsedService {
 #[tracing::instrument(skip_all)]
 pub fn analyze_services(root: &Path) -> Result<ServiceTopology, ArchguardError> {
     analyze_services_with(root, &manifest_render::Tools::from_env())
+}
+/// Analyze several projects and merge their Elasticsearch maps (ADR 0024); one root equals `analyze_services`.
+pub fn analyze_service_set(roots: &[PathBuf]) -> Result<ServiceTopology, ArchguardError> {
+    service_set::merge(roots, analyze_services)
 }
 pub(crate) fn analyze_services_with(
     root: &Path,

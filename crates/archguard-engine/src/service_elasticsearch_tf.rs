@@ -6,7 +6,7 @@ use super::service_elasticsearch_findings::{EsGap, es_gap};
 use super::service_terraform::{ModuleCtx, Resource, TfFile};
 use super::service_terraform_hcl::{attr, block, get, literal, object};
 use archguard_core::ServiceEvidence;
-use archguard_core::{SearchArtifact, SearchReference, ServiceTopology};
+use archguard_core::{SearchArtifact, SearchIndexDetail, SearchReference, ServiceTopology};
 use archguard_flow_common::support::{Discovery, relative, test_path};
 use hcl_edit::Span;
 use hcl_edit::expr::{Expression, TraversalOperator};
@@ -54,6 +54,7 @@ pub(super) fn augment(report: &mut ServiceTopology, scope: &str, resources: &[Re
             scope,
             out: Vec::new(),
             sources: Vec::new(),
+            detail: None,
         };
         read.resource(kind, name_key);
         let out = read.finish();
@@ -118,6 +119,8 @@ pub(super) fn search_templates(root: &Path, discovery: &Discovery, report: &mut 
                     "Search template declared in JSON file {rel}; name assumed from file name. Read as text; no cluster access."
                 ),
             }],
+            origins: vec![],
+            detail: None,
         });
     }
 }
@@ -191,6 +194,7 @@ fn kibana(report: &mut ServiceTopology, scope: &str, r: &Resource, suffix: &str)
         scope,
         out: Vec::new(),
         sources: Vec::new(),
+        detail: None,
     };
     if suffix == "data_view" {
         read.data_view();
@@ -208,6 +212,8 @@ struct Read<'x, 'a> {
     out: Vec<SearchArtifact>,
     /// Where names came from when read through `var.x`; attached to the evidence.
     sources: Vec<String>,
+    /// Detail of the index being read, taken over by the next `push`.
+    detail: Option<SearchIndexDetail>,
 }
 
 /// Values read through a variable, and where they came from.
@@ -295,6 +301,8 @@ impl Read<'_, '_> {
             patterns,
             references,
             evidence: vec![r.evidence(r.line(), "", NOTE)],
+            origins: vec![],
+            detail: self.detail.take(),
         });
     }
 
@@ -378,6 +386,7 @@ impl Read<'_, '_> {
             }
             "ingest_pipeline" => self.pipeline(body),
             "transform" => self.transform(body),
+            "watch" => self.watch(body, &mut patterns),
             "enrich_policy" | "snapshot_lifecycle" => self.index_refs(body),
             _ => {
                 if kind == "stored_script"
@@ -403,7 +412,34 @@ impl Read<'_, '_> {
             name: n.clone(),
         });
         self.aliases(body, target);
+        let (mut detail, mut missed) =
+            super::service_elasticsearch_tf_detail::read(body, &self.r.module);
+        let (legacy, bad) = super::service_elasticsearch_tf_links::legacy_settings(body);
+        if !legacy.is_empty() {
+            detail.get_or_insert_default().settings.extend(legacy);
+        }
+        if bad {
+            missed.push("settings");
+        }
+        refs.extend(self.detail(detail, &missed));
         refs
+    }
+
+    /// Keeps `detail` for the next `push`, names what was not read in one gap and returns the ILM
+    /// reference.
+    fn detail(
+        &mut self,
+        detail: Option<SearchIndexDetail>,
+        missed: &[&str],
+    ) -> Option<SearchReference> {
+        if !missed.is_empty() {
+            let path = &self.r.file.path;
+            let parts = [self.r.address.as_str(), &missed.join(", ")];
+            es_gap(self.report, EsGap::DetailNotLiteral, path, None, &parts);
+        }
+        let ilm = super::service_elasticsearch_tf_links::ilm(detail.as_ref());
+        self.detail = detail;
+        ilm
     }
 
     fn template(
@@ -419,6 +455,10 @@ impl Read<'_, '_> {
             for n in self.texts("a composed_of name", attr(body, "composed_of")) {
                 refs.extend(reference("component_template", Some(n)));
             }
+        }
+        if let Some(template) = block(body, "template") {
+            let read = super::service_elasticsearch_tf_detail::read_template(template);
+            refs.extend(self.detail(read.0, &read.1));
         }
         if let (Some(template), Some(n)) = (block(body, "template"), name) {
             self.aliases(
@@ -462,6 +502,18 @@ impl Read<'_, '_> {
         let n = pipe.map(|e| self.text("the destination pipeline", Some(e)));
         refs.extend(reference("ingest_pipeline", n.flatten()));
         refs
+    }
+
+    fn watch(&mut self, body: &Body, patterns: &mut Vec<String>) -> Vec<SearchReference> {
+        let (names, found, bad) = super::service_elasticsearch_tf_links::watch_indices(body);
+        if bad {
+            self.detail(None, &["input"]);
+        }
+        *patterns = found;
+        names
+            .into_iter()
+            .flat_map(|n| reference("index", Some(n)))
+            .collect()
     }
 
     fn index_refs(&mut self, body: &Body) -> Vec<SearchReference> {

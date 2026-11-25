@@ -49,20 +49,31 @@ fn covers(a: &str, b: &str) -> bool {
     glob(a, &b.replace('*', "")) || glob(b, &a.replace('*', ""))
 }
 
-/// Whether `a` names or matches the index `index`: indices and aliases by name, templates,
-/// data views and alerting rules by their patterns; every other kind covers nothing.
+/// The names of a usage's index list: comma-split, trimmed, without empty parts and `-`
+/// exclusions (an exclusion names nothing). The one split rule for findings and covers.
+pub(super) fn index_parts(index: &str) -> impl Iterator<Item = &str> {
+    index
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty() && !p.starts_with('-'))
+}
+
+/// Whether `a` names or matches a name of the usage's index list `index`: indices and aliases
+/// by name, templates, data views, alerting rules and watches by their patterns; every other kind
+/// covers nothing.
 pub fn search_artifact_covers(a: &SearchArtifact, index: &str) -> bool {
-    match a.kind.as_str() {
-        "index" | "alias" => a.name.as_deref() == Some(index),
-        "index_template" | "data_view" | "alerting_rule" => {
-            a.patterns.iter().any(|p| covers(p, index))
+    index_parts(index).any(|p| match a.kind.as_str() {
+        "index" | "alias" => a.name.as_deref() == Some(p),
+        "index_template" | "data_view" | "alerting_rule" | "watch" => {
+            a.patterns.iter().any(|q| covers(q, p))
         }
         _ => false,
-    }
+    })
 }
 
 /// The Elasticsearch reader gaps: the only way to create such a diagnostic is [`es_gap`], the
-/// only way to recognize one is [`is_elasticsearch_gap`]. One list defines the variants, `ALL`
+/// only ways to recognize one are [`is_elasticsearch_gap`] and, for the detail gap of one
+/// resource, [`is_detail_gap`]. One list defines the variants, `ALL`
 /// and their texts, so a variant cannot exist without being recognized.
 macro_rules! es_gaps {
     ($($(#[$m:meta])* $name:ident => $text:expr,)+) => {
@@ -90,6 +101,7 @@ es_gaps! {
     SavedObjects => ": saved objects are not analyzed.",
     NotLiteral => ": Elasticsearch name is not a literal; ",
     NoParamsIndex => ": alerting rule has no top-level params index; its index comes from a data view or is unknown.",
+    DetailNotLiteral => ": index mapping, settings or analysis are not literal (file(), local., var. and references are not evaluated); not read: ",
 }
 
 const SCAN_STOP_TAIL: &str = " files; indices in later files are unknown.";
@@ -107,6 +119,7 @@ impl EsGap {
             Self::ScanStop => format!("{t}{}{SCAN_STOP_TAIL}", p(0)),
             Self::SavedObjects | Self::NoParamsIndex => format!("{}{t}", p(0)),
             Self::NotLiteral => format!("{}{t}{}{NOT_LITERAL_TAIL}", p(0), p(1)),
+            Self::DetailNotLiteral => format!("{}{t}{}.", p(0), p(1)),
             _ => t.into(),
         }
     }
@@ -117,7 +130,7 @@ impl EsGap {
             Self::IndexNotLiteral => m.starts_with(t),
             Self::ScanStop => m.starts_with(t) && m.ends_with(SCAN_STOP_TAIL),
             Self::SavedObjects | Self::NoParamsIndex => m.ends_with(t),
-            Self::NotLiteral => m.contains(t),
+            Self::NotLiteral | Self::DetailNotLiteral => m.contains(t),
             _ => m == t,
         }
     }
@@ -143,6 +156,13 @@ pub(super) fn es_gap(
 /// Whether the diagnostic comes from one of the Elasticsearch readers.
 pub fn is_elasticsearch_gap(d: &ServiceDiagnostic) -> bool {
     EsGap::ALL.iter().any(|k| k.matches(&d.message))
+}
+
+/// Whether `d` is the [`EsGap::DetailNotLiteral`] gap of the resource at `address`.
+pub fn is_detail_gap(d: &ServiceDiagnostic, address: &str) -> bool {
+    d.message
+        .strip_prefix(address)
+        .is_some_and(|r| r.starts_with(EsGap::DetailNotLiteral.text()))
 }
 
 /// Names of declared indices and aliases plus template patterns.
@@ -203,11 +223,7 @@ fn usage_hits(model: &ElasticsearchModel, out: &mut Hits<'_>) {
     let covered = |p: &str| declared.iter().any(|d| covers(d, p));
     if arts.iter().any(|a| a.address.contains("elasticstack_")) {
         for u in &model.usages {
-            let parts = u.index.split(',').map(str::trim);
-            if parts
-                .filter(|p| !p.is_empty() && !p.starts_with('-'))
-                .any(|p| !covered(p))
-            {
+            if index_parts(&u.index).any(|p| !covered(p)) {
                 add(
                     out,
                     "undeclared_index",
@@ -305,6 +321,8 @@ mod tests {
             patterns: patterns.iter().map(|p| p.to_string()).collect(),
             references: vec![],
             evidence: vec![],
+            origins: vec![],
+            detail: None,
         }
     }
 
@@ -329,7 +347,7 @@ mod tests {
                 "logs-a"
             ));
         }
-        for kind in ["index_template", "data_view", "alerting_rule"] {
+        for kind in ["index_template", "data_view", "alerting_rule", "watch"] {
             assert!(search_artifact_covers(
                 &art(kind, None, &["logs-*"]),
                 "logs-a"

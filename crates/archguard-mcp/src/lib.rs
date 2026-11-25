@@ -61,6 +61,8 @@ mod runtime_tools;
 mod sbom_tools;
 mod security_tools;
 mod semantic_tools;
+#[cfg(test)]
+mod service_set_tool_tests;
 mod test_coverage_tools;
 mod tools;
 mod traced;
@@ -448,14 +450,35 @@ impl ArchguardTools {
     }
 
     #[tool(
-        description = "Discover monorepo projects and applications from supported manifests alongside Docker Compose services, local build contexts and service-cycle groups without requiring an import graph. Project kinds distinguish applications, libraries and tooling; shared libraries or identical class names do not prove API connections. Distinguishes configured HTTP endpoints from depends_on startup dependencies; neither proves observed runtime calls. Lists statically configured datastores, which services point at them, and shared datastores: shared table (same database and a table both services' source names: EF Core, JPA, TypeORM, SQLAlchemy entities or SQL migrations), shared database (same datastore and database name; disjoint_tables when every service's tables are known and none repeats) versus shared server only; datastores.tables lists each service's tables with file and line. Table names from constants or configuration stay unknown and appear as diagnostics; configuration does not prove runtime use and queries are never analyzed. Includes sanitized source pointers and coverage diagnostics. Large responses contain partial lists with exact totals and truncated=true; the sampled graph must not be treated as complete."
+        description = "Discover monorepo projects and applications from supported manifests alongside Docker Compose services, local build contexts and service-cycle groups without requiring an import graph. Project kinds distinguish applications, libraries and tooling; shared libraries or identical class names do not prove API connections. Distinguishes configured HTTP endpoints from depends_on startup dependencies; neither proves observed runtime calls. Lists statically configured datastores, which services point at them, and shared datastores: shared table (same database and a table both services' source names: EF Core, JPA, TypeORM, SQLAlchemy entities or SQL migrations), shared database (same datastore and database name; disjoint_tables when every service's tables are known and none repeats) versus shared server only; datastores.tables lists each service's tables with file and line. Table names from constants or configuration stay unknown and appear as diagnostics; configuration does not prove runtime use and queries are never analyzed. Includes sanitized source pointers and coverage diagnostics. Large responses contain partial lists with exact totals and truncated=true; the sampled graph must not be treated as complete. With `paths` (2 to 16 project folders inside the server root, the first is the main project) the Elasticsearch maps of all projects are merged: artifacts carry `origins`, `elasticsearch.projects` lists the project names, foreign usages are prefixed `<project>:`; everything else stays the main project's."
     )]
     async fn service_topology(
         &self,
-        Parameters(params): Parameters<InsightParams>,
+        Parameters(params): Parameters<ServiceTopologyParams>,
     ) -> Result<String, ErrorData> {
-        let root = tools::resolve_root(&self.root, params.path.as_deref())?;
-        let topology = archguard_engine::analyze_services(&root).map_err(insight_error)?;
+        let topology = match params.paths {
+            None => {
+                let root = tools::resolve_root(&self.root, params.path.as_deref())?;
+                archguard_engine::analyze_services(&root)
+            }
+            Some(paths) => {
+                if params.path.is_some() || !(2..=16).contains(&paths.len()) {
+                    return Err(tools::invalid_params(
+                        "`paths` takes 2 to 16 entries and excludes `path`",
+                    ));
+                }
+                let roots = paths
+                    .iter()
+                    .map(|p| tools::resolve_root(&self.root, Some(p)))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let base = tools::resolve_root(&self.root, None)?;
+                let entries: Vec<_> = paths.iter().map(std::path::PathBuf::from).collect();
+                archguard_engine::resolve_project_dirs(&base, &entries)
+                    .map_err(tools::invalid_params)?;
+                archguard_engine::analyze_service_set(&roots)
+            }
+        }
+        .map_err(insight_error)?;
         Ok(service_topology_value(&topology).to_string())
     }
 
@@ -1087,12 +1110,27 @@ pub struct HotspotsParams {
     pub level: Option<String>,
 }
 
+/// The mapping is desktop content; it would only eat the 4 KiB budget.
+fn drop_es_detail(value: &mut Value) {
+    let artifacts = value.pointer_mut("/elasticsearch/artifacts");
+    for a in artifacts
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(o) = a.as_object_mut() {
+            o.remove("detail");
+        }
+    }
+}
+
 /// Preserve exact totals independently of the bounded evidence samples. A
 /// service graph has several lists, so the common single-list guard alone
 /// cannot bound it. Shrink the largest list first, keeping its stable prefix.
 fn service_topology_value(topology: &archguard_engine::core::ServiceTopology) -> Value {
     use archguard_engine::core::{ServiceDependencyKind, SharedDatastoreScope};
     let mut value = serde_json::to_value(topology).expect("service topology serializes");
+    drop_es_detail(&mut value);
     // (total name, JSON pointer) of every list that may be sampled.
     let lists = [
         ("projects", "/projects"),
@@ -1183,6 +1221,14 @@ fn service_topology_value(topology: &archguard_engine::core::ServiceTopology) ->
 #[serde(default)]
 pub struct InsightParams {
     pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct ServiceTopologyParams {
+    pub path: Option<String>,
+    /// 2 to 16 project folders inside the server root (the first is the main project) whose Elasticsearch maps are merged into one picture with `origins` and `elasticsearch.projects`; excludes `path`.
+    pub paths: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
@@ -2925,7 +2971,7 @@ links = ["docs/adr/1.md"]
         std::fs::write(dir.path().join("archguard.toml"), "invalid TOML [").unwrap();
         let handler = ArchguardTools::new(dir.path().into());
         let text = handler
-            .service_topology(Parameters(InsightParams::default()))
+            .service_topology(Parameters(ServiceTopologyParams::default()))
             .await
             .unwrap();
         let value: Value = serde_json::from_str(&text).unwrap();
@@ -2956,7 +3002,7 @@ links = ["docs/adr/1.md"]
         std::fs::write(dir.path().join("compose.yaml"), compose).unwrap();
         let handler = ArchguardTools::new(dir.path().into());
         let text = handler
-            .service_topology(Parameters(InsightParams::default()))
+            .service_topology(Parameters(ServiceTopologyParams::default()))
             .await
             .unwrap();
         let value: Value = serde_json::from_str(&text).unwrap();
@@ -3017,6 +3063,17 @@ links = ["docs/adr/1.md"]
         assert_eq!(value["truncated"], true);
         assert!(value.to_string().len() <= tools::MAX_RESPONSE_BYTES);
         assert!(value["elasticsearch"]["findings"].as_array().unwrap().len() < 300);
+    }
+
+    #[test]
+    fn service_topology_omits_the_elasticsearch_detail() {
+        let topology: archguard_engine::core::ServiceTopology = serde_json::from_value(json!({"schema_version":1,"root":"/project","monorepo":false,"monorepo_reason":"","compose_files":[],"projects":[],"services":[],"dependencies":[],"cycles":[],"diagnostics":[],"complete":true,
+            "elasticsearch":{"artifacts":[{"kind":"index","name":"a","address":"x","scope":"s","patterns":[],"references":[],"evidence":[],
+                "detail":{"fields":[{"path":"a.b","kind":"keyword"}],"settings":{"number_of_shards":"1"}}}],"usages":[],"findings":[]}})).unwrap();
+        assert!(topology.elasticsearch.artifacts[0].detail.is_some());
+        let value = service_topology_value(&topology);
+        assert_eq!(value["totals"]["elasticsearch_artifacts"], 1);
+        assert!(!value.to_string().contains("\"detail\""));
     }
 
     #[test]

@@ -72,6 +72,7 @@ mod performance;
 mod php_calls;
 mod pipeline;
 mod project_files;
+mod project_set;
 mod python_calls;
 mod quality_findings;
 mod quality_gate;
@@ -192,6 +193,7 @@ pub use performance::{
 };
 pub use pipeline::{Level, NamedGraph, SourceNames};
 pub use project_files::write_project_file;
+pub use project_set::{ProjectSet, read_project_set, resolve_project_dirs, write_project_set};
 pub use quality_findings::{
     QualityFinding, QualityReport, import_quality_findings, quality_findings_fingerprint,
     read_quality_findings,
@@ -231,8 +233,11 @@ pub use security::{
     scan_security, security_fingerprint,
 };
 pub use semantic_calls::{analyze_calls, semantic_fingerprints};
-pub use services::analyze_services;
-pub use services::{is_elasticsearch_gap, search_artifact_covers};
+pub use services::{
+    SearchEdge, SearchGraph, SearchNode, is_detail_gap, is_elasticsearch_gap,
+    search_artifact_covers, search_graph, short_scope,
+};
+pub use services::{analyze_service_set, analyze_services};
 pub use share_report::share_report;
 pub use snapshot::{
     Snapshot, SnapshotRow, latest_snapshot, read_snapshots, read_trend, snapshot_record,
