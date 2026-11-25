@@ -7,6 +7,7 @@ import { Button, ZoomControls, Legend, EmptyState } from "widgets.slint";
 import { Fmt } from "format.slint";
 import { ServicesTree, SvcRow, SvcEdge } from "services_tree.slint";
 import { SvcSearchDetail, SearchDetailBody } from "services_search.slint";
+import { EsIndexPage, EsPage } from "es_index_page.slint";
 
 // One artifact kind of the filter: declared nodes of the kind, the declared ones shown, and ghosts apart.
 export struct EsKind {
@@ -33,6 +34,9 @@ export struct EsModel {
     // The focused node's details (artifact or undeclared name); `has-detail` is false for a service.
     detail: SvcSearchDetail,
     has-detail: bool,
+    // The detail page of an index, template or undeclared index; it replaces the bar.
+    page: EsPage,
+    has-page: bool,
 }
 
 export global ElasticsearchData {
@@ -44,6 +48,8 @@ export global ElasticsearchData {
     callback zoom-by(float);
     callback fit(float, float);
     callback resized(float);
+    // A usage on the page: the file and line to open in the editor.
+    callback open(string, int);
 }
 
 // The focused node's details beside or below the tree; "Show all" closes it. A name that
@@ -80,6 +86,9 @@ export component EsView inherits Rectangle {
     // The zoom and Fit buttons lie inside the pane (the check at 400 px).
     out property <bool> zoom-visible: root.ready && zoomc.absolute-position.x + zoomc.width <= root.absolute-position.x + root.width + 1px;
     out property <bool> bar-packed: insp.packed;
+    // The page is open and beside the graph.
+    out property <bool> page-beside: m.has-page && ipage.x > 0px;
+    out property <length> page-width: ipage.width;
     out property <bool> header-scrolls: root.ready && filter.preferred-width + 16px > root.width;
     background: Theme.bg;
     min-width: 360px;
@@ -146,8 +155,11 @@ export component EsView inherits Rectangle {
         // The detail bar lies right of the tree, below it in a narrow pane.
         Rectangle {
             vertical-stretch: root.ready ? 1 : 0;
-            property <bool> side: root.width >= 700px;
-            property <length> bar: !m.has-detail ? 0px : side ? 300px : min(220px, self.height * 0.5);
+            // The page needs 900 px beside the graph, then max(480 px, half); else it sits below.
+            property <bool> side: m.has-page ? root.width >= 900px : root.width >= 700px;
+            property <length> bar: !m.has-detail ? 0px
+                : m.has-page ? (side ? max(480px, self.width * 0.5) : self.height * 0.5)
+                : side ? 300px : min(220px, self.height * 0.5);
             tree := ServicesTree {
                 x: 0px;
                 y: 0px;
@@ -163,8 +175,19 @@ export component EsView inherits Rectangle {
                 resized(w) => { ElasticsearchData.resized(w); }
                 zoom-by(f) => { ElasticsearchData.zoom-by(f); }
             }
+            ipage := EsIndexPage {
+                visible: m.has-page;
+                x: parent.side ? parent.width - parent.bar : 0px;
+                y: parent.side ? 0px : parent.height - parent.bar;
+                width: parent.side ? parent.bar : parent.width;
+                height: parent.side ? parent.height : parent.bar;
+                title: m.focus;
+                page: m.page;
+                close => { ElasticsearchData.clear-focus(); }
+                open(file, line) => { ElasticsearchData.open(file, line); }
+            }
             insp := EsInspector {
-                visible: m.has-detail;
+                visible: m.has-detail && !m.has-page;
                 x: parent.side ? parent.width - parent.bar : 0px;
                 y: parent.side ? 0px : parent.height - parent.bar;
                 width: parent.side ? parent.bar : parent.width;

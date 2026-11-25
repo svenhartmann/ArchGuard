@@ -9,12 +9,15 @@ use slint::{ComponentHandle, ModelRc, PhysicalSize, VecModel};
 
 slint::slint! {
     import { EsView, ElasticsearchData, EsModel, EsKind } from "../archguard-desktop-ui/ui/es_view.slint";
+    import { EsPage, EsMapRow, EsUse } from "../archguard-desktop-ui/ui/es_index_page.slint";
     import { SvcRow, SvcEdge } from "../archguard-desktop-ui/ui/services_tree.slint";
-    export { ElasticsearchData, EsModel, EsKind, SvcRow, SvcEdge }
+    export { ElasticsearchData, EsModel, EsKind, SvcRow, SvcEdge, EsPage, EsMapRow, EsUse }
     export component Page inherits Window {
         out property <bool> scrolls: view.header-scrolls;
         out property <bool> zoom-visible: view.zoom-visible;
         out property <bool> bar-packed: view.bar-packed;
+        out property <bool> page-beside: view.page-beside;
+        out property <length> page-width: view.page-width;
         view := EsView {}
     }
 }
@@ -389,4 +392,128 @@ fn a_foreign_row_renders_with_its_project() {
     let plain = frame(&window);
     data.set_model(with("[infra] idx"));
     assert!(!same(&frame(&window), &plain), "the prefix is drawn");
+}
+
+fn with_page(has: bool) -> EsModel {
+    let mut m = with_detail(true);
+    m.has_page = has;
+    if has {
+        m.page = EsPage {
+            address: "res.orders".into(),
+            mapping: ModelRc::new(VecModel::from(vec![
+                EsMapRow {
+                    name: "customer".into(),
+                    kind: "object".into(),
+                    parent: true,
+                    ..Default::default()
+                },
+                EsMapRow {
+                    depth: 1,
+                    name: "name".into(),
+                    kind: "text".into(),
+                    ..Default::default()
+                },
+            ])),
+            ..Default::default()
+        };
+    }
+    m
+}
+
+/// Layout size after a frame at `width` px (the pane is as wide as the window).
+fn page_at(window: &MinimalSoftwareWindow, width: u32, m: EsModel) -> Page {
+    window.set_size(PhysicalSize::new(width, H as u32));
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    page.global::<ElasticsearchData>().set_model(m);
+    window.request_redraw();
+    let mut buf = vec![PremultipliedRgbaColor::default(); width as usize * H];
+    window.draw_if_needed(|r| {
+        r.render(&mut buf, width as usize);
+    });
+    page
+}
+
+/// The page sits right of the graph from 900 px at max(480 px, half the pane), below it narrower.
+#[test]
+fn the_page_is_beside_the_graph_from_900_px_and_below_it_narrower() {
+    let window = window();
+    let wide = page_at(&window, 1000, with_page(true));
+    assert!(wide.get_page_beside());
+    assert_eq!(wide.get_page_width(), 500.0);
+    let edge = page_at(&window, 900, with_page(true));
+    assert!(edge.get_page_beside());
+    assert_eq!(edge.get_page_width(), 480.0);
+    let narrow = page_at(&window, 899, with_page(true));
+    assert!(!narrow.get_page_beside(), "below the graph under 900 px");
+    // Another kind keeps the 300 px bar beside the graph.
+    let bar = page_at(&window, 1000, with_page(false));
+    assert!(!bar.get_page_beside());
+}
+
+/// The page draws its headings and rows where the 300 px bar of the same focus drew less.
+#[test]
+fn the_page_shows_more_than_the_bar() {
+    let window = window();
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    let data = page.global::<ElasticsearchData>();
+    data.set_model(with_page(false));
+    let bar = frame(&window);
+    data.set_model(with_page(true));
+    let shown = frame(&window);
+    assert!(
+        ink(&shown, H * 3 / 4, H) > ink(&bar, H * 3 / 4, H),
+        "the page's sections show lower in the pane"
+    );
+}
+
+mod page {
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use archguard_engine::analyze_services;
+
+    use super::super::state::{EsState, build_from};
+    use super::super::view::build;
+
+    fn state(label: &str) -> EsState {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/es-index-detail/literal");
+        let t = analyze_services(&dir).expect("fixture");
+        let mut s = build_from(Arc::new(Ok(t)));
+        let at = s.graph.nodes.iter().position(|n| n.label == label);
+        s.focus_on(at.unwrap_or_else(|| panic!("no node {label}")));
+        s
+    }
+
+    #[test]
+    fn an_index_focus_opens_the_page_with_its_sections() {
+        use slint::Model;
+        let m = build(&state("orders"));
+        assert!(m.has_page && m.has_detail);
+        let map: Vec<(i32, String)> = m
+            .page
+            .mapping
+            .iter()
+            .map(|r| (r.depth, r.name.to_string()))
+            .collect();
+        assert!(map.contains(&(0, "customer".into())), "{map:?}");
+        assert!(map.contains(&(1, "name".into())), "{map:?}");
+        assert!(map.contains(&(1, "sku".into())), "{map:?}");
+        let settings: Vec<String> = m
+            .page
+            .settings
+            .iter()
+            .map(|p| p.value.to_string())
+            .collect();
+        assert_eq!(settings[..3], ["1", "2", "30s"]);
+        assert!(m.page.links.iter().any(|l| l.value == "p1"));
+    }
+
+    #[test]
+    fn another_kind_keeps_the_bar_without_a_page() {
+        let m = build(&state("p1"));
+        assert!(m.has_detail && !m.has_page);
+    }
 }

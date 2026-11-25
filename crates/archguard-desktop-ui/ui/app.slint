@@ -12,6 +12,7 @@ import { ArchitectureView, ArchitectureData, RichData } from "architecture_view.
 import { CallsView, CallsData } from "calls_view.slint";
 import { ServicesView, ServicesData } from "services_view.slint";
 import { EsKind, EsModel, ElasticsearchData } from "es_view.slint";
+import { EsPage, EsMapRow, EsPair, EsUse } from "es_index_page.slint";
 import { DbView, DbEngine, DbRow, DbModel, DatabaseData } from "db_view.slint";
 import { RuntimeView, RuntimeData } from "runtime_view.slint";
 import { QualityView, QualityData } from "quality_view.slint";
@@ -37,7 +38,7 @@ export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowI
 export { GraphData, Crumb, Hit, CycleItem, Neighbor, MatrixData, FileData, NodeDep }
 // Per-tab data globals, set from src/<tab>_ui.rs.
 export { RichData }
-export { ElasticsearchData, EsKind, EsModel, DatabaseData, DbEngine, DbRow, DbModel }
+export { ElasticsearchData, EsKind, EsModel, EsPage, EsMapRow, EsPair, EsUse, DatabaseData, DbEngine, DbRow, DbModel }
 export { StartData, ArchitectureData, CallsData, ServicesData, RuntimeData, QualityData, SecurityData, ScreensData, ScreensNote, DomainData, AccessData }
 export { SettingsData, SettingsEdit, SettingsModel }
 // Templates for text the Rust side composes (`tab_support::Texts`).
