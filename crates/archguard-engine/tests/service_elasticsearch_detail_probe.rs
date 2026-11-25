@@ -1,5 +1,7 @@
 //! Acceptance probe R12 (ticket 44): counts index details read from a local corpus, numbers only.
 //! Run: `ARCHGUARD_ES_PROBE=<copy> cargo test -p archguard-engine --test service_elasticsearch_detail_probe -- --ignored --nocapture`
+#[path = "service_elasticsearch_detail_probe/forms.rs"]
+mod forms;
 use archguard_core::SearchArtifact;
 use archguard_engine::{analyze_services, is_elasticsearch_gap};
 use std::collections::{BTreeMap, BTreeSet};
@@ -126,4 +128,7 @@ fn probe() {
     println!("artifacts: {} {kinds:?}", arts.len());
     println!("usages: {}", r.elasticsearch.usages.len());
     println!("other ES gaps by kind: {other:?}");
+    for (k, n) in forms::breakdown(Path::new(&root)) {
+        println!("form {k}: {n}");
+    }
 }
