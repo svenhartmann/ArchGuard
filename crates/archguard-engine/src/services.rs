@@ -27,7 +27,9 @@ mod service_deployments;
 mod service_elasticsearch_code;
 #[path = "service_elasticsearch_findings.rs"]
 mod service_elasticsearch_findings;
-pub use service_elasticsearch_findings::{is_elasticsearch_gap, search_artifact_covers};
+pub use service_elasticsearch_findings::{
+    is_detail_gap, is_elasticsearch_gap, search_artifact_covers,
+};
 #[path = "service_elasticsearch_graph.rs"]
 mod service_elasticsearch_graph;
 pub use service_elasticsearch_graph::{SearchEdge, SearchGraph, SearchNode, search_graph};
