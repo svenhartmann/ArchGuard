@@ -180,3 +180,30 @@ fn canvas_texts_are_translated() {
         .collect();
     assert!(missing.is_empty(), "no German text for {missing:?}");
 }
+
+/// The header (3 rows) sits at the box's top: below it, a box without compartments is empty.
+#[test]
+fn the_header_sits_at_the_top_of_the_box() {
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    window.set_size(PhysicalSize::new(W as u32, H as u32));
+    slint::platform::set_platform(Box::new(Pixels(window.clone()))).expect("platform");
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    let bare = EsClassBox {
+        compartments: ModelRc::default(),
+        ..index_box()
+    };
+    let buf = shot(&window, &page, vec![bare], vec![]);
+    // Box at (20, 20), 150 x 90: the header takes rows 20..68.
+    let bg = key(&buf[100 * W + 30]);
+    let below = (72..106)
+        .flat_map(|y| (26..165).map(move |x| (x, y)))
+        .filter(|&(x, y)| key(&buf[y * W + x]) != bg)
+        .count();
+    assert_eq!(below, 0, "nothing is drawn below the header");
+    let header = (22..66)
+        .flat_map(|y| (26..165).map(move |x| (x, y)))
+        .filter(|&(x, y)| key(&buf[y * W + x]) != key(&buf[70 * W + 30]))
+        .count();
+    assert!(header > 50, "the header is drawn at the top");
+}
