@@ -544,6 +544,17 @@ mod tests {
         assert_eq!(session.active, 1);
     }
 
+    /// A set file that cannot be opened must not say "Could not save the changes".
+    #[test]
+    fn an_open_error_has_its_own_notice_text() {
+        assert_ne!(OPEN_FAILED, 2, "2 is the save error");
+        let slint = include_str!("../../archguard-desktop-ui/ui/app.slint");
+        let line = format!(
+            "root.notice-kind == {OPEN_FAILED} {{ return @tr(\"Could not open: {{}}\", root.notice); }}"
+        );
+        assert!(slint.contains(&line), "{line}");
+    }
+
     #[test]
     fn an_analysis_error_stays_the_error() {
         let result: Result<(), String> = guarded(|| Err("no config".into()));
