@@ -205,6 +205,26 @@ mod elasticsearch_tests {
     }
 
     #[test]
+    fn detail_is_skipped_when_none_and_round_trips() {
+        let mut a = art(&[]);
+        assert!(!serde_json::to_string(&a).unwrap().contains("detail"));
+        a.detail = Some(SearchIndexDetail {
+            fields: vec![SearchField {
+                path: "a.b".into(),
+                kind: "keyword".into(),
+                ..Default::default()
+            }],
+            settings: [("number_of_shards".to_string(), "1".to_string())].into(),
+            analysis: vec![],
+        });
+        let json = serde_json::to_string(&a).unwrap();
+        assert!(json.contains("\"detail\""));
+        assert!(!json.contains("analysis"));
+        assert!(!json.contains("analyzer"));
+        assert_eq!(serde_json::from_str::<SearchArtifact>(&json).unwrap(), a);
+    }
+
+    #[test]
     fn foreign_and_primary() {
         assert!(!art(&[]).foreign("infra"));
         assert!(!art(&["infra", "adapter"]).foreign("infra"));
