@@ -559,6 +559,13 @@ mod tests {
     }
 
     #[test]
+    fn the_open_error_notice_has_german_text() {
+        let de = crate::tab_support::texts_check::po_de();
+        let text = de.get("Could not open: {}").map_or("", String::as_str);
+        assert!(text.contains("{}") && !text.is_empty(), "{text:?}");
+    }
+
+    #[test]
     fn an_analysis_error_stays_the_error() {
         let result: Result<(), String> = guarded(|| Err("no config".into()));
         assert_eq!(result, Err("no config".to_string()));
