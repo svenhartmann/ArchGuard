@@ -24,6 +24,7 @@ import { SaveDialog, NoticeBar } from "shell_dialog.slint";
 import { ReviewDecisionsDialog, ReviewDecisionsData, DecisionRow } from "review_decisions.slint";
 import { CompareView, CompareData, CompareRow, CompareRelation, CompareCounts } from "compare_view.slint";
 import { CompareDialog } from "compare_dialog.slint";
+import { ProjectSetDialog, ProjectSetData } from "project_set_dialog.slint";
 import { HelpDialog, HelpData, HelpBlock } from "help_dialog.slint";
 import { UpdateNotice, UpdateBar } from "update_notice.slint";
 import { PaneItem, TabItem, PaneStrip, ViewBarTab, Views } from "panes.slint";
@@ -50,6 +51,8 @@ export { UpdateNotice }
 export { ReviewDecisionsData, DecisionRow }
 // File → Compare architecture… (src/compare_ui.rs).
 export { CompareData, CompareRow, CompareRelation, CompareCounts }
+// File → Compose projects… and Open project set… (src/project_set_ui.rs).
+export { ProjectSetData }
 export { HelpData, HelpBlock }
 // The Graph panels' widths (src/graph_panels_ui.rs).
 export { GraphPanels } from "graph_panels.slint";
@@ -288,6 +291,10 @@ export component AppWindow inherits Window {
                 shortcut: @keys(Control + O);
                 activated => { root.add-doc(); }
             }
+            MenuItem {
+                title: @tr("Open project set…");
+                activated => { ProjectSetData.open-set(); }
+            }
             Menu {
                 title: @tr("Open recent");
                 for r[i] in root.recent: MenuItem {
@@ -311,6 +318,10 @@ export component AppWindow inherits Window {
                 title: @tr("Compare architecture…");
                 enabled: root.has-doc;
                 activated => { CompareData.show(); }
+            }
+            MenuItem {
+                title: @tr("Compose projects…");
+                activated => { ProjectSetData.show(); }
             }
             MenuSeparator { }
             Menu {
@@ -919,6 +930,7 @@ export component AppWindow inherits Window {
 
     if ReviewDecisionsData.open: ReviewDecisionsDialog { }
     if CompareData.dialog: CompareDialog { }
+    if ProjectSetData.dialog: ProjectSetDialog { }
     if HelpData.open: HelpDialog { }
 
     // Tooltips above everything else, menus and the save prompt included.

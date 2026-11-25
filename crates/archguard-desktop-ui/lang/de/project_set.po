@@ -1,0 +1,68 @@
+msgid "Compose projects…"
+msgstr "Projekte zusammenstellen …"
+
+msgid "Open project set…"
+msgstr "Verbund öffnen …"
+
+msgid "Compose projects"
+msgstr "Projekte zusammenstellen"
+
+msgid "Merge 2 to 16 project folders into one set. The first folder is the main project; the Services and Elasticsearch views show the merged picture."
+msgstr "Fasst 2 bis 16 Projektordner zu einem Verbund zusammen. Der erste Ordner ist das Hauptprojekt; die Ansichten Services und Elasticsearch zeigen das gemeinsame Bild."
+
+msgid "Name"
+msgstr "Name"
+
+msgid "Name of the set"
+msgstr "Name des Verbunds"
+
+msgid "Folders"
+msgstr "Ordner"
+
+msgid "Add folder…"
+msgstr "Ordner hinzufügen …"
+
+msgid "Main project"
+msgstr "Hauptprojekt"
+
+msgid "Make main project"
+msgstr "Zum Hauptprojekt"
+
+msgid "Up"
+msgstr "Nach oben"
+
+msgid "No folder yet. Use “Add folder…”."
+msgstr "Noch kein Ordner. Mit „Ordner hinzufügen …“ wählen."
+
+msgid "Keys: ↑ ↓ select, Alt+↑ move up, Delete remove, Insert add, Esc close."
+msgstr "Tasten: ↑ ↓ wählen, Alt+↑ nach oben, Entf entfernen, Einfg hinzufügen, Esc schließen."
+
+msgid "Give the set a name."
+msgstr "Gib dem Verbund einen Namen."
+
+msgid "Add at least 2 folders."
+msgstr "Füge mindestens 2 Ordner hinzu."
+
+msgid "A set holds at most 16 folders."
+msgstr "Ein Verbund hat höchstens 16 Ordner."
+
+msgid "A folder is listed twice."
+msgstr "Ein Ordner steht doppelt in der Liste."
+
+msgid "Save and open…"
+msgstr "Speichern und öffnen …"
+
+msgid "Add project folder"
+msgstr "Projektordner hinzufügen"
+
+msgid "Save project set"
+msgstr "Verbund speichern"
+
+msgid "Open project set"
+msgstr "Verbund öffnen"
+
+msgid "Project sets"
+msgstr "Verbünde"
+
+msgid "This is not a project set file (*.archguard-set.toml)."
+msgstr "Das ist keine Verbund-Datei (*.archguard-set.toml)."
