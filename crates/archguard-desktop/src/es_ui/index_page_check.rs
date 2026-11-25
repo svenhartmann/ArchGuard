@@ -294,3 +294,11 @@ fn the_page_view_keeps_own_usages_clickable_and_foreign_ones_not() {
         ]
     );
 }
+
+/// The scope reads like the graph labels' root path: no `terraform:` prefix.
+#[test]
+fn the_overview_scope_is_the_short_root_path() {
+    let mut t = topology();
+    t.elasticsearch.artifacts[0].scope = "terraform:infra/main".into();
+    assert_eq!(page(&t, "orders").overview.scope, "infra/main");
+}
