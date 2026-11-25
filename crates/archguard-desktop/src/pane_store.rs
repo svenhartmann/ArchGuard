@@ -157,4 +157,15 @@ mod tests {
         assert!(text.contains(start), "{text}");
         assert_eq!(read(&table), Some(l));
     }
+
+    /// A session stored before the rename reads its Elasticsearch tab as the Database tab.
+    #[test]
+    fn the_old_elasticsearch_tab_reads_as_database() {
+        let mut table = toml_edit::Table::new();
+        let tabs: Array = ["graph", "elasticsearch"].into_iter().collect();
+        table.insert("panes", value(Array::from_iter([tabs])));
+        let l = read(&table).expect("layout");
+        let kinds: Vec<&str> = l.panes[0].tabs.iter().map(|t| t.kind.as_str()).collect();
+        assert_eq!(kinds, ["graph", "database"]);
+    }
 }

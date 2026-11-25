@@ -16,6 +16,7 @@ mod compare;
 mod compare_ui;
 mod config_editor;
 mod context;
+mod db_ui;
 mod deferred;
 mod diagram;
 mod documents;

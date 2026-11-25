@@ -795,4 +795,12 @@ mod tests {
             "a File view keeps its node"
         );
     }
+
+    #[test]
+    fn the_old_elasticsearch_key_navigates_to_database() {
+        let mut l = Layout::single("graph");
+        l.navigate("elasticsearch");
+        assert_eq!(l.focused(), "database");
+        assert!(VIEWS.contains(&"database") && !VIEWS.contains(&"elasticsearch"));
+    }
 }
