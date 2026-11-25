@@ -1,0 +1,29 @@
+// The class view's list (left column), ticket 10.
+
+// `side` is the small right-aligned note of a row (the artifact kind in Analysis).
+export struct EsClassRow {
+    label: string,
+    side: string,
+    writes: int,
+    reads: int,
+    warn: bool,
+    selected: bool,
+    // Position in the flat list; the arrow keys step to the neighbours.
+    index: int,
+}
+
+// title: 0 Services, 1 Indices (with `root`), 2 Aliases, 3 Templates, 4 Analysis, 5 Processing.
+export struct EsClassGroup {
+    title: int,
+    root: string,
+    rows: [EsClassRow],
+}
+
+export component EsClassList inherits Rectangle {
+    in property <[EsClassGroup]> groups;
+    in property <string> query;
+    in property <int> kind;
+    callback select(int);
+    callback search(string);
+    callback choose-kind(int);
+}
