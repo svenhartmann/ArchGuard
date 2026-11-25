@@ -8,9 +8,9 @@ use slint::platform::software_renderer::{
 use slint::{ComponentHandle, ModelRc, PhysicalSize, VecModel};
 
 slint::slint! {
-    import { DbView, DatabaseData, DbModel, DbEngine, DbRow } from "../archguard-desktop-ui/ui/db_view.slint";
+    import { DbView, DatabaseData, DbModel, DbEngine, DbRow, DbRel } from "../archguard-desktop-ui/ui/db_view.slint";
     import { ElasticsearchData, EsModel } from "../archguard-desktop-ui/ui/es_view.slint";
-    export { DatabaseData, DbModel, DbEngine, DbRow, ElasticsearchData, EsModel }
+    export { DatabaseData, DbModel, DbEngine, DbRow, DbRel, ElasticsearchData, EsModel }
     export component Page inherits Window {
         out property <bool> listed: view.listed;
         view := DbView {}
@@ -52,6 +52,7 @@ fn engine(name: &str, count: i32) -> DbEngine {
     DbEngine {
         name: name.into(),
         count,
+        orphan: false,
     }
 }
 
@@ -65,6 +66,9 @@ fn model(active: i32, es: bool, rows: Vec<DbRow>) -> DbModel {
         ])),
         active,
         es,
+        relational: false,
+        rel: ModelRc::default(),
+        problem: "".into(),
         rows: ModelRc::new(VecModel::from(rows)),
     }
 }
@@ -87,7 +91,7 @@ fn db_texts_are_translated() {
         .filter_map(|rest| rest.split('"').next())
         .collect();
     assert!(
-        texts.len() >= 5 && texts.contains(&"Database name"),
+        texts.len() >= 9 && texts.contains(&"Database name"),
         "the view has translatable texts"
     );
     let po = crate::tab_support::texts_check::po_de();
@@ -125,4 +129,37 @@ fn sub_items_and_the_list_appear_and_elasticsearch_shows_its_graph() {
     let graph = frame(&window);
     assert!(!page.get_listed(), "Elasticsearch shows no list");
     assert_ne!(graph, strip, "the Elasticsearch view takes the body");
+}
+
+#[test]
+fn a_relational_sub_item_shows_its_lines_and_a_problem() {
+    let window = window();
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    let data = page.global::<DatabaseData>();
+    let line = |kind, text: &str, detail: &str| DbRel {
+        kind,
+        text: text.into(),
+        detail: detail.into(),
+        file: "orders/Order.java".into(),
+        line: 7,
+        clickable: kind == 2,
+    };
+    let mut m = model(1, false, Vec::new());
+    m.relational = true;
+    data.set_model(m.clone());
+    let strip = frame(&window);
+    assert!(!page.get_listed(), "a relational sub-item shows no list");
+    m.rel = ModelRc::new(VecModel::from(vec![
+        line(0, "pg", ""),
+        line(1, "orders", "shop"),
+        line(2, "orders", ""),
+        line(3, "orders", "billing, orders"),
+    ]));
+    data.set_model(m.clone());
+    let lines = frame(&window);
+    assert_ne!(lines, strip, "the lines appear");
+    m.problem = "editor: not found".into();
+    data.set_model(m);
+    assert_ne!(frame(&window), lines, "the problem appears");
 }

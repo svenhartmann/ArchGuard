@@ -9,6 +9,8 @@ use archguard_engine::core::{DatastoreUsage, ServiceTopology};
 pub struct Engine {
     pub name: String,
     pub count: usize,
+    /// The sub-item "tables without datastore" (no engine name).
+    pub orphan: bool,
 }
 
 /// One datastore of a list sub-item.
@@ -25,11 +27,16 @@ const UNKNOWN: &str = "unknown";
 /// Engines without tables (as `archguard-engine`'s service tables); the other named ones are relational.
 const NOT_RELATIONAL: [&str; 6] = ["mongodb", "redis", "cassandra", ES, "neo4j", "couchdb"];
 
-fn engine_of(engine: &Option<String>) -> &str {
+pub(super) fn engine_of(engine: &Option<String>) -> &str {
     engine.as_deref().unwrap_or(UNKNOWN)
 }
 
 /// Elasticsearch, then the relational engines, then the others (each by name), unknown last.
+/// Engines whose datastores hold tables (the Services tab's table analysis, ADR 0012).
+pub fn is_relational(name: &str) -> bool {
+    rank(name) == 1
+}
+
 fn rank(name: &str) -> u8 {
     match name {
         ES => 0,
@@ -54,6 +61,7 @@ pub fn engines(t: &ServiceTopology) -> Vec<Engine> {
         .map(|(name, count)| Engine {
             name: name.into(),
             count,
+            orphan: false,
         })
         .collect();
     out.sort_by_key(|e| rank(&e.name));
@@ -70,7 +78,10 @@ fn joined<'a>(items: impl Iterator<Item = &'a str>) -> String {
     seen.join(", ")
 }
 
-fn used<'a>(t: &'a ServiceTopology, id: &'a str) -> impl Iterator<Item = &'a DatastoreUsage> {
+pub(super) fn used<'a>(
+    t: &'a ServiceTopology,
+    id: &'a str,
+) -> impl Iterator<Item = &'a DatastoreUsage> {
     t.datastores
         .usages
         .iter()
@@ -78,7 +89,7 @@ fn used<'a>(t: &'a ServiceTopology, id: &'a str) -> impl Iterator<Item = &'a Dat
 }
 
 /// The service's name, else its id (as the Services view).
-fn name<'a>(t: &'a ServiceTopology, id: &'a str) -> &'a str {
+pub(super) fn name<'a>(t: &'a ServiceTopology, id: &'a str) -> &'a str {
     t.services
         .iter()
         .find(|s| s.id == id)
@@ -147,6 +158,7 @@ mod tests {
             references: vec![],
             evidence: vec![],
             origins: vec![],
+            detail: None,
         }
     }
 
