@@ -273,3 +273,56 @@ fn a_member_with_an_es_gap_and_a_non_es_gap_reports_both() {
         r.diagnostics
     );
 }
+
+fn kind_counts<T>(
+    items: &[T],
+    kind: impl Fn(&T) -> &str,
+) -> std::collections::BTreeMap<String, usize> {
+    let mut m = std::collections::BTreeMap::new();
+    for i in items {
+        *m.entry(kind(i).to_string()).or_insert(0) += 1;
+    }
+    m
+}
+
+fn print_counts(label: &str, r: &ServiceTopology) {
+    let e = &r.elasticsearch;
+    println!(
+        "{label}: artifacts {:?}",
+        kind_counts(&e.artifacts, |a| &a.kind)
+    );
+    println!(
+        "{label}: merged {}",
+        e.artifacts.iter().filter(|a| a.origins.len() > 1).count()
+    );
+    println!("{label}: usages {}", e.usages.len());
+    println!(
+        "{label}: findings {:?}",
+        kind_counts(&e.findings, |f| &f.kind)
+    );
+    println!("{label}: projects {}", e.projects.len());
+}
+
+/// Acceptance probe R10 (spec.md): counts only, no names. Skipped unless the env var is set.
+#[test]
+#[ignore = "needs ARCHGUARD_ES_PROBE_SPLIT, see spec.md Abnahme-Probe R10"]
+fn probe_split() {
+    let Ok(p) = std::env::var("ARCHGUARD_ES_PROBE_SPLIT") else {
+        return;
+    };
+    let p = PathBuf::from(p);
+    let adapter = analyze_services(&p.join("adapter")).unwrap();
+    print_counts("adapter alone", &adapter);
+    let infra = analyze_services(&p.join("infra")).unwrap();
+    print_counts("infra alone", &infra);
+    let both = analyze_service_set(&[p.join("infra"), p.join("adapter")]).unwrap();
+    print_counts("set", &both);
+    println!(
+        "set: diagnostics {}, complete {}",
+        both.diagnostics.len(),
+        both.complete
+    );
+    if p.join("whole").is_dir() {
+        print_counts("unsplit", &analyze_services(&p.join("whole")).unwrap());
+    }
+}
