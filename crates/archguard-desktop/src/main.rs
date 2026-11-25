@@ -19,6 +19,7 @@ mod context;
 mod deferred;
 mod diagram;
 mod documents;
+mod documents_set;
 mod documents_ui;
 mod domain_ui;
 mod editor;

@@ -52,8 +52,9 @@ impl TabState for EsState {
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
         let (root, slot) = (data.root.to_path_buf(), Shared::<Topology>::active());
+        let set = crate::documents_set::active_set();
         move || {
-            let mut s = state::build_from(tab_support::topology(&slot, &root));
+            let mut s = state::build_from(tab_support::topology(&slot, &root, set.as_deref()));
             snapshot_overrides(&mut s);
             s
         }
