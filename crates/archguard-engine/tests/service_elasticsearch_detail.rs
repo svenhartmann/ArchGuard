@@ -353,3 +353,37 @@ fn deeper_chains_cycles_and_non_literals_are_one_gap_each() {
     }
     assert_eq!(gaps.len(), 8, "{gaps:#?}");
 }
+
+fn access() -> ServiceTopology {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/es-index-detail/access/terraform");
+    analyze_services(&root).unwrap()
+}
+
+#[test]
+fn attribute_and_index_access_on_literal_values_is_read() {
+    let r = access();
+    assert_eq!(
+        fields(art(&r, "index", "decoded-attr")),
+        ["a:keyword", "z:long"]
+    );
+    assert_eq!(fields(art(&r, "index", "key-access")), ["b:text"]);
+    assert_eq!(fields(art(&r, "index", "list-access")), ["c:date"]);
+}
+
+#[test]
+fn access_to_a_missing_or_non_literal_key_is_one_gap() {
+    let r = access();
+    let gaps: Vec<_> = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("not read:"))
+        .map(|d| d.message.as_str())
+        .collect();
+    for address in ["missing_key", "var_key"] {
+        let hits: Vec<_> = gaps.iter().filter(|m| m.contains(address)).collect();
+        assert_eq!(hits.len(), 1, "{address}: {gaps:#?}");
+        assert!(hits[0].contains("mappings"), "{address}: {}", hits[0]);
+    }
+    assert_eq!(gaps.len(), 2, "{gaps:#?}");
+}
