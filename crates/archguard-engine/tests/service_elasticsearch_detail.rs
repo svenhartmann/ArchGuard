@@ -399,7 +399,7 @@ fn for_expressions_over_literal_collections_are_read() {
     let r = for_fixture();
     assert_eq!(
         fields(art(&r, "index", "obj-for")),
-        ["id:keyword", "title:text", "skip:keyword"]
+        ["id:keyword", "skip:keyword", "title:text"]
     );
     assert_eq!(
         fields(art(&r, "index", "filtered")),
@@ -415,6 +415,13 @@ fn for_expressions_over_literal_collections_are_read() {
         .unwrap()
         .analysis[0];
     assert_eq!(f.definition, r#"{"type":"stop","stopwords":["a","c"]}"#);
+    // Terraform iterates a map in lexical key order
+    let m = &art(&r, "index", "map-order")
+        .detail
+        .as_ref()
+        .unwrap()
+        .analysis[0];
+    assert_eq!(m.definition, r#"{"type":"stop","stopwords":["a","b"]}"#);
 }
 
 #[test]

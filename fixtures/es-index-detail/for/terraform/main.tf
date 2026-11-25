@@ -43,3 +43,8 @@ resource "elasticstack_elasticsearch_index" "unbound" {
   name     = "unbound"
   mappings = jsonencode({ properties = { for k, v in local.fields : k => { type = w } } })
 }
+
+resource "elasticstack_elasticsearch_index" "map_order" {
+  name            = "map-order"
+  analysis_filter = jsonencode({ f = { type = "stop", stopwords = [for k, v in { b = 1, a = 2 } : k] } })
+}
