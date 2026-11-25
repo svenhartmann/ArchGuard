@@ -61,6 +61,8 @@ mod runtime_tools;
 mod sbom_tools;
 mod security_tools;
 mod semantic_tools;
+#[cfg(test)]
+mod service_set_tool_tests;
 mod test_coverage_tools;
 mod tools;
 mod traced;
@@ -448,14 +450,35 @@ impl ArchguardTools {
     }
 
     #[tool(
-        description = "Discover monorepo projects and applications from supported manifests alongside Docker Compose services, local build contexts and service-cycle groups without requiring an import graph. Project kinds distinguish applications, libraries and tooling; shared libraries or identical class names do not prove API connections. Distinguishes configured HTTP endpoints from depends_on startup dependencies; neither proves observed runtime calls. Lists statically configured datastores, which services point at them, and shared datastores: shared table (same database and a table both services' source names: EF Core, JPA, TypeORM, SQLAlchemy entities or SQL migrations), shared database (same datastore and database name; disjoint_tables when every service's tables are known and none repeats) versus shared server only; datastores.tables lists each service's tables with file and line. Table names from constants or configuration stay unknown and appear as diagnostics; configuration does not prove runtime use and queries are never analyzed. Includes sanitized source pointers and coverage diagnostics. Large responses contain partial lists with exact totals and truncated=true; the sampled graph must not be treated as complete."
+        description = "Discover monorepo projects and applications from supported manifests alongside Docker Compose services, local build contexts and service-cycle groups without requiring an import graph. Project kinds distinguish applications, libraries and tooling; shared libraries or identical class names do not prove API connections. Distinguishes configured HTTP endpoints from depends_on startup dependencies; neither proves observed runtime calls. Lists statically configured datastores, which services point at them, and shared datastores: shared table (same database and a table both services' source names: EF Core, JPA, TypeORM, SQLAlchemy entities or SQL migrations), shared database (same datastore and database name; disjoint_tables when every service's tables are known and none repeats) versus shared server only; datastores.tables lists each service's tables with file and line. Table names from constants or configuration stay unknown and appear as diagnostics; configuration does not prove runtime use and queries are never analyzed. Includes sanitized source pointers and coverage diagnostics. Large responses contain partial lists with exact totals and truncated=true; the sampled graph must not be treated as complete. With `paths` (2 to 16 project folders inside the server root, the first is the main project) the Elasticsearch maps of all projects are merged: artifacts carry `origins`, `elasticsearch.projects` lists the project names, foreign usages are prefixed `<project>:`; everything else stays the main project's."
     )]
     async fn service_topology(
         &self,
-        Parameters(params): Parameters<InsightParams>,
+        Parameters(params): Parameters<ServiceTopologyParams>,
     ) -> Result<String, ErrorData> {
-        let root = tools::resolve_root(&self.root, params.path.as_deref())?;
-        let topology = archguard_engine::analyze_services(&root).map_err(insight_error)?;
+        let topology = match params.paths {
+            None => {
+                let root = tools::resolve_root(&self.root, params.path.as_deref())?;
+                archguard_engine::analyze_services(&root)
+            }
+            Some(paths) => {
+                if params.path.is_some() || !(2..=16).contains(&paths.len()) {
+                    return Err(tools::invalid_params(
+                        "`paths` takes 2 to 16 entries and excludes `path`",
+                    ));
+                }
+                let roots = paths
+                    .iter()
+                    .map(|p| tools::resolve_root(&self.root, Some(p)))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let base = tools::resolve_root(&self.root, None)?;
+                let entries: Vec<_> = paths.iter().map(std::path::PathBuf::from).collect();
+                archguard_engine::resolve_project_dirs(&base, &entries)
+                    .map_err(tools::invalid_params)?;
+                archguard_engine::analyze_service_set(&roots)
+            }
+        }
+        .map_err(insight_error)?;
         Ok(service_topology_value(&topology).to_string())
     }
 
@@ -1183,6 +1206,14 @@ fn service_topology_value(topology: &archguard_engine::core::ServiceTopology) ->
 #[serde(default)]
 pub struct InsightParams {
     pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct ServiceTopologyParams {
+    pub path: Option<String>,
+    /// 2 to 16 project folders inside the server root (the first is the main project) whose Elasticsearch maps are merged into one picture with `origins` and `elasticsearch.projects`; excludes `path`.
+    pub paths: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
@@ -2925,7 +2956,7 @@ links = ["docs/adr/1.md"]
         std::fs::write(dir.path().join("archguard.toml"), "invalid TOML [").unwrap();
         let handler = ArchguardTools::new(dir.path().into());
         let text = handler
-            .service_topology(Parameters(InsightParams::default()))
+            .service_topology(Parameters(ServiceTopologyParams::default()))
             .await
             .unwrap();
         let value: Value = serde_json::from_str(&text).unwrap();
@@ -2956,7 +2987,7 @@ links = ["docs/adr/1.md"]
         std::fs::write(dir.path().join("compose.yaml"), compose).unwrap();
         let handler = ArchguardTools::new(dir.path().into());
         let text = handler
-            .service_topology(Parameters(InsightParams::default()))
+            .service_topology(Parameters(ServiceTopologyParams::default()))
             .await
             .unwrap();
         let value: Value = serde_json::from_str(&text).unwrap();

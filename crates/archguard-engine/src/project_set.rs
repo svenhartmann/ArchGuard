@@ -46,21 +46,28 @@ fn check_shape(file: &Path, name: &str, count: usize) -> Result<(), ArchguardErr
 
 /// Existing directory, canonical (symlinks followed: the user picked the entry), no duplicates.
 fn resolve(file: &Path, base: &Path, entries: &[PathBuf]) -> Result<Vec<PathBuf>, ArchguardError> {
+    resolve_project_dirs(base, entries).map_err(|reason| fail(file, reason))
+}
+
+/// The one check for a list of project folders (set files and MCP `paths`): each entry is
+/// non-empty, an existing folder and not a duplicate after canonicalisation. The reason names
+/// the 1-based position only, never file contents.
+pub fn resolve_project_dirs(base: &Path, entries: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     let mut out: Vec<PathBuf> = Vec::with_capacity(entries.len());
     for (i, entry) in entries.iter().enumerate() {
         let n = i + 1;
         if entry.as_os_str().is_empty() {
-            return Err(fail(file, format!("project {n} is empty")));
+            return Err(format!("project {n} is empty"));
         }
         let dir = base
             .join(entry)
             .canonicalize()
-            .map_err(|_| fail(file, format!("project {n} does not exist")))?;
+            .map_err(|_| format!("project {n} does not exist"))?;
         if !dir.is_dir() {
-            return Err(fail(file, format!("project {n} is not a folder")));
+            return Err(format!("project {n} is not a folder"));
         }
         if out.contains(&dir) {
-            return Err(fail(file, format!("project {n} is a duplicate")));
+            return Err(format!("project {n} is a duplicate"));
         }
         out.push(dir);
     }
