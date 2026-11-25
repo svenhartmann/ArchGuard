@@ -231,3 +231,6 @@ are code, but no analyzer measures them.
   read through it appear sorted, parents before children. A `jsonencode`
   written directly in the index attribute and all other paths keep the written
   order.
+- **2026-11-25:** The readers, findings and graph moved from the engine to the
+  crate `archguard-search` (pure move, [ADR 0025](0025-search-crate.md)); the
+  engine re-exports the public API.
