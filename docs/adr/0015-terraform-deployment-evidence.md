@@ -90,3 +90,8 @@ contains secrets. ArchGuard must not do any of that.
   Elasticsearch names from non-sensitive `variable` defaults and literal module
   arguments. This applies only to those names; the decision above (variables
   and locals stay unknown for workloads and datastores) is unchanged.
+- **2026-11-25:** Only for Elasticsearch index detail (mappings, settings,
+  analysis), [ADR 0023](0023-elasticsearch-artifacts.md) reads literal
+  `local.*` values and `elasticstack_elasticsearch_index.<r>.<attr>` of the
+  same module instance, one level deep. Workloads, datastores, names, aliases
+  and pipelines still do not read locals.

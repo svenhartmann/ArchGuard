@@ -64,6 +64,9 @@ pub(super) struct Resource<'a> {
 /// caller's context. Lets readers resolve `var.x` without a second parse.
 pub(super) struct ModuleCtx<'a> {
     variables: Vec<(&'a Block, &'a TfFile)>,
+    /// `locals` blocks and `resource` blocks of this instance only; read by ES detail (ADR 0023).
+    pub(super) locals: Vec<&'a Block>,
+    pub(super) resources: Vec<&'a Block>,
     call: Option<(&'a Block, &'a TfFile)>,
     parent: Option<Rc<ModuleCtx<'a>>>,
     /// Module nesting level; the root is 0.
@@ -300,6 +303,8 @@ fn instance<'a>(
             .iter()
             .flat_map(|f| blocks(f, "variable").map(move |b| (b, f)))
             .collect(),
+        locals: files.iter().flat_map(|f| blocks(f, "locals")).collect(),
+        resources: files.iter().flat_map(|f| blocks(f, "resource")).collect(),
         call: caller.as_ref().map(|c| (c.1, c.2)),
         depth: caller.as_ref().map_or(0, |c| c.0.depth + 1),
         parent: caller.map(|c| c.0),

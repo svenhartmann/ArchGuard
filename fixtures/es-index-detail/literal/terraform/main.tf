@@ -37,7 +37,7 @@ resource "elasticstack_elasticsearch_index" "heredoc" {
 
 resource "elasticstack_elasticsearch_index" "computed" {
   name             = "computed"
-  mappings         = local.m
+  mappings         = file("m.json")
   number_of_shards = var.s
   refresh_interval = "1s"
 }
