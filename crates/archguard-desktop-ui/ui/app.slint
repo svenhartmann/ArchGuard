@@ -86,7 +86,7 @@ export component AppWindow inherits Window {
     // App shell: menu, recent projects, settings, the save prompt
     // (src/shell_ui.rs).
     in property <[RecentItem]> recent;
-    // Shown until dismissed; notice-kind 1: settings unreadable, 2: save failed.
+    // Shown until dismissed; notice-kind 1: settings unreadable, 2: save failed, 16: open failed.
     in-out property <string> notice;
     in property <int> notice-kind;
     in property <bool> prompt-open;
@@ -240,6 +240,7 @@ export component AppWindow inherits Window {
         if root.notice-kind == 13 { return @tr("Not analyzed again: the Graph has simulated changes. Clear them first."); }
         if root.notice-kind == 14 { return @tr("Not analyzed again: save or discard the unsaved changes first ({}).", root.notice); }
         if root.notice-kind == 15 { return @tr("Analyzing again; the views update when it is done."); }
+        if root.notice-kind == 16 { return @tr("Could not open: {}", root.notice); }
         return @tr("Could not save the changes: {}", root.notice);
     }
 

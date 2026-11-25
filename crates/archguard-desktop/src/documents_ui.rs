@@ -95,6 +95,9 @@ pub fn index(i: i32) -> usize {
     usize::try_from(i).unwrap_or(usize::MAX)
 }
 
+/// Notice 16 reads "Could not open: …" (`ui/app.slint`).
+const OPEN_FAILED: i32 = 16;
+
 /// Open a project folder, or a project set file, as the active document;
 /// analyse it if it is new. A set file that is not valid is a notice.
 pub fn open(ui: &AppWindow, path: PathBuf) {
@@ -102,7 +105,7 @@ pub fn open(ui: &AppWindow, path: PathBuf) {
     let target = match target(&path) {
         Ok(t) => t,
         Err(e) => {
-            ui.set_notice_kind(2);
+            ui.set_notice_kind(OPEN_FAILED);
             ui.set_notice(e.into());
             return;
         }
