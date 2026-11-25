@@ -22,13 +22,6 @@ pub(crate) fn node_label(label: &str, warn: bool, project: Option<&str>) -> Stri
     format!("{prefix}{cut}…")
 }
 
-/// The project of a foreign graph node: the part after the last ` · ` of its title.
-pub(crate) fn foreign_project(title: &str, foreign: bool) -> Option<&str> {
-    foreign
-        .then(|| title.rsplit_once(" · ").map(|(_, p)| p))
-        .flatten()
-}
-
 /// The title of an artifact in the list: `[project] ` first when it is not declared in the primary project.
 pub(crate) fn title(a: &SearchArtifact, primary: Option<&str>) -> String {
     let name = a.name.as_deref().unwrap_or(&a.address);
@@ -74,17 +67,6 @@ mod tests {
         );
         assert_eq!(title(&art("a", &["adapter"]), Some("adapter")), "a");
         assert_eq!(title(&art("a", &[]), None), "a");
-    }
-
-    #[test]
-    fn the_project_of_a_node_is_the_last_part_of_its_title() {
-        assert_eq!(
-            foreign_project("adapter:w · adapter", true),
-            Some("adapter")
-        );
-        assert_eq!(foreign_project("a · b · c", true), Some("c"));
-        assert_eq!(foreign_project("adapter:w · adapter", false), None);
-        assert_eq!(foreign_project("plain", true), None);
     }
 
     #[test]

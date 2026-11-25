@@ -113,11 +113,19 @@ impl<'a> Build<'a> {
                 m.primary().is_some_and(|x| x != *p) && m.projects.iter().any(|q| q == p)
             });
             let (label, title) = match project {
-                Some(p) => (&label[p.len() + 1..], format!("{} · {p}", u.service)),
+                // Not in this project's service list: the id is `<file>::<name>`, show the name.
+                Some(p) => {
+                    let rest = &label[p.len() + 1..];
+                    (
+                        rest.rsplit("::").next().unwrap_or(rest),
+                        format!("{} · {p}", u.service),
+                    )
+                }
                 None => (label, u.service.clone()),
             };
             let mut n = node("service", label, &title, "");
             n.foreign = project.is_some();
+            n.projects = project.map(String::from).into_iter().collect();
             n.service = at;
             seen.insert(u.service.as_str(), self.nodes.len());
             self.nodes.push(n);
@@ -133,6 +141,7 @@ impl<'a> Build<'a> {
             }
             let mut n = node(&a.kind, &base_label(a), &title, &a.scope);
             n.foreign = self.t.elasticsearch.primary().is_some_and(|p| a.foreign(p));
+            n.projects = a.origins.clone();
             n.artifact = Some(i);
             if let Some(name) = a.name.as_deref() {
                 self.by_name
