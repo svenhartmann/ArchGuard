@@ -7,7 +7,7 @@
 use std::cell::RefCell;
 use std::path::{Component, Path, PathBuf};
 
-use archguard_engine::{ProjectSet, read_project_set, write_project_set};
+use archguard_engine::{ProjectSet, read_project_set, resolve_project_dirs, write_project_set};
 use slint::{ComponentHandle, SharedString};
 
 use crate::documents::with_store;
@@ -66,6 +66,13 @@ impl Dialog {
         if i > 0 && i < self.folders.len() {
             self.folders.swap(i - 1, i);
         }
+    }
+
+    /// The engine's folder check (empty, missing, not a folder, duplicate after
+    /// canonicalisation), the one place for these rules; the reason names the
+    /// position only.
+    pub fn folder_error(&self) -> Option<String> {
+        resolve_project_dirs(Path::new("/"), &self.folders).err()
     }
 
     pub fn block(&self) -> Option<Block> {
@@ -164,6 +171,12 @@ fn edit(ui: &AppWindow, f: impl FnOnce(&mut Dialog)) {
 /// Show the model in the dialog; `error` is the last save's failure.
 fn push(ui: &AppWindow, error: &str) {
     let d = ui.global::<ProjectSetData>();
+    let found = DIALOG.with_borrow(Dialog::folder_error);
+    let error = if error.is_empty() {
+        found.as_deref().unwrap_or("")
+    } else {
+        error
+    };
     DIALOG.with_borrow(|m| {
         d.set_folders(model(
             m.folders
@@ -221,7 +234,7 @@ fn save(ui: &AppWindow) {
     let Some((name, blocked)) = DIALOG.with_borrow(|m| Some((m.name.clone(), m.block()))) else {
         return;
     };
-    if blocked.is_some() {
+    if blocked.is_some() || DIALOG.with_borrow(|m| m.folder_error().is_some()) {
         return;
     }
     let mut dialog = rfd::FileDialog::new()
@@ -337,7 +350,7 @@ pub fn snapshot_hook(ui: &AppWindow) {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use archguard_engine::{ProjectSet, read_project_set, write_project_set};
+    use archguard_engine::{ProjectSet, read_project_set, resolve_project_dirs, write_project_set};
 
     use super::{Block, Dialog, file_name, relative, write};
     use crate::documents_set::{Target, target};
@@ -401,6 +414,25 @@ mod tests {
         assert_eq!(d.block(), None);
         d.name = "x".repeat(201);
         assert_eq!(d.block(), Some(Block::Name));
+    }
+
+    #[test]
+    fn the_engine_checks_the_folders() {
+        let t = tempfile::tempdir().expect("temp");
+        let root = t.path().canonicalize().expect("root");
+        let mut d = Dialog::new();
+        d.add(dir(&root, "a"));
+        assert_eq!(d.folder_error(), None);
+        d.add(root.join("gone"));
+        assert_eq!(
+            d.folder_error().as_deref(),
+            Some("project 2 does not exist")
+        );
+        d.folders[1] = root.join("a/../a");
+        assert_eq!(
+            d.folder_error().as_deref(),
+            Some("project 2 is a duplicate")
+        );
     }
 
     #[test]
