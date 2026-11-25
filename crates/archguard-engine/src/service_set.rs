@@ -165,3 +165,37 @@ fn merge_gaps(
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use archguard_core::SearchIndexDetail;
+
+    fn art(detail: Option<SearchIndexDetail>) -> SearchArtifact {
+        SearchArtifact {
+            kind: "index".into(),
+            name: Some("audit".into()),
+            address: "a".into(),
+            scope: "s".into(),
+            patterns: vec![],
+            references: vec![],
+            evidence: vec![],
+            origins: vec![],
+            detail,
+        }
+    }
+
+    #[test]
+    fn merge_keeps_the_first_detail_and_adopts_a_later_one() {
+        let d = |n: &str| SearchIndexDetail {
+            settings: [("number_of_shards".to_string(), n.to_string())].into(),
+            ..Default::default()
+        };
+        let mut a = art(Some(d("1")));
+        merge_artifact(&mut a, art(Some(d("2"))), "b");
+        assert_eq!(a.detail, Some(d("1")));
+        let mut c = art(None);
+        merge_artifact(&mut c, art(Some(d("2"))), "b");
+        assert_eq!(c.detail, Some(d("2")));
+    }
+}

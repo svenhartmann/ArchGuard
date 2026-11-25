@@ -3051,6 +3051,17 @@ links = ["docs/adr/1.md"]
     }
 
     #[test]
+    fn service_topology_omits_the_elasticsearch_detail() {
+        let topology = serde_json::from_value(json!({"schema_version":1,"root":"/project","monorepo":false,"monorepo_reason":"","compose_files":[],"projects":[],"services":[],"dependencies":[],"cycles":[],"diagnostics":[],"complete":true,
+            "elasticsearch":{"artifacts":[{"kind":"index","name":"a","address":"x","scope":"s","patterns":[],"references":[],"evidence":[],
+                "detail":{"fields":[{"path":"a.b","kind":"keyword"}],"settings":{"number_of_shards":"1"}}}],"usages":[],"findings":[]}})).unwrap();
+        assert!(topology.elasticsearch.artifacts[0].detail.is_some());
+        let value = service_topology_value(&topology);
+        assert_eq!(value["totals"]["elasticsearch_artifacts"], 1);
+        assert!(!value.to_string().contains("\"detail\""));
+    }
+
+    #[test]
     fn service_topology_datastores_have_exact_totals_within_the_budget() {
         let evidence = json!([{"file":"compose.yaml","pointer":"/services/app/environment/DATABASE_URL","line":null,"description":"Literal datastore connection URL; host, port and database name only. Credentials and options omitted."}]);
         let usages: Vec<_> = (0..400)
