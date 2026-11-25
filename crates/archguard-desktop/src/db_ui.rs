@@ -3,6 +3,7 @@
 //! the Services tab's, read once per document. The chosen sub-item is not stored.
 
 mod model;
+mod relational;
 #[cfg(test)]
 mod view_check;
 
