@@ -26,7 +26,8 @@
 //! Export without the save dialog: [`export_hook`]. View → Settings:
 //! `crate::settings_view_ui::snapshot_hook`. View → Review decisions…:
 //! `crate::review_decisions_ui::snapshot_hook`. File → Compare
-//! architecture…: `crate::compare_ui::snapshot_hook`. Help → Metrics,
+//! architecture…: `crate::compare_ui::snapshot_hook`. File → Compose
+//! projects…: `crate::project_set_ui::snapshot_hook`. Help → Metrics,
 //! commands & MCP…: `crate::help_ui::snapshot_hook`. View → Analyze again,
 //! after the dirty and simulation hooks: `ARCHGUARD_DESKTOP_REANALYZE=1`.
 
@@ -74,6 +75,7 @@ pub fn schedule(ui: &AppWindow) {
     export_hook(ui);
     crate::review_decisions_ui::snapshot_hook(ui);
     crate::compare_ui::snapshot_hook(ui);
+    crate::project_set_ui::snapshot_hook(ui);
     crate::help_ui::snapshot_hook(ui);
     let weak = ui.as_weak();
     // `ARCHGUARD_DESKTOP_HOLD=<seconds>`: keep the prepared view open that

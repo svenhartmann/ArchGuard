@@ -94,7 +94,10 @@ fn every_dialog_and_menu_text_has_german() {
     let mut ids: Vec<&str> = dialog.split("@tr(\"").skip(1).collect();
     assert!(ids.len() > 10, "the dialog has texts");
     for menu in ["Compose projects…", "Open project set…"] {
-        assert!(app.contains(&format!("@tr(\"{menu}\")")), "{menu} in the File menu");
+        assert!(
+            app.contains(&format!("@tr(\"{menu}\")")),
+            "{menu} in the File menu"
+        );
         ids.push(menu);
     }
     for id in ids {

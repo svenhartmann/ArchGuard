@@ -1,0 +1,223 @@
+// File → Compose projects…: name a set and pick 2 to 16 project folders, the
+// first is the primary project (src/project_set_ui.rs, ADR 0024). Keys: Esc
+// closes, Enter in the name saves; in the list ↑/↓ select, Alt+↑ moves up,
+// Delete removes, Insert adds.
+import { Theme } from "theme.slint";
+import { Button, Badge, FocusRing } from "widgets.slint";
+import { LineEdit } from "fields.slint";
+
+export global ProjectSetData {
+    in-out property <bool> dialog;
+    in-out property <string> name;
+    // The folders in order; the first is the primary project.
+    in-out property <[string]> folders;
+    in-out property <int> selected: -1;
+    // Why saving is blocked: 0 none, 1 name, 2 fewer than 2 folders,
+    // 3 more than 16, 4 a folder twice.
+    in-out property <int> reason;
+    // The failure of the last save, from the engine.
+    in-out property <string> error;
+    callback show();
+    callback open-set();
+    callback name-edited(string);
+    callback add();
+    callback remove(int);
+    callback up(int);
+    callback save();
+    callback close();
+
+    // Titles of the native pickers and the notice, read by Rust.
+    out property <string> add-title: @tr("Add project folder");
+    out property <string> save-title: @tr("Save project set");
+    out property <string> open-title: @tr("Open project set");
+    out property <string> filter-name: @tr("Project sets");
+    out property <string> not-a-set: @tr("This is not a project set file (*.archguard-set.toml).");
+
+    public pure function reason-text(r: int) -> string {
+        if r == 1 { return @tr("Give the set a name."); }
+        if r == 2 { return @tr("Add at least 2 folders."); }
+        if r == 3 { return @tr("A set holds at most 16 folders."); }
+        if r == 4 { return @tr("A folder is listed twice."); }
+        return "";
+    }
+}
+
+component Row inherits Rectangle {
+    in property <string> path;
+    in property <int> index;
+    in property <bool> selected;
+    callback clicked;
+    height: Theme.control-h + 6px;
+    border-radius: Theme.radius-sm;
+    background: root.selected ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
+    touch := TouchArea { clicked => { root.clicked(); } }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 6px;
+        spacing: 8px;
+        alignment: stretch;
+        Text {
+            text: root.path;
+            color: Theme.text;
+            font-size: Theme.font-body;
+            overflow: elide;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            accessible-role: text;
+            accessible-label: (root.index == 0 ? @tr("Main project") + ": " : "") + root.path;
+        }
+        if root.index == 0: Badge { text: @tr("Main project"); variant: "accent"; y: (parent.height - self.height) / 2; }
+        if root.index == 1: Button {
+            compact: true;
+            text: @tr("Make main project");
+            y: (parent.height - self.height) / 2;
+            clicked => { ProjectSetData.up(root.index); }
+        }
+        if root.index > 1: Button {
+            compact: true;
+            text: @tr("Up");
+            y: (parent.height - self.height) / 2;
+            clicked => { ProjectSetData.up(root.index); }
+        }
+        Button {
+            compact: true;
+            text: @tr("Remove");
+            y: (parent.height - self.height) / 2;
+            clicked => { ProjectSetData.remove(root.index); }
+        }
+    }
+}
+
+// Modal over the window, as the compare dialog.
+export component ProjectSetDialog inherits Rectangle {
+    background: Theme.shadow;
+    TouchArea { }
+    FocusScope {
+        init => { name-edit.focus(); }
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                ProjectSetData.close();
+                return accept;
+            }
+            if (event.text == Key.Return && ProjectSetData.reason == 0) {
+                ProjectSetData.save();
+                return accept;
+            }
+            reject
+        }
+        Rectangle {
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            width: min(620px, root.width - 32px);
+            height: box.preferred-height;
+            background: Theme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 30px;
+            drop-shadow-color: Theme.shadow;
+            accessible-role: groupbox;
+            accessible-label: @tr("Compose projects");
+            box := VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+                Text { text: @tr("Compose projects"); color: Theme.text; font-size: Theme.font-section; font-weight: Theme.weight-title; }
+                Text {
+                    text: @tr("Merge 2 to 16 project folders into one set. The first folder is the main project; the Services and Elasticsearch views show the merged picture.");
+                    color: Theme.muted;
+                    font-size: Theme.font-small;
+                    wrap: word-wrap;
+                }
+                VerticalLayout {
+                    spacing: 4px;
+                    Text { text: @tr("Name"); color: Theme.text; font-size: Theme.field-label; }
+                    name-edit := LineEdit {
+                        text <=> ProjectSetData.name;
+                        placeholder-text: @tr("Name of the set");
+                        edited(t) => { ProjectSetData.name-edited(t); }
+                        accepted(t) => { if ProjectSetData.reason == 0 { ProjectSetData.save(); } }
+                    }
+                }
+                HorizontalLayout {
+                    Text { text: @tr("Folders"); color: Theme.text; font-size: Theme.field-label; horizontal-stretch: 1; vertical-alignment: center; }
+                    Button { compact: true; text: @tr("Add folder…"); clicked => { ProjectSetData.add(); } }
+                }
+                list := FocusScope {
+                    height: max(Theme.control-h * 2, min(ProjectSetData.folders.length, 6) * (Theme.control-h + 6px) + 8px);
+                    key-pressed(event) => {
+                        if (event.text == Key.UpArrow && event.modifiers.alt) {
+                            ProjectSetData.up(ProjectSetData.selected);
+                            return accept;
+                        }
+                        if (event.text == Key.UpArrow) {
+                            ProjectSetData.selected = max(ProjectSetData.selected - 1, 0);
+                            return accept;
+                        }
+                        if (event.text == Key.DownArrow) {
+                            ProjectSetData.selected = min(ProjectSetData.selected + 1, ProjectSetData.folders.length - 1);
+                            return accept;
+                        }
+                        if (event.text == Key.Delete || event.text == Key.Backspace) {
+                            ProjectSetData.remove(ProjectSetData.selected);
+                            return accept;
+                        }
+                        if (event.text == Key.Insert) {
+                            ProjectSetData.add();
+                            return accept;
+                        }
+                        reject
+                    }
+                    Rectangle {
+                        border-radius: Theme.radius-sm;
+                        border-width: 1px;
+                        border-color: list.has-focus ? Theme.accent : Theme.border;
+                        background: Theme.panel-2;
+                        FocusRing { has-focus: list.has-focus; }
+                        VerticalLayout {
+                            padding: 4px;
+                            spacing: 0px;
+                            alignment: start;
+                            for p[i] in ProjectSetData.folders: Row {
+                                path: p;
+                                index: i;
+                                selected: i == ProjectSetData.selected;
+                                clicked => { ProjectSetData.selected = i; list.focus(); }
+                            }
+                            if ProjectSetData.folders.length == 0: Text {
+                                text: @tr("No folder yet. Use “Add folder…”.");
+                                color: Theme.muted;
+                                font-size: Theme.font-small;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                height: Theme.control-h * 2;
+                            }
+                        }
+                    }
+                }
+                Text {
+                    text: @tr("Keys: ↑ ↓ select, Alt+↑ move up, Delete remove, Insert add, Esc close.");
+                    color: Theme.muted;
+                    font-size: Theme.font-caption;
+                    wrap: word-wrap;
+                }
+                if ProjectSetData.error != "" || ProjectSetData.reason != 0: Text {
+                    text: ProjectSetData.error != "" ? ProjectSetData.error : ProjectSetData.reason-text(ProjectSetData.reason);
+                    color: ProjectSetData.error != "" ? Theme.danger : Theme.muted;
+                    font-size: Theme.font-small;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    Button { text: @tr("Cancel"); clicked => { ProjectSetData.close(); } }
+                    Button {
+                        primary: true;
+                        text: @tr("Save and open…");
+                        enabled: ProjectSetData.reason == 0;
+                        clicked => { ProjectSetData.save(); }
+                    }
+                }
+            }
+        }
+    }
+}
