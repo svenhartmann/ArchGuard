@@ -31,7 +31,8 @@ pub(super) fn lookup<'a>(ctx: &ModuleCtx<'a>, e: &Expression) -> Option<&'a Expr
     // resource references stop at the attribute; local objects are walked key by key
     let found = match root.as_str() {
         "local" => local(ctx, first)?,
-        kind => sibling(ctx, kind, first, keys.next()??)?,
+        kind @ "elasticstack_elasticsearch_index" => sibling(ctx, kind, first, keys.next()??)?,
+        _ => return None,
     };
     keys.try_fold(found, |e, k| get(e, k?))
 }

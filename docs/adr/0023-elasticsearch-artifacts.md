@@ -198,12 +198,11 @@ are code, but no analyzer measures them.
   with `*` become the watch's `patterns`. A non-literal `input` is one
   `DetailNotLiteral` gap; other inputs (`http`) and `indices` elsewhere (e.g.
   in `actions`) give nothing.
-
-**Locals and sibling indices (2026-11-25, ticket 39).** Index `mappings`,
-settings and `analysis_*` are also read through `local.<name>[.<key>]` and
-`elasticstack_elasticsearch_index.<r>.<attr>` of the same module instance,
-one level: the found value must itself be literal (a local that uses another
-local, `var.`, `each` or a function other than `jsonencode`/`jsondecode` of a
-literal stays a gap; so does a resource or local of another module). Names,
-aliases and pipelines still do not read locals. See
-[ADR 0015](0015-terraform-deployment-evidence.md).
+- **2026-11-25:** Locals and sibling indices (ticket 39). Index `mappings`,
+  settings and `analysis_*` are also read through `local.<name>[.<key>]` and
+  `elasticstack_elasticsearch_index.<r>.<attr>` of the same module instance,
+  one level: the found value must itself be literal (a local that uses another
+  local, `var.`, `each` or a function other than `jsonencode`/`jsondecode` of a
+  literal stays a gap; so does a resource or local of another module). Names,
+  aliases and pipelines still do not read locals. See
+  [ADR 0015](0015-terraform-deployment-evidence.md).
