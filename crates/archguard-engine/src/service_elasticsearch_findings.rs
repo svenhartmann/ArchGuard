@@ -337,7 +337,7 @@ mod tests {
                 "logs-a"
             ));
         }
-        for kind in ["index_template", "data_view", "alerting_rule"] {
+        for kind in ["index_template", "data_view", "alerting_rule", "watch"] {
             assert!(search_artifact_covers(
                 &art(kind, None, &["logs-*"]),
                 "logs-a"

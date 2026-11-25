@@ -112,7 +112,7 @@ fn topology() -> ServiceTopology {
     t.diagnostics.push(ServiceDiagnostic {
         file: "main.tf".into(),
         service: None,
-        message: "res.computed: Elasticsearch name is not a literal; mappings is unknown.".into(),
+        message: "res.computed: index mapping, settings or analysis are not literal (file(), local., var. and references are not evaluated); not read: mappings.".into(),
     });
     t
 }
@@ -250,4 +250,13 @@ fn without_detail_the_note_says_not_read_when_a_gap_names_the_address_else_not_d
     assert_eq!(c.note, Some(DetailNote::NotRead));
     assert!(c.mapping.is_empty() && c.settings.is_empty());
     assert_eq!(page(&t, "plain").note, Some(DetailNote::NotDeclared));
+    // Another gap naming the address is no "not read".
+    let mut t = topology();
+    t.diagnostics[0].message =
+        "res.computed: Elasticsearch name is not a literal; mappings is unknown.".into();
+    assert_eq!(page(&t, "computed").note, Some(DetailNote::NotDeclared));
+    // A detail gap of another address is none either.
+    let mut t = topology();
+    t.diagnostics[0].message = t.diagnostics[0].message.replace("res.computed", "res.plain");
+    assert_eq!(page(&t, "computed").note, Some(DetailNote::NotDeclared));
 }
