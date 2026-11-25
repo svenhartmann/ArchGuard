@@ -105,7 +105,7 @@ impl Search {
                 let a = &es.artifacts[i];
                 SvcSearchRow {
                     index: i as i32,
-                    title: a.name.as_deref().unwrap_or(&a.address).into(),
+                    title: super::search_origin::title(a, es.primary()).into(),
                     warn: names(a).any(|n| subjects.contains(n)),
                     open: self.open == Some(i),
                 }
@@ -165,6 +165,7 @@ pub(crate) fn detail(
     SvcSearchDetail {
         declaration: evidence(&a.evidence),
         scope: a.scope.as_str().into(),
+        projects: super::search_origin::projects(a).into(),
         patterns: model(a.patterns.iter().map(|p| p.as_str().into())),
         references: model(
             a.references

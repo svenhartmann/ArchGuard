@@ -14,6 +14,7 @@ mod patterns;
 pub(crate) mod search;
 #[cfg(test)]
 mod search_check;
+pub(crate) mod search_origin;
 mod sections;
 #[cfg(test)]
 mod sections_check;

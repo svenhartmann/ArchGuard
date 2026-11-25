@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use super::state::EsState;
 use crate::services_ui::layout::{self, Link, Node};
+use crate::services_ui::search_origin::node_label;
 use crate::services_ui::{paths, search, view::evidence, view::shorten};
 use crate::tab_support::model;
 use crate::ui::{EsKind, EsModel, SvcEdge, SvcRow, SvcSearchDetail};
@@ -85,7 +86,8 @@ fn scene(s: &EsState) -> Scene {
     }
     let mut at = vec![None; nodes.len()];
     for (i, n) in nodes.iter().enumerate().filter(|(i, _)| shown[*i]) {
-        let name = format!("{}{}", if n.warn { "⚠ " } else { "" }, n.label);
+        let project = n.foreign.then(|| n.projects.join(", "));
+        let name = node_label(&n.label, n.warn, project.as_deref());
         at[i] = Some(out.nodes.len());
         out.nodes.push(Node {
             id: format!("n{i}"),
