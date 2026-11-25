@@ -264,3 +264,106 @@ fn the_detail_entries_are_packed_at_the_top_of_a_tall_bar() {
     frame(&window);
     assert!(page.get_bar_packed(), "the entries are spread over the bar");
 }
+
+mod origin {
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use archguard_engine::analyze_service_set;
+    use slint::Model;
+
+    use super::super::state::{EsState, build_from};
+    use super::super::view::build;
+
+    fn state(first: &str, second: &str) -> EsState {
+        let dir = |n: &str| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/es-set")
+                .join(n)
+        };
+        let t = analyze_service_set(&[dir(first), dir(second)]).expect("set");
+        build_from(Arc::new(Ok(t)))
+    }
+
+    fn names(s: &EsState) -> Vec<String> {
+        build(s).rows.iter().map(|r| r.name.to_string()).collect()
+    }
+
+    #[test]
+    fn a_foreign_service_carries_the_marker_the_primary_ones_do_not() {
+        let n = names(&state("infra", "adapter"));
+        assert!(n.contains(&"↧ writer".to_string()), "{n:?}");
+        assert!(
+            n.contains(&"orders".to_string()) && n.contains(&"audit".to_string()),
+            "{n:?}"
+        );
+        assert!(
+            !n.iter()
+                .any(|x| x.contains("↧ orders") || x.contains("↧ audit")),
+            "{n:?}"
+        );
+    }
+
+    #[test]
+    fn with_the_other_primary_project_the_declarations_carry_it() {
+        let mut s = state("adapter", "infra");
+        let n = names(&s);
+        assert!(
+            n.contains(&"↧ orders".to_string()) && n.contains(&"audit".to_string()),
+            "{n:?}"
+        );
+        assert!(
+            !n.iter().any(|x| x.contains("writer") && x.contains('↧')),
+            "{n:?}"
+        );
+        let pipe = s
+            .kinds()
+            .iter()
+            .position(|k| k == "ingest_pipeline")
+            .unwrap();
+        s.toggle_kind(pipe);
+        assert!(names(&s).contains(&"↧ p1".to_string()));
+    }
+
+    #[test]
+    fn a_warning_comes_before_the_marker_and_the_label_stays_within_32() {
+        let mut s = state("infra", "adapter");
+        let at = s.graph.nodes.iter().position(|n| n.foreign).unwrap();
+        s.graph.nodes[at].warn = true;
+        s.graph.nodes[at].label = "y".repeat(40);
+        let n = names(&s);
+        let row = n
+            .iter()
+            .find(|x| x.starts_with("⚠ ↧ "))
+            .unwrap_or_else(|| panic!("{n:?}"));
+        assert!(row.chars().count() <= 32, "{row}");
+    }
+
+    #[test]
+    fn without_a_set_no_row_has_the_marker() {
+        let t = archguard_engine::analyze_services(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/es-set/adapter"),
+        )
+        .expect("single");
+        let s = build_from(Arc::new(Ok(t)));
+        assert!(names(&s).iter().all(|x| !x.contains('↧')));
+    }
+}
+
+/// A row of a foreign node renders (the marker adds ink next to the label).
+#[test]
+fn a_foreign_row_renders_with_the_marker() {
+    let window = window();
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    let data = page.global::<ElasticsearchData>();
+    let with = |name: &str| {
+        let mut m = model(false);
+        m.rows = ModelRc::new(VecModel::from(vec![row(0, name)]));
+        m
+    };
+    data.set_model(with("idx"));
+    let plain = frame(&window);
+    data.set_model(with("↧ idx"));
+    assert!(!same(&frame(&window), &plain), "the marker is drawn");
+}

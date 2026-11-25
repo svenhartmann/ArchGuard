@@ -40,6 +40,8 @@ export struct SvcSearchGap {
 export struct SvcSearchDetail {
     declaration: [SvcEvidence],
     scope: string,
+    // Projects of a project set that declare the artifact, comma separated.
+    projects: string,
     patterns: [string],
     references: [string],
     writers: string,

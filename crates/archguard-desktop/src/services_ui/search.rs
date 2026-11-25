@@ -165,6 +165,7 @@ pub(crate) fn detail(
     SvcSearchDetail {
         declaration: evidence(&a.evidence),
         scope: a.scope.as_str().into(),
+        projects: super::search_origin::projects(a).into(),
         patterns: model(a.patterns.iter().map(|p| p.as_str().into())),
         references: model(
             a.references

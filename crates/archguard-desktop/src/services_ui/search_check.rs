@@ -169,3 +169,70 @@ fn the_section_appears_only_with_artifacts_and_fits_the_width() {
         "something is drawn into the right padding"
     );
 }
+
+/// Project sets: the list marks foreign artifacts, the detail names the projects.
+mod origin {
+    use std::path::{Path, PathBuf};
+
+    use archguard_engine::core::ServiceTopology;
+    use archguard_engine::{analyze_service_set, search_graph};
+    use slint::Model;
+
+    use crate::services_ui::search::Search;
+    use crate::services_ui::view::evidence;
+
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/es-set")
+            .join(name)
+    }
+
+    /// The fixture set with `first` as the primary project.
+    fn set(first: &str, second: &str) -> ServiceTopology {
+        analyze_service_set(&[fixture(first), fixture(second)]).expect("set")
+    }
+
+    fn titles(t: &ServiceTopology) -> Vec<String> {
+        let m = Search::default().model(t, evidence);
+        m.kinds
+            .iter()
+            .flat_map(|k| {
+                k.rows
+                    .iter()
+                    .map(|r| r.title.to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_list_marks_what_the_primary_project_does_not_declare() {
+        let infra = titles(&set("infra", "adapter"));
+        assert!(infra.iter().all(|t| !t.contains('↧')), "{infra:?}");
+        let adapter = titles(&set("adapter", "infra"));
+        assert!(adapter.contains(&"↧ orders".to_string()), "{adapter:?}");
+        assert!(adapter.contains(&"↧ p1".to_string()), "{adapter:?}");
+        // `audit` is declared in both projects: one artifact, no marker.
+        assert_eq!(adapter.iter().filter(|t| t.contains("audit")).count(), 1);
+        assert!(adapter.contains(&"audit".to_string()), "{adapter:?}");
+    }
+
+    #[test]
+    fn the_detail_names_the_projects_only_in_a_set() {
+        let t = set("infra", "adapter");
+        let at = t
+            .elasticsearch
+            .artifacts
+            .iter()
+            .position(|a| a.name.as_deref() == Some("audit"))
+            .unwrap();
+        let mut s = Search::default();
+        s.choose(at, t.elasticsearch.artifacts.len());
+        assert_eq!(s.model(&t, evidence).detail.projects, "infra, adapter");
+        let single = archguard_engine::analyze_services(&fixture("adapter")).expect("single");
+        let mut s = Search::default();
+        s.choose(0, single.elasticsearch.artifacts.len());
+        assert_eq!(s.model(&single, evidence).detail.projects, "");
+        assert!(search_graph(&single).nodes.iter().all(|n| !n.foreign));
+    }
+}
