@@ -1,0 +1,23 @@
+msgid "Indices · {0}"
+msgstr "Indizes · {0}"
+
+msgid "Indices · not declared"
+msgstr "Indizes · nicht deklariert"
+
+msgid "Aliases"
+msgstr "Aliasse"
+
+msgid "Templates"
+msgstr "Templates"
+
+msgid "Processing"
+msgstr "Verarbeitung"
+
+msgid "Search …"
+msgstr "Suchen …"
+
+msgid "All kinds"
+msgstr "Alle Arten"
+
+msgid "Indices"
+msgstr "Indizes"

@@ -158,8 +158,8 @@ fn the_selected_row_is_highlighted() {
 fn counters_show_only_above_zero() {
     let (window, page) = shown(vec![group(0, vec![row("a", 0, 0, false, 0)])]);
     let none = frame(&window);
-    // Right half of the first row: nothing without counters.
-    let band = ((200, 280), (95, 120));
+    // The right part of the list: counters add ink there.
+    let band = ((150, 280), (50, H));
     page.set_groups(groups(vec![group(0, vec![row("a", 2, 0, false, 0)])]));
     let writes = frame(&window);
     page.set_groups(groups(vec![group(0, vec![row("a", 0, 3, false, 0)])]));
