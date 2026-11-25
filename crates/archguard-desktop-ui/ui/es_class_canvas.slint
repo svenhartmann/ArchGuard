@@ -3,35 +3,47 @@ import { Theme } from "theme.slint";
 import { ZoomControls } from "widgets.slint";
 
 export struct EsClassLine {
+    // Indent level, 12 px each.
     depth: int,
+    // 0 none, 1 "+" (field), 2 multi-field mark.
     prefix: int,
     text: string,
+    // Type, shown after " : ".
     kind: string,
+    // Analyzer note, shown after the type in the analysis colour.
     note: string,
+    // > 0: "{n} fields" (collapsed); < 0: "{n} more"; 0: a normal row.
     summary: int,
 }
 
 export struct EsClassChip {
     text: string,
+    // 0 char filter, 1 tokenizer, 2 filter.
     stage: int,
+    // 1: built in (not declared), outline only.
     class: int,
+    // Relative to its compartment (px at zoom 1); h is 14.
     x: float,
     y: float,
     w: float,
 }
 
 export struct EsClassCompartment {
+    // 0 Fields, 1 Settings, 2 Analysis, 3 Chain, 4 Parameters, 5 Used by, 6 Points to, 7 Access, 8 Patterns, else none.
     title: int,
+    // Relative to the box. Rows are 16 px: title, then lines at y + 16 * (1 + i).
     y: float,
     lines: [EsClassLine],
     chips: [EsClassChip],
 }
 
 export struct EsClassBox {
+    // Canvas px at zoom 1; the header is 3 rows (48 px) at the box's top.
     x: float,
     y: float,
     w: float,
     h: float,
+    // 4: analysis block (teal), others neutral.
     kind: int,
     stereotype: string,
     name: string,
@@ -39,15 +51,19 @@ export struct EsClassBox {
     ghost: bool,
     warn: bool,
     selected: bool,
+    // Ghost only: the dashed outline as path commands in box-local coordinates.
     border: string,
     compartments: [EsClassCompartment],
 }
 
 export struct EsClassEdge {
+    // Path commands in canvas coordinates, dashes included.
     line: string,
     head: string,
+    // Head: 0 open arrow, 1 filled, 2 hollow triangle, 3 diamond.
     shape: int,
     dashed: bool,
+    // 1 write (outgoing colour), 2 read (incoming colour), else edge.
     style: int,
     label: string,
     lx: float,
@@ -69,9 +85,9 @@ public pure function title(t: int) -> string {
         : "";
 }
 
-// prefix 0 none, 1 "+" (field), 2 multi-field mark.
+// prefix 0 none, 1 "+" (field), 2 multi-field mark (›).
 public pure function mark(p: int) -> string {
-    return p == 1 ? "+ " : p == 2 ? "\u{2442} " : "";
+    return p == 1 ? "+ " : p == 2 ? "\u{203A} " : "";
 }
 }
 
@@ -80,6 +96,7 @@ public pure function mark(p: int) -> string {
 component ClassLine inherits HorizontalLayout {
     in property <EsClassLine> l;
     in property <float> zoom;
+    alignment: start;
     spacing: 6px * zoom;
     padding-left: l.depth * 12px * zoom;
     Text {
@@ -149,6 +166,7 @@ component ClassBox inherits Rectangle {
         stroke-width: (box.selected ? 2px : 1px) * zoom;
     }
     Rectangle {
+        y: 0;
         height: 3 * rh;
         background: box.ghost ? transparent : analysis ? Theme.analysis.with-alpha(0.12) : Theme.panel-2;
         VerticalLayout {
