@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use archguard_engine::{SearchGraph, search_graph};
 
+use super::class::types::{Group, Key, Switch, Switches};
 use crate::services_ui::search::KINDS;
 use crate::tab_support::Topology;
 
@@ -24,6 +25,21 @@ pub struct EsState {
     pub(super) root: PathBuf,
     /// The editor's error of the last usage click.
     pub(super) problem: String,
+    /// Class view: the selected box.
+    // Unused until ticket 12.
+    #[allow(dead_code)]
+    pub(super) selected: Option<Key>,
+    /// Class view: whole cluster instead of the neighborhood.
+    #[allow(dead_code)]
+    pub(super) cluster: bool,
+    #[allow(dead_code)]
+    pub(super) switches: Switches,
+    /// Class view: list search text.
+    #[allow(dead_code)]
+    pub(super) query: String,
+    /// Class view: list kind filter.
+    #[allow(dead_code)]
+    pub(super) group: Group,
 }
 
 pub fn build_from(topology: Topology) -> EsState {
@@ -37,6 +53,11 @@ pub fn build_from(topology: Topology) -> EsState {
         viewport: 0.0,
         root: PathBuf::new(),
         problem: String::new(),
+        selected: None,
+        cluster: false,
+        switches: Switches::default(),
+        query: String::new(),
+        group: Group::All,
     }
 }
 
@@ -89,5 +110,36 @@ impl EsState {
         } else {
             (self.zoom * factor).clamp(0.01, 3.0)
         };
+    }
+}
+
+// Unused until ticket 12.
+#[allow(dead_code)]
+impl EsState {
+    pub(super) fn select(&mut self, key: Option<Key>) {
+        self.selected = key;
+        self.problem.clear();
+    }
+
+    pub(super) fn toggle_cluster(&mut self) {
+        self.cluster = !self.cluster;
+    }
+
+    pub(super) fn set_switch(&mut self, switch: Switch, on: bool) {
+        let s = &mut self.switches;
+        match switch {
+            Switch::Services => s.services = on,
+            Switch::Analysis => s.analysis = on,
+            Switch::MultiFields => s.multi_fields = on,
+            Switch::CollapseFields => s.collapse_fields = on,
+        }
+    }
+
+    pub(super) fn set_query(&mut self, query: &str) {
+        self.query = query.to_string();
+    }
+
+    pub(super) fn set_group(&mut self, group: Group) {
+        self.group = group;
     }
 }
