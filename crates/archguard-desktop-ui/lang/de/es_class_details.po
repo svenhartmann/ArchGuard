@@ -1,0 +1,32 @@
+msgid "Fields with analysis"
+msgstr "Felder mit Analyse"
+
+msgid "Analysis chain {0}"
+msgstr "Analyse-Kette {0}"
+
+msgid "Char filter"
+msgstr "Char-Filter"
+
+msgid "Tokenizer"
+msgstr "Tokenizer"
+
+msgid "Filter {0}"
+msgstr "Filter {0}"
+
+msgid "built in"
+msgstr "eingebaut"
+
+msgid "not declared (plugin or Elasticsearch default)"
+msgstr "nicht deklariert (Plugin oder Elasticsearch-Standard)"
+
+msgid "Definition"
+msgstr "Definition"
+
+msgid "Index and search analyzer differ at {0}: search only {1}; index only {2}."
+msgstr "Index- und Such-Analyzer unterscheiden sich bei {0}: nur Suche {1}; nur Index {2}."
+
+msgid "Static hint, no rating."
+msgstr "Statischer Hinweis, keine Bewertung."
+
+msgid "The file lies on the Elasticsearch nodes; its content cannot be read statically."
+msgstr "Die Datei liegt auf den Elasticsearch-Knoten; ihr Inhalt ist statisch nicht lesbar."

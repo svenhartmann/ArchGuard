@@ -162,8 +162,7 @@ fn clicks(window: &MinimalSoftwareWindow, page: &Page) -> Vec<(String, i32)> {
             });
         }
     }
-    let out = seen.borrow().clone();
-    out
+    seen.borrow().clone()
 }
 
 #[test]
