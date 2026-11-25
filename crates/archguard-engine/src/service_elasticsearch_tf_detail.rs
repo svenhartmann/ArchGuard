@@ -122,19 +122,77 @@ impl Json {
     }
 }
 
-fn object(o: &hcl_edit::expr::Object, ctx: Option<&ModuleCtx>) -> Option<Vec<(String, Json)>> {
+/// Reference hops allowed from an attribute: index -> local -> local is depth 3 (ADR 0023).
+const MAX_HOPS: usize = 2;
+
+/// Addresses of the expressions followed so far; its length is the depth, a repeat is a cycle.
+type Path = Vec<usize>;
+
+fn object(
+    o: &hcl_edit::expr::Object,
+    ctx: Option<&ModuleCtx>,
+    path: &mut Path,
+) -> Option<Vec<(String, Json)>> {
     o.iter()
         .map(|(k, v)| {
             let key = match k {
                 ObjectKey::Ident(i) => i.as_str().to_owned(),
                 ObjectKey::Expression(k) => literal(k)?,
             };
-            Some((key, tree(v.expr(), ctx)?))
+            Some((key, tree(v.expr(), ctx, path)?))
         })
         .collect()
 }
 
-fn tree(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<Json> {
+/// Follows a `local.*` or sibling-index reference and reads what it points to with `read`.
+fn follow<T>(
+    ctx: Option<&ModuleCtx>,
+    e: &Expression,
+    path: &mut Path,
+    read: impl FnOnce(&Expression, &mut Path) -> Option<T>,
+) -> Option<T> {
+    let found = lookup(ctx?, e)?;
+    let id = std::ptr::from_ref(found) as usize;
+    if path.len() >= MAX_HOPS || path.contains(&id) {
+        return None;
+    }
+    path.push(id);
+    let out = read(found, path);
+    path.pop();
+    out
+}
+
+/// `merge()` of objects (shallow, the right value wins) or `concat()` of lists, all arguments
+/// literal.
+fn call(c: &hcl_edit::expr::FuncCall, ctx: Option<&ModuleCtx>, path: &mut Path) -> Option<Json> {
+    let name = c.name.name.as_str();
+    if c.args.expand_final() || !matches!(name, "merge" | "concat") {
+        return None;
+    }
+    let mut objects: Vec<(String, Json)> = vec![];
+    let mut items = vec![];
+    for a in c.args.iter() {
+        match (name, tree(a, ctx, path)?) {
+            ("merge", Json::Obj(o)) => {
+                for (k, v) in o {
+                    match objects.iter_mut().find(|(x, _)| *x == k) {
+                        Some(slot) => slot.1 = v,
+                        None => objects.push((k, v)),
+                    }
+                }
+            }
+            ("concat", Json::Arr(a)) => items.extend(a),
+            _ => return None,
+        }
+    }
+    Some(if name == "merge" {
+        Json::Obj(objects)
+    } else {
+        Json::Arr(items)
+    })
+}
+
+fn tree(e: &Expression, ctx: Option<&ModuleCtx>, path: &mut Path) -> Option<Json> {
     Some(match e {
         Expression::Null(_) => Json::Null,
         Expression::Bool(b) => Json::Bool(*b.value()),
@@ -142,34 +200,43 @@ fn tree(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<Json> {
         Expression::String(_) | Expression::StringTemplate(_) | Expression::HeredocTemplate(_) => {
             Json::Str(literal(e)?)
         }
-        Expression::Array(a) => Json::Arr(a.iter().map(|x| tree(x, ctx)).collect::<Option<_>>()?),
-        Expression::Object(o) => Json::Obj(object(o, ctx)?),
-        Expression::Traversal(_) => return tree(lookup(ctx?, e)?, None),
+        Expression::Array(a) => Json::Arr(
+            a.iter()
+                .map(|x| tree(x, ctx, path))
+                .collect::<Option<_>>()?,
+        ),
+        Expression::Object(o) => Json::Obj(object(o, ctx, path)?),
+        Expression::FuncCall(c) => call(c, ctx, path)?,
+        Expression::Traversal(_) => return follow(ctx, e, path, |f, p| tree(f, ctx, p)),
         _ => return None,
     })
 }
 
 /// `jsonencode(<literal>)` or a literal JSON text (string or heredoc). JSON is read as HCL,
-/// whose object syntax accepts it; `file()`, `local.*`, `var.*` and references are not literal.
+/// whose object syntax accepts it; `file()`, `var.*` and unresolved references are not literal.
 pub(super) fn json_attr(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<Json> {
+    json_at(e, ctx, &mut vec![])
+}
+
+fn json_at(e: &Expression, ctx: Option<&ModuleCtx>, path: &mut Path) -> Option<Json> {
     if let Expression::Traversal(_) = e {
-        return json_attr(lookup(ctx?, e)?, None);
+        return follow(ctx, e, path, |f, p| json_at(f, ctx, p));
     }
     if let Expression::FuncCall(c) = e {
         let mut args = c.args.iter();
         return match (c.name.name.as_str(), args.next(), args.next()) {
-            ("jsonencode", Some(a), None) => tree(a, ctx),
-            ("jsondecode", Some(a), None) => json_attr(a, ctx),
+            ("jsonencode", Some(a), None) => tree(a, ctx, path),
+            ("jsondecode", Some(a), None) => json_at(a, ctx, path),
             _ => None,
         };
     }
     let text = literal(e).filter(|_| !matches!(e, Expression::Number(_) | Expression::Bool(_)))?;
     let body = parser::parse_body(&format!("x = {text}")).ok()?;
-    tree(attr(&body, "x")?, None)
+    tree(attr(&body, "x")?, None, path)
 }
 
 fn setting(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<String> {
-    match tree(e, ctx)? {
+    match tree(e, ctx, &mut vec![])? {
         Json::Str(s) => Some(s),
         Json::Null | Json::Obj(_) => None,
         other => Some(other.compact()),

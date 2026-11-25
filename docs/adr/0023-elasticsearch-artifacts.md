@@ -206,3 +206,10 @@ are code, but no analyzer measures them.
   literal stays a gap; so does a resource or local of another module). Names,
   aliases and pipelines still do not read locals. See
   [ADR 0015](0015-terraform-deployment-evidence.md).
+- **2026-11-25:** Chains and `merge`/`concat` (ticket 45, after probe 44). The
+  lookup above follows references through up to two further hops (index,
+  local or sibling, local or sibling: depth 3; a fourth link is a gap), with a
+  visited set so a cycle is a gap and never loops. `merge()` of literal objects
+  (shallow, the rightmost value wins) and `concat()` of literal lists are
+  evaluated; one non-literal argument keeps the whole attribute unread. `var.*`,
+  conditionals, `each.*`, `file()` and other modules still give a gap.
