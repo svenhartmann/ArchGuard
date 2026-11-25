@@ -6,7 +6,7 @@ mod variants;
 
 use archguard_flow_jvm::{domain_java, ui_flow_micronaut, ui_flow_quarkus};
 
-const POM: &str = "<project><dependencies><dependency><artifactId>quarkus-resteasy</artifactId></dependency></dependencies></project>";
+const POM: &str = "<project><dependencies><dependency><artifactId>quarkus-resteasy</artifactId></dependency><dependency>micronaut-security</dependency></dependencies></project>";
 const JAVA: &str = r#"
 package a.b;
 import jakarta.ws.rs.*;
@@ -22,9 +22,12 @@ public class OrderResource {
 "#;
 const KOTLIN: &str = r#"
 package a
+import io.micronaut.http.annotation.*
+import io.micronaut.security.annotation.Secured
+import io.micronaut.security.rules.SecurityRule
 @Controller("/k")
 class K(val svc: S) {
-    @Get("/{id}") @Secured("ROLE_X") fun one(id: Long): String = svc.f(id)
+    @Get("/{id}") @Secured(SecurityRule.IS_AUTHENTICATED) fun one(id: Long): String = svc.f(id)
     @Post fun add(o: Order) { svc.save(o) }
 }
 data class Order(val id: Long, val name: String)
@@ -45,6 +48,14 @@ fn jvm_extractors_survive_broken_files() {
             "micronaut:\n  application:\n    name: x\n",
         ),
     ];
+    dirs::intact_tree(&files, |root| {
+        dirs::assert_flow("ui_flow_quarkus::extract", &ui_flow_quarkus::extract(root));
+        dirs::assert_flow(
+            "ui_flow_micronaut::extract",
+            &ui_flow_micronaut::extract(root),
+        );
+        dirs::assert_domain("domain_java::extract", &domain_java::extract(root));
+    });
     dirs::each_broken_tree(&files, |root| {
         ui_flow_quarkus::extract(root);
         ui_flow_micronaut::extract(root);

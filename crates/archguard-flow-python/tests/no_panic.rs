@@ -38,11 +38,22 @@ fn python_extractors_survive_broken_files() {
     let files = [
         ("requirements.txt", "flask\nfastapi\ndjango\n"),
         ("app.py", APP),
-        ("pkg/urls.py", APP),
-        ("pkg/models.py", APP),
-        ("pkg/views.py", APP),
-        ("manage.py", APP),
+        ("proj/shop/__init__.py", ""),
+        ("proj/shop/settings.py", "ROOT_URLCONF = 'shop.urls'\n"),
+        ("proj/shop/urls.py", APP),
+        ("proj/pkg/models.py", APP),
+        ("proj/pkg/views.py", APP),
+        ("proj/manage.py", APP),
     ];
+    dirs::intact_tree(&files, |root| {
+        dirs::assert_flow("ui_flow_fastapi::extract", &ui_flow_fastapi::extract(root));
+        dirs::assert_flow("ui_flow_django::extract", &ui_flow_django::extract(root));
+        dirs::assert_domain("domain_python::extract", &domain_python::extract(root));
+        dirs::assert_flow(
+            "ui_flow_flask",
+            &with_root_config(root, ui_flow_flask::extract_with),
+        );
+    });
     dirs::each_broken_tree(&files, |root| {
         ui_flow_fastapi::extract(root);
         ui_flow_django::extract(root);

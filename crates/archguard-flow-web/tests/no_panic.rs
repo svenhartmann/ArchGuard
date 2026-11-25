@@ -40,20 +40,35 @@ export class AComponent { constructor(private router: Router) {} go() { this.rou
 fn web_extractors_survive_broken_files() {
     let files = [
         (
-            "package.json",
-            r#"{"dependencies":{"@angular/core":"17","react":"18","vue":"3","svelte":"4"}}"#,
+            "ng/package.json",
+            r#"{"dependencies":{"@angular/router":"17"}}"#,
         ),
-        ("src/app/app.routes.ts", ROUTES),
-        ("src/App.tsx", ROUTES),
-        ("src/router.ts", ROUTES),
-        ("src/app/a.component.ts", COMPONENT),
+        ("ng/src/app/app.routes.ts", ROUTES),
+        ("ng/src/app/a.component.ts", COMPONENT),
         (
-            "src/app/a.component.html",
+            "ng/src/app/a.component.html",
             "<a routerLink=\"/a\" (click)=\"go()\">a</a><ng-container *ngIf=\"x\"></ng-container>",
         ),
-        ("src/Page.vue", VUE),
-        ("src/routes/+page.svelte", SVELTE),
+        (
+            "react/package.json",
+            r#"{"dependencies":{"react-router-dom":"6"}}"#,
+        ),
+        ("react/src/App.tsx", ROUTES),
+        ("vue/package.json", r#"{"dependencies":{"vue-router":"4"}}"#),
+        ("vue/src/router.ts", ROUTES),
+        ("vue/src/Page.vue", VUE),
+        (
+            "svelte/package.json",
+            r#"{"devDependencies":{"@sveltejs/kit":"2"}}"#,
+        ),
+        ("svelte/src/routes/+page.svelte", SVELTE),
     ];
+    dirs::intact_tree(&files, |root| {
+        dirs::assert_flow("ui_flow_angular::extract", &ui_flow_angular::extract(root));
+        dirs::assert_flow("ui_flow_react::extract", &ui_flow_react::extract(root));
+        dirs::assert_flow("ui_flow_vue::extract", &ui_flow_vue::extract(root));
+        dirs::assert_flow("ui_flow_svelte::extract", &ui_flow_svelte::extract(root));
+    });
     dirs::each_broken_tree(&files, |root| {
         ui_flow_angular::extract(root);
         ui_flow_react::extract(root);

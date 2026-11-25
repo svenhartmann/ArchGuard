@@ -41,6 +41,10 @@ fn backend_extractors_survive_broken_files() {
         ("Controllers/OrdersController.cs", ASPNET),
         ("Program.cs", ASPNET),
     ];
+    dirs::intact_tree(&files, |root| {
+        dirs::assert_flow("ui_flow_backend::extract", &ui_flow_backend::extract(root));
+        dirs::assert_flow("ui_flow_webflux::extract", &ui_flow_webflux::extract(root));
+    });
     dirs::each_broken_tree(&files, |root| {
         ui_flow_backend::extract(root);
         ui_flow_webflux::extract(root);

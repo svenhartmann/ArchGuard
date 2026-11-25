@@ -41,6 +41,10 @@ fn rust_extractors_survive_broken_files() {
         ("src/lib.rs", RS),
         ("ui/main.slint", SLINT),
     ];
+    dirs::intact_tree(&files, |root| {
+        dirs::assert_flow("ui_flow_rust::extract", &ui_flow_rust::extract(root));
+        dirs::assert_flow("ui_flow_slint::extract", &ui_flow_slint::extract(root));
+    });
     dirs::each_broken_tree(&files, |root| {
         ui_flow_rust::extract(root);
         ui_flow_slint::extract(root);

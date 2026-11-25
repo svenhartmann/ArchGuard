@@ -9,7 +9,10 @@ use archguard_flow_server::{ui_flow_go, ui_flow_laravel, ui_flow_phoenix, ui_flo
 
 const GO: &str = r#"
 package main
-import ("net/http"; "github.com/gin-gonic/gin")
+import (
+    "net/http"
+    "github.com/gin-gonic/gin"
+)
 func main() {
     r := gin.Default()
     g := r.Group("/api", AuthRequired())
@@ -17,6 +20,7 @@ func main() {
     http.HandleFunc("/h", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("é")) })
     r.Run(":8080")
 }
+func getUser(c *gin.Context) { c.String(200, "u") }
 "#;
 const PHP: &str = r#"<?php
 use Illuminate\Support\Facades\Route;
@@ -65,6 +69,7 @@ fn server_extractors_survive_broken_files() {
             "composer.json",
             r#"{"require":{"laravel/framework":"^11"}}"#,
         ),
+        ("artisan", "#!/usr/bin/env php\n"),
         ("routes/web.php", PHP),
         ("app/Http/Controllers/UserController.php", PHP),
         (
@@ -76,6 +81,15 @@ fn server_extractors_survive_broken_files() {
         ("config/routes.rb", RB),
         ("app/controllers/posts_controller.rb", RB),
     ];
+    dirs::intact_tree(&files, |root| {
+        dirs::assert_flow("ui_flow_go::extract", &ui_flow_go::extract(root));
+        dirs::assert_flow("ui_flow_laravel::extract", &ui_flow_laravel::extract(root));
+        dirs::assert_flow("ui_flow_rails::extract", &ui_flow_rails::extract(root));
+        dirs::assert_flow(
+            "ui_flow_phoenix",
+            &with_root_config(root, ui_flow_phoenix::extract_with),
+        );
+    });
     dirs::each_broken_tree(&files, |root| {
         ui_flow_go::extract(root);
         ui_flow_laravel::extract(root);

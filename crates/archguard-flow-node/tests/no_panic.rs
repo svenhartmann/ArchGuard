@@ -43,6 +43,14 @@ fn node_extractors_survive_broken_files() {
         ("src/server.js", TS),
         ("src/order.entity.ts", TS),
     ];
+    dirs::intact_tree(&files, |root| {
+        dirs::assert_flow("ui_flow_express::extract", &ui_flow_express::extract(root));
+        dirs::assert_flow("ui_flow_nestjs::extract", &ui_flow_nestjs::extract(root));
+        dirs::assert_domain(
+            "domain_typescript::extract",
+            &domain_typescript::extract(root),
+        );
+    });
     dirs::each_broken_tree(&files, |root| {
         ui_flow_express::extract(root);
         ui_flow_nestjs::extract(root);

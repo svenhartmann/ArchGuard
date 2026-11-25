@@ -30,13 +30,18 @@ fn dotnet_extractors_survive_broken_files() {
     let files = [
         (
             "App.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk.Web\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>",
+            "<Project Sdk=\"Microsoft.NET.Sdk.Web\"><PropertyGroup><TargetFramework>net8.0</TargetFramework><UseWPF>true</UseWPF></PropertyGroup></Project>",
         ),
         ("Models/Order.cs", CS),
         ("Pages/Orders.razor", RAZOR),
         ("Views/Main.xaml", XAML),
         ("Views/Main.xaml.cs", CS),
     ];
+    dirs::intact_tree(&files, |root| {
+        dirs::assert_domain("domain_csharp::extract", &domain_csharp::extract(root));
+        dirs::assert_flow("ui_flow_blazor::extract", &ui_flow_blazor::extract(root));
+        dirs::assert_flow("ui_flow_xaml::extract", &ui_flow_xaml::extract(root));
+    });
     dirs::each_broken_tree(&files, |root| {
         domain_csharp::extract(root);
         ui_flow_blazor::extract(root);
