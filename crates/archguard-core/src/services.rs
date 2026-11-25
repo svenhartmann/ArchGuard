@@ -88,7 +88,7 @@ pub struct SearchArtifact {
     pub detail: Option<SearchIndexDetail>,
 }
 
-/// Mapping, settings and analysis of an index or template (ADR 0023). A
+/// Mapping, settings and analysis of an index or template (ADR 0023). An
 /// attribute that is not fully literal is not read; the others are.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchIndexDetail {
