@@ -38,7 +38,7 @@ export global DatabaseData {
 component Cell inherits Mono {
     in property <bool> head;
     color: head ? Theme.text : Theme.muted;
-    font-weight: head ? Theme.weight-strong : 400;
+    font-weight: head ? Theme.weight-strong : Theme.weight-regular;
     // The same split in every row: stretch by share from a near-zero width.
     preferred-width: 1px;
     min-width: 0;
@@ -95,7 +95,7 @@ export component DbView inherits Rectangle {
             VerticalLayout {
                 alignment: start;
                 padding: 8px;
-                DbLine { head: true; id: @tr("Datastore"); endpoint: @tr("Address"); services: @tr("Services"); database: @tr("Database"); }
+                DbLine { head: true; id: @tr("Datastore"); endpoint: @tr("Address"); services: @tr("Services"); database: @tr("Database name"); }
                 for r in m.rows: DbLine { id: r.id; endpoint: r.endpoint; services: r.services; database: r.database; }
             }
         }

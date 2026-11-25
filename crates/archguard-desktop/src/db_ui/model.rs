@@ -77,6 +77,14 @@ fn used<'a>(t: &'a ServiceTopology, id: &'a str) -> impl Iterator<Item = &'a Dat
         .filter(move |u| u.datastore == id)
 }
 
+/// The service's name, else its id (as the Services view).
+fn name<'a>(t: &'a ServiceTopology, id: &'a str) -> &'a str {
+    t.services
+        .iter()
+        .find(|s| s.id == id)
+        .map_or(id, |s| s.name.as_str())
+}
+
 /// The datastores of `engine`: id, `host:port`, the services using it and its database names.
 pub fn rows(t: &ServiceTopology, engine: &str) -> Vec<Row> {
     t.datastores
@@ -84,7 +92,7 @@ pub fn rows(t: &ServiceTopology, engine: &str) -> Vec<Row> {
         .iter()
         .filter(|n| engine_of(&n.engine) == engine)
         .map(|n| {
-            let host = n.host.as_deref().or(n.service.as_deref()).unwrap_or("");
+            let host = n.host.as_deref().unwrap_or("");
             let endpoint = match n.port {
                 Some(p) if !host.is_empty() => format!("{host}:{p}"),
                 Some(p) => format!(":{p}"),
@@ -93,7 +101,7 @@ pub fn rows(t: &ServiceTopology, engine: &str) -> Vec<Row> {
             Row {
                 id: n.id.clone(),
                 endpoint,
-                services: joined(used(t, &n.id).map(|u| u.service.as_str())),
+                services: joined(used(t, &n.id).map(|u| name(t, &u.service))),
                 database: joined(used(t, &n.id).filter_map(|u| u.database.as_deref())),
             }
         })

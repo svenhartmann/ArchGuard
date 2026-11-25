@@ -6,3 +6,6 @@ msgstr "Datastore"
 
 msgid "Address"
 msgstr "Adresse"
+
+msgid "Database name"
+msgstr "Datenbankname"
