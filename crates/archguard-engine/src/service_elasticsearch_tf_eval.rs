@@ -230,7 +230,11 @@ fn entry(f: &ForExpr, cx: &mut Cx) -> Option<Option<(String, Json)>> {
 /// duplicate keys and more than `MAX_FOR` elements are gaps.
 fn for_expr(f: &ForExpr, cx: &mut Cx) -> Option<Json> {
     let items: Vec<(Json, Json)> = match tree(&f.intro.collection_expr, cx)? {
-        Json::Obj(o) => o.into_iter().map(|(k, v)| (Json::Str(k), v)).collect(),
+        Json::Obj(mut o) => {
+            // Terraform iterates a map in lexical key order
+            o.sort_by(|a, b| a.0.cmp(&b.0));
+            o.into_iter().map(|(k, v)| (Json::Str(k), v)).collect()
+        }
         Json::Arr(a) => a
             .into_iter()
             .enumerate()
