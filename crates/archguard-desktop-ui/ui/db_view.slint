@@ -39,6 +39,9 @@ component Cell inherits Mono {
     in property <bool> head;
     color: head ? Theme.text : Theme.muted;
     font-weight: head ? Theme.weight-strong : 400;
+    // The same split in every row: stretch by share from a near-zero width.
+    preferred-width: 1px;
+    min-width: 0;
 }
 
 component DbLine inherits HorizontalLayout {
@@ -69,18 +72,14 @@ export component DbView inherits Rectangle {
     preferred-height: 860px;
 
     VerticalLayout {
-        if m.engines.length > 0: ScrollView {
-            height: Theme.control-h-sm + 18px;
-            content-width: max(strip.preferred-width + 16px, self.width);
-            strip := HorizontalLayout {
-                padding: 8px;
-                spacing: 2px;
-                alignment: start;
-                for e[i] in m.engines: Tab {
-                    text: e.name + " (" + Fmt.int(e.count) + ")";
-                    active: i == m.active;
-                    clicked => { DatabaseData.select(i); }
-                }
+        if m.engines.length > 0: HorizontalLayout {
+            padding: 8px;
+            spacing: 2px;
+            alignment: start;
+            for e[i] in m.engines: Tab {
+                text: e.name + " (" + Fmt.int(e.count) + ")";
+                active: i == m.active;
+                clicked => { DatabaseData.select(i); }
             }
         }
         if m.engines.length > 0: Rectangle { height: 1px; background: Theme.border; }
