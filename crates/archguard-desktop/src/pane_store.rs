@@ -63,7 +63,11 @@ pub fn read(t: &dyn TableLike) -> Option<Layout> {
 /// `"graph"` or `{ view = "graph", node = "…", display = 1 }`.
 fn read_tab(v: &Value) -> Option<Tab> {
     let tab = |kind: &str| Tab {
-        kind: kind.to_string(),
+        kind: panes::RENAMED
+            .iter()
+            .find(|r| r.0 == kind)
+            .map_or(kind, |r| r.1)
+            .to_string(),
         id: 0,
         node: None,
         display: 0,

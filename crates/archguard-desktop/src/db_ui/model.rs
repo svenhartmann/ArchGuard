@@ -1,6 +1,8 @@
 //! The tab's data: the engines of the topology as sub-items and the list rows of an engine.
 
-use archguard_engine::core::ServiceTopology;
+use std::collections::BTreeMap;
+
+use archguard_engine::core::{DatastoreUsage, ServiceTopology};
 
 /// One sub-item: the raw engine name and what it holds.
 #[derive(Debug, PartialEq, Eq)]
@@ -18,12 +20,84 @@ pub struct Row {
     pub database: String,
 }
 
-pub fn engines(_: &ServiceTopology) -> Vec<Engine> {
-    Vec::new()
+const ES: &str = "elasticsearch";
+const UNKNOWN: &str = "unknown";
+/// Engines without tables (as `archguard-engine`'s service tables); the other named ones are relational.
+const NOT_RELATIONAL: [&str; 6] = ["mongodb", "redis", "cassandra", ES, "neo4j", "couchdb"];
+
+fn engine_of(engine: &Option<String>) -> &str {
+    engine.as_deref().unwrap_or(UNKNOWN)
 }
 
-pub fn rows(_: &ServiceTopology, _engine: &str) -> Vec<Row> {
-    Vec::new()
+/// Elasticsearch, then the relational engines, then the others (each by name), unknown last.
+fn rank(name: &str) -> u8 {
+    match name {
+        ES => 0,
+        UNKNOWN => 3,
+        n if NOT_RELATIONAL.contains(&n) => 2,
+        _ => 1,
+    }
+}
+
+/// One sub-item per engine with content: the Elasticsearch model counts its artifacts,
+/// every engine its datastores.
+pub fn engines(t: &ServiceTopology) -> Vec<Engine> {
+    let mut count: BTreeMap<&str, usize> = BTreeMap::new();
+    for n in &t.datastores.nodes {
+        *count.entry(engine_of(&n.engine)).or_default() += 1;
+    }
+    if !t.elasticsearch.is_empty() {
+        count.insert(ES, t.elasticsearch.artifacts.len());
+    }
+    let mut out: Vec<Engine> = count
+        .into_iter()
+        .map(|(name, count)| Engine {
+            name: name.into(),
+            count,
+        })
+        .collect();
+    out.sort_by_key(|e| rank(&e.name));
+    out
+}
+
+fn joined<'a>(items: impl Iterator<Item = &'a str>) -> String {
+    let mut seen: Vec<&str> = Vec::new();
+    for i in items {
+        if !seen.contains(&i) {
+            seen.push(i);
+        }
+    }
+    seen.join(", ")
+}
+
+fn used<'a>(t: &'a ServiceTopology, id: &'a str) -> impl Iterator<Item = &'a DatastoreUsage> {
+    t.datastores
+        .usages
+        .iter()
+        .filter(move |u| u.datastore == id)
+}
+
+/// The datastores of `engine`: id, `host:port`, the services using it and its database names.
+pub fn rows(t: &ServiceTopology, engine: &str) -> Vec<Row> {
+    t.datastores
+        .nodes
+        .iter()
+        .filter(|n| engine_of(&n.engine) == engine)
+        .map(|n| {
+            let host = n.host.as_deref().or(n.service.as_deref()).unwrap_or("");
+            let endpoint = match n.port {
+                Some(p) if !host.is_empty() => format!("{host}:{p}"),
+                Some(p) => format!(":{p}"),
+                None => host.to_string(),
+            };
+            Row {
+                id: n.id.clone(),
+                endpoint,
+                services: joined(used(t, &n.id).map(|u| u.service.as_str())),
+                database: joined(used(t, &n.id).filter_map(|u| u.database.as_deref())),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

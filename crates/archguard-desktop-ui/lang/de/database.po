@@ -1,0 +1,8 @@
+msgid "No datastores in this project."
+msgstr "Keine Datastores in diesem Projekt."
+
+msgid "Datastore"
+msgstr "Datastore"
+
+msgid "Address"
+msgstr "Adresse"
