@@ -11,6 +11,8 @@ export global ProjectSetData {
     in-out property <string> name;
     // The folders in order; the first is the primary project.
     in-out property <[string]> folders;
+    // The folder names of `folders`, shown first in a row.
+    in-out property <[string]> names;
     in-out property <int> selected: -1;
     // Why saving is blocked: 0 none, 1 name, 2 fewer than 2 folders,
     // 3 more than 16, 4 a folder twice.
@@ -43,6 +45,7 @@ export global ProjectSetData {
 }
 
 component Row inherits Rectangle {
+    in property <string> name;
     in property <string> path;
     in property <int> index;
     in property <bool> selected;
@@ -57,14 +60,23 @@ component Row inherits Rectangle {
         spacing: 8px;
         alignment: stretch;
         Text {
-            text: root.path;
+            text: root.name;
             color: Theme.text;
             font-size: Theme.font-body;
+            font-weight: Theme.weight-medium;
+            overflow: elide;
+            vertical-alignment: center;
+            max-width: 220px;
+            accessible-role: text;
+            accessible-label: (root.index == 0 ? @tr("Main project") + ": " : "") + root.name + ", " + root.path;
+        }
+        Text {
+            text: root.path;
+            color: Theme.muted;
+            font-size: Theme.font-small;
             overflow: elide;
             vertical-alignment: center;
             horizontal-stretch: 1;
-            accessible-role: text;
-            accessible-label: (root.index == 0 ? @tr("Main project") + ": " : "") + root.path;
         }
         if root.index == 0: Badge { text: @tr("Main project"); variant: "accent"; y: (parent.height - self.height) / 2; }
         if root.index == 1: Button {
@@ -178,6 +190,7 @@ export component ProjectSetDialog inherits Rectangle {
                             spacing: 0px;
                             alignment: start;
                             for p[i] in ProjectSetData.folders: Row {
+                                name: ProjectSetData.names[i];
                                 path: p;
                                 index: i;
                                 selected: i == ProjectSetData.selected;

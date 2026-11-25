@@ -1,8 +1,9 @@
 //! File → Compose projects… (ui/project_set_dialog.slint): the dialog's
 //! model, writing the set file and opening it (ADR 0024). The folder checks
-//! (exists, is a folder, no duplicate) stay in the engine's
-//! `write_project_set`; the dialog only blocks what it can tell without the
-//! disk: name, count and a repeated path.
+//! (empty, exists, is a folder, no duplicate after canonicalisation) are the
+//! engine's `resolve_project_dirs`, run live and again by `write_project_set`;
+//! the dialog itself only blocks what is not a folder check: name and count,
+//! and a repeated path as a hint.
 
 use std::cell::RefCell;
 use std::path::{Component, Path, PathBuf};
@@ -117,6 +118,14 @@ pub fn relative(base: &Path, dir: &Path) -> PathBuf {
     out
 }
 
+/// The last component of `dir`, shown first in a row; the whole path for a root.
+pub fn folder_name(dir: &Path) -> String {
+    dir.file_name().map_or_else(
+        || dir.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
+}
+
 /// The default file name for a set: its name without characters a file name cannot hold.
 pub fn file_name(name: &str) -> String {
     let clean: String = name
@@ -182,6 +191,9 @@ fn push(ui: &AppWindow, error: &str) {
             m.folders
                 .iter()
                 .map(|p| SharedString::from(p.display().to_string())),
+        ));
+        d.set_names(model(
+            m.folders.iter().map(|p| SharedString::from(folder_name(p))),
         ));
         d.set_reason(m.block().map_or(0, |b| b as i32));
         let last = m.folders.len() as i32 - 1;
