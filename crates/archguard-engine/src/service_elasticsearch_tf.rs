@@ -3,11 +3,11 @@
 //! non-sensitive `string`/`list(string)` literal module argument or `default`; anything else the
 //! provider would evaluate (locals, `each`, module outputs, functions) is a gap.
 use super::service_elasticsearch_findings::{EsGap, es_gap};
-use super::service_terraform::{ModuleCtx, Resource, TfFile};
-use super::service_terraform_hcl::{attr, block, get, literal, object};
 use archguard_core::ServiceEvidence;
 use archguard_core::{SearchArtifact, SearchIndexDetail, SearchReference, ServiceTopology};
 use archguard_flow_common::support::{Discovery, relative, test_path};
+use archguard_terraform::hcl::{attr, block, get, literal, object};
+use archguard_terraform::module::{ModuleCtx, Resource, TfFile};
 use hcl_edit::Span;
 use hcl_edit::expr::{Expression, TraversalOperator};
 use hcl_edit::parser;

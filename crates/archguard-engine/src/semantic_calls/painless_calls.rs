@@ -3,10 +3,10 @@
 //! Calls stay unresolved. Scripts are read from `.painless` files and from literal
 //! `script = { source = … }` objects in resource attributes (also inside `jsonencode(…)`).
 // shortcut: scripts inside JSON strings and `script { }` blocks are not found; add when a repo needs it.
-use crate::services::service_terraform_hcl::{literal, object};
 use archguard_core::{CallAnalysis, CallAnalyzer, CallClass, CallMethod, Config, MethodComplexity};
 use archguard_extract::Excludes;
 use archguard_extract::painless::measure;
+use archguard_terraform::hcl::{literal, object};
 use hcl_edit::expr::Expression;
 use hcl_edit::{Span, parser};
 use sha2::{Digest, Sha256};

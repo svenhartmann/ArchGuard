@@ -1,8 +1,8 @@
 //! Single-step lookup of `local.<name>[.<key>…]` and `<index resource>.<name>.<attr>` inside the
 //! module instance of an index (ADR 0023). The caller follows what the found expression
 //! references itself, bounded by depth and a cycle check.
-use super::service_terraform::ModuleCtx;
-use super::service_terraform_hcl::{attr, get};
+use archguard_terraform::hcl::{attr, get};
+use archguard_terraform::module::ModuleCtx;
 use hcl_edit::expr::{Expression, TraversalOperator};
 
 pub(super) fn local<'a>(ctx: &ModuleCtx<'a>, name: &str) -> Option<&'a Expression> {
