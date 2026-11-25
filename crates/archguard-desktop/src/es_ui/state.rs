@@ -116,13 +116,30 @@ impl EsState {
 // Unused until ticket 12.
 #[allow(dead_code)]
 impl EsState {
-    pub(super) fn select(&mut self, _key: Option<Key>) {}
+    pub(super) fn select(&mut self, key: Option<Key>) {
+        self.selected = key;
+        self.problem.clear();
+    }
 
-    pub(super) fn toggle_cluster(&mut self) {}
+    pub(super) fn toggle_cluster(&mut self) {
+        self.cluster = !self.cluster;
+    }
 
-    pub(super) fn set_switch(&mut self, _switch: Switch, _on: bool) {}
+    pub(super) fn set_switch(&mut self, switch: Switch, on: bool) {
+        let s = &mut self.switches;
+        match switch {
+            Switch::Services => s.services = on,
+            Switch::Analysis => s.analysis = on,
+            Switch::MultiFields => s.multi_fields = on,
+            Switch::CollapseFields => s.collapse_fields = on,
+        }
+    }
 
-    pub(super) fn set_query(&mut self, _query: &str) {}
+    pub(super) fn set_query(&mut self, query: &str) {
+        self.query = query.to_string();
+    }
 
-    pub(super) fn set_group(&mut self, _group: Group) {}
+    pub(super) fn set_group(&mut self, group: Group) {
+        self.group = group;
+    }
 }

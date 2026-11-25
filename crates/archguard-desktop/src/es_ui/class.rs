@@ -30,6 +30,6 @@ mod state_check;
 
 // Shared types live in `types` so `state` does not import this module (it would close a cycle
 // through `state_check`).
-mod types;
+pub mod types;
 #[allow(unused_imports)] // Unused until ticket 12.
 pub use types::{Group, Key, Switch, Switches};
