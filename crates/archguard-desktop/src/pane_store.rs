@@ -63,7 +63,11 @@ pub fn read(t: &dyn TableLike) -> Option<Layout> {
 /// `"graph"` or `{ view = "graph", node = "…", display = 1 }`.
 fn read_tab(v: &Value) -> Option<Tab> {
     let tab = |kind: &str| Tab {
-        kind: kind.to_string(),
+        kind: panes::RENAMED
+            .iter()
+            .find(|r| r.0 == kind)
+            .map_or(kind, |r| r.1)
+            .to_string(),
         id: 0,
         node: None,
         display: 0,
@@ -156,5 +160,16 @@ mod tests {
         let start = r#"{ view = "start", world = { mode = "architecture", area = "crates/core" } }, "graph""#;
         assert!(text.contains(start), "{text}");
         assert_eq!(read(&table), Some(l));
+    }
+
+    /// A session stored before the rename reads its Elasticsearch tab as the Database tab.
+    #[test]
+    fn the_old_elasticsearch_tab_reads_as_database() {
+        let mut table = toml_edit::Table::new();
+        let tabs: Array = ["graph", "elasticsearch"].into_iter().collect();
+        table.insert("panes", value(Array::from_iter([tabs])));
+        let l = read(&table).expect("layout");
+        let kinds: Vec<&str> = l.panes[0].tabs.iter().map(|t| t.kind.as_str()).collect();
+        assert_eq!(kinds, ["graph", "database"]);
     }
 }

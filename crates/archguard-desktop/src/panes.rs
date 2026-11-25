@@ -21,7 +21,7 @@ pub const VIEWS: [&str; 13] = [
     "dsm",
     "calls",
     "services",
-    "elasticsearch",
+    "database",
     "runtime",
     "screens",
     "access",
@@ -29,6 +29,10 @@ pub const VIEWS: [&str; 13] = [
     "quality",
     "security",
 ];
+
+/// View ids of earlier versions and their current ids; stored sessions and
+/// `navigate` read the old one as the new one.
+pub const RENAMED: [(&str, &str); 1] = [("elasticsearch", "database")];
 
 /// The view of one tree node (a file or package), opened from the Graph or
 /// the Matrix; not in the view bar.
@@ -51,7 +55,7 @@ const FREE_ORDER: [&str; 13] = [
     "quality",
     "calls",
     "services",
-    "elasticsearch",
+    "database",
     "runtime",
     "screens",
     "access",
@@ -219,6 +223,7 @@ impl Layout {
     /// The view bar: select a tab of `kind`, or show a new instance in the
     /// focused tab.
     pub fn navigate(&mut self, kind: &str) {
+        let kind = RENAMED.iter().find(|r| r.0 == kind).map_or(kind, |r| r.1);
         if let Some((p, t)) = self.find(kind) {
             return self.select_tab(p, t);
         }
@@ -794,5 +799,13 @@ mod tests {
             !link::follow(Some(file.key()), |_, _| ()),
             "a File view keeps its node"
         );
+    }
+
+    #[test]
+    fn the_old_elasticsearch_key_navigates_to_database() {
+        let mut l = Layout::single("graph");
+        l.navigate("elasticsearch");
+        assert_eq!(l.focused(), "database");
+        assert!(VIEWS.contains(&"database") && !VIEWS.contains(&"elasticsearch"));
     }
 }
