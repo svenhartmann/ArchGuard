@@ -32,7 +32,9 @@ pub use service_elasticsearch_findings::{
 };
 #[path = "service_elasticsearch_graph.rs"]
 mod service_elasticsearch_graph;
-pub use service_elasticsearch_graph::{SearchEdge, SearchGraph, SearchNode, search_graph};
+pub use service_elasticsearch_graph::{
+    SearchEdge, SearchGraph, SearchNode, search_graph, short_scope,
+};
 #[path = "service_elasticsearch_tf.rs"]
 mod service_elasticsearch_tf;
 #[path = "service_elasticsearch_tf_detail.rs"]

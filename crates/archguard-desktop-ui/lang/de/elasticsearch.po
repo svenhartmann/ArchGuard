@@ -24,3 +24,21 @@ msgstr "Zugriff unbekannt (gestrichelt)"
 
 msgid "Not declared in this project."
 msgstr "In diesem Projekt nicht deklariert."
+
+msgid "Mapping"
+msgstr "Mapping"
+
+msgid "Usage in code"
+msgstr "Nutzung im Code"
+
+msgid "Not read: the definition is not a literal."
+msgstr "Nicht gelesen: die Definition ist kein Literal."
+
+msgid "Field"
+msgstr "Feld"
+
+msgid "Type"
+msgstr "Typ"
+
+msgid "Analyzer"
+msgstr "Analyzer"

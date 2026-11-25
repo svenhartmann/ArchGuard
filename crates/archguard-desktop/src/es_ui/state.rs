@@ -1,6 +1,7 @@
 //! The Elasticsearch tab's state: the topology's search graph, the kind filter, the focus.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 use archguard_engine::{SearchGraph, search_graph};
 
@@ -19,6 +20,10 @@ pub struct EsState {
     pub(super) focus: Option<usize>,
     pub(super) zoom: f32,
     pub(super) viewport: f32,
+    /// The document's root: usages open their file below it.
+    pub(super) root: PathBuf,
+    /// The editor's error of the last usage click.
+    pub(super) problem: String,
 }
 
 pub fn build_from(topology: Topology) -> EsState {
@@ -30,6 +35,8 @@ pub fn build_from(topology: Topology) -> EsState {
         focus: None,
         zoom: 1.0,
         viewport: 0.0,
+        root: PathBuf::new(),
+        problem: String::new(),
     }
 }
 
@@ -59,14 +66,21 @@ impl EsState {
         if !self.toggled.remove(&kind) {
             self.toggled.insert(kind);
         }
-        self.focus = None;
+        self.clear_focus();
     }
 
     /// A group row (no node) has no focus.
     pub(super) fn focus_on(&mut self, node: usize) {
         if node < self.graph.nodes.len() {
             self.focus = Some(node);
+            self.problem.clear();
         }
+    }
+
+    /// "Show all": no focus.
+    pub(super) fn clear_focus(&mut self) {
+        self.focus = None;
+        self.problem.clear();
     }
 
     pub(super) fn zoom_by(&mut self, factor: f32) {
