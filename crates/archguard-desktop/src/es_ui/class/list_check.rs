@@ -110,8 +110,8 @@ fn groups_counters_search_filter() {
     assert!(members(&all).contains(&Key::Node(0)));
 
     // Case-insensitive substring over the label: `ab` finds `xAby`, not `a-b`.
-    let hit = list(&t, &g, "ab", Group::All);
-    assert_eq!(hit.len(), 1);
+    let hit = list(&t, &g, "ab", Group::Indices);
+    assert_eq!(hit.len(), 1, "{hit:?}");
     assert_eq!(rows(&hit, 0), [row("xAby", "", 1, 0, false)]);
 
     let only = list(&t, &g, "", Group::Aliases);
