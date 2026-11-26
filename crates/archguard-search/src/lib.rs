@@ -7,7 +7,8 @@ mod graph;
 mod merge;
 mod sources;
 
-pub use context::{Reader, SearchContext, SourceOutput};
+pub use context::Reader;
+use context::SearchContext;
 pub use findings::{is_detail_gap, is_elasticsearch_gap, search_artifact_covers};
 pub use graph::{SearchEdge, SearchGraph, SearchNode, search_graph, short_scope};
 pub use merge::merge_set;

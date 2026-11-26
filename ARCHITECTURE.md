@@ -81,6 +81,8 @@ graph TD
         BCK["archguard-flow-backend"]
         CLK["archguard-flow-clike"]
         COM["archguard-flow-common"]
+        TF["archguard-terraform"]
+        SRCH["archguard-search"]
     end
     subgraph L1["Layer 1 — Domain logic"]
         EXT["archguard-extract"]
@@ -106,6 +108,13 @@ graph TD
     ENG --> BCK
     ENG --> CLK
     ENG --> COM
+    ENG --> TF
+    ENG --> SRCH
+    SRCH --> TF
+    SRCH --> COM
+    SRCH --> CORE
+    TF --> COM
+    TF --> CORE
     FLOWS --> COM
     FLOWS --> CLK
     BCK --> CLK
@@ -621,7 +630,7 @@ commented-out suggestions.
 
 ## 12. Safeguards for ArchGuard's architecture
 
-1. **Cargo metadata allowlist:** `scripts/checks/check_architecture.py` checks the twenty-one workspace crates and every manifest dependency against Section 3.2, including build, dev, optional and target-specific entries. Forty-nine edges are currently allowed and present. Cargo alone does not prevent forbidden acyclic layer edges.
+1. **Cargo metadata allowlist:** `scripts/checks/check_architecture.py` checks the twenty-three workspace crates and every manifest dependency against Section 3.2, including build, dev, optional and target-specific entries. Fifty-six edges are currently allowed and present. Cargo alone does not prevent forbidden acyclic layer edges.
 2. **Dependency sink:** shared types live in `archguard-core`. L1 crates (`extract`, `analysis`, `report`, `store`) have no dependencies on one another; a type needed by several L1 crates belongs in `archguard-core`.
 3. **CI source scan:** `archguard check .` additionally runs with ArchGuard's own `archguard.toml`. It resolves imports between the workspace crates, but only those used in scanned non-test source; the manifest allowlist also covers declared build, dev, optional and target-specific dependencies, so the scan does not replace it.
 

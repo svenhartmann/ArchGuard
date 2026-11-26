@@ -10,19 +10,19 @@ pub type Reader = dyn Fn(&Path, &Path) -> Option<String>;
 /// Read-only input of every source. Unlike the engine's `ExtractContext` it carries the
 /// discovery and the service list (code usages are per owning service), and the engine's
 /// safe file reader, which cannot move into this crate (ADR 0025).
-pub struct SearchContext<'a> {
-    pub root: &'a Path,
-    pub discovery: &'a Discovery,
-    pub topology: &'a ServiceTopology,
-    pub read: &'a Reader,
+pub(crate) struct SearchContext<'a> {
+    pub(crate) root: &'a Path,
+    pub(crate) discovery: &'a Discovery,
+    pub(crate) topology: &'a ServiceTopology,
+    pub(crate) read: &'a Reader,
 }
 
 /// One source's contribution; the merge puts them together.
 #[derive(Default)]
-pub struct SourceOutput {
-    pub artifacts: Vec<SearchArtifact>,
-    pub usages: Vec<SearchIndexUsage>,
-    pub diagnostics: Vec<ServiceDiagnostic>,
+pub(crate) struct SourceOutput {
+    pub(crate) artifacts: Vec<SearchArtifact>,
+    pub(crate) usages: Vec<SearchIndexUsage>,
+    pub(crate) diagnostics: Vec<ServiceDiagnostic>,
 }
 
 impl SourceOutput {
