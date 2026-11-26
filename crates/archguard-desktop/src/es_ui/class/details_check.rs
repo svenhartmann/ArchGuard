@@ -283,3 +283,32 @@ fn field_details_have_the_normalizer_chain_and_none_for_fields_without_analysis(
     assert!(sku.index.is_none() && sku.normalizer.is_none());
     assert!(field_details(&t, &g, node(&g, "index", "docs"), "nope").is_none());
 }
+
+fn opensearch_topology() -> ServiceTopology {
+    let art = |kind: &str, name: &str| {
+        serde_json::json!({"kind": kind, "name": name, "address": format!("res.{name}"),
+            "scope": "terraform:infra/main", "flavor": "opensearch",
+            "patterns": [], "references": [], "evidence": []})
+    };
+    let es = serde_json::json!({"findings": [], "usages": [],
+        "artifacts": [art("index", "os-idx"), art("ism_policy", "os-ism")]});
+    ServiceTopology {
+        elasticsearch: serde_json::from_value(es).unwrap(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn opensearch_artifacts_show_the_product_in_the_head_scope() {
+    let t = opensearch_topology();
+    let g = search_graph(&t);
+    let at = |kind: &str| Key::Node(g.nodes.iter().position(|n| n.kind == kind).unwrap());
+    match details(&t, &g, &at("index")) {
+        Details::Index(i) => assert_eq!(i.page.overview.scope, "OpenSearch \u{b7} infra/main"),
+        other => panic!("{other:?}"),
+    }
+    match details(&t, &g, &at("ism_policy")) {
+        Details::Other(o) => assert_eq!(o.scope.as_str(), "OpenSearch \u{b7} terraform:infra/main"),
+        other => panic!("{other:?}"),
+    }
+}
