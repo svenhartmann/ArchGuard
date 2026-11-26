@@ -205,6 +205,7 @@ mod tests {
 
     fn art(kind: &str, name: &str, patterns: &[&str], refs: &[(&str, &str)]) -> SearchArtifact {
         SearchArtifact {
+            flavor: String::new(),
             kind: kind.into(),
             name: Some(name.into()),
             address: format!("{kind}.{name}"),

@@ -329,10 +329,12 @@ fn probe_split() {
 
 /// Stands in for `analyze_services`: the fixture project holds a finished Elasticsearch model.
 fn read_topology(root: &Path) -> Result<ServiceTopology, archguard_engine::core::ArchguardError> {
-    let mut t = ServiceTopology::default();
-    t.elasticsearch =
+    let elasticsearch =
         serde_json::from_str(&fs::read_to_string(root.join("topology.json")).unwrap()).unwrap();
-    Ok(t)
+    Ok(ServiceTopology {
+        elasticsearch,
+        ..Default::default()
+    })
 }
 
 #[test]

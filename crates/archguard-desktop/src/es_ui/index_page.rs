@@ -81,6 +81,7 @@ pub fn index_page(t: &ServiceTopology, node: &SearchNode) -> IndexPage {
         Some(a) => a,
         None => {
             ghost = SearchArtifact {
+                flavor: String::new(),
                 kind: node.kind.clone(),
                 name: Some(node.title.clone()),
                 address: node.title.clone(),

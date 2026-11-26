@@ -244,3 +244,9 @@ are code, but no analyzer measures them.
   `text` field without `search_analyzer`, and without a search analyzer the index analyzer applies;
   a multi-field is a child of a field whose kind is not `object`/`nested`; the index chain is
   compared with the search chain.
+- **2026-11-25:** `SearchArtifact.flavor: String` (empty = Elasticsearch, `opensearch` =
+  OpenSearch; omitted from JSON when empty, goldens stay byte-identical). Reasons: OpenSearch has
+  the same artifact kinds and analysis models, so no second model; `scope` stays the source; per
+  artifact because a project set can mix both. A string like `kind`, no enum in the core. The
+  merge key (sources and project set) is (kind, flavor, name): same name with another product is
+  two artifacts. ISM policies are the new kind `ism_policy`. CLI text appends ` (opensearch)`.

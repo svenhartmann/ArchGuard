@@ -125,6 +125,7 @@ fn detail(s: &EsState) -> Option<SvcSearchDetail> {
         Some(i) => t.elasticsearch.artifacts.get(i)?,
         None => {
             ghost = SearchArtifact {
+                flavor: String::new(),
                 kind: n.kind.clone(),
                 name: Some(n.title.clone()),
                 address: n.title.clone(),
@@ -283,6 +284,7 @@ mod tests {
 
     fn artifact(kind: &str, name: &str, references: &[(&str, &str)]) -> SearchArtifact {
         SearchArtifact {
+            flavor: String::new(),
             kind: kind.into(),
             name: Some(name.into()),
             address: format!("res.{name}"),
