@@ -89,7 +89,7 @@ fn a_clicked_box_selects_it_and_a_part_shows_its_block_details() {
         .iter()
         .position(|k| matches!(k, Key::Part { name, .. } if name == "german_custom"))
         .expect("the analyzer is in the neighbourhood");
-    s.pick_box(i);
+    s.pick_box(i, 0.0);
     let m = build(&mut s);
     assert_eq!(selected(&m), ["german_custom"]);
     assert_eq!(m.details.mode, 1);
@@ -231,4 +231,156 @@ fn the_hint_names_only_the_sides_that_differ_and_the_tokenizer() {
         (t.search_only.as_str(), t.index_only.as_str(), t.tokenizer),
         ("", "a, b", true)
     );
+}
+
+fn box_index(m: &EsClassModel, name: &str) -> usize {
+    boxes(m)
+        .iter()
+        .position(|b| b.name == name)
+        .unwrap_or_else(|| panic!("no box {name}"))
+}
+
+fn field_lines(m: &EsClassModel) -> Vec<(String, bool)> {
+    let b = boxes(m).remove(box_index(m, "produkte_aktuell"));
+    b.compartments
+        .row_data(0)
+        .expect("fields")
+        .lines
+        .iter()
+        .map(|l| (l.text.to_string(), l.focus))
+        .collect()
+}
+
+#[test]
+fn a_field_in_focus_highlights_its_row_and_chain_and_dims_the_rest() {
+    let mut s = state();
+    let m = build(&mut s);
+    assert!(boxes(&m).iter().all(|b| !b.dim) && field_lines(&m).iter().all(|(_, f)| !f));
+    let key = s.box_keys[box_index(&m, "produkte_aktuell")].clone();
+    s.set_field(key, "titel");
+    let m = build(&mut s);
+    let lit: Vec<String> = boxes(&m)
+        .iter()
+        .filter(|b| !b.dim)
+        .map(|b| b.name.to_string())
+        .collect();
+    for want in [
+        "produkte_aktuell",
+        "german_custom",
+        "german_search",
+        "german_stop",
+        "synonyme",
+    ] {
+        assert!(lit.iter().any(|n| n == want), "{want} is lit: {lit:?}");
+    }
+    for gone in ["autocomplete", "autocomplete_tok", "lower"] {
+        assert!(!lit.iter().any(|n| n == gone), "{gone} is dim: {lit:?}");
+    }
+    let focus: Vec<String> = field_lines(&m)
+        .into_iter()
+        .filter(|(_, f)| *f)
+        .map(|(t, _)| t)
+        .collect();
+    assert_eq!(focus, ["titel"]);
+    assert!(m.edges.iter().any(|e| e.dim) && m.edges.iter().any(|e| !e.dim));
+}
+
+#[test]
+fn the_details_of_a_field_in_focus_show_the_tree_and_both_chains() {
+    let mut s = state();
+    let m = build(&mut s);
+    let key = s.box_keys[box_index(&m, "produkte_aktuell")].clone();
+    s.set_field(key, "titel");
+    let d = build(&mut s).details;
+    assert_eq!((d.mode, d.head.title.as_str()), (3, "produkte_aktuell"));
+    let f = &d.field;
+    assert_eq!(
+        (f.path.as_str(), f.kind.as_str(), f.role),
+        ("titel", "text", 0)
+    );
+    assert_eq!(
+        (f.index_name.as_str(), f.search_name.as_str()),
+        ("german_custom", "german_search")
+    );
+    assert!(
+        f.index_chain.row_count() > 0 && f.search_chain.row_count() > f.index_chain.row_count()
+    );
+    assert_eq!(f.norm_name, "");
+    assert!(f.hint.field == "titel");
+    let tree: Vec<(String, i32, bool)> = d
+        .fields
+        .iter()
+        .map(|r| (r.path.to_string(), r.depth, r.selected))
+        .collect();
+    assert!(
+        tree.contains(&("titel".into(), 0, true))
+            && tree.contains(&("hersteller.name".into(), 1, false)),
+        "{tree:?}"
+    );
+    assert!(
+        tree.iter().any(|(p, _, _)| p == "id"),
+        "fields without analysis are listed"
+    );
+    let raw = d
+        .fields
+        .iter()
+        .find(|r| r.path == "titel.raw")
+        .expect("multi-field");
+    assert!(raw.name.starts_with('\u{203A}'), "{}", raw.name);
+}
+
+#[test]
+fn a_multi_field_with_a_normalizer_shows_the_normalizer_chain() {
+    let mut s = state();
+    let m = build(&mut s);
+    let key = s.box_keys[box_index(&m, "produkte_aktuell")].clone();
+    s.set_field(key, "titel.raw");
+    let f = build(&mut s).details.field;
+    assert_eq!((f.role, f.norm_name.as_str()), (1, "lower"));
+    assert!(f.norm_chain.row_count() > 0 && f.index_chain.row_count() == 0);
+}
+
+#[test]
+fn a_click_on_a_field_row_selects_the_field_the_header_returns_to_the_index() {
+    let mut s = state();
+    let m = build(&mut s);
+    let i = box_index(&m, "produkte_aktuell");
+    let key = s.box_keys[i].clone();
+    let (top, _) = s.box_rows[i]
+        .iter()
+        .find(|(_, p)| p == "beschreibung")
+        .cloned()
+        .expect("row");
+    s.pick_box(i, top + 4.0);
+    assert_eq!(s.field, Some((key.clone(), "beschreibung".to_string())));
+    assert_eq!(build(&mut s).details.field.path, "beschreibung");
+    s.pick_box(i, 5.0);
+    assert_eq!(
+        (s.field.clone(), s.selected.clone()),
+        (None, Some(key.clone()))
+    );
+    // A part box takes the selection and leaves no field behind.
+    s.set_field(key, "titel");
+    let j = build(&mut s)
+        .boxes
+        .iter()
+        .position(|b| b.name == "german_custom")
+        .expect("analyzer");
+    s.pick_box(j, 30.0);
+    assert_eq!(s.field, None);
+    assert_eq!(build(&mut s).details.mode, 1);
+}
+
+#[test]
+fn a_click_on_a_field_in_the_details_selects_it_in_the_shown_index() {
+    let mut s = state();
+    build(&mut s);
+    s.select_field("preis");
+    let m = build(&mut s);
+    assert_eq!(
+        (m.details.mode, m.details.field.path.as_str()),
+        (3, "preis")
+    );
+    s.clear_field();
+    assert_eq!(build(&mut s).details.mode, 0);
 }

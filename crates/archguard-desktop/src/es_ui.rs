@@ -24,7 +24,7 @@ pub fn wire(ui: &AppWindow) {
     let d = ui.global::<EsClassData>();
     let a = Actions::<EsState>::new(ui);
     d.on_select_row(a.on(|s, _, i: i32| s.pick_row(index(i).unwrap_or(usize::MAX))));
-    d.on_select_box(a.on(|s, _, i: i32| s.pick_box(index(i).unwrap_or(usize::MAX))));
+    d.on_select_box(a.on2(|s, _, i: i32, y: f32| s.pick_box(index(i).unwrap_or(usize::MAX), y)));
     d.on_search(a.on(|s, _, q: slint::SharedString| s.set_query(&q)));
     d.on_choose_kind(a.on(|s, _, i: i32| s.set_group(Group::from_index(index(i).unwrap_or(0)))));
     d.on_toggle_cluster(a.on0(|s, _| s.toggle_cluster()));

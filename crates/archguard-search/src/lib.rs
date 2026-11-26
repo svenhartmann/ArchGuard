@@ -12,7 +12,8 @@ mod sources;
 pub use analysis::{ChainRef, SearchAnalysisPart, search_analysis_parts, search_builtin};
 pub use analysis_use::{
     SearchAnalysisUse, SearchAnalysisUser, SearchAnalyzerDifference, SearchFieldRole,
-    search_analysis_users, search_analyzer_difference, search_field_depth, search_field_role,
+    search_analysis_users, search_analyzer_difference, search_field_analyzers, search_field_depth,
+    search_field_role,
 };
 pub use context::Reader;
 use context::SearchContext;

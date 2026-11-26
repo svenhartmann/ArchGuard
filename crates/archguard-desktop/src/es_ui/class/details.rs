@@ -4,7 +4,7 @@
 use archguard_engine::core::{SearchArtifact, SearchIndexDetail, ServiceTopology};
 use archguard_engine::{
     ChainRef, SearchAnalysisPart, SearchFieldRole, SearchGraph, SearchNode, search_analysis_parts,
-    search_analysis_users, search_analyzer_difference, search_field_role,
+    search_analysis_users, search_analyzer_difference, search_field_depth, search_field_role,
 };
 use serde_json::Value;
 
@@ -38,11 +38,35 @@ pub struct IndexDetails {
 #[derive(Debug, PartialEq, Eq)]
 pub struct FieldRow {
     pub path: String,
+    pub depth: usize,
     pub role: SearchFieldRole,
     pub kind: String,
     pub analyzer: Option<String>,
     pub search_analyzer: Option<String>,
     pub normalizer: Option<String>,
+}
+
+/// `None` for fields without an analyzer (keyword, numbers, objects).
+/// The analysis chain a field uses in one role: the effective analyzer or normalizer `name`;
+/// `stages` is empty when it is built in or not declared.
+#[derive(Debug, PartialEq, Eq)]
+pub struct FieldChain {
+    pub name: String,
+    pub declared: bool,
+    pub stages: Vec<StageRow>,
+}
+
+/// One field of an index: its role, the index and search chain, the normalizer chain and the
+/// neutral hint when index and search analysis differ.
+#[derive(Debug, PartialEq, Eq)]
+pub struct FieldDetails {
+    pub path: String,
+    pub kind: String,
+    pub role: SearchFieldRole,
+    pub index: Option<FieldChain>,
+    pub search: Option<FieldChain>,
+    pub normalizer: Option<FieldChain>,
+    pub hint: Option<Hint>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -96,6 +120,16 @@ pub fn details(t: &ServiceTopology, g: &SearchGraph, key: &Key) -> Details {
         }
     };
     found.unwrap_or_else(|| Details::Other(SvcSearchDetail::default()))
+}
+
+/// The details of field `path` of the index (or template) node `owner`.
+pub fn field_details(
+    _t: &ServiceTopology,
+    _g: &SearchGraph,
+    _owner: usize,
+    _path: &str,
+) -> Option<FieldDetails> {
+    None
 }
 
 fn node_details(t: &ServiceTopology, n: &SearchNode) -> Option<Details> {
@@ -159,6 +193,7 @@ fn field_rows(d: &SearchIndexDetail) -> Vec<FieldRow> {
         })
         .map(|(i, f)| FieldRow {
             path: f.path.clone(),
+            depth: search_field_depth(&d.fields, i),
             role: search_field_role(&d.fields, i),
             kind: f.kind.clone(),
             analyzer: f.analyzer.clone(),

@@ -3,7 +3,7 @@
 use archguard_engine::{SearchGraph, core::ServiceTopology, search_graph};
 use serde_json::{Value, json};
 
-use super::diagram::{BoxKind, DEdge, Diagram, EdgeStyle, diagram};
+use super::diagram::{BoxKind, DEdge, Diagram, EdgeStyle, diagram, diagram_field};
 use super::types::{Key, Switches};
 
 fn art(kind: &str, name: &str, refs: Value, detail: Value) -> Value {
@@ -83,6 +83,7 @@ fn has(d: &Diagram, from: &Key, to: &Key, style: EdgeStyle, label: &str) -> bool
         to: to.clone(),
         style,
         label: label.into(),
+        dim: false,
     })
 }
 
@@ -297,4 +298,76 @@ fn switches_drop_services_and_analysis() {
     }
     assert!(d.edges.iter().all(|e| e.style != EdgeStyle::Uses));
     assert_eq!(count(&d, BoxKind::Service), 2);
+}
+
+fn dim_names(d: &Diagram, dim: bool) -> Vec<String> {
+    let mut v: Vec<String> = d
+        .boxes
+        .iter()
+        .filter(|b| b.dim == dim)
+        .map(|b| match &b.key {
+            Key::Part { name, .. } => name.clone(),
+            Key::Node(_) => format!("#{:?}", b.kind),
+        })
+        .collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn a_field_in_focus_keeps_its_analysis_chain_and_dims_the_rest() {
+    let (t, g) = topo();
+    let sel = node(&g, "index", "products");
+    let d = diagram_field(&t, &g, &sel, None, &Switches::default(), Some("title"));
+    // The index and the analyzer with the declared tokenizer and filter stay; icu_x is only a chip.
+    assert_eq!(
+        dim_names(&d, false),
+        ["#Index", "my_stop", "title_fold", "tok"]
+    );
+    let dimmed = dim_names(&d, true);
+    for name in ["default", "lower_n", "#Alias", "#Service", "#Processing"] {
+        assert!(
+            dimmed.iter().any(|n| n == name),
+            "{name} is dim: {dimmed:?}"
+        );
+    }
+    let edge = |from: &Key, to: &Key| {
+        d.edges
+            .iter()
+            .find(|e| &e.from == from && &e.to == to)
+            .unwrap_or_else(|| panic!("{from:?} {to:?}"))
+    };
+    let fold = part(&g, "products", "analyzer", "title_fold");
+    assert!(!edge(&sel, &fold).dim);
+    assert!(!edge(&fold, &part(&g, "products", "tokenizer", "tok")).dim);
+    assert!(!edge(&fold, &part(&g, "products", "filter", "my_stop")).dim);
+    assert!(edge(&sel, &part(&g, "products", "analyzer", "default")).dim);
+    assert!(
+        edge(
+            &part(&g, "products", "normalizer", "lower_n"),
+            &part(&g, "products", "filter", "my_stop")
+        )
+        .dim
+    );
+    assert!(
+        d.edges
+            .iter()
+            .filter(|e| e.style != EdgeStyle::Uses)
+            .all(|e| e.dim)
+    );
+}
+
+#[test]
+fn a_normalizer_field_keeps_the_normalizer_and_no_field_dims_nothing() {
+    let (t, g) = topo();
+    let sel = node(&g, "index", "products");
+    let d = diagram_field(&t, &g, &sel, None, &Switches::default(), Some("tag"));
+    assert_eq!(dim_names(&d, false), ["#Index", "lower_n", "my_stop"]);
+    let d = diagram_field(&t, &g, &sel, None, &Switches::default(), None);
+    assert!(d.boxes.iter().all(|b| !b.dim) && d.edges.iter().all(|e| !e.dim));
+    let d = diagram_field(&t, &g, &sel, None, &Switches::default(), Some("nope"));
+    assert!(
+        d.boxes.iter().all(|b| !b.dim),
+        "an unknown field dims nothing"
+    );
 }

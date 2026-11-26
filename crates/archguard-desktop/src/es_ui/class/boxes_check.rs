@@ -255,3 +255,29 @@ fn declared_default_applies_to_text_fields_without_analyzer() {
     assert_eq!(f[0].4, "{default}");
     assert_eq!(f[1].4, "");
 }
+
+#[test]
+fn field_lines_carry_their_full_path_other_lines_none() {
+    let b = docs(&Switches::default());
+    let fields = b
+        .compartments
+        .iter()
+        .find(|c| c.title == Title::Fields)
+        .expect("fields");
+    let raw = fields
+        .lines
+        .iter()
+        .find(|l| l.text == "raw")
+        .expect("title.raw");
+    assert_eq!(raw.path, "title.raw");
+    assert!(
+        fields.lines.iter().all(|l| !l.path.is_empty()),
+        "every line is a field"
+    );
+    let other = b
+        .compartments
+        .iter()
+        .find(|c| c.title == Title::Analysis)
+        .expect("analysis");
+    assert!(other.lines.iter().all(|l| l.path.is_empty()));
+}

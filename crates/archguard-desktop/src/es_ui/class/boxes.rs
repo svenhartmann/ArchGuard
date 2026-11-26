@@ -56,6 +56,8 @@ pub enum ChainClass {
 pub struct Line {
     pub depth: usize,
     pub prefix: Prefix,
+    /// A field line: the field's full path (what a click selects), else empty.
+    pub path: String,
     pub text: String,
     pub kind_text: String,
     pub note: String,
@@ -303,6 +305,7 @@ fn field_lines(d: &SearchIndexDetail, sw: &Switches) -> Vec<Line> {
         out.push(Line {
             depth: search_field_depth(&d.fields, i),
             prefix,
+            path: String::new(),
             text: f.path.rsplit('.').next().unwrap_or_default().into(),
             kind_text: f.kind.clone(),
             note: if parts.is_empty() {

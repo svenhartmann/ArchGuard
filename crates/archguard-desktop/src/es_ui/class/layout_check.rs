@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::boxes::{BoxContent, content};
 use super::boxes::{Compartment, Line, Title};
 use super::diagram::{BoxKind, DBox, DEdge, Diagram, EdgeStyle, diagram};
-use super::layout::{Scene, layout};
+use super::layout::{Scene, field_rows, layout};
 use super::types::{Key, Switches};
 use crate::diagram::HeadShape;
 
@@ -144,6 +144,7 @@ fn dbox(i: usize, kind: BoxKind) -> DBox {
         ghost: false,
         warn: false,
         selected: i == 0,
+        dim: false,
     }
 }
 
@@ -153,6 +154,7 @@ fn dedge(a: usize, b: usize, style: EdgeStyle) -> DEdge {
         to: Key::Node(b),
         style,
         label: String::new(),
+        dim: false,
     }
 }
 
@@ -272,4 +274,46 @@ fn the_alias_diamond_sits_outside_its_box() {
         let inside = xy[0] > b.x && xy[0] < b.x + b.w && xy[1] > b.y && xy[1] < b.y + b.h;
         assert!(!inside, "{xy:?} inside {b:?}: {diamond}");
     }
+}
+
+#[test]
+fn field_rows_give_the_top_of_every_field_line_relative_to_the_box() {
+    let field = |p: &str| Line {
+        path: p.into(),
+        text: p.into(),
+        ..Default::default()
+    };
+    let setting = Line {
+        text: "a = 1".into(),
+        ..Default::default()
+    };
+    let content = BoxContent {
+        compartments: vec![
+            Compartment {
+                title: Title::Fields,
+                lines: vec![field("a"), field("a.b")],
+                chips: Vec::new(),
+            },
+            Compartment {
+                title: Title::Settings,
+                lines: vec![setting],
+                chips: Vec::new(),
+            },
+        ],
+        ..Default::default()
+    };
+    let mut d = Diagram::default();
+    d.boxes.push(dbox(0, BoxKind::Index));
+    let scene = layout(&d, std::slice::from_ref(&content));
+    let p = &scene.boxes[0];
+    let rows = field_rows(&content, p);
+    // The header is 48 px; the compartment title takes a row, then one row per line.
+    assert_eq!(
+        rows,
+        [
+            (p.comps[0] + 16.0, "a".to_string()),
+            (p.comps[0] + 32.0, "a.b".to_string())
+        ]
+    );
+    assert_eq!(p.comps[0], 48.0);
 }

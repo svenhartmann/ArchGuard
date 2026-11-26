@@ -29,6 +29,8 @@ pub struct EsState {
     pub(super) selected: Option<Key>,
     /// Class view: whole cluster instead of the neighborhood.
     pub(super) cluster: bool,
+    /// Class view: the selected field, as index key and field path.
+    pub(super) field: Option<(Key, String)>,
     pub(super) switches: Switches,
     /// Class view: list search text.
     pub(super) query: String,
@@ -39,6 +41,10 @@ pub struct EsState {
     pub(super) row_keys: Vec<Key>,
     pub(super) box_keys: Vec<Key>,
     pub(super) canvas: (f32, f32),
+    /// Class view, set with `box_keys`: per canvas box the (top, path) of its field lines.
+    pub(super) box_rows: Vec<Vec<(f32, String)>>,
+    /// Class view, set by the last build: the shown selection (what a details click refers to).
+    pub(super) shown: Option<Key>,
     /// Class view: counts up with every change of the selection or scope (the canvas refits).
     pub(super) fit_tick: i32,
 }
@@ -56,12 +62,15 @@ pub fn build_from(topology: Topology) -> EsState {
         problem: String::new(),
         selected: None,
         cluster: false,
+        field: None,
         switches: Switches::default(),
         query: String::new(),
         group: Group::All,
         row_keys: Vec::new(),
         box_keys: Vec::new(),
         canvas: (0.0, 0.0),
+        box_rows: Vec::new(),
+        shown: None,
         fit_tick: 0,
     }
 }
@@ -128,6 +137,15 @@ impl EsState {
         self.fit_tick += 1;
     }
 
+    /// Field `path` of the index `key` is selected (the index is selected with it).
+    pub(super) fn set_field(&mut self, _key: Key, _path: &str) {}
+
+    /// Back to the index selection.
+    pub(super) fn clear_field(&mut self) {}
+
+    /// A field of the shown index was clicked in the details.
+    pub(super) fn select_field(&mut self, _path: &str) {}
+
     pub(super) fn toggle_cluster(&mut self) {
         self.cluster = !self.cluster;
         self.fit_tick += 1;
@@ -152,7 +170,7 @@ impl EsState {
     }
 
     /// The canvas box `i` is selected; an index out of range is ignored.
-    pub(super) fn pick_box(&mut self, i: usize) {
+    pub(super) fn pick_box(&mut self, i: usize, _y: f32) {
         if let Some(key) = self.box_keys.get(i).cloned() {
             self.select(Some(key));
         }

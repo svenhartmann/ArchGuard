@@ -109,6 +109,9 @@ fn index_mode(g: &SearchGraph, key: &Key, d: &IndexDetails) -> EsDetails {
                 .into(),
         },
         fields: model(d.fields.iter().map(|f| EsDetailField {
+            path: f.path.as_str().into(),
+            depth: f.depth as i32,
+            selected: false,
             name: f.path.as_str().into(),
             kind: f.kind.as_str().into(),
             analysis: analysis_text(f).into(),

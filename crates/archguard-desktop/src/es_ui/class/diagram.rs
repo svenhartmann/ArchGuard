@@ -31,6 +31,8 @@ pub struct DBox {
     /// `SearchNode.warn`: engine findings only.
     pub warn: bool,
     pub selected: bool,
+    /// A field is in focus and this box is not part of its analysis.
+    pub dim: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -52,6 +54,7 @@ pub struct DEdge {
     pub to: Key,
     pub style: EdgeStyle,
     pub label: String,
+    pub dim: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -68,6 +71,18 @@ pub fn diagram(
     selected: &Key,
     cluster: Option<&[Key]>,
     sw: &Switches,
+) -> Diagram {
+    diagram_field(t, g, selected, cluster, sw, None)
+}
+
+/// [`diagram`] with a field of the selected index in focus: what its analysis does not use is dim.
+pub fn diagram_field(
+    t: &ServiceTopology,
+    g: &SearchGraph,
+    selected: &Key,
+    cluster: Option<&[Key]>,
+    sw: &Switches,
+    _field: Option<&str>,
 ) -> Diagram {
     let cx = Cx::new(t, g, sw);
     let (mut nodes, parts) = match cluster {
@@ -263,6 +278,7 @@ impl<'a> Cx<'a> {
                 to,
                 style,
                 label,
+                dim: false,
             })
             .collect();
         Diagram { boxes, edges }
@@ -276,6 +292,7 @@ impl<'a> Cx<'a> {
             ghost: !n.declared,
             warn: n.warn,
             selected: Key::Node(i) == *sel,
+            dim: false,
         }
     }
 
@@ -378,5 +395,6 @@ fn part_box(k: &Key, sel: &Key) -> DBox {
         ghost: false,
         warn: false,
         selected: k == sel,
+        dim: false,
     }
 }

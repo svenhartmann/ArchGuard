@@ -79,6 +79,9 @@ fn index_details() -> EsDetails {
             location: s("infra/indices.tf:42"),
         },
         fields: model(vec![EsDetailField {
+            path: s("title"),
+            depth: 0,
+            selected: false,
             name: s("title"),
             kind: s("text"),
             analysis: s("index: german_custom"),

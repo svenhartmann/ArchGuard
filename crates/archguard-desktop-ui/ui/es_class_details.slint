@@ -14,6 +14,12 @@ export struct EsDetailHead {
 }
 
 export struct EsDetailField {
+    // The full path (what a click selects); `name` is the last segment, "›" before a multi-field.
+    path: string,
+    // Indent level, 12 px each.
+    depth: int,
+    // The field in focus.
+    selected: bool,
     name: string,
     kind: string,
     // Index and search analyzer, as text.
@@ -51,9 +57,26 @@ export struct EsDetailUse {
     clickable: bool,
 }
 
+// A field in focus: its chains as the engine resolves them.
+export struct EsDetailFocus {
+    path: string,
+    kind: string,
+    // 0 field, 1 multi-field, 2 child of an object.
+    role: int,
+    index-name: string,
+    index-chain: [EsDetailRow],
+    search-name: string,
+    search-chain: [EsDetailRow],
+    // Empty: no normalizer.
+    norm-name: string,
+    norm-chain: [EsDetailRow],
+    hint: EsDetailHint,
+}
+
 export struct EsDetails {
-    // 0 index, 1 building block, 2 other (`other`).
+    // 0 index, 1 building block, 2 other (`other`), 3 index with a field in focus (`field`).
     mode: int,
+    field: EsDetailFocus,
     head: EsDetailHead,
     fields: [EsDetailField],
     chain-name: string,

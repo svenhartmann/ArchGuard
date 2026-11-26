@@ -14,6 +14,8 @@ export struct EsClassLine {
     note: string,
     // > 0: "{n} fields" (collapsed); < 0: "{n} more"; 0: a normal row.
     summary: int,
+    // The field in focus.
+    focus: bool,
 }
 
 export struct EsClassChip {
@@ -51,6 +53,8 @@ export struct EsClassBox {
     ghost: bool,
     warn: bool,
     selected: bool,
+    // A field is in focus and this box is not part of its analysis.
+    dim: bool,
     // Ghost only: the dashed outline as path commands in box-local coordinates.
     border: string,
     compartments: [EsClassCompartment],
@@ -68,6 +72,7 @@ export struct EsClassEdge {
     label: string,
     lx: float,
     ly: float,
+    dim: bool,
 }
 
 // Compartment titles by index; -1 has none. Raw words are not translated.
@@ -150,7 +155,7 @@ component ClassChip inherits Rectangle {
 component ClassBox inherits Rectangle {
     in property <EsClassBox> box;
     in property <float> zoom;
-    callback clicked();
+    callback clicked(float);
     // kind 4: an analysis building block.
     property <bool> analysis: box.kind == 4;
     property <length> rh: 16px * zoom;
@@ -241,7 +246,7 @@ component ClassBox inherits Rectangle {
     }
     TouchArea {
         mouse-cursor: pointer;
-        clicked => { root.clicked(); }
+        clicked => { root.clicked(self.mouse-y / 1px / zoom); }
     }
 }
 
@@ -253,7 +258,7 @@ export component EsClassCanvas inherits Rectangle {
     in property <float> zoom: 1.0;
     // A new value asks for `fit` once the viewport has a size.
     in property <int> fit-tick;
-    callback select(int);
+    callback select(int, float);
     callback zoom-by(float);
     callback fit(float, float);
 
@@ -311,7 +316,7 @@ export component EsClassCanvas inherits Rectangle {
             for b[i] in root.boxes: ClassBox {
                 box: b;
                 zoom: root.zoom;
-                clicked => { root.select(i); }
+                clicked(y) => { root.select(i, y); }
             }
             // Labels lie above the boxes, on a background, so no box hides them.
             for e in root.edges: Rectangle {

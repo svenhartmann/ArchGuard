@@ -205,6 +205,7 @@ fn slint_box(b: &DBox, c: &BoxContent, p: &Placed) -> EsClassBox {
         ghost: b.ghost,
         warn: b.warn,
         selected: b.selected,
+        dim: b.dim,
         border: if b.ghost {
             dash_rect(p.w, p.h).into()
         } else {
@@ -279,6 +280,7 @@ fn slint_line(l: &Line) -> EsClassLine {
         kind: l.kind_text.as_str().into(),
         note: l.note.as_str().into(),
         summary: l.summary.unwrap_or(0) as i32,
+        focus: false,
     }
 }
 
@@ -296,6 +298,7 @@ fn slint_edge(e: &PlacedEdge) -> EsClassEdge {
         label: e.label.as_str().into(),
         lx: e.lx,
         ly: e.ly,
+        dim: e.dim,
     }
 }
 

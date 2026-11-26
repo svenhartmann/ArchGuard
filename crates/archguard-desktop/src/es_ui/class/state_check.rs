@@ -44,3 +44,29 @@ fn defaults_and_changes() {
     s.set_group(Group::Aliases);
     assert_eq!(s.group, Group::Aliases);
 }
+
+#[test]
+fn a_field_selection_is_an_index_key_and_a_path_that_another_selection_drops() {
+    let mut s = state();
+    s.set_field(Key::Node(2), "title");
+    assert_eq!(s.field, Some((Key::Node(2), "title".to_string())));
+    assert_eq!(
+        s.selected,
+        Some(Key::Node(2)),
+        "the index is selected with it"
+    );
+    let tick = s.fit_tick;
+    s.set_field(Key::Node(2), "body");
+    assert_eq!(s.field, Some((Key::Node(2), "body".to_string())));
+    assert_eq!(s.fit_tick, tick, "the same index keeps the view");
+
+    s.select(Some(Key::Node(3)));
+    assert_eq!(s.field, None);
+    s.set_field(Key::Node(2), "title");
+    s.pick_row(0);
+    assert_eq!(s.field, None, "a list row selects the index, not the field");
+    s.set_field(Key::Node(2), "title");
+    s.clear_field();
+    assert_eq!(s.field, None);
+    assert_eq!(s.selected, Some(Key::Node(2)));
+}

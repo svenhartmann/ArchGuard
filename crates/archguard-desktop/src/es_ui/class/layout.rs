@@ -29,6 +29,7 @@ pub struct PlacedEdge {
     pub label: String,
     pub lx: f32,
     pub ly: f32,
+    pub dim: bool,
 }
 
 /// `boxes` is index-aligned with `Diagram::boxes`, `edges` follows `Diagram::edges`.
@@ -243,6 +244,7 @@ fn place_edge(e: &DEdge, a: &Placed, b: &Placed, same: bool) -> PlacedEdge {
         label: e.label.clone(),
         lx: st.mid.0,
         ly: st.mid.1,
+        dim: e.dim,
     }
 }
 
@@ -327,4 +329,9 @@ pub fn layout(d: &Diagram, contents: &[BoxContent]) -> Scene {
         width,
         height,
     }
+}
+
+/// The field lines of a box as (top, path), relative to the box.
+pub fn field_rows(_c: &BoxContent, _p: &Placed) -> Vec<(f32, String)> {
+    Vec::new()
 }

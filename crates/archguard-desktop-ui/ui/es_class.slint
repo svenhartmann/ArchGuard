@@ -40,7 +40,7 @@ export global EsClassData {
     in-out property <EsClassModel> model;
     // A list row (flat index) and a canvas box (index in `boxes`).
     callback select-row(int);
-    callback select-box(int);
+    callback select-box(int, float);
     callback search(string);
     callback choose-kind(int);
     callback toggle-cluster();
@@ -153,7 +153,7 @@ export component EsClassView inherits Rectangle {
                         canvas-h: m.canvas-h;
                         zoom: m.zoom;
                         fit-tick: m.fit-tick;
-                        select(i) => { EsClassData.select-box(i); }
+                        select(i, y) => { EsClassData.select-box(i, y); }
                         zoom-by(f) => { EsClassData.zoom-by(f); }
                         fit(w, h) => { EsClassData.fit(w, h); }
                     }
