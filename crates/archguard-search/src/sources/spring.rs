@@ -6,13 +6,16 @@
 //! with `@Document(indexName = …)` is an `index` named by a literal or a string constant of its
 //! service (Java; a Kotlin constant is a gap), `scope` = `spring:<module>`, evidence = the class
 //! line. `@Field(type, name, analyzer, searchAnalyzer, normalizer)` is a field named `name` or the
-//! property; `FieldType.Auto` writes no entry, a missing type with an analyzer keeps one without type. `@MultiField` is
+//! property; a missing or `Auto` type keeps the field only with an analysis name. `@MultiField` is
 //! the main field plus `<field>.<suffix>` per `@InnerField`. `@Setting(shards, replicas,
 //! refreshInterval)` are settings; `settingPath` and `mappingPath` are classpath JSON below
 //! `<module>/src/main/resources` and replace the annotation attributes (Spring: no other mapping
 //! processing). `@Document` has no default index name (Javadoc). All or nothing per attribute: a
 //! SpEL, placeholder, variable, escaping path or unreadable resource is a gap. Trust boundary:
 //! files below the root, at most 5 000 source files, no test paths, no network; contents are data.
+// shortcut: flavor is a plain substring match anywhere in the module's own build file (a parent
+// pom, `gradle/libs.versions.toml` and a nested Gradle module without build file are missed) and
+// the `org.opensearch.data` import counts per file, not per module; lift when a corpus needs it.
 // shortcut: Kotlin classes need a `{}` body, nested classes share their outer class's fields and
 // resources are found only under `src/main/resources`; lift when a corpus needs it.
 use super::constants::{Constants, lang, literal};
@@ -114,7 +117,7 @@ struct FileScan<'a, 'c> {
 
 impl FileScan<'_, '_> {
     /// The module's build file declares `org.opensearch.client:spring-data-opensearch*`.
-    fn opensearch_build(&self) -> bool {
+    fn opensearch_build(&mut self) -> bool {
         let dir = module_of(self.rel).0;
         BUILD_FILES.iter().any(|f| {
             let path = if dir == "." {
@@ -122,9 +125,18 @@ impl FileScan<'_, '_> {
             } else {
                 format!("{dir}/{f}")
             };
-            (self.ctx.read)(self.ctx.root, &self.ctx.root.join(path)).is_some_and(|t| {
-                t.contains("org.opensearch.client") && t.contains("spring-data-opensearch")
-            })
+            let full = self.ctx.root.join(&path);
+            match (self.ctx.read)(self.ctx.root, &full) {
+                Some(t) => {
+                    t.contains("org.opensearch.client") && t.contains("spring-data-opensearch")
+                }
+                None => {
+                    if full.exists() {
+                        es_gap(self.out, EsGap::Unread, &path, None, &[]);
+                    }
+                    false
+                }
+            }
         })
     }
 
@@ -286,15 +298,15 @@ impl FileScan<'_, '_> {
         self.typed(args, path)
     }
 
-    /// The field of `path` with its type and analysis names; `Auto` writes none, and a field
-    /// without type is kept only with an analysis name (Spring writes those regardless).
+    /// The field of `path` with its type and analysis names; `Auto` is Spring's default and acts like
+    /// no type: kept only with an analysis name (Spring writes those regardless).
     fn typed(&mut self, args: &[Arg], path: String) -> Option<SearchField> {
         let kind = match find(args, "type") {
             None => String::new(),
             Some(a) => {
                 let parts: Vec<&str> = a.val.split('.').map(str::trim).collect();
                 match parts.as_slice() {
-                    [.., "FieldType", "Auto"] => return None,
+                    [.., "FieldType", "Auto"] => String::new(),
                     [.., "FieldType", "TokenCount"] => "token_count".into(),
                     [.., "FieldType", t] => t.to_ascii_lowercase(),
                     _ => {
