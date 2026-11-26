@@ -155,7 +155,7 @@ export component EsClassDetails inherits Rectangle {
                 SectionHeading { label: @tr("Usage in code"); }
                 for u in details.usages: Rectangle {
                     height: ul.preferred-height;
-                    ul := Mono { text: u.text; color: u.clickable ? Theme.accent : Theme.muted; }
+                    ul := Mono { width: parent.width; wrap: word-wrap; text: u.text; color: u.clickable ? Theme.accent : Theme.muted; }
                     if u.clickable: TouchArea {
                         mouse-cursor: pointer;
                         clicked => { root.open(u.file, u.line); }

@@ -70,6 +70,15 @@ fn usage(u: &UsageRow) -> EsDetailUse {
     }
 }
 
+/// The names of a list, or a dash when it is empty (the hint sentence needs a word).
+fn names(items: &[String]) -> String {
+    if items.is_empty() {
+        "–".into()
+    } else {
+        items.join(", ")
+    }
+}
+
 fn label(g: &SearchGraph, key: &Key) -> String {
     match key {
         Key::Node(i) => g.nodes.get(*i).map(|n| n.label.clone()),
@@ -87,8 +96,8 @@ fn index_mode(g: &SearchGraph, key: &Key, d: &IndexDetails) -> EsDetails {
     let first = d.chains.first();
     let hint = d.hints.first().map(|h| EsDetailHint {
         field: h.field.as_str().into(),
-        search_only: h.only_search.join(", ").into(),
-        index_only: h.only_index.join(", ").into(),
+        search_only: names(&h.only_search).into(),
+        index_only: names(&h.only_index).into(),
     });
     EsDetails {
         mode: 0,
