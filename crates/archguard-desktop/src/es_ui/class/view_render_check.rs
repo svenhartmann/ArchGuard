@@ -130,13 +130,51 @@ fn three_columns_are_drawn_and_the_details_sit_right_on_a_wide_view() {
     assert!(details > 50, "the details sit at the right: {details}");
 }
 
+/// The full model against the same one without details: only the details differ.
+fn details_only(w: usize) -> (Frame, Frame) {
+    let window = window(w as u32);
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    let data = page.global::<EsClassData>();
+    let mut bare = model(true);
+    bare.details = EsDetails::default();
+    data.set_model(bare);
+    let without = frame(&window, w);
+    data.set_model(model(true));
+    (frame(&window, w), without)
+}
+
 #[test]
 fn a_narrow_view_puts_the_details_below_the_canvas() {
-    let (drawn, empty) = shown(800);
-    let right = diff(&drawn, &empty, 800, (560, 800), (60, 300));
-    let below = diff(&drawn, &empty, 800, (300, 800), (440, 700));
+    let (drawn, without) = details_only(800);
+    let top = diff(&drawn, &without, 800, (280, 800), (0, 330));
+    let below = diff(&drawn, &without, 800, (280, 800), (330, 700));
     assert!(below > 50, "the details lie under the canvas: {below}");
-    assert!(right < below, "nothing of them at the top right: {right}");
+    assert_eq!(top, 0, "nothing of them beside the canvas");
+}
+
+#[test]
+fn the_canvas_asks_for_a_fit_when_the_tick_changes() {
+    let window = window(1400);
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    let data = page.global::<EsClassData>();
+    let asked = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let log = asked.clone();
+    data.on_fit(move |w, h| log.borrow_mut().push((w, h)));
+    data.set_model(model(true));
+    frame(&window, 1400);
+    asked.borrow_mut().clear();
+    let mut next = model(true);
+    next.fit_tick = 1;
+    data.set_model(next);
+    frame(&window, 1400);
+    let asked = asked.borrow();
+    assert_eq!(asked.len(), 1, "one fit per tick: {asked:?}");
+    assert!(
+        asked[0].0 > 300.0 && asked[0].1 > 200.0,
+        "the canvas's size: {asked:?}"
+    );
 }
 
 #[test]

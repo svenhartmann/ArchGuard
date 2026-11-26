@@ -89,6 +89,7 @@ fn index_details() -> EsDetails {
             field: s("title"),
             search_only: s("synonyme"),
             index_only: s("-"),
+            tokenizer: false,
         },
         settings: model(vec![EsDetailPair {
             key: s("shards"),

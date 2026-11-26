@@ -97,6 +97,7 @@ pub fn build(s: &mut EsState) -> EsClassModel {
         canvas_w: scene.width,
         canvas_h: scene.height,
         zoom: s.zoom,
+        fit_tick: s.fit_tick,
         details: current
             .as_ref()
             .map(|k| slint_details(&s.graph, k, &details(t, &s.graph, k)))

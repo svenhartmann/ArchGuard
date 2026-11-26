@@ -243,6 +243,8 @@ export component EsClassCanvas inherits Rectangle {
     in property <float> canvas-w;
     in property <float> canvas-h;
     in property <float> zoom: 1.0;
+    // A new value asks for `fit` once the viewport has a size.
+    in property <int> fit-tick;
     callback select(int);
     callback zoom-by(float);
     callback fit(float, float);

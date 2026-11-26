@@ -195,3 +195,40 @@ fn data_streams_are_processing_in_list_and_diagram() {
     assert_eq!(boxes(&m)[0].kind, 5);
     assert_eq!(boxes(&m)[0].stereotype, "data_stream");
 }
+
+#[test]
+fn selection_and_cluster_link_ask_the_canvas_for_a_fit() {
+    let mut s = state();
+    let first = build(&mut s).fit_tick;
+    s.pick_row(1);
+    let picked = build(&mut s).fit_tick;
+    assert_ne!(picked, first, "a new selection refits");
+    s.toggle_cluster();
+    assert_ne!(build(&mut s).fit_tick, picked, "a new scope refits");
+    let same = build(&mut s).fit_tick;
+    assert_eq!(build(&mut s).fit_tick, same, "a plain rebuild does not");
+}
+
+#[test]
+fn the_hint_names_only_the_sides_that_differ_and_the_tokenizer() {
+    use super::details::Hint;
+    use super::view_details::hint;
+    let h = |only_index: &[&str], only_search: &[&str], tokenizer_differs| Hint {
+        field: "title".into(),
+        index: String::new(),
+        search: String::new(),
+        tokenizer_differs,
+        only_index: only_index.iter().map(|s| s.to_string()).collect(),
+        only_search: only_search.iter().map(|s| s.to_string()).collect(),
+    };
+    let t = hint(&h(&[], &["syn"], false));
+    assert_eq!(
+        (t.search_only.as_str(), t.index_only.as_str(), t.tokenizer),
+        ("syn", "", false)
+    );
+    let t = hint(&h(&["a", "b"], &[], true));
+    assert_eq!(
+        (t.search_only.as_str(), t.index_only.as_str(), t.tokenizer),
+        ("", "a, b", true)
+    );
+}

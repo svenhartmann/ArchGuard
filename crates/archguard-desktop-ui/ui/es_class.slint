@@ -29,6 +29,8 @@ export struct EsClassModel {
     canvas-w: float,
     canvas-h: float,
     zoom: float,
+    // Counts up when the selection or the scope changed: the canvas fits its content.
+    fit-tick: int,
     details: EsDetails,
     // Why the editor did not open the last usage.
     problem: string,
@@ -150,6 +152,7 @@ export component EsClassView inherits Rectangle {
                         canvas-w: m.canvas-w;
                         canvas-h: m.canvas-h;
                         zoom: m.zoom;
+                        fit-tick: m.fit-tick;
                         select(i) => { EsClassData.select-box(i); }
                         zoom-by(f) => { EsClassData.zoom-by(f); }
                         fit(w, h) => { EsClassData.fit(w, h); }

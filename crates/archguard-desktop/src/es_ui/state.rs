@@ -39,6 +39,8 @@ pub struct EsState {
     pub(super) row_keys: Vec<Key>,
     pub(super) box_keys: Vec<Key>,
     pub(super) canvas: (f32, f32),
+    /// Class view: counts up with every change of the selection or scope (the canvas refits).
+    pub(super) fit_tick: i32,
 }
 
 pub fn build_from(topology: Topology) -> EsState {
@@ -60,6 +62,7 @@ pub fn build_from(topology: Topology) -> EsState {
         row_keys: Vec::new(),
         box_keys: Vec::new(),
         canvas: (0.0, 0.0),
+        fit_tick: 0,
     }
 }
 

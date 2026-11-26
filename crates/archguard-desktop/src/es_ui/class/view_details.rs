@@ -3,7 +3,7 @@
 use archguard_engine::SearchGraph;
 use slint::ModelRc;
 
-use super::details::{Details, FieldRow, IndexDetails, PartDetails, StageRow};
+use super::details::{Details, FieldRow, Hint, IndexDetails, PartDetails, StageRow};
 use super::types::Key;
 use crate::es_ui::index_page::UsageRow;
 use crate::tab_support::model;
@@ -87,6 +87,15 @@ fn label(g: &SearchGraph, key: &Key) -> String {
     .unwrap_or_default()
 }
 
+pub fn hint(h: &Hint) -> EsDetailHint {
+    EsDetailHint {
+        field: h.field.as_str().into(),
+        search_only: names(&h.only_search).into(),
+        index_only: names(&h.only_index).into(),
+        ..Default::default()
+    }
+}
+
 fn index_mode(g: &SearchGraph, key: &Key, d: &IndexDetails) -> EsDetails {
     let p = &d.page;
     let kind = match key {
@@ -94,11 +103,7 @@ fn index_mode(g: &SearchGraph, key: &Key, d: &IndexDetails) -> EsDetails {
         Key::Part { .. } => "",
     };
     let first = d.chains.first();
-    let hint = d.hints.first().map(|h| EsDetailHint {
-        field: h.field.as_str().into(),
-        search_only: names(&h.only_search).into(),
-        index_only: names(&h.only_index).into(),
-    });
+    let hint = d.hints.first().map(hint);
     EsDetails {
         mode: 0,
         head: EsDetailHead {
