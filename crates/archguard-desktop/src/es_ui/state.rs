@@ -82,6 +82,7 @@ impl EsState {
         DEFAULT.contains(&kind) != self.toggled.contains(kind)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))] // Removed in ticket 14.
     pub(super) fn toggle_kind(&mut self, i: usize) {
         let Some(kind) = self.kinds().into_iter().nth(i) else {
             return;
@@ -93,6 +94,7 @@ impl EsState {
     }
 
     /// A group row (no node) has no focus.
+    #[cfg_attr(not(test), allow(dead_code))] // Removed in ticket 14.
     pub(super) fn focus_on(&mut self, node: usize) {
         if node < self.graph.nodes.len() {
             self.focus = Some(node);
@@ -101,6 +103,7 @@ impl EsState {
     }
 
     /// "Show all": no focus.
+    #[cfg_attr(not(test), allow(dead_code))] // Removed in ticket 14.
     pub(super) fn clear_focus(&mut self) {
         self.focus = None;
         self.problem.clear();
@@ -150,7 +153,11 @@ impl EsState {
     }
 
     /// A usage was clicked: open its file in the editor, an error goes into `problem`.
-    pub(super) fn open_usage(&mut self, _file: &str, _line: u32) {}
+    pub(super) fn open_usage(&mut self, file: &str, line: u32) {
+        self.problem = crate::editor::open(&self.root, file, line)
+            .err()
+            .unwrap_or_default();
+    }
 
     pub(super) fn set_query(&mut self, query: &str) {
         self.query = query.to_string();

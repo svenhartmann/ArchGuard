@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), allow(dead_code))]
-// Unused until ticket 12.
 //! Column layout and edge paths, ticket 08.
 
 use std::collections::{BTreeMap, HashMap};

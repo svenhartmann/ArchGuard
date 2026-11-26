@@ -1,6 +1,4 @@
 //! Box contents (header, compartments, rows, chips), ticket 05.
-// Unused until ticket 12.
-#![cfg_attr(not(test), allow(dead_code))]
 
 use archguard_engine::core::{SearchIndexDetail, ServiceTopology};
 use archguard_engine::{

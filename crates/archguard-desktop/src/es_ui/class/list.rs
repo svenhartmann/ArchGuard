@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), allow(dead_code))]
-// Unused until ticket 12.
 //! List model (groups, search, kind filter), ticket 06.
 
 use archguard_engine::core::{SearchIndexDetail, ServiceTopology};

@@ -6,6 +6,7 @@ pub mod diagram;
 pub mod layout;
 pub mod list;
 pub mod view;
+pub mod view_details;
 
 #[cfg(test)]
 mod boxes_check;
@@ -35,5 +36,3 @@ mod view_render_check;
 // Shared types live in `types` so `state` does not import this module (it would close a cycle
 // through `state_check`).
 pub mod types;
-#[allow(unused_imports)] // Unused until ticket 12.
-pub use types::{Group, Key, Switch, Switches};

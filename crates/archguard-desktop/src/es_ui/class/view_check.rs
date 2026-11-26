@@ -183,7 +183,7 @@ fn a_ghost_has_a_dashed_border_and_the_ghost_index_a_root() {
 #[test]
 fn data_streams_are_processing_in_list_and_diagram() {
     let es = json!({"artifacts": [{"kind": "data_stream", "name": "logs-app", "address": "r.logs",
-        "scope": "terraform:infra", "patterns": [], "references": [], "evidence": []}], "usages": []});
+        "scope": "terraform:infra", "patterns": [], "references": [], "evidence": []}], "usages": [], "findings": []});
     let t = archguard_engine::core::ServiceTopology {
         elasticsearch: serde_json::from_value(es).unwrap(),
         ..Default::default()

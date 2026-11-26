@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), allow(dead_code))]
-// Unused until ticket 12.
 //! Detail model (index, building block, other), ticket 07. Reuses `index_page` for the overview,
 //! links, usage and the "not read" note; the analysis parts come from the engine.
 
