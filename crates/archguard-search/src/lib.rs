@@ -1,12 +1,14 @@
 //! L2: the Elasticsearch map of a project (ADR 0023, 0025): sources (Terraform, search templates,
 //! code), their merge, findings and the graph. One format is one module in `sources/` and one row
 //! in `sources::SOURCES`.
+mod analysis;
 mod context;
 mod findings;
 mod graph;
 mod merge;
 mod sources;
 
+pub use analysis::{ChainRef, SearchAnalysisPart, search_analysis_parts, search_builtin};
 pub use context::Reader;
 use context::SearchContext;
 pub use findings::{is_detail_gap, is_elasticsearch_gap, search_artifact_covers};
