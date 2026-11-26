@@ -116,7 +116,7 @@ fn parent(path: &str) -> &str {
 }
 
 /// Byte offset of the first `"lang"\s*:\s*"mustache"`.
-fn mustache_lang(text: &str) -> Option<usize> {
+pub(super) fn mustache_lang(text: &str) -> Option<usize> {
     text.match_indices("\"lang\"")
         .map(|(at, key)| (at, &text[at + key.len()..]))
         .find_map(|(at, rest)| {

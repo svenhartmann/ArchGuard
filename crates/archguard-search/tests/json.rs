@@ -99,3 +99,30 @@ fn unreadable_definition_under_an_elasticsearch_path_is_a_gap_elsewhere_it_is_no
     assert_eq!(gaps, ["elasticsearch/broken.json"]);
     assert!(!report.complete);
 }
+
+/// Ratio only: twice the files must not cost more than a generous multiple of the time.
+#[test]
+fn scan_time_grows_linearly_with_the_file_count() {
+    let time = |n: usize| {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for i in 0..n {
+            let sub = dir.path().join(format!("elasticsearch/d{}", i % 20));
+            std::fs::create_dir_all(&sub).expect("dir");
+            let body = r#"{"settings":{"number_of_shards":1},"mappings":{"properties":{"a":{"type":"keyword"}}}}"#;
+            std::fs::write(sub.join(format!("i{i}.json")), body).expect("file");
+        }
+        let mut report = ServiceTopology::default();
+        let discovery = Discovery::new(dir.path(), &mut report).expect("discovery");
+        let read = |_: &Path, p: &Path| std::fs::read_to_string(p).ok();
+        let start = std::time::Instant::now();
+        archguard_search::analyze(dir.path(), &discovery, &read, &mut report);
+        assert_eq!(report.elasticsearch.artifacts.len(), n);
+        start.elapsed().as_secs_f64()
+    };
+    let best = |n| (0..3).map(|_| time(n)).fold(f64::MAX, f64::min);
+    let (small, large) = (best(300), best(600));
+    assert!(
+        large < small * 6.0,
+        "2n files took {large}s, n files {small}s"
+    );
+}

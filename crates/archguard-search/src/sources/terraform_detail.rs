@@ -83,7 +83,7 @@ fn setting(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<String> {
     }
 }
 
-fn fields(props: &Json, prefix: &str, out: &mut Vec<SearchField>) {
+pub(super) fn fields(props: &Json, prefix: &str, out: &mut Vec<SearchField>) {
     let Json::Obj(props) = props else { return };
     for (name, def) in props {
         let path = format!("{prefix}{name}");
@@ -124,7 +124,7 @@ fn mapping(
 
 /// Settings object of a template flattened to dotted keys without `index.`; `analysis` becomes
 /// analysis entries. Arrays and numbers keep their compact JSON, nulls are dropped.
-fn flatten(prefix: &str, o: &[(String, Json)], d: &mut SearchIndexDetail) {
+pub(super) fn flatten(prefix: &str, o: &[(String, Json)], d: &mut SearchIndexDetail) {
     for (k, v) in o {
         let path = if prefix.is_empty() {
             k.clone()

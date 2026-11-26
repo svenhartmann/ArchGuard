@@ -4,6 +4,7 @@ pub(crate) use crate::context::SourceOutput;
 
 pub(crate) mod code;
 pub(crate) mod constants;
+pub(crate) mod json;
 pub(crate) mod json_files;
 pub(crate) mod search_templates;
 pub(crate) mod terraform;

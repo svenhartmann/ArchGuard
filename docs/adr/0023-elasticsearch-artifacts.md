@@ -250,3 +250,25 @@ are code, but no analyzer measures them.
   artifact because a project set can mix both. A string like `kind`, no enum in the core. The
   merge key (sources and project set) is (kind, flavor, name): same name with another product is
   two artifacts. ISM policies are the new kind `ism_policy`. CLI text appends ` (opensearch)`.
+- **2026-11-25 (source formats, ticket 21):** one rule set for every further input format (tickets
+  22-28), each format one module in `archguard-search/src/sources/` and one row in `SOURCES`.
+  - Classifier: `sources/json.rs` `search_definition` decides the kind from top-level key shapes
+    only (rules in its module comment); lookalikes (package.json, tsconfig, OpenAPI, JSON Schema,
+    Kubernetes, editor settings) do not match, every heuristic has a negative fixture. A body
+    carrying `$schema`, `openapi`, `swagger` or `apiVersion`, or a mustache script, is none.
+  - Name = literal name of the API position; a raw definition file without a name is named after the
+    file stem (Q2), like search templates. `scope` = `<source>:<folder>` (`json:<folder>`);
+    `flavor` as above (ISM = `opensearch`). Evidence = file and the line of the deciding key.
+  - Gaps: a file without ES shape yields nothing. A file that does not parse (or cannot be read) is
+    a gap (`is_elasticsearch_gap`) under `**/elasticsearch/**`, `**/opensearch/**`,
+    `**/mappings/**` or with `template` in its name, never silently dropped. Paths outside the root,
+    absolute paths, variables, SpEL and environment values are a gap too, never followed.
+  - Trust boundary (research-formats.md): files below the project root only, through the safe
+    reader (no symlinks, at most 1 MiB), at most 5 000 files per source, test paths and
+    `.terraform`/`.git`/`node_modules` excluded, no network, no execution; file content is data.
+    YAML with aliases is refused.
+  - Search templates (`"lang": "mustache"`) stay with `search_templates`; no double count. A
+    later source that names the same file (curl `-d @file`, Spring `mappingPath`) completes the
+    artifact of that file (`find_file_artifact`, match by evidence path) instead of adding one.
+  - Readers built on this: 22-28 (HTTP request files and curl, Spring annotations, code literals,
+    Logstash, integration packages, further builders).
