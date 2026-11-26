@@ -6,6 +6,15 @@ use std::fmt::Write;
 
 pub type Point = (f32, f32);
 
+/// The end of an edge; the code is what the Slint canvas reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeadShape {
+    Open = 0,
+    Filled = 1,
+    Hollow = 2,
+    Diamond = 3,
+}
+
 /// An arrow from `a` to `b` that leaves and enters horizontally, and the
 /// point halfway along it (for a label). Ends one above the other bulge
 /// out to the left (an edge within one column of cards).
