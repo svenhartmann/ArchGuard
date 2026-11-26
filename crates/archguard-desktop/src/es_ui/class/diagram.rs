@@ -401,13 +401,21 @@ impl<'a> Cx<'a> {
             }
         };
         for &i in nodes {
-            let fields =
-                Self::detail_of(self.t, &self.g.nodes[i]).map_or(&[][..], |d| &d.fields[..]);
-            let analyzers = fields
+            let Some(d) = Self::detail_of(self.t, &self.g.nodes[i]) else {
+                continue;
+            };
+            // The engine resolves the index and search analyzer of each field in one place.
+            let resolved: Vec<(String, String)> = d
+                .fields
                 .iter()
-                .flat_map(|f| [&f.analyzer, &f.search_analyzer]);
-            let named = analyzers.flatten().map(|n| ("analyzer", n.as_str()));
-            let norms = fields
+                .filter_map(|f| search_field_analyzers(d, &f.path))
+                .collect();
+            let named = resolved
+                .iter()
+                .flat_map(|(a, b)| [a, b])
+                .map(|n| ("analyzer", n.as_str()));
+            let norms = d
+                .fields
                 .iter()
                 .filter_map(|f| f.normalizer.as_deref())
                 .map(|n| ("normalizer", n));

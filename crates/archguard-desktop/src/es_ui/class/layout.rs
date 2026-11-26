@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use super::boxes::{BoxContent, Chip, Compartment};
 use super::diagram::{BoxKind, DEdge, Diagram, EdgeStyle};
 use super::types::{HEAD, Key, ROW};
-use crate::diagram::{HeadShape, Point, curve_stroke, head_path, line_stroke};
+use crate::diagram::{HeadShape, Point, Stroke, curve_stroke, head_path, line_stroke};
 
 /// A positioned box. `comps` are the compartment tops (relative to the box); `chips` are
 /// `(x, y, w)` of all chips in compartment order, relative to their compartment.
@@ -43,7 +43,7 @@ pub struct Scene {
 
 const COL_W: [f32; 4] = [230.0, 300.0, 270.0, 190.0];
 const MARGIN: f32 = 20.0;
-const GAP_X: f32 = 80.0;
+const GAP_X: f32 = 120.0;
 const GAP_Y: f32 = 24.0;
 const CHIP_ROW: f32 = 18.0;
 const PAD: f32 = 8.0;
@@ -211,7 +211,71 @@ fn ports(a: &Placed, b: &Placed, same: bool) -> (Point, Point) {
     }
 }
 
-fn place_edge(e: &DEdge, a: &Placed, b: &Placed, same: bool) -> PlacedEdge {
+/// Where an edge between two columns runs: the ports, and the height at which it crosses the
+/// columns in between (a free horizontal channel; `None` for neighbouring columns).
+fn channel(p: Point, q: Point, between: &[&Placed]) -> Option<f32> {
+    if between.is_empty() {
+        return None;
+    }
+    let mut iv: Vec<(f32, f32)> = between.iter().map(|b| (b.y, b.y + b.h)).collect();
+    iv.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut free = vec![iv[0].0 - GAP_Y / 2.0];
+    let mut end = iv[0].1;
+    for &(top, bottom) in &iv[1..] {
+        if top > end {
+            free.push((end + top) / 2.0);
+        }
+        end = end.max(bottom);
+    }
+    free.push(end + GAP_Y / 2.0);
+    let want = (p.1 + q.1) / 2.0;
+    free.into_iter()
+        .min_by(|a, b| (a - want).abs().total_cmp(&(b - want).abs()))
+}
+
+/// The stroke of an edge from `p` to `q` and the centre of its label. Between non-adjacent
+/// columns it leaves into the gap, crosses the columns in between at a free height and enters
+/// through the gap before the target.
+fn route(p: Point, q: Point, same: bool, dashed: bool, between: &[&Placed]) -> (Stroke, Point) {
+    if same {
+        let st = line_stroke(p, q, dashed);
+        let at = st.mid;
+        return (st, at);
+    }
+    let Some(y) = channel(p, q, between) else {
+        let st = curve_stroke(p, q, dashed);
+        let at = ((p.0 + q.0) / 2.0, st.mid.1);
+        return (st, at);
+    };
+    let half = GAP_X / 2.0 * (q.0 - p.0).signum();
+    let (g1, g2) = ((p.0 + half, y), (q.0 - half, y));
+    let (first, mid, last) = (
+        curve_stroke(p, g1, dashed),
+        line_stroke(g1, g2, dashed),
+        curve_stroke(g2, q, dashed),
+    );
+    let at = (g1.0, first.mid.1);
+    let path = format!("{} {} {}", first.path, mid.path, last.path);
+    (Stroke { path, ..last }, at)
+}
+
+/// The label's top left corner centred on `at`, or `None` if it does not fit between the
+/// columns or would lie over a box.
+fn label_pos(text: &str, at: Point, boxes: &[Placed]) -> Option<Point> {
+    let (w, h) = label_size(text);
+    let (x, y) = (at.0 - w / 2.0, at.1 - h / 2.0);
+    let over = |b: &Placed| x < b.x + b.w && b.x < x + w && y < b.y + b.h && b.y < y + h;
+    (!text.is_empty() && !boxes.iter().any(over)).then_some((x, y))
+}
+
+fn place_edge(
+    e: &DEdge,
+    (ia, ib): (usize, usize),
+    boxes: &[Placed],
+    (col, by_col): (&[usize], &[Vec<usize>]),
+) -> PlacedEdge {
+    let (a, b) = (&boxes[ia], &boxes[ib]);
+    let same = col[ia] == col[ib];
     let (p, q) = ports(a, b, same);
     let (shape, dashed) = match e.style {
         EdgeStyle::Write | EdgeStyle::Read => (HeadShape::Filled, false),
@@ -220,11 +284,12 @@ fn place_edge(e: &DEdge, a: &Placed, b: &Placed, same: bool) -> PlacedEdge {
         EdgeStyle::Uses => (HeadShape::Open, true),
         _ => (HeadShape::Open, false),
     };
-    let st = if same {
-        line_stroke(p, q, dashed)
-    } else {
-        curve_stroke(p, q, dashed)
-    };
+    let (lo, hi) = (col[ia].min(col[ib]), col[ia].max(col[ib]));
+    let between: Vec<&Placed> = (lo + 1..hi)
+        .flat_map(|c| &by_col[c])
+        .map(|&i| &boxes[i])
+        .collect();
+    let (st, at) = route(p, q, same, dashed, &between);
     let end = if shape == HeadShape::Diamond {
         HeadShape::Open
     } else {
@@ -240,15 +305,16 @@ fn place_edge(e: &DEdge, a: &Placed, b: &Placed, same: bool) -> PlacedEdge {
     } else {
         end
     };
+    let pos = label_pos(&e.label, at, boxes);
     PlacedEdge {
         line: st.path,
         head,
         shape,
         dashed,
         style: e.style,
-        label: e.label.clone(),
-        lx: st.mid.0,
-        ly: st.mid.1,
+        label: pos.map_or_else(String::new, |_| e.label.clone()),
+        lx: pos.map_or(0.0, |p| p.0),
+        ly: pos.map_or(0.0, |p| p.1),
         dim: e.dim,
     }
 }
@@ -285,7 +351,12 @@ pub fn layout(d: &Diagram, contents: &[BoxContent]) -> Scene {
         .map(|i| measure(contents.get(i), COL_W[col[i]]))
         .collect();
     let (ends, nbrs) = neighbours(d);
-    let mut x = MARGIN;
+    // The leftmost used column starts at the margin; empty columns take no room.
+    let mut x = MARGIN
+        - col
+            .iter()
+            .min()
+            .map_or(0.0, |&c| COL_W[..c].iter().map(|w| w + GAP_X).sum());
     let xs: Vec<f32> = COL_W
         .iter()
         .map(|w| {
@@ -313,13 +384,17 @@ pub fn layout(d: &Diagram, contents: &[BoxContent]) -> Scene {
     near(&order2, 1, &col, &nbrs, &mut boxes);
     near(&column_by_kind(3, &col, &kinds), 2, &col, &nbrs, &mut boxes);
     near(&column_by_kind(0, &col, &kinds), 1, &col, &nbrs, &mut boxes);
+    let mut by_col = vec![Vec::new(); COL_W.len()];
+    for (i, &c) in col.iter().enumerate() {
+        by_col[c].push(i);
+    }
     let edges = d
         .edges
         .iter()
         .zip(&ends)
         .filter_map(|(e, end)| {
             let &(a, b) = end.as_ref()?;
-            Some(place_edge(e, &boxes[a], &boxes[b], col[a] == col[b]))
+            Some(place_edge(e, (a, b), &boxes, (&col, &by_col)))
         })
         .collect();
     let bottom = boxes.iter().map(|p| p.y + p.h).fold(0.0, f32::max);
