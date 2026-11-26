@@ -100,8 +100,10 @@ component ClassLine inherits HorizontalLayout {
     spacing: 6px * zoom;
     padding-left: l.depth * 12px * zoom;
     Text {
-        text: l.summary > 0 ? @tr("{0} fields", l.summary) : l.summary < 0 ? @tr("{0} more", -l.summary) : ClassText.mark(l.prefix) + l.text + (l.kind != "" ? " : " + l.kind : "");
-        color: l.summary != 0 ? Theme.muted : Theme.text;
+        text: l.summary > 0 ? @tr("{0} fields", l.summary) : l.summary < 0 ? @tr("{0} more", -l.summary)
+            : l.text == "not_read" ? @tr("Not read: the definition is not a literal.")
+            : l.text == "not_declared" ? @tr("Not declared in this project.") : ClassText.mark(l.prefix) + l.text + (l.kind != "" ? " : " + l.kind : "");
+        color: l.summary != 0 || l.text == "not_read" || l.text == "not_declared" ? Theme.muted : Theme.text;
         font-family: Theme.mono-family;
         font-size: max(6px, Theme.font-mono * zoom);
         vertical-alignment: center;
@@ -152,8 +154,8 @@ component ClassBox inherits Rectangle {
     height: box.h * 1px * zoom;
     border-radius: 6px * zoom;
     background: box.ghost ? transparent : Theme.panel;
-    border-width: box.ghost ? 0px : box.selected ? 2px : 1px;
-    border-color: box.selected ? Theme.accent : analysis ? Theme.analysis : Theme.border;
+    // The header band must not paint over the rounded corners.
+    clip: true;
     // A ghost's dashed outline comes from the model.
     if box.ghost: Path {
         width: root.width;
@@ -223,6 +225,12 @@ component ClassBox inherits Rectangle {
             zoom: zoom;
         }
     }
+    // The frame lies above the header band, so the selected accent shows on all four sides.
+    if !box.ghost: Rectangle {
+        border-radius: 6px * zoom;
+        border-width: box.selected ? 2px : 1px;
+        border-color: box.selected ? Theme.accent : analysis ? Theme.analysis : Theme.border;
+    }
     TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
@@ -243,6 +251,8 @@ export component EsClassCanvas inherits Rectangle {
         content-width: max(self.width, root.canvas-w * root.zoom * 1px);
         content-height: max(self.height, root.canvas-h * root.zoom * 1px);
         Rectangle {
+            x: 0;
+            y: 0;
             width: root.canvas-w * root.zoom * 1px;
             height: root.canvas-h * root.zoom * 1px;
             for e in root.edges: Rectangle {

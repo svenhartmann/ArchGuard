@@ -50,5 +50,120 @@ export global EsClassData {
 }
 
 export component EsClassView inherits Rectangle {
+    property <EsClassModel> m: EsClassData.model;
+    // Details lie right of the canvas from 900 px, below it otherwise.
+    property <bool> side: root.width >= 900px;
+    property <[string]> switch-names: [@tr("Services"), @tr("Analysis components"), @tr("Multi-fields"), @tr("Collapse fields")];
     background: Theme.bg;
+    min-width: 360px;
+    preferred-width: 1480px;
+    max-width: 100000px;
+    preferred-height: 860px;
+
+    if m.state != 1: EmptyState {
+        title: m.state == 0 ? @tr("Reading the service topology …") : @tr("The service topology is unavailable.");
+    }
+    if m.state == 1: VerticalLayout {
+        Rectangle {
+            height: bar.preferred-height + 16px;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 6px;
+                bar := VerticalLayout {
+                    spacing: 6px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: end;
+                        for name[i] in root.switch-names: Button {
+                            text: name;
+                            compact: true;
+                            pressed-state: m.switches[i];
+                            clicked => { EsClassData.switch(i, !m.switches[i]); }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 14px;
+                        alignment: start;
+                        Text { text: @tr("Legend"); color: Theme.muted; font-size: Theme.font-small; vertical-alignment: center; }
+                        Legend { text: @tr("writes"); swatch: Theme.outgoing; }
+                        Legend { text: @tr("reads"); swatch: Theme.incoming; }
+                        Legend { text: @tr("«uses» (analysis)"); outline: true; outline-color: Theme.analysis; }
+                        Legend { text: @tr("Alias ◇ index"); swatch: Theme.edge; }
+                        Legend { text: @tr("Template covers"); outline: true; outline-color: Theme.edge; }
+                        Legend { text: @tr("Pipeline / ILM"); swatch: Theme.edge; }
+                    }
+                }
+            }
+        }
+        Rectangle { height: 1px; background: Theme.border; }
+        Rectangle {
+            vertical-stretch: 1;
+            property <length> bar-w: root.side ? max(360px, self.width * 0.3) : 0px;
+            property <length> bar-h: root.side ? 0px : self.height * 0.4;
+            list := EsClassList {
+                x: 0px;
+                width: 280px;
+                height: parent.height;
+                groups: m.groups;
+                query: m.query;
+                kind: m.kind;
+                count: m.count;
+                write-glyph: m.write-glyph;
+                read-glyph: m.read-glyph;
+                select(i) => { EsClassData.select-row(i); }
+                search(t) => { EsClassData.search(t); }
+                choose-kind(i) => { EsClassData.choose-kind(i); }
+            }
+            Rectangle {
+                x: list.width;
+                width: parent.width - list.width - parent.bar-w;
+                height: parent.height - parent.bar-h;
+                VerticalLayout {
+                    HorizontalLayout {
+                        height: 32px;
+                        padding-left: 14px;
+                        padding-right: 8px;
+                        spacing: 8px;
+                        alignment: start;
+                        Text {
+                            text: m.cluster ? @tr("Whole cluster · {0} elements", m.crumb-count) : @tr("Around {0} · direct neighbours + analysis components", m.crumb-name);
+                            color: Theme.muted;
+                            font-size: Theme.font-small;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Button {
+                            text: m.cluster ? @tr("Show neighbourhood") : @tr("Show whole cluster");
+                            compact: true;
+                            y: (parent.height - self.height) / 2;
+                            clicked => { EsClassData.toggle-cluster(); }
+                        }
+                    }
+                    if m.problem != "": HorizontalLayout {
+                        padding-left: 14px;
+                        Text { text: m.problem; color: Theme.danger; font-size: Theme.font-small; }
+                    }
+                    EsClassCanvas {
+                        vertical-stretch: 1;
+                        boxes: m.boxes;
+                        edges: m.edges;
+                        canvas-w: m.canvas-w;
+                        canvas-h: m.canvas-h;
+                        zoom: m.zoom;
+                        select(i) => { EsClassData.select-box(i); }
+                        zoom-by(f) => { EsClassData.zoom-by(f); }
+                        fit(w, h) => { EsClassData.fit(w, h); }
+                    }
+                }
+            }
+            EsClassDetails {
+                x: root.side ? parent.width - parent.bar-w : list.width;
+                y: root.side ? 0px : parent.height - parent.bar-h;
+                width: root.side ? parent.bar-w : parent.width - list.width;
+                height: root.side ? parent.height : parent.bar-h;
+                details: m.details;
+                open(file, line) => { EsClassData.open(file, line); }
+            }
+        }
+    }
 }

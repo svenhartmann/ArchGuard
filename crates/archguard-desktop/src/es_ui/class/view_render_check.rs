@@ -124,7 +124,7 @@ fn three_columns_are_drawn_and_the_details_sit_right_on_a_wide_view() {
     let (drawn, empty) = shown(w);
     let list = diff(&drawn, &empty, w, (0, 280), (100, 400));
     let canvas = diff(&drawn, &empty, w, (300, 700), (120, 450));
-    let details = diff(&drawn, &empty, w, (w - 340, w), (100, 400));
+    let details = diff(&drawn, &empty, w, (w - 410, w - 200), (60, 300));
     assert!(list > 50, "the list shows its rows: {list}");
     assert!(canvas > 50, "the canvas shows the box: {canvas}");
     assert!(details > 50, "the details sit at the right: {details}");
@@ -133,7 +133,7 @@ fn three_columns_are_drawn_and_the_details_sit_right_on_a_wide_view() {
 #[test]
 fn a_narrow_view_puts_the_details_below_the_canvas() {
     let (drawn, empty) = shown(800);
-    let right = diff(&drawn, &empty, 800, (460, 800), (100, 300));
+    let right = diff(&drawn, &empty, 800, (560, 800), (60, 300));
     let below = diff(&drawn, &empty, 800, (300, 800), (440, 700));
     assert!(below > 50, "the details lie under the canvas: {below}");
     assert!(right < below, "nothing of them at the top right: {right}");
