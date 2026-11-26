@@ -50,7 +50,9 @@ fn only_indexes_below_the_fos_elastica_root_are_artifacts() {
         "index catalog fos:config/packages",
         "index custom_idx fos:extra",
         "index dev_only fos:config/packages/dev",
+        "index products fos:dup",
         "index shop_v2 fos:config/packages",
+        "index user fos:dup",
     ];
     assert_eq!(
         got, want,
@@ -139,4 +141,15 @@ fn env_and_parameter_names_and_unreadable_files_are_gaps() {
     assert!(env.ends_with("Source line 33."), "{env}");
     assert!(param.ends_with("Source line 37."), "{param}");
     assert!(!report.complete);
+}
+
+#[test]
+fn evidence_line_is_the_index_key_not_an_earlier_equal_key() {
+    let report = analyze();
+    let all = fos(&report);
+    let user = all
+        .iter()
+        .find(|a| a.name.as_deref() == Some("user"))
+        .expect("user");
+    assert_eq!(user.evidence[0].line, Some(9), "not doctrine or a property");
 }

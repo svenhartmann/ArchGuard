@@ -1,0 +1,11 @@
+doctrine:
+    indexes:
+        user: { columns: [id] }
+fos_elastica:
+    indexes:
+        products:
+            properties:
+                user: { type: keyword }
+        user:
+            properties:
+                id: { type: keyword }
