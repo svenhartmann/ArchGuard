@@ -1,10 +1,12 @@
 //! Spring Data Elasticsearch / OpenSearch annotations in Java and Kotlin (ticket 23). Rules:
 //! an annotation counts only when the file imports it from `org.springframework.data.elasticsearch
-//! .annotations` (flavor empty) or from `org.opensearch.data.*` (flavor `opensearch`); a class
+//! .annotations` (also for Spring Data OpenSearch); flavor is `opensearch` when the module's
+//! pom.xml/build.gradle(.kts) declares `org.opensearch.client:spring-data-opensearch*` or the file
+//! imports `org.opensearch.data.*`, else empty; a class
 //! with `@Document(indexName = …)` is an `index` named by a literal or a string constant of its
 //! service (Java; a Kotlin constant is a gap), `scope` = `spring:<module>`, evidence = the class
 //! line. `@Field(type, name, analyzer, searchAnalyzer, normalizer)` is a field named `name` or the
-//! property; a missing type is `FieldType.Auto`, which writes no mapping entry. `@MultiField` is
+//! property; `FieldType.Auto` writes no entry, a missing type with an analyzer keeps one without type. `@MultiField` is
 //! the main field plus `<field>.<suffix>` per `@InnerField`. `@Setting(shards, replicas,
 //! refreshInterval)` are settings; `settingPath` and `mappingPath` are classpath JSON below
 //! `<module>/src/main/resources` and replace the annotation attributes (Spring: no other mapping
@@ -26,10 +28,8 @@ use archguard_flow_common::support::{owners, relative, test_path};
 use serde_json::Value;
 
 const MAX_FILES: usize = 5_000;
-const MARKERS: [&str; 2] = [
-    "org.springframework.data.elasticsearch",
-    "org.opensearch.data",
-];
+const MARKER: &str = "org.springframework.data.elasticsearch";
+const BUILD_FILES: [&str; 3] = ["pom.xml", "build.gradle", "build.gradle.kts"];
 const SETTINGS: [(&str, &str); 3] = [
     ("shards", "number_of_shards"),
     ("replicas", "number_of_replicas"),
@@ -50,7 +50,7 @@ pub(crate) fn extract_with(ctx: &SearchContext) -> SourceOutput {
             continue; // the code source reports unreadable files
         };
         constants.collect(&service_key(ctx, rel), ext(rel), rel, &text);
-        if MARKERS.iter().any(|m| text.contains(m)) {
+        if text.contains(MARKER) {
             annotated.push((rel, text));
         }
     }
@@ -113,6 +113,21 @@ struct FileScan<'a, 'c> {
 }
 
 impl FileScan<'_, '_> {
+    /// The module's build file declares `org.opensearch.client:spring-data-opensearch*`.
+    fn opensearch_build(&self) -> bool {
+        let dir = module_of(self.rel).0;
+        BUILD_FILES.iter().any(|f| {
+            let path = if dir == "." {
+                (*f).into()
+            } else {
+                format!("{dir}/{f}")
+            };
+            (self.ctx.read)(self.ctx.root, &self.ctx.root.join(path)).is_some_and(|t| {
+                t.contains("org.opensearch.client") && t.contains("spring-data-opensearch")
+            })
+        })
+    }
+
     fn gap(&mut self) {
         es_gap(self.out, EsGap::SpringNotLiteral, self.rel, None, &[]);
     }
@@ -129,20 +144,25 @@ impl FileScan<'_, '_> {
 
     fn run(&mut self, text: &str) {
         let scan = Scan::new(text, ext(self.rel) == "kt");
+        let flavor = if scan.imports_opensearch_data() || self.opensearch_build() {
+            "opensearch"
+        } else {
+            ""
+        };
         for class in &scan.classes {
-            if let Some(a) = self.artifact(&scan, class) {
+            if let Some(a) = self.artifact(&scan, class, flavor) {
                 self.out.elasticsearch.artifacts.push(a);
             }
         }
     }
 
-    fn artifact(&mut self, s: &Scan, class: &Class) -> Option<SearchArtifact> {
+    fn artifact(&mut self, s: &Scan, class: &Class, flavor: &str) -> Option<SearchArtifact> {
         let head = s.head(class);
         let named = |n: &str| {
             let a = head.iter().find(|a| a.name == n)?;
-            s.provider(n).map(|_| s.args_of(a))
+            s.provides(n).then(|| s.args_of(a))
         };
-        let flavor = s.provider("Document")?;
+        s.provides("Document").then_some(())?;
         let (index, declared) = match self.index_name(&named("Document")?) {
             Some(i) => i,
             None => {
@@ -172,7 +192,7 @@ impl FileScan<'_, '_> {
         }];
         evidence.extend(declared);
         Some(SearchArtifact {
-            flavor: flavor.into(),
+            flavor: flavor.to_owned(),
             kind: "index".into(),
             name: Some(index),
             address: format!("{}#{}", self.rel, class.name),
@@ -241,7 +261,7 @@ impl FileScan<'_, '_> {
         let mut out = vec![];
         for (i, a) in s.anns.iter().enumerate() {
             let inside = a.start > class.name_end && a.end <= class.close;
-            if !inside || s.provider(&a.name).is_none() {
+            if !inside || !s.provides(&a.name) {
                 continue;
             }
             let args = s.args_of(a);
@@ -266,25 +286,35 @@ impl FileScan<'_, '_> {
         self.typed(args, path)
     }
 
-    /// The field of `path` with its type and analysis names; `Auto` (or no type) writes none.
+    /// The field of `path` with its type and analysis names; `Auto` writes none, and a field
+    /// without type is kept only with an analysis name (Spring writes those regardless).
     fn typed(&mut self, args: &[Arg], path: String) -> Option<SearchField> {
-        let raw = find(args, "type")?.val;
-        let parts: Vec<&str> = raw.split('.').map(str::trim).collect();
-        let kind = match parts.as_slice() {
-            [.., "FieldType", t] if *t != "Auto" => t.to_ascii_lowercase(),
-            [.., "FieldType", _] => return None,
-            _ => {
-                self.gap();
-                return None;
+        let kind = match find(args, "type") {
+            None => String::new(),
+            Some(a) => {
+                let parts: Vec<&str> = a.val.split('.').map(str::trim).collect();
+                match parts.as_slice() {
+                    [.., "FieldType", "Auto"] => return None,
+                    [.., "FieldType", "TokenCount"] => "token_count".into(),
+                    [.., "FieldType", t] => t.to_ascii_lowercase(),
+                    _ => {
+                        self.gap();
+                        return None;
+                    }
+                }
             }
         };
-        Some(SearchField {
+        let field = SearchField {
             path,
             kind,
             analyzer: self.text(args, "analyzer"),
             search_analyzer: self.text(args, "searchAnalyzer"),
             normalizer: self.text(args, "normalizer"),
-        })
+        };
+        let named = field.analyzer.is_some()
+            || field.search_analyzer.is_some()
+            || field.normalizer.is_some();
+        (!field.kind.is_empty() || named).then_some(field)
     }
 
     fn multi(

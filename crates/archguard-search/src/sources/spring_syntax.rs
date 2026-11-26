@@ -65,19 +65,17 @@ impl<'t> Scan<'t> {
         }
     }
 
-    /// The flavor (`""` or `opensearch`) of the import that provides annotation `name`.
-    pub(super) fn provider(&self, name: &str) -> Option<&'static str> {
-        self.imports.iter().find_map(|i| {
-            let (pkg, last) = i.rsplit_once('.')?;
-            let flavor = if pkg.starts_with(OPENSEARCH) {
-                "opensearch"
-            } else if pkg == SPRING {
-                ""
-            } else {
-                return None;
-            };
-            (last == name || last == "*").then_some(flavor)
+    /// Whether the file imports annotation `name` from the Spring annotations package.
+    pub(super) fn provides(&self, name: &str) -> bool {
+        self.imports.iter().any(|i| {
+            i.rsplit_once('.')
+                .is_some_and(|(pkg, last)| pkg == SPRING && (last == name || last == "*"))
         })
+    }
+
+    /// Whether the file imports a `org.opensearch.data.*` class (client, core, aot).
+    pub(super) fn imports_opensearch_data(&self) -> bool {
+        self.imports.iter().any(|i| i.starts_with(OPENSEARCH))
     }
 
     pub(super) fn args_of(&self, a: &Ann) -> Vec<Arg<'_>> {
