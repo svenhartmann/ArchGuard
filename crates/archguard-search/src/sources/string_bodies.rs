@@ -7,8 +7,8 @@
 //!   (chained or on the variable it is assigned to) and `.indices().create(b -> b.index("x").withJson(new
 //!   StringReader(B)))`, C# low-level `.Indices.Create<R>("x", PostData.String(B))`. No client import is needed.
 //! - The name is a literal or a string constant of the service (`constants.rs`); the body is a string
-//!   literal or a constant of the service whose whole value is one literal that starts a JSON object,
-//!   found by its name (qualified: the file stem). Two declarations of one name are a gap.
+//!   literal or a constant (declaration rules of `constants.rs`; a variable is a gap) whose whole value is one literal that starts a JSON object,
+//!   found by its name (qualified: the file stem). Two declarations of one name are a gap; two calls with one name in one file keep both (`:line` suffix).
 //! - Composed strings (`+`, `%`, `format`, interpolation), unknown escapes, files, variables, invalid
 //!   JSON and spans over 2 000 tokens are a gap (`BodyNotLiteral`); object literals are not string bodies.
 //! - The kind comes from the shape of the JSON (`search_definition`); a body without ES shape yields nothing.
@@ -16,7 +16,7 @@
 //! - Trust boundary: files below the root through the safe reader (1 MiB, no symlinks), at most 5 000 files
 //!   per service, no test paths; contents are data, nothing is executed.
 // shortcut: constants are matched by name over the service, not by scope; `Class.NAME` compares the file stem.
-use super::constants::{Constants, Name, lang, short, site};
+use super::constants::{Constants, Name, declared_lines, lang, short, site};
 use super::json::search_definition;
 use super::string_bodies_calls::{Arg, Found, find, json_constants};
 use super::string_bodies_lex::{Lang, lex};
@@ -87,7 +87,11 @@ pub(crate) fn extract_with(ctx: &SearchContext) -> SourceOutput {
             continue;
         };
         names.collect(service, ext, &rel, &text);
+        let declared = declared_lines(&text, ext, &rel);
         for (name, text, line) in json_constants(&toks) {
+            if !declared.contains(&line) {
+                continue; // a local variable, field or argument is no constant
+            }
             let key = (service.clone(), lang(ext), name.clone());
             let owner = rel.rsplit('/').next().unwrap_or(&rel);
             let owner = owner.rsplit_once('.').map_or(owner, |(s, _)| s);
@@ -223,8 +227,11 @@ fn settle(
     } else {
         def.flavor
     };
-    let address = format!("{}#{name}", p.rel);
+    let mut address = format!("{}#{name}", p.rel);
     let scope = format!("code:{}", short(&p.service));
+    if artifacts.contains_key(&(scope.clone(), address.clone())) {
+        address = format!("{address}:{line}"); // a second call with the same name keeps its own body
+    }
     let artifact = SearchArtifact {
         flavor: flavor.into(),
         kind: def.kind.into(),
@@ -237,5 +244,5 @@ fn settle(
         origins: vec![],
         detail: def.detail,
     };
-    artifacts.entry((scope, address)).or_insert(artifact);
+    artifacts.insert((scope, address), artifact);
 }

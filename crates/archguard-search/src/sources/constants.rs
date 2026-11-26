@@ -388,6 +388,12 @@ fn declarations(text: &str, ext: &str, rel: &str) -> Vec<(String, Constant)> {
     out
 }
 
+/// Lines of the `NAME =` declarations of string constants (same rules as `declarations`, value unread).
+pub(super) fn declared_lines(text: &str, ext: &str, rel: &str) -> std::collections::BTreeSet<u32> {
+    let lines = declarations(text, ext, rel).into_iter();
+    lines.filter_map(|(_, c)| c.evidence.line).collect()
+}
+
 /// What an index argument is: a literal, a possibly qualified identifier that a constant of
 /// the same service may resolve, or neither.
 pub(super) enum Name {
