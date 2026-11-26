@@ -58,6 +58,7 @@ fn resources_become_artifacts_and_lookalikes_do_not() {
         "ilm_policy logs-ilm [] terraform:es",
         "index ? [opensearch] terraform:os",
         "index dynamic-v1 [opensearch] terraform:os",
+        "index host-form [opensearch] terraform:host",
         "index logs-v1 [] terraform:es",
         "index orders-v1 [opensearch] terraform:os",
         "index_template legacy-logs [opensearch] terraform:os",
@@ -144,4 +145,22 @@ fn unreadable_parts_are_gaps_and_unknown_providers_are_never_guessed() {
             .iter()
             .any(|a| a.name.as_deref() == Some("no-provider-declared"))
     );
+}
+
+#[test]
+fn other_sources_under_the_same_local_name_are_unknown_and_the_host_form_is_read() {
+    let report = analyze();
+    let foreign = gaps(&report, "foreign/");
+    assert_eq!(foreign.len(), 2, "{foreign:?}");
+    assert!(foreign.iter().all(|g| g.contains("unknown provider")));
+    let names = ["other-source-os", "other-source-es"];
+    assert!(
+        !report
+            .elasticsearch
+            .artifacts
+            .iter()
+            .any(|a| names.contains(&a.name.as_deref().unwrap_or("")))
+    );
+    assert!(gaps(&report, "host/").is_empty());
+    assert_eq!(artifact(&report, "host-form").flavor, "opensearch");
 }
