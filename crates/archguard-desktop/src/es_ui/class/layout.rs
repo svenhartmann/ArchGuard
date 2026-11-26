@@ -380,7 +380,7 @@ fn neighbours(d: &Diagram) -> (Ends, Vec<Vec<usize>>) {
 
 /// A tall column is split into sub-columns so the scene keeps the shape of a canvas, then every
 /// column gets its x; the leftmost used column starts at the margin and empty columns take no
-/// room. Boxes of a sub-column keep their order and their distances.
+/// room. Boxes keep their order; a wrapped scene stacks them tight.
 fn wrap_columns(boxes: &mut [Placed], by_col: &[Vec<usize>]) {
     let lanes: Vec<Lane> = by_col
         .iter()
@@ -392,6 +392,8 @@ fn wrap_columns(boxes: &mut [Placed], by_col: &[Vec<usize>]) {
         })
         .collect();
     let k = counts(&lanes);
+    // Wrapped, the columns stack tight: the wishes for the height of a neighbour mean little then.
+    let wrapped = k.iter().any(|&n| n > 1);
     let first = by_col.iter().position(|v| !v.is_empty()).unwrap_or(0);
     let mut x = MARGIN;
     for (c, ids) in by_col.iter().enumerate() {
@@ -399,11 +401,11 @@ fn wrap_columns(boxes: &mut [Placed], by_col: &[Vec<usize>]) {
         ids.sort_by(|&a, &b| boxes[a].y.total_cmp(&boxes[b].y));
         let heights: Vec<f32> = ids.iter().map(|&i| boxes[i].h + GAP_Y).collect();
         let sub = assign(&heights, k[c]);
-        let mut top = vec![None; k[c]];
+        let mut next = vec![MARGIN; k[c]];
         for (&i, &s) in ids.iter().zip(&sub) {
-            let shift = *top[s].get_or_insert(boxes[i].y) - MARGIN;
-            if k[c] > 1 {
-                boxes[i].y -= shift;
+            if wrapped {
+                boxes[i].y = next[s];
+                next[s] += boxes[i].h + GAP_Y;
             }
             boxes[i].x = x + s as f32 * (COL_W[c] + GAP_X);
         }
