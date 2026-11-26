@@ -194,6 +194,9 @@ pub enum FindingKind {
     /// A broken `[views]` convention (ADR 0021/0022); its id
     /// `view-<rule>:<file>:<subject>` is what a baseline accepts.
     Convention,
+    /// An Elasticsearch/OpenSearch definition-quality rule (es-quality); its id
+    /// `es-<rule>:<scope>:<name>` is what a baseline accepts.
+    SearchQuality,
 }
 
 /// A recommendation to break a cycle: cutting the dependency `from` → `to`

@@ -46,6 +46,7 @@ const KINDS: &[&str] = &[
     "ownership_rule",
     "orphan",
     "target_architecture",
+    "search_quality",
 ];
 const CATEGORIES: &[&str] = &[
     "architecture",
@@ -437,8 +438,10 @@ mod tests {
     #[test]
     fn kind_search_quality_is_a_valid_filter() {
         let (_dir, report, _) = fixture();
-        let mut params = ArchitectureFindingsParams::default();
-        params.kind = Some("search_quality".into());
+        let params = ArchitectureFindingsParams {
+            kind: Some("search_quality".into()),
+            ..Default::default()
+        };
         assert_eq!(list_value(&report, "r", &params).unwrap()["total"], 0);
     }
 

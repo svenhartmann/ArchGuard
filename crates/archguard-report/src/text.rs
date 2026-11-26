@@ -209,6 +209,7 @@ fn summary_line(r: &Report) -> String {
         FindingKind::TargetArchitecture,
         FindingKind::License,
         FindingKind::Convention,
+        FindingKind::SearchQuality,
     ]
     .into_iter()
     .filter_map(|kind| {
@@ -217,7 +218,9 @@ fn summary_line(r: &Report) -> String {
             .findings
             .iter()
             .filter(|f| {
-                f.kind == kind && !(kind == FindingKind::Convention && f.severity == Severity::Info)
+                f.kind == kind
+                    && !(matches!(kind, FindingKind::Convention | FindingKind::SearchQuality)
+                        && f.severity == Severity::Info)
             })
             .count();
         (n > 0).then(|| format!("{n} {}", pluralize(kind_label(kind), n)))
@@ -307,6 +310,7 @@ fn kind_label(kind: FindingKind) -> &'static str {
         FindingKind::TargetArchitecture => "target architecture violation",
         FindingKind::License => "licence finding",
         FindingKind::Convention => "convention violation",
+        FindingKind::SearchQuality => "search quality finding",
     }
 }
 

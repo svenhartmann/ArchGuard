@@ -28,6 +28,9 @@ pub fn finding_attribute(kind: FindingKind) -> QualityAttribute {
         // Licence findings exist only in `check` output (ADR 0016); a
         // dependency's licence is a maintenance fact of the dependency set.
         FindingKind::License => QualityAttribute::Maintainability,
+        // Search-quality findings appear only in `check`/review output; goals
+        // read them per rule through the `search_definitions` source (ADR 0003).
+        FindingKind::SearchQuality => QualityAttribute::Maintainability,
     }
 }
 
