@@ -69,6 +69,7 @@ fn documents_of_every_import_path_become_artifacts_and_lookalikes_do_not() {
         "index notes python:shop [] shop/others.py:Note",
         "index products python:shop [] shop/products.py:ProductDocument",
         "index typed python:typed [] typed/typed.py:Typed",
+        "index invalid python:typed [] typed/untyped.py:Invalid",
         "index untyped python:typed [] typed/untyped.py:Untyped",
     ];
     assert_eq!(got, want, "own `Document` classes must not match");
@@ -220,12 +221,23 @@ fn typed_fields_async_documents_and_numpy_vectors() {
     let t = by_address(&report, "typed/typed.py:Typed");
     assert_eq!(
         fields_of(t),
-        ["tag:keyword", "title:text", "vec:dense_vector"]
+        [
+            "home:object",
+            "homes:nested",
+            "maybe:text",
+            "note:text",
+            "seen:date",
+            "title:text",
+            "vec:dense_vector"
+        ]
     );
     let u = by_address(&report, "typed/untyped.py:Untyped");
-    assert!(u.detail.is_none(), "M[int] names no field class");
+    assert_eq!(fields_of(u), ["count:integer"]);
+    // A Field class is no annotation type: the DSL raises TypeError, nothing is guessed.
+    let bad = by_address(&report, "typed/untyped.py:Invalid");
+    assert!(bad.detail.is_none());
     assert!(gaps(&report).iter().any(
-        |g| g.starts_with("typed/untyped.py: typed/untyped.py:Untyped")
+        |g| g.starts_with("typed/untyped.py: typed/untyped.py:Invalid")
             && g.ends_with("not read: mappings.")
     ));
 }
@@ -246,7 +258,7 @@ fn django_model_fields_are_a_gap() {
 fn non_literal_parts_are_gaps_that_name_the_attribute() {
     let report = analyze();
     let gaps = gaps(&report);
-    assert_eq!(gaps.len(), 7, "{gaps:#?}");
+    assert_eq!(gaps.len(), 8, "{gaps:#?}");
     assert!(gaps.iter().any(
         |g| g.starts_with("shop/dynamic.py: shop/dynamic.py:Partial")
             && g.ends_with("not read: mappings, settings.")

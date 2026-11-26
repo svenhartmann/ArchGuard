@@ -1,4 +1,4 @@
-from elasticsearch.dsl import Document, M
+from elasticsearch.dsl import Document, Keyword, M
 
 
 class Untyped(Document):
@@ -6,3 +6,10 @@ class Untyped(Document):
 
     class Index:
         name = "untyped"
+
+
+class Invalid(Document):
+    tag: M[Keyword]
+
+    class Index:
+        name = "invalid"
