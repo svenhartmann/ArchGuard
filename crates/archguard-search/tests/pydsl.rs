@@ -70,6 +70,7 @@ fn documents_of_every_import_path_become_artifacts_and_lookalikes_do_not() {
         "index products python:shop [] shop/products.py:ProductDocument",
         "index opaque python:typed [] typed/rhs.py:Opaque",
         "index rhs python:typed [] typed/rhs.py:Rhs",
+        "index subclassed python:typed [] typed/rhs.py:Subclassed",
         "index typed python:typed [] typed/typed.py:Typed",
         "index invalid python:typed [] typed/untyped.py:Invalid",
         "index untyped python:typed [] typed/untyped.py:Untyped",
@@ -252,7 +253,27 @@ fn a_right_hand_side_wins_over_the_annotation() {
     // keyword from `field=`, `exclude=True` skipped, keyword from the local subclass, the
     // annotation only without an assignment.
     let r = by_address(&report, "typed/rhs.py:Rhs");
-    assert_eq!(fields_of(r), ["a:keyword", "c:keyword", "plain:integer"]);
+    assert_eq!(
+        fields_of(r),
+        [
+            "a:keyword",
+            "c:keyword",
+            "named:keyword",
+            "plain:integer",
+            "renamed:keyword"
+        ]
+    );
+    // A subclass call with arguments would lose them: a gap, not a bare keyword.
+    assert!(
+        by_address(&report, "typed/rhs.py:Subclassed")
+            .detail
+            .is_none()
+    );
+    assert!(
+        gaps(&report)
+            .iter()
+            .any(|g| g.starts_with("typed/rhs.py: typed/rhs.py:Subclassed"))
+    );
     // An assigned call that is no field class is a gap, never the annotation type.
     let o = by_address(&report, "typed/rhs.py:Opaque");
     assert!(o.detail.is_none());
@@ -280,7 +301,7 @@ fn django_model_fields_are_a_gap() {
 fn non_literal_parts_are_gaps_that_name_the_attribute() {
     let report = analyze();
     let gaps = gaps(&report);
-    assert_eq!(gaps.len(), 8, "{gaps:#?}");
+    assert_eq!(gaps.len(), 9, "{gaps:#?}");
     assert!(gaps.iter().any(
         |g| g.starts_with("shop/dynamic.py: shop/dynamic.py:Partial")
             && g.ends_with("not read: mappings, settings.")

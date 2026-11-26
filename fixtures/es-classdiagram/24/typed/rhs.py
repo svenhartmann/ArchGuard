@@ -10,6 +10,9 @@ class Rhs(Document):
     b: M[str] = mapped_field(exclude=True)
     c: str = LowerKeyword()
     plain: M[int]
+    e: M[str] = mapped_field(Keyword(), exclude=True)
+    f: M[str] = mapped_field(Keyword(), es_name="renamed")
+    g: M[str] = mapped_field("named", field=Keyword())
 
     class Index:
         name = "rhs"
@@ -20,3 +23,10 @@ class Opaque(Document):
 
     class Index:
         name = "opaque"
+
+
+class Subclassed(Document):
+    c: str = LowerKeyword(normalizer="lower")
+
+    class Index:
+        name = "subclassed"
