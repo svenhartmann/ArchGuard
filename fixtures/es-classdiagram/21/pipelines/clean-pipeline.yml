@@ -1,0 +1,6 @@
+description: clean fields
+processors:
+  - lowercase:
+      field: title
+  - remove:
+      field: tmp

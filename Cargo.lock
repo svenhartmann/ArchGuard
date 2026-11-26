@@ -556,6 +556,7 @@ dependencies = [
  "archguard-terraform",
  "hcl-edit",
  "serde_json",
+ "serde_yaml_ng",
  "tempfile",
 ]
 

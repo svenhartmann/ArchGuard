@@ -1,0 +1,4 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: shop }
+spec: { template: { spec: { containers: [ { name: shop, image: shop:1 } ] } }, replicas: 2 }

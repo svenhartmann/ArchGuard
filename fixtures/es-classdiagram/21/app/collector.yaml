@@ -1,0 +1,5 @@
+processors:
+  batch: {}
+  memory_limiter: { limit_mib: 400 }
+pipelines:
+  - processors: [ { name: batch, enabled: true } ]
