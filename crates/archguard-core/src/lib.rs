@@ -43,11 +43,16 @@ mod review_kpi;
 mod review_session;
 mod rules;
 mod runtime;
+mod search_quality;
 pub use runtime::{
     RuntimeBreakdown, RuntimeCallSite, RuntimeConfig, RuntimeDiagnostic, RuntimeEndpoint,
     RuntimeEvidence, RuntimeFinding, RuntimeMethod, RuntimeProfile, RuntimeRequest,
     RuntimeSampledMethod, RuntimeSamples, RuntimeSpan, RuntimeStatement, RuntimeStats,
     RuntimeTimePart,
+};
+pub use search_quality::{
+    RuleKind, SEARCH_RULES, SearchKpi, SearchQuality, SearchQualityConfig, SearchQualityFinding,
+    SearchRule, parse_es_duration_ms, search_rule,
 };
 mod services;
 mod staged;
