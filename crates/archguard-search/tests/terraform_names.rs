@@ -141,3 +141,49 @@ fn chains_of_depth_5_resolve_depth_6_and_cycles_are_gaps() {
     assert_eq!(indices(&report)[0].name, None);
     assert_eq!(name_gaps(&report), 1);
 }
+
+#[test]
+fn alias_blocks_of_one_name_in_one_scope_are_one_artifact_and_one_box() {
+    let report = analyze(&fixture("terraform"));
+    let aliases: Vec<_> = report
+        .elasticsearch
+        .artifacts
+        .iter()
+        .filter(|a| a.kind == "alias" && a.name.as_deref() == Some("orders"))
+        .collect();
+    assert_eq!(aliases.len(), 1);
+    let refs: Vec<_> = aliases[0]
+        .references
+        .iter()
+        .map(|r| r.name.as_str())
+        .collect();
+    assert_eq!(refs, ["orders-2026-01-01", "orders-2025-06-01"]);
+    assert_eq!(aliases[0].evidence.len(), 2);
+    let boxes = archguard_search::search_graph(&report)
+        .nodes
+        .iter()
+        .filter(|n| n.kind == "alias")
+        .count();
+    assert_eq!(boxes, 1);
+}
+
+#[test]
+fn opensearch_and_phillbaker_names_follow_the_same_rule() {
+    for (dir, want) in [
+        ("os_names", ["os-from-file", "local-pipe"].as_slice()),
+        ("pb_names", ["pb-from-local"].as_slice()),
+    ] {
+        let report = analyze(&fixture(dir));
+        let mut got: Vec<_> = report
+            .elasticsearch
+            .artifacts
+            .iter()
+            .filter_map(|a| a.name.clone())
+            .collect();
+        got.sort();
+        let mut want: Vec<_> = want.iter().map(|s| s.to_string()).collect();
+        want.sort();
+        assert_eq!(got, want, "{dir}");
+        assert_eq!(name_gaps(&report), 0, "{dir}");
+    }
+}
