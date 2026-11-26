@@ -194,3 +194,18 @@ fn hostile_literals_are_gaps_not_crashes_or_wrong_values() {
     gap("deep-v1");
     gap("esc-v1");
 }
+
+#[test]
+fn non_ascii_text_in_a_skipped_member_is_a_gap_not_a_panic() {
+    let report = analyze();
+    let a = named(&report, "umlaut-v1");
+    assert_eq!(a.detail.as_ref().unwrap().fields.len(), 1);
+    let at = format!("shop/src/nonascii.ts:{}: ", a.evidence[0].line.unwrap());
+    assert!(
+        gaps(&report)
+            .iter()
+            .any(|g| g.contains(&at) && g.contains("not read: settings")),
+        "{:?}",
+        gaps(&report)
+    );
+}
