@@ -77,6 +77,9 @@ fn every_rule_yields_its_kind_and_name_and_lookalikes_yield_nothing() {
         "http:docker index shop-docker ",
         "http:docker component_template shop-docker-comp ",
         "http:make index shop-make ",
+        "http:notes index shop-one ",
+        "http:notes index shop-three ",
+        "http:notes index_template shop-two ",
         "http:scripts index shop-attached ",
         "http:scripts ingest_pipeline shop-clean ",
         "http:scripts index shop-eq ",
@@ -239,4 +242,23 @@ fn attached_and_unusual_data_options_and_multiline_quotes_are_read() {
         "curl inside a quoted echo is text"
     );
     assert!(gaps(&report, "scripts/forms.sh").is_empty());
+}
+
+#[test]
+fn a_body_ends_at_its_blank_line_so_comments_between_requests_do_not_break_it() {
+    let report = analyze();
+    for n in ["shop-one", "shop-two", "shop-three"] {
+        assert_eq!(
+            named(&report, n).scope,
+            "http:notes",
+            "{n} is read despite a comment after its body"
+        );
+    }
+    let bad = gaps(&report, "notes/comments.http");
+    assert_eq!(bad.len(), 1, "only shop-bad is a gap");
+    assert!(
+        bad[0].message.ends_with("Source line 19."),
+        "the gap names the request line: {}",
+        bad[0].message
+    );
 }
