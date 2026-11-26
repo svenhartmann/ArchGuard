@@ -6,6 +6,10 @@ pub(crate) mod code;
 pub(crate) mod constants;
 pub(crate) mod json;
 pub(crate) mod json_files;
+pub(crate) mod pydsl;
+pub(crate) mod pydsl_eval;
+pub(crate) mod pydsl_module;
+pub(crate) mod pydsl_project;
 pub(crate) mod search_templates;
 pub(crate) mod terraform;
 pub(crate) mod terraform_detail;
@@ -21,5 +25,6 @@ pub(crate) const SOURCES: &[fn(&SearchContext) -> SourceOutput] = &[
     terraform_other::extract_with,
     search_templates::extract_with,
     json_files::extract_with,
+    pydsl::extract_with,
     code::extract_with,
 ];
