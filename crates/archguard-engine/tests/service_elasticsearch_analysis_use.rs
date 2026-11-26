@@ -72,9 +72,9 @@ fn users_roles_and_differences() {
     assert_eq!(
         users(&d, "analyzer", "default_search"),
         [
-            s("author.name", "default_search"),
+            s("title.shingle", "default_search"),
             s("body", "default_search"),
-            s("title.shingle", "default_search")
+            s("author.name", "default_search")
         ]
     );
     assert!(users(&d, "analyzer", "unused_a").is_empty());

@@ -87,12 +87,11 @@ fn field_users(detail: &SearchIndexDetail, kind: &str, name: &str) -> Vec<Search
                 kind == "analyzer" && name == "default" && text && f.analyzer.is_none(),
                 "default",
             ),
-            // A field with its own `analyzer` searches with it (ES), so only both-less fields.
+            // ES 8.19 search order: `search_analyzer`, `default_search`, `analyzer`, `default`.
             (
                 kind == "analyzer"
                     && name == "default_search"
                     && text
-                    && f.analyzer.is_none()
                     && f.search_analyzer.is_none(),
                 "default_search",
             ),
@@ -166,15 +165,33 @@ fn stages(detail: &SearchIndexDetail, name: &str) -> (Option<String>, BTreeSet<S
     (tokenizer, set)
 }
 
-/// The difference of the index and the search chain of field `path`; `None` without an own search
-/// analyzer or with equal stage names (names of the analyzers do not count).
+/// The difference of the effective index and search analyzer of field `path`. Search order (ES
+/// 8.19): `search_analyzer`, declared `default_search`, `analyzer`, declared `default`, `standard`.
+/// `None` without a differing search analyzer or with equal stage names (analyzer names do not
+/// count).
 pub fn search_analyzer_difference(
     detail: &SearchIndexDetail,
     path: &str,
 ) -> Option<SearchAnalyzerDifference> {
     let f = detail.fields.iter().find(|f| f.path == path)?;
-    let search = f.search_analyzer.clone()?;
-    let index = f.analyzer.clone().unwrap_or_else(|| "default".into());
+    let declared = |n: &str| {
+        detail
+            .analysis
+            .iter()
+            .any(|a| a.kind == "analyzer" && a.name == n)
+    };
+    let index = f
+        .analyzer
+        .clone()
+        .or_else(|| declared("default").then(|| "default".to_string()))
+        .unwrap_or_else(|| "standard".into());
+    let search = f
+        .search_analyzer
+        .clone()
+        .or_else(|| {
+            (f.kind == "text" && declared("default_search")).then(|| "default_search".to_string())
+        })
+        .unwrap_or_else(|| index.clone());
     let ((it, is), (st, ss)) = (stages(detail, &index), stages(detail, &search));
     let list = |a: &BTreeSet<String>, b: &BTreeSet<String>| a.difference(b).cloned().collect();
     let d = SearchAnalyzerDifference {
