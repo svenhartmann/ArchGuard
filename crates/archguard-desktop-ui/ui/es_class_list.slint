@@ -66,9 +66,11 @@ export component EsClassList inherits Rectangle {
     background: Theme.panel;
     forward-focus: keys;
 
-    // Scroll the row at `y` (Rust-computed, 26 px high) into view.
-    function reveal(y: length) {
-        if y < -sv.content-y { sv.content-y = -y; }
+    // Scroll the row at `y` (Rust-computed, 26 px high) into view, with its group header (30 px
+    // above it) when it is the group's first row.
+    function reveal(y: length, first: bool) {
+        if first && y - 30px < -sv.content-y { sv.content-y = -(y - 30px); }
+        else if y < -sv.content-y { sv.content-y = -y; }
         else if y + 26px > -sv.content-y + sv.visible-height { sv.content-y = -(y + 26px - sv.visible-height); }
     }
 
@@ -130,10 +132,10 @@ export component EsClassList inherits Rectangle {
                             font-size: Theme.font-heading;
                         }
                     }
-                    for r in g.rows: Rectangle {
+                    for r[i] in g.rows: Rectangle {
                         height: 26px;
                         property <bool> at: root.cursor == r.index;
-                        changed at => { if (self.at) { root.reveal(r.y); } }
+                        changed at => { if (self.at) { root.reveal(r.y, i == 0); } }
                         property <bool> chosen: r.selected;
                         changed chosen => { if (self.chosen) { root.cursor = r.index; } }
                         init => { if (self.chosen) { root.cursor = r.index; } }
