@@ -198,6 +198,19 @@ mod elasticsearch_tests {
         assert!(!json.contains("origins"));
     }
 
+    #[test]
+    fn flavor_round_trips_and_is_skipped_when_empty() {
+        let base = serde_json::json!({"kind": "index", "name": "a", "address": "x", "scope": "s",
+            "patterns": [], "references": [], "evidence": []});
+        let plain: SearchArtifact = serde_json::from_value(base.clone()).unwrap();
+        assert!(!serde_json::to_string(&plain).unwrap().contains("flavor"));
+        let mut os = base;
+        os["flavor"] = "opensearch".into();
+        let os: SearchArtifact = serde_json::from_value(os).unwrap();
+        let json = serde_json::to_value(&os).unwrap();
+        assert_eq!(json["flavor"], "opensearch");
+    }
+
     fn art(origins: &[&str]) -> SearchArtifact {
         SearchArtifact {
             kind: "index".into(),

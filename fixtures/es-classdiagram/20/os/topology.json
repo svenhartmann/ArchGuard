@@ -1,0 +1,16 @@
+{
+ "artifacts": [
+  {
+   "kind": "index",
+   "name": "orders",
+   "address": "orders",
+   "scope": "os",
+   "patterns": [],
+   "references": [],
+   "evidence": [],
+   "flavor": "opensearch"
+  }
+ ],
+ "usages": [],
+ "findings": []
+}

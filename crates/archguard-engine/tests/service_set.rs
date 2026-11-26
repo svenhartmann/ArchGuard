@@ -326,3 +326,27 @@ fn probe_split() {
         print_counts("unsplit", &analyze_services(&p.join("whole")).unwrap());
     }
 }
+
+/// Stands in for `analyze_services`: the fixture project holds a finished Elasticsearch model.
+fn read_topology(root: &Path) -> Result<ServiceTopology, archguard_engine::core::ArchguardError> {
+    let mut t = ServiceTopology::default();
+    t.elasticsearch =
+        serde_json::from_str(&fs::read_to_string(root.join("topology.json")).unwrap()).unwrap();
+    Ok(t)
+}
+
+#[test]
+fn same_name_other_flavor_is_not_merged() {
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/es-classdiagram/20");
+    let t =
+        archguard_search::merge_set(&[base.join("es"), base.join("os")], read_topology).unwrap();
+    let json = serde_json::to_value(&t).unwrap();
+    let arts = json["elasticsearch"]["artifacts"].as_array().unwrap();
+    assert_eq!(arts.len(), 2);
+    let mut flavors: Vec<&str> = arts
+        .iter()
+        .map(|a| a["flavor"].as_str().unwrap_or(""))
+        .collect();
+    flavors.sort();
+    assert_eq!(flavors, ["", "opensearch"]);
+}
