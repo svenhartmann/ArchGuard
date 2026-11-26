@@ -1,0 +1,54 @@
+// The Elasticsearch class view: bar (switches, legend, scope line), then list | canvas | details
+// (model: src/es_ui/class/view.rs, the only place that fills it).
+import { Theme } from "theme.slint";
+import { Button, Legend, EmptyState } from "widgets.slint";
+import { EsClassCanvas, EsClassBox, EsClassEdge } from "es_class_canvas.slint";
+import { EsClassList, EsClassGroup } from "es_class_list.slint";
+import { EsClassDetails, EsDetails } from "es_class_details.slint";
+
+export struct EsClassModel {
+    // 0 loading, 1 ready (also without Elasticsearch data), 2 topology unavailable.
+    state: int,
+    // The four switches: Services, Analysis components, Multi-fields, Collapse fields.
+    switches: [bool],
+    // Whole cluster instead of the neighbourhood of the selection.
+    cluster: bool,
+    // The selection's label (neighbourhood) and the element count of the cluster.
+    crumb-name: string,
+    crumb-count: int,
+    groups: [EsClassGroup],
+    query: string,
+    // Kind filter, `Group` order: 0 all, 1 services, 2 indices, ...
+    kind: int,
+    // Rows in all groups.
+    count: int,
+    write-glyph: string,
+    read-glyph: string,
+    boxes: [EsClassBox],
+    edges: [EsClassEdge],
+    canvas-w: float,
+    canvas-h: float,
+    zoom: float,
+    details: EsDetails,
+    // Why the editor did not open the last usage.
+    problem: string,
+}
+
+export global EsClassData {
+    in-out property <EsClassModel> model;
+    // A list row (flat index) and a canvas box (index in `boxes`).
+    callback select-row(int);
+    callback select-box(int);
+    callback search(string);
+    callback choose-kind(int);
+    callback toggle-cluster();
+    // Switch index as in `switches`, and its new value.
+    callback switch(int, bool);
+    callback zoom-by(float);
+    callback fit(float, float);
+    callback open(string, int);
+}
+
+export component EsClassView inherits Rectangle {
+    background: Theme.bg;
+}

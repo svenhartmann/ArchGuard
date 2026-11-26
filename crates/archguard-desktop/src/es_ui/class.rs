@@ -27,6 +27,10 @@ mod list_view_check;
 mod probe_check;
 #[cfg(test)]
 mod state_check;
+#[cfg(test)]
+mod view_check;
+#[cfg(test)]
+mod view_render_check;
 
 // Shared types live in `types` so `state` does not import this module (it would close a cycle
 // through `state_check`).
