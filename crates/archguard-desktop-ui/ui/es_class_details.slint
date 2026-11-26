@@ -1,0 +1,181 @@
+// The right column of the Elasticsearch class diagram (model: src/es_ui/class/details.rs).
+import { ScrollView } from "std-widgets.slint";
+import { SvcSearchDetail, SearchDetailBody } from "services_search.slint";
+import { Mono, Note, Heading } from "services_sections.slint";
+import { Theme } from "theme.slint";
+import { SectionHeading, Dashes } from "widgets.slint";
+
+export struct EsDetailHead {
+    title: string,
+    // Stereotype and Terraform root.
+    subtitle: string,
+    // `file:line` of the declaration.
+    location: string,
+}
+
+export struct EsDetailField {
+    name: string,
+    kind: string,
+    // Index and search analyzer, as text.
+    analysis: string,
+}
+
+// One row of an analysis chain. stage 0 char filter, 1 tokenizer, 2 filter (`n` counts from 1);
+// class 0 declared (`params` is its parameter line), 1 built in, 2 not declared.
+export struct EsDetailRow {
+    stage: int,
+    n: int,
+    chip: string,
+    class: int,
+    params: string,
+}
+
+// Static note about differing index and search analyzers; empty `field`: none.
+export struct EsDetailHint {
+    field: string,
+    search-only: string,
+    index-only: string,
+}
+
+export struct EsDetailPair {
+    key: string,
+    value: string,
+}
+
+export struct EsDetailUse {
+    text: string,
+    file: string,
+    line: int,
+    clickable: bool,
+}
+
+export struct EsDetails {
+    // 0 index, 1 building block, 2 other (`other`).
+    mode: int,
+    head: EsDetailHead,
+    fields: [EsDetailField],
+    chain-name: string,
+    chain: [EsDetailRow],
+    hint: EsDetailHint,
+    settings: [EsDetailPair],
+    links: [EsDetailPair],
+    usages: [EsDetailUse],
+    params: [EsDetailPair],
+    used-by: [string],
+    definition: string,
+    other: SvcSearchDetail,
+}
+
+// A chain building block: a pill coloured by stage, outline only when built in.
+component Pill inherits Rectangle {
+    in property <EsDetailRow> item;
+    border-width: 1px;
+    border-radius: 8px;
+    border-color: item.stage == 1 ? Theme.priority : item.stage == 2 ? Theme.analysis : Theme.muted;
+    background: item.class == 0 ? self.border-color.with-alpha(0.15) : transparent;
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        Text { text: item.chip; color: Theme.text; font-family: Theme.mono-family; font-size: Theme.font-small; }
+    }
+}
+
+component ChainTable inherits VerticalLayout {
+    in property <[EsDetailRow]> rows;
+    spacing: 4px;
+    for r in rows: HorizontalLayout {
+        spacing: 8px;
+        Note { text: r.stage == 0 ? @tr("Char filter") : r.stage == 1 ? @tr("Tokenizer") : @tr("Filter {0}", r.n); width: 80px; }
+        VerticalLayout {
+            spacing: 2px;
+            horizontal-stretch: 1;
+            HorizontalLayout { alignment: start; Pill { item: r; } }
+            if r.class == 1: Note { text: @tr("built in"); }
+            if r.class == 2: Note { text: @tr("not declared (plugin or Elasticsearch default)"); }
+            if r.class == 0 && r.params != "": Mono { text: r.params; }
+        }
+    }
+}
+
+component Pairs inherits VerticalLayout {
+    in property <[EsDetailPair]> items;
+    spacing: 2px;
+    for p in items: VerticalLayout {
+        HorizontalLayout {
+            spacing: 8px;
+            Note { text: p.key; width: 110px; }
+            Mono { text: p.value; horizontal-stretch: 1; }
+        }
+        if p.key == "synonyms_path" || p.key == "stopwords_path": Note { text: @tr("The file lies on the Elasticsearch nodes; its content cannot be read statically."); }
+    }
+}
+
+export component EsClassDetails inherits Rectangle {
+    in property <EsDetails> details;
+    // The file and line of a clickable usage.
+    callback open(string, int);
+    background: Theme.panel;
+    ScrollView {
+        VerticalLayout {
+            padding: 8px;
+            spacing: 6px;
+            alignment: start;
+            Heading { text: details.head.title; }
+            if details.head.subtitle != "": Note { text: details.head.subtitle; }
+            if details.head.location != "": HorizontalLayout {
+                spacing: 8px;
+                Note { text: @tr("Declaration"); width: 110px; }
+                Mono { text: details.head.location; horizontal-stretch: 1; }
+            }
+
+            if details.mode == 0: VerticalLayout {
+                spacing: 6px;
+                SectionHeading { label: @tr("Fields with analysis"); }
+                for f in details.fields: HorizontalLayout {
+                    spacing: 8px;
+                    Mono { text: f.name; width: 110px; }
+                    Mono { text: f.kind + (f.analysis != "" ? " · " + f.analysis : ""); color: Theme.text; horizontal-stretch: 1; }
+                }
+                if details.chain.length > 0: SectionHeading { label: @tr("Analysis chain {0}", details.chain-name); }
+                ChainTable { rows: details.chain; }
+                if details.hint.field != "": Rectangle {
+                    // Neutral: dashed frame, no warning colour or symbol.
+                    Dashes { width: parent.width; height: parent.height; tint: Theme.muted; }
+                    VerticalLayout {
+                        padding: 6px;
+                        spacing: 2px;
+                        Note { text: @tr("Index and search analyzer differ at {0}: search only {1}; index only {2}.", details.hint.field, details.hint.search-only, details.hint.index-only); }
+                        Note { text: @tr("Static hint, no rating."); }
+                    }
+                }
+                SectionHeading { label: @tr("Settings" => "Settings"); }
+                Pairs { items: details.settings; }
+                SectionHeading { label: @tr("Settings" => "Links"); }
+                Pairs { items: details.links; }
+                SectionHeading { label: @tr("Usage in code"); }
+                for u in details.usages: Rectangle {
+                    height: ul.preferred-height;
+                    ul := Mono { text: u.text; color: u.clickable ? Theme.accent : Theme.muted; }
+                    if u.clickable: TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.open(u.file, u.line); }
+                    }
+                }
+            }
+
+            if details.mode == 1: VerticalLayout {
+                spacing: 6px;
+                SectionHeading { label: @tr("Chain"); }
+                ChainTable { rows: details.chain; }
+                SectionHeading { label: @tr("Parameters"); }
+                Pairs { items: details.params; }
+                SectionHeading { label: @tr("Used by"); }
+                for u in details.used-by: Mono { text: u; }
+                SectionHeading { label: @tr("Definition"); }
+                Mono { text: details.definition; }
+            }
+
+            if details.mode == 2: SearchDetailBody { detail: details.other; }
+        }
+    }
+}
