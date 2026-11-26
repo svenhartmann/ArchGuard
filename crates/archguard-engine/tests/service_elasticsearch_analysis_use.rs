@@ -71,7 +71,11 @@ fn users_roles_and_differences() {
     assert_eq!(users(&d, "analyzer", "default"), [s("body", "default")]);
     assert_eq!(
         users(&d, "analyzer", "default_search"),
-        [s("body", "default_search")]
+        [
+            s("author.name", "default_search"),
+            s("body", "default_search"),
+            s("title.shingle", "default_search")
+        ]
     );
     assert!(users(&d, "analyzer", "unused_a").is_empty());
     assert_eq!(
@@ -91,5 +95,20 @@ fn users_roles_and_differences() {
         search_analyzer_difference(&d, "same").is_none(),
         "lookalike"
     );
-    assert!(search_analyzer_difference(&d, "body").is_none());
+    // `default_search` beats the field's own `analyzer` in ES 8.19.
+    let body = search_analyzer_difference(&d, "body").unwrap();
+    assert_eq!(
+        (body.index.as_str(), body.search.as_str()),
+        ("default", "default_search")
+    );
+    assert!(!body.tokenizer_differs);
+    assert_eq!(
+        (body.only_index.len(), body.only_search.as_slice()),
+        (0, ["trim".to_string()].as_slice())
+    );
+    let sh = search_analyzer_difference(&d, "title.shingle").unwrap();
+    assert_eq!(
+        (sh.index.as_str(), sh.search.as_str()),
+        ("shingle_a", "default_search")
+    );
 }

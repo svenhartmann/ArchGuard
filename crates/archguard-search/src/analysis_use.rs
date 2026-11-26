@@ -186,3 +186,32 @@ pub fn search_analyzer_difference(
     };
     (d.tokenizer_differs || !d.only_index.is_empty() || !d.only_search.is_empty()).then_some(d)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use archguard_core::SearchAnalysis;
+
+    #[test]
+    fn without_default_the_index_analyzer_is_standard() {
+        let d = SearchIndexDetail {
+            fields: vec![SearchField {
+                path: "t".into(),
+                kind: "text".into(),
+                ..Default::default()
+            }],
+            analysis: vec![SearchAnalysis {
+                kind: "analyzer".into(),
+                name: "default_search".into(),
+                definition: r#"{"tokenizer":"whitespace"}"#.into(),
+            }],
+            ..Default::default()
+        };
+        let x = search_analyzer_difference(&d, "t").unwrap();
+        assert_eq!(
+            (x.index.as_str(), x.search.as_str()),
+            ("standard", "default_search")
+        );
+        assert!(x.tokenizer_differs);
+    }
+}
