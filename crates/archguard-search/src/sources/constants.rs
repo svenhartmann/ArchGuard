@@ -91,7 +91,7 @@ impl Constants {
 
     /// The literal of the one constant the reference names in its service (qualified: in its class); any other count, a
     /// non-literal value or a qualifier that is not the declaring class (file stem) is a gap.
-    fn resolve(
+    pub(super) fn resolve(
         &self,
         service: &str,
         ext: &'static str,
@@ -140,7 +140,7 @@ pub(super) fn reference(arg: &str) -> Name {
 }
 
 /// `tsx` is `ts`: constants and references of one language group meet.
-fn lang(ext: &str) -> &'static str {
+pub(super) fn lang(ext: &str) -> &'static str {
     match ext {
         "java" => "java",
         "cs" => "cs",

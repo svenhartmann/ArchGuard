@@ -1,0 +1,1 @@
+{"properties":{"headline":{"type":"text","analyzer":"english"},"tags":{"type":"keyword"}}}

@@ -11,6 +11,8 @@ pub(crate) mod pydsl_eval;
 pub(crate) mod pydsl_module;
 pub(crate) mod pydsl_project;
 pub(crate) mod search_templates;
+pub(crate) mod spring;
+pub(crate) mod spring_syntax;
 pub(crate) mod terraform;
 pub(crate) mod terraform_detail;
 pub(crate) mod terraform_eval;
@@ -27,4 +29,5 @@ pub(crate) const SOURCES: &[fn(&SearchContext) -> SourceOutput] = &[
     json_files::extract_with,
     pydsl::extract_with,
     code::extract_with,
+    spring::extract_with,
 ];
