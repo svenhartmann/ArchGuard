@@ -102,17 +102,31 @@ fn has_alias(text: &str) -> bool {
     })
 }
 
-/// First line of every `<key>:` after the `indexes:` line, built once per file.
+/// First line of every direct child key of `fos_elastica: indexes:`, built once per file.
 fn key_lines(text: &str) -> HashMap<&str, u32> {
+    let indent = |l: &str| l.len() - l.trim_start().len();
     let mut map = HashMap::new();
-    let mut seen = false;
+    let (mut in_root, mut in_indexes, mut child) = (false, false, None::<usize>);
     for (i, l) in text.lines().enumerate() {
         let t = l.trim();
-        seen |= t == "indexes:";
-        if let (true, Some((k, _))) = (seen, t.split_once(':')) {
-            let k = k.trim_matches(['\'', '"']);
-            map.entry(k)
-                .or_insert(u32::try_from(i + 1).unwrap_or(u32::MAX));
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        let ind = indent(l);
+        if ind == 0 {
+            in_root = t == "fos_elastica:";
+            in_indexes = false;
+        } else if in_indexes {
+            let c = *child.get_or_insert(ind);
+            if ind < c {
+                in_indexes = false;
+            } else if let (true, Some((k, _))) = (ind == c, t.split_once(':')) {
+                map.entry(k.trim_matches(['\'', '"']))
+                    .or_insert(u32::try_from(i + 1).unwrap_or(u32::MAX));
+            }
+        }
+        if in_root && !in_indexes && child.is_none() && t == "indexes:" {
+            in_indexes = true;
         }
     }
     map
