@@ -2,7 +2,7 @@
 use archguard_core::{SearchIndexDetail, ServiceTopology};
 use archguard_engine::{
     SearchFieldRole, analyze_services, search_analysis_users, search_analyzer_difference,
-    search_field_role,
+    search_field_depth, search_field_role,
 };
 use std::path::Path;
 
@@ -44,6 +44,12 @@ fn users_roles_and_differences() {
     assert_eq!(role("title.raw"), SearchFieldRole::MultiField);
     assert_eq!(role("author.name"), SearchFieldRole::Property);
     assert_eq!(role("lines.sku"), SearchFieldRole::Property);
+    let i = d
+        .fields
+        .iter()
+        .position(|f| f.path == "author.name")
+        .unwrap();
+    assert_eq!(search_field_depth(&d.fields, i), 1);
 
     assert_eq!(
         users(&d, "analyzer", "idx_a"),

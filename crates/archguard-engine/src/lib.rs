@@ -145,7 +145,8 @@ pub use archguard_search::{
     ChainRef, SearchAnalysisPart, SearchAnalysisUse, SearchAnalysisUser, SearchAnalyzerDifference,
     SearchEdge, SearchFieldRole, SearchGraph, SearchNode, is_detail_gap, is_elasticsearch_gap,
     search_analysis_parts, search_analysis_users, search_analyzer_difference,
-    search_artifact_covers, search_builtin, search_field_role, search_graph, short_scope,
+    search_artifact_covers, search_builtin, search_field_depth, search_field_role, search_graph,
+    short_scope,
 };
 pub use architecture::architecture_context;
 pub use cache::{
