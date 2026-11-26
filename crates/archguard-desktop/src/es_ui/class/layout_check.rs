@@ -4,9 +4,11 @@ use archguard_engine::{SearchGraph, core::ServiceTopology, search_graph};
 use serde_json::{Value, json};
 
 use super::boxes::{BoxContent, content};
-use super::diagram::{BoxKind, Diagram, diagram};
+use super::boxes::{Compartment, Line, Title};
+use super::diagram::{BoxKind, DBox, DEdge, Diagram, EdgeStyle, diagram};
 use super::layout::{Scene, layout};
 use super::types::{Key, Switches};
+use crate::diagram::HeadShape;
 
 fn art(kind: &str, name: &str, refs: Value, detail: Value) -> Value {
     json!({"kind": kind, "name": name, "address": format!("{kind}.{name}"), "scope": "terraform:infra",
@@ -63,6 +65,14 @@ fn scene() -> (Diagram, Vec<BoxContent>, Scene) {
     (d, cs, s)
 }
 
+/// A part's content carries its owner's label as name, so parts are found by key.
+fn label<'a>(k: &'a Key, c: &'a BoxContent) -> &'a str {
+    match k {
+        Key::Part { name, .. } => name,
+        Key::Node(_) => &c.name,
+    }
+}
+
 fn col(k: BoxKind) -> usize {
     match k {
         BoxKind::Service | BoxKind::Processing => 0,
@@ -105,7 +115,7 @@ fn four_columns_no_overlap() {
     }
     let at = |kind, name: &str| {
         let i = (0..d.boxes.len())
-            .find(|&i| d.boxes[i].kind == kind && cs[i].name == name)
+            .find(|&i| d.boxes[i].kind == kind && label(&d.boxes[i].key, &cs[i]) == name)
             .unwrap_or_else(|| panic!("no {kind:?} {name}"));
         (i, s.boxes[i].clone())
     };
@@ -117,8 +127,127 @@ fn four_columns_no_overlap() {
     );
     let (ia, a1) = at(BoxKind::Analyzer, "title_fold");
     let (_, t1) = at(BoxKind::Tokenizer, "tok");
+    assert!(
+        a1.y < at(BoxKind::Analyzer, "name_fold").1.y,
+        "title_fold is used first"
+    );
     assert_eq!(t1.y, a1.y, "leaf on the height of its first analyzer");
     let (ip, products) = at(BoxKind::Index, "products");
     assert_eq!(products.h, expected_h(&cs[ip]));
     assert_eq!(a1.h, expected_h(&cs[ia]));
+}
+
+fn dbox(i: usize, kind: BoxKind) -> DBox {
+    DBox {
+        key: Key::Node(i),
+        kind,
+        ghost: false,
+        warn: false,
+        selected: i == 0,
+    }
+}
+
+fn dedge(a: usize, b: usize, style: EdgeStyle) -> DEdge {
+    DEdge {
+        from: Key::Node(a),
+        to: Key::Node(b),
+        style,
+        label: String::new(),
+    }
+}
+
+/// `n` groups of service, alias, index, analyzer and tokenizer, wired in a chain.
+fn synthetic(n: usize) -> (Diagram, Vec<BoxContent>) {
+    let kinds = [
+        BoxKind::Service,
+        BoxKind::Alias,
+        BoxKind::Index,
+        BoxKind::Analyzer,
+        BoxKind::Tokenizer,
+    ];
+    let mut d = Diagram::default();
+    for i in 0..n * 5 {
+        d.boxes.push(dbox(i, kinds[i % 5]));
+    }
+    let styles = [
+        EdgeStyle::Write,
+        EdgeStyle::Alias,
+        EdgeStyle::Uses,
+        EdgeStyle::Uses,
+    ];
+    for g in 0..n {
+        for (k, &s) in styles.iter().enumerate() {
+            d.edges.push(dedge(g * 5 + k, g * 5 + k + 1, s));
+        }
+        if g + 1 < n {
+            d.edges
+                .push(dedge(g * 5 + 3, (g + 1) * 5 + 3, EdgeStyle::Uses));
+        }
+    }
+    let line = Line {
+        text: "field".into(),
+        ..Default::default()
+    };
+    let comp = Compartment {
+        title: Title::Fields,
+        lines: vec![line; 4],
+        chips: Vec::new(),
+    };
+    let cs = (0..n * 5)
+        .map(|_| BoxContent {
+            compartments: vec![comp.clone()],
+            ..Default::default()
+        })
+        .collect();
+    (d, cs)
+}
+
+#[test]
+fn edge_ends_follow_the_style() {
+    let mut d = Diagram::default();
+    let kinds = [
+        BoxKind::Service,
+        BoxKind::Template,
+        BoxKind::Index,
+        BoxKind::Alias,
+        BoxKind::Analyzer,
+    ];
+    for (i, k) in kinds.iter().enumerate() {
+        d.boxes.push(dbox(i, *k));
+    }
+    let wanted = [
+        (EdgeStyle::Write, HeadShape::Filled, false),
+        (EdgeStyle::Read, HeadShape::Filled, false),
+        (EdgeStyle::Covers, HeadShape::Hollow, true),
+        (EdgeStyle::Alias, HeadShape::Diamond, false),
+        (EdgeStyle::Uses, HeadShape::Open, true),
+        (EdgeStyle::Pipeline, HeadShape::Open, false),
+    ];
+    for (k, (s, _, _)) in wanted.iter().enumerate() {
+        d.edges.push(dedge(k % 2, 2 + k % 3, *s));
+    }
+    let cs = vec![BoxContent::default(); 5];
+    let scene = layout(&d, &cs);
+    for (e, (style, shape, dashed)) in scene.edges.iter().zip(wanted) {
+        assert_eq!((e.style, e.shape, e.dashed), (style, shape, dashed));
+        let closed = e.head.contains('Z');
+        assert_eq!(closed, shape != HeadShape::Open, "{style:?}: {}", e.head);
+        assert!(!e.line.is_empty() && !e.line.contains('Z'));
+    }
+}
+
+#[test]
+fn layout_time_grows_about_linearly() {
+    let best = |n: usize| {
+        let (d, cs) = synthetic(n);
+        (0..3)
+            .map(|_| {
+                let t = std::time::Instant::now();
+                std::hint::black_box(layout(&d, &cs));
+                t.elapsed().as_secs_f64()
+            })
+            .fold(f64::MAX, f64::min)
+    };
+    let (small, large) = (best(200), best(800));
+    assert!(large / small < 8.0, "{small} -> {large}");
 }
