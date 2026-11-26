@@ -69,6 +69,7 @@ fn documents_of_every_import_path_become_artifacts_and_lookalikes_do_not() {
         "index notes python:shop [] shop/others.py:Note",
         "index products python:shop [] shop/products.py:ProductDocument",
         "index opaque python:typed [] typed/rhs.py:Opaque",
+        "index positional python:typed [] typed/rhs.py:Positional",
         "index rhs python:typed [] typed/rhs.py:Rhs",
         "index subclassed python:typed [] typed/rhs.py:Subclassed",
         "index typed python:typed [] typed/typed.py:Typed",
@@ -258,7 +259,6 @@ fn a_right_hand_side_wins_over_the_annotation() {
         [
             "a:keyword",
             "c:keyword",
-            "named:keyword",
             "plain:integer",
             "renamed:keyword"
         ]
@@ -273,6 +273,17 @@ fn a_right_hand_side_wins_over_the_annotation() {
         gaps(&report)
             .iter()
             .any(|g| g.starts_with("typed/rhs.py: typed/rhs.py:Subclassed"))
+    );
+    // A positional string is no field and no name (`es_name` is keyword-only): a gap.
+    assert!(
+        by_address(&report, "typed/rhs.py:Positional")
+            .detail
+            .is_none()
+    );
+    assert!(
+        gaps(&report)
+            .iter()
+            .any(|g| g.starts_with("typed/rhs.py: typed/rhs.py:Positional"))
     );
     // An assigned call that is no field class is a gap, never the annotation type.
     let o = by_address(&report, "typed/rhs.py:Opaque");
@@ -301,7 +312,7 @@ fn django_model_fields_are_a_gap() {
 fn non_literal_parts_are_gaps_that_name_the_attribute() {
     let report = analyze();
     let gaps = gaps(&report);
-    assert_eq!(gaps.len(), 9, "{gaps:#?}");
+    assert_eq!(gaps.len(), 10, "{gaps:#?}");
     assert!(gaps.iter().any(
         |g| g.starts_with("shop/dynamic.py: shop/dynamic.py:Partial")
             && g.ends_with("not read: mappings, settings.")

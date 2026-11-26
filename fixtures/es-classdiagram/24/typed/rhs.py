@@ -12,7 +12,6 @@ class Rhs(Document):
     plain: M[int]
     e: M[str] = mapped_field(Keyword(), exclude=True)
     f: M[str] = mapped_field(Keyword(), es_name="renamed")
-    g: M[str] = mapped_field("named", field=Keyword())
 
     class Index:
         name = "rhs"
@@ -30,3 +29,10 @@ class Subclassed(Document):
 
     class Index:
         name = "subclassed"
+
+
+class Positional(Document):
+    x: M[str] = mapped_field("named")
+
+    class Index:
+        name = "positional"
