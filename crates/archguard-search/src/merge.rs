@@ -21,8 +21,8 @@ pub(crate) fn apply(report: &mut ServiceTopology, outputs: Vec<SourceOutput>) {
     findings::augment(report);
 }
 
-/// (kind, literal name) -> index into the merged artifacts; the first artifact wins.
-type Seen = HashMap<(String, String), usize>;
+/// (kind, flavor, literal name) -> index into the merged artifacts; the first artifact wins.
+type Seen = HashMap<(String, String, String), usize>;
 
 type Analyze = fn(&Path) -> Result<ServiceTopology, ArchguardError>;
 
@@ -45,7 +45,8 @@ pub fn merge_set(roots: &[PathBuf], analyze: Analyze) -> Result<ServiceTopology,
     for (i, a) in base.elasticsearch.artifacts.iter_mut().enumerate() {
         a.origins = vec![names[0].clone()];
         if let Some(n) = &a.name {
-            seen.entry((a.kind.clone(), n.clone())).or_insert(i);
+            seen.entry((a.kind.clone(), a.flavor.clone(), n.clone()))
+                .or_insert(i);
         }
     }
     for (root, name) in rest.iter().zip(&names[1..]) {
@@ -104,7 +105,10 @@ fn merge_project(base: &mut ServiceTopology, seen: &mut Seen, name: &str, other:
     let mut fresh = Seen::new();
     for mut a in other.elasticsearch.artifacts {
         prefix_evidence(name, &mut a.evidence);
-        let key = a.name.clone().map(|n| (a.kind.clone(), n));
+        let key = a
+            .name
+            .clone()
+            .map(|n| (a.kind.clone(), a.flavor.clone(), n));
         match key.as_ref().and_then(|k| seen.get(k)) {
             Some(&i) => merge_artifact(&mut base.elasticsearch.artifacts[i], a, name),
             None => {
@@ -187,6 +191,7 @@ mod tests {
 
     fn art(detail: Option<SearchIndexDetail>) -> SearchArtifact {
         SearchArtifact {
+            flavor: String::new(),
             kind: "index".into(),
             name: Some("audit".into()),
             address: "a".into(),

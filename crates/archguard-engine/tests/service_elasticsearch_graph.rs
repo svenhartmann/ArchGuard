@@ -22,6 +22,7 @@ fn svc(name: &str) -> Service {
 
 fn art(kind: &str, name: Option<&str>, address: &str, scope: &str) -> SearchArtifact {
     SearchArtifact {
+        flavor: String::new(),
         kind: kind.into(),
         name: name.map(Into::into),
         address: address.into(),

@@ -150,6 +150,7 @@ mod tests {
 
     fn artifact() -> SearchArtifact {
         SearchArtifact {
+            flavor: String::new(),
             kind: "index".into(),
             name: Some("x".into()),
             address: "i.x".into(),

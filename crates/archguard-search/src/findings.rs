@@ -314,6 +314,7 @@ mod tests {
 
     fn art(kind: &str, name: Option<&str>, patterns: &[&str]) -> SearchArtifact {
         SearchArtifact {
+            flavor: String::new(),
             kind: kind.into(),
             name: name.map(String::from),
             address: String::new(),

@@ -70,7 +70,7 @@ impl ElasticsearchModel {
 /// A declared Elasticsearch object. `kind` is one of `index`, `alias`,
 /// `index_template`, `component_template`, `ilm_policy`, `ingest_pipeline`,
 /// `transform`, `watch`, `enrich_policy`, `snapshot_lifecycle`,
-/// `stored_script`, `search_template`, `data_view`, `alerting_rule`.
+/// `stored_script`, `search_template`, `data_view`, `alerting_rule`, `ism_policy`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchArtifact {
     pub kind: String,
@@ -86,6 +86,9 @@ pub struct SearchArtifact {
     /// Mapping, settings and analysis of an index or template; each attribute is read only when literal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<SearchIndexDetail>,
+    /// Empty = Elasticsearch, `opensearch` = OpenSearch; per artifact because a set can mix both.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub flavor: String,
 }
 
 /// Mapping, settings and analysis of an index or template (ADR 0023). An
@@ -167,6 +170,7 @@ mod elasticsearch_tests {
         assert!(!serde_json::to_string(&t).unwrap().contains("elasticsearch"));
         let mut t = t;
         t.elasticsearch.artifacts.push(SearchArtifact {
+            flavor: String::new(),
             kind: "index_template".into(),
             name: Some("t1".into()),
             address: "es_index_template.t1".into(),
@@ -198,8 +202,22 @@ mod elasticsearch_tests {
         assert!(!json.contains("origins"));
     }
 
+    #[test]
+    fn flavor_round_trips_and_is_skipped_when_empty() {
+        let base = serde_json::json!({"kind": "index", "name": "a", "address": "x", "scope": "s",
+            "patterns": [], "references": [], "evidence": []});
+        let plain: SearchArtifact = serde_json::from_value(base.clone()).unwrap();
+        assert!(!serde_json::to_string(&plain).unwrap().contains("flavor"));
+        let mut os = base;
+        os["flavor"] = "opensearch".into();
+        let os: SearchArtifact = serde_json::from_value(os).unwrap();
+        let json = serde_json::to_value(&os).unwrap();
+        assert_eq!(json["flavor"], "opensearch");
+    }
+
     fn art(origins: &[&str]) -> SearchArtifact {
         SearchArtifact {
+            flavor: String::new(),
             kind: "index".into(),
             name: Some("audit".into()),
             address: "a".into(),

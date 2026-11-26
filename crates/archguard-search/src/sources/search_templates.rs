@@ -57,6 +57,7 @@ fn search_templates(ctx: &SearchContext, report: &mut ServiceTopology) {
             .and_then(|s| s.to_str())
             .map(str::to_owned);
         report.elasticsearch.artifacts.push(SearchArtifact {
+            flavor: String::new(),
             kind: "search_template".into(),
             name,
             address: rel.clone(),

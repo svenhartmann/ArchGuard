@@ -353,6 +353,7 @@ mod origin {
         let mut t = ServiceTopology::default();
         t.elasticsearch.projects = vec!["infra".into(), "a · b".into()];
         t.elasticsearch.artifacts = vec![SearchArtifact {
+            flavor: String::new(),
             kind: "index".into(),
             name: Some("x".into()),
             address: "i.x".into(),

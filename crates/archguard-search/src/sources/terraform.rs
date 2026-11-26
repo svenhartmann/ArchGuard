@@ -196,6 +196,7 @@ impl Read<'_, '_> {
     ) {
         let r = self.r;
         self.out.push(SearchArtifact {
+            flavor: String::new(),
             kind: kind.into(),
             name,
             address: format!("{}{suffix}", r.address),
