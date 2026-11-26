@@ -256,12 +256,7 @@ fn a_right_hand_side_wins_over_the_annotation() {
     let r = by_address(&report, "typed/rhs.py:Rhs");
     assert_eq!(
         fields_of(r),
-        [
-            "a:keyword",
-            "c:keyword",
-            "plain:integer",
-            "renamed:keyword"
-        ]
+        ["a:keyword", "c:keyword", "plain:integer", "renamed:keyword"]
     );
     // A subclass call with arguments would lose them: a gap, not a bare keyword.
     assert!(

@@ -303,14 +303,14 @@ impl<'a> Module<'a> {
         if (args.iter()).any(|a| a.name == Some("exclude") && a.value == "True") {
             return None;
         }
-        // `es_name` (or a positional string) is the index name of the field.
-        let text = |a: &&Arg| string_value(a.value);
+        // `es_name=` (keyword-only) is the index name of the field.
         *renamed = (args.iter())
-            .find(|a| a.name == Some("es_name") || (a.name.is_none() && text(a).is_some()))
-            .and_then(|a| text(&a));
-        let field = args.iter().find(|a| {
-            a.name == Some("field") || (a.name.is_none() && string_value(a.value).is_none())
-        });
+            .find(|a| a.name == Some("es_name"))
+            .and_then(|a| string_value(a.value));
+        // The only positional parameter is `field`; a non-field value there is a gap.
+        let field = args
+            .iter()
+            .find(|a| a.name == Some("field") || a.name.is_none());
         // `value` is a slice of `src`; `at` would start at the argument name.
         let r = field.map(|f| {
             let at = f.value.as_ptr() as usize - self.src.as_ptr() as usize;
