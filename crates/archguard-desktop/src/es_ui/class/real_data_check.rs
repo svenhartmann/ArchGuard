@@ -6,9 +6,9 @@ use archguard_engine::{SearchGraph, core::ServiceTopology, search_graph};
 use serde_json::{Value, json};
 
 use super::boxes::{BoxContent, ChainClass, Chip, Compartment, Stage, Title, content};
-use super::diagram::{BoxKind, DBox, Diagram};
+use super::diagram::{BoxKind, DBox, Diagram, EdgeStyle, diagram};
 use super::layout::{Placed, layout};
-use super::layout_check::synthetic;
+use super::layout_check::{crosses, dedge, synthetic};
 use super::types::{Key, Switches};
 use super::view::fit;
 use crate::es_ui::state::build_from;
@@ -188,4 +188,65 @@ fn fit_never_goes_below_forty_percent() {
     s.canvas = (9000.0, 12000.0);
     fit(&mut s, 1000.0, 800.0);
     assert!((s.zoom - 0.4).abs() < 1e-4, "{}", s.zoom);
+}
+
+/// Three boxes in one column and an edge from the first to the third passes the second.
+#[test]
+fn an_edge_within_a_column_goes_around_the_box_between() {
+    let mut d = Diagram::default();
+    for i in 0..3 {
+        let mut b = DBox {
+            key: Key::Node(i),
+            kind: BoxKind::Index,
+            ghost: false,
+            warn: false,
+            selected: i == 0,
+            dim: false,
+        };
+        b.selected = i == 0;
+        d.boxes.push(b);
+    }
+    d.edges.push(dedge(0, 2, EdgeStyle::Uses));
+    let s = layout(
+        &d,
+        &[
+            BoxContent::default(),
+            BoxContent::default(),
+            BoxContent::default(),
+        ],
+    );
+    let ys: Vec<f32> = s.boxes.iter().map(|b| b.y).collect();
+    assert!(ys[0] < ys[1] && ys[1] < ys[2], "{ys:?}");
+    assert!(
+        !crosses(&s.edges[0].line, &s.boxes[1]),
+        "{}",
+        s.edges[0].line
+    );
+}
+
+/// A declared `default_search` is used by the index like a declared `default`.
+#[test]
+fn a_declared_default_search_gets_the_same_uses_edge_as_default() {
+    let detail = json!({"fields": [{"path": "k", "kind": "keyword"}], "settings": {},
+        "analysis": [
+            {"kind": "analyzer", "name": "default", "definition": r#"{"tokenizer":"standard"}"#},
+            {"kind": "analyzer", "name": "default_search", "definition": r#"{"tokenizer":"standard"}"#}]});
+    let art = json!({"kind": "index", "name": "docs", "address": "r.docs", "scope": "terraform:a",
+        "patterns": [], "references": [], "evidence": [], "detail": detail});
+    let elasticsearch =
+        serde_json::from_value(json!({"artifacts": [art], "usages": [], "findings": []})).unwrap();
+    let t = ServiceTopology {
+        elasticsearch,
+        ..Default::default()
+    };
+    let g = search_graph(&t);
+    let part = |name: &str| Key::Part {
+        owner: 0,
+        kind: "analyzer".into(),
+        name: name.into(),
+    };
+    let d = diagram(&t, &g, &Key::Node(0), None, &Switches::default());
+    let uses = |to: Key| d.edges.iter().any(|e| e.from == Key::Node(0) && e.to == to);
+    assert!(uses(part("default")), "default edge");
+    assert!(uses(part("default_search")), "default_search edge");
 }

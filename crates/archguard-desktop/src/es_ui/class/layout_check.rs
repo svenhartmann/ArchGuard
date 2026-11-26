@@ -137,7 +137,7 @@ fn four_columns_no_overlap() {
     assert_eq!(a1.h, expected_h(&cs[ia]));
 }
 
-fn dbox(i: usize, kind: BoxKind) -> DBox {
+pub(super) fn dbox(i: usize, kind: BoxKind) -> DBox {
     DBox {
         key: Key::Node(i),
         kind,
@@ -148,7 +148,7 @@ fn dbox(i: usize, kind: BoxKind) -> DBox {
     }
 }
 
-fn dedge(a: usize, b: usize, style: EdgeStyle) -> DEdge {
+pub(super) fn dedge(a: usize, b: usize, style: EdgeStyle) -> DEdge {
     DEdge {
         from: Key::Node(a),
         to: Key::Node(b),
@@ -391,7 +391,7 @@ fn inside(p: (f32, f32), b: &super::layout::Placed) -> bool {
     p.0 > b.x + 1.0 && p.0 < b.x + b.w - 1.0 && p.1 > b.y + 1.0 && p.1 < b.y + b.h - 1.0
 }
 
-fn crosses(line: &str, b: &super::layout::Placed) -> bool {
+pub(super) fn crosses(line: &str, b: &super::layout::Placed) -> bool {
     polylines(line).iter().any(|pl| {
         pl.windows(2).any(|w| {
             let n = ((w[1].0 - w[0].0).hypot(w[1].1 - w[0].1) / 2.0)
