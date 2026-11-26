@@ -252,10 +252,10 @@ fn the_view_follows_the_cursor_down_and_back_up() {
         press(&window, Key::UpArrow);
     }
     frame(&window);
-    // Back at the first row; its group header (30 px) may stay above the view.
-    assert!(
-        page.get_scroll_y() >= -GROUP_H,
-        "the view is back at the top"
+    assert_eq!(
+        page.get_scroll_y(),
+        0.0,
+        "the view is back at the top, group header shown"
     );
 }
 
