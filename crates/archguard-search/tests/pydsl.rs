@@ -223,7 +223,9 @@ fn typed_fields_async_documents_and_numpy_vectors() {
         fields_of(t),
         [
             "home:object",
+            "home.city:text",
             "homes:nested",
+            "homes.city:text",
             "maybe:text",
             "note:text",
             "seen:date",
@@ -258,7 +260,7 @@ fn django_model_fields_are_a_gap() {
 fn non_literal_parts_are_gaps_that_name_the_attribute() {
     let report = analyze();
     let gaps = gaps(&report);
-    assert_eq!(gaps.len(), 8, "{gaps:#?}");
+    assert_eq!(gaps.len(), 7, "{gaps:#?}");
     assert!(gaps.iter().any(
         |g| g.starts_with("shop/dynamic.py: shop/dynamic.py:Partial")
             && g.ends_with("not read: mappings, settings.")

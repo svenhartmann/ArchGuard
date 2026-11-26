@@ -36,6 +36,8 @@ impl<'a> Project<'a> {
         self.class_kind((f, c), BASE_DEPTH)
     }
 
+    // shortcut: the first base that leads to a Document wins; `class C(A, B)` loses the fields of
+    // B (the DSL merges every Document base). Merge the chains when a project needs it.
     fn class_kind(&self, (f, c): Class, depth: u8) -> Kind {
         let m = &self.files[f].1;
         let mut lost = None;

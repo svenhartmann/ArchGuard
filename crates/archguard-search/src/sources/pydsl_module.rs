@@ -107,9 +107,11 @@ pub(super) struct Module<'a> {
 pub(super) enum Member {
     /// A field class call, to be evaluated: its range.
     Call(usize, usize),
-    /// A typed member (`x: M[Keyword]`) with its ES type; `None` when the annotation names no
-    /// field class and the type would have to be inferred.
+    /// A typed member (`x: M[int]`) with its ES type; `None` when the annotation is not in the
+    /// DSL type table.
     Typed(Option<String>),
+    /// An `InnerDoc` class of the file as `object`, or `nested` in a list.
+    Doc(usize, bool),
 }
 
 impl<'a> Module<'a> {
@@ -259,26 +261,54 @@ impl<'a> Module<'a> {
             .or_else(|| mapped.map(|_| Member::Typed(None)))
     }
 
-    /// `M[Keyword]` and `Keyword` name a field class; `M[str]` needs inference; `str` is no field.
+    /// The annotation as the DSL reads it (`DocumentOptions`): `M`/`Mapped`/`Optional`/`X | None`
+    /// are unwrapped, `list[...]` makes it multi, `str`/`int`/... map through a fixed table and a
+    /// local `InnerDoc` is an object (nested in a list). `ClassVar` is no field; anything else,
+    /// a field class (`M[Keyword]`) included, is a gap: the DSL raises a `TypeError` for it.
     fn annotated(&self, (a, e): Range) -> Option<Member> {
-        let b = self.masked.as_bytes();
-        let (name, j) = dotted(b, a);
-        let open = skip_ws(b, j);
-        let mapped = self
-            .dsl(&name)
-            .is_some_and(|d| matches!(d.0.as_str(), "M" | "Mapped"));
-        if !(mapped && b.get(open) == Some(&b'[') && e > open + 1) {
-            return self.field_type_of(&name).map(|t| Member::Typed(Some(t)));
-        }
-        let inner = dotted(b, skip_ws(b, open + 1)).0;
-        Some(Member::Typed(self.field_type_of(&inner)))
+        self.annotation(&self.masked[a..e], false)
     }
 
-    fn field_type_of(&self, name: &str) -> Option<String> {
-        match self.classify(name)? {
-            Callee::Field(t) => Some(t),
-            _ => None,
+    fn annotation(&self, text: &str, multi: bool) -> Option<Member> {
+        let text = text.trim();
+        let parts = union_parts(text);
+        let mut rest = parts.iter().filter(|p| **p != "None");
+        if let (Some(one), None) = (rest.next(), rest.next()) {
+            if parts.len() > 1 {
+                return self.annotation(one, multi);
+            }
+        } else if parts.len() > 1 {
+            return Some(Member::Typed(None));
         }
+        let generic = text.strip_suffix(']').and_then(|s| s.split_once('['));
+        let last = |n: &str| n.trim().rsplit('.').next().unwrap_or("").to_owned();
+        match generic {
+            Some((head, inner)) => match last(head).as_str() {
+                "ClassVar" => None,
+                "M" | "Mapped" | "Optional" => self.annotation(inner, multi),
+                "list" | "List" => self.annotation(inner, true),
+                _ => Some(Member::Typed(None)),
+            },
+            None => {
+                let name = last(text);
+                if name == "ClassVar" {
+                    return None;
+                }
+                let Some(ty) = annotation_type(&name) else {
+                    return Some(self.inner_doc(&name, multi));
+                };
+                Some(Member::Typed(Some(ty.into())))
+            }
+        }
+    }
+
+    /// A class of this file that derives `InnerDoc`; else a gap. Bases of bases are not followed.
+    fn inner_doc(&self, name: &str, nested: bool) -> Member {
+        let found = self.class_index(name).filter(|&c| {
+            (self.bases(&self.defs[c]).iter())
+                .any(|b| self.dsl(b).is_some_and(|d| d.0 == "InnerDoc"))
+        });
+        found.map_or(Member::Typed(None), |c| Member::Doc(c, nested))
     }
 
     /// The index of the local class `name`.
@@ -307,6 +337,34 @@ impl<'a> Module<'a> {
             .map(|a| (a.target.to_owned(), a.value_at, a.value_at + a.value.len()))
             .collect()
     }
+}
+
+/// The top-level `|` parts of an annotation, trimmed.
+fn union_parts(text: &str) -> Vec<&str> {
+    let (mut depth, mut start, mut parts) = (0, 0, vec![]);
+    for (i, c) in text.char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' => depth -= 1,
+            '|' if depth == 0 => parts.push(text[std::mem::replace(&mut start, i + 1)..i].trim()),
+            _ => {}
+        }
+    }
+    parts.push(text[start..].trim());
+    parts
+}
+
+/// The DSL's `type_annotation_map`.
+fn annotation_type(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "str" => "text",
+        "int" => "integer",
+        "float" => "float",
+        "bool" => "boolean",
+        "bytes" => "binary",
+        "datetime" | "date" => "date",
+        _ => return None,
+    })
 }
 
 /// `TextField` is `Text`; django's `TimeField` is a keyword and its `FileField` a text.

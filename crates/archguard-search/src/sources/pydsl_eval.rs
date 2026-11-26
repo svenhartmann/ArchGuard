@@ -159,6 +159,11 @@ impl<'m, 'a> Eval<'m, 'a> {
             let value = match member {
                 Member::Call(a, e) => self.value((a, e), depth)?,
                 Member::Typed(ty) => serde_json::json!({ "type": ty? }),
+                Member::Doc(class, nested) => {
+                    let inner = self.properties(class, depth.checked_sub(1)?)?;
+                    let ty = if nested { "nested" } else { "object" };
+                    serde_json::json!({ "type": ty, "properties": inner })
+                }
             };
             props.insert(name, value);
         }

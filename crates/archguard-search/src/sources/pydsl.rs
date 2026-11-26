@@ -12,9 +12,13 @@
 //!   `analyzers`. A document without a name (no `class Index`, none inherited, no `name`) is an
 //!   artifact without name and a gap.
 //! - Fields are the class attributes that call a field class (`Text(...)`, `fields.TextField(...)`),
-//!   `mapped_field(Text())` or are typed `M[Keyword]`: ES type is the snake-case class name,
+//!   `mapped_field(Text())` or carry an annotation: ES type is the snake-case class name,
 //!   `fields={'raw': Keyword()}` are multi-fields, `Object`/`Nested` take `properties={...}` or
-//!   an inner document class. `M[str]` without a field class would need type inference: gap.
+//!   an inner document class. Annotations follow the DSL table (`str` text, `int` integer, `float`,
+//!   `bool` boolean, `bytes` binary, `datetime`/`date` date); `M`, `Optional`, `| None` unwrap,
+//!   `list[...]` makes an `InnerDoc` nested, `ClassVar` is skipped. What the table lacks
+//!   (`M[Keyword]`, `M[Any]`) is a gap; the real DSL would refuse it too. Inference from
+//!   `mapped_field()` options is not done.
 //! - `analyzer`, `tokenizer`, `token_filter`, `char_filter`, `normalizer` calls resolve through
 //!   module constants into the analysis, stored as Elasticsearch writes it (`type: custom`).
 //! - All or nothing per attribute: `mappings` or `settings` that are not literal are not read and
