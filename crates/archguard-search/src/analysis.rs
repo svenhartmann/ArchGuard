@@ -13,6 +13,9 @@
 //! - token filters: the files under `docs/reference/analysis/tokenfilters/` of
 //!   <https://github.com/elastic/elasticsearch/tree/8.19> (the guide page lists none in text);
 //!   plugin filters (`phonetic`, `icu_*`) are left out on purpose.
+//! - names registered in `CommonAnalysisPlugin.java`, filters (`*_stem`, `bengali_normalization`,
+//!   `type_as_payload`) and analyzers (`chinese`, `snowball`):
+//!   <https://github.com/elastic/elasticsearch/blob/8.19/modules/analysis-common/src/main/java/org/elasticsearch/analysis/common/CommonAnalysisPlugin.java>
 //! - normalizer: only `lowercase` is built in.
 use archguard_core::{SearchAnalysis, SearchIndexDetail};
 use serde_json::Value;
@@ -61,6 +64,8 @@ const ANALYZERS: &[&str] = &[
     "swedish",
     "turkish",
     "thai",
+    "chinese",
+    "snowball",
 ];
 const TOKENIZERS: &[&str] = &[
     "standard",
@@ -136,6 +141,16 @@ const FILTERS: &[&str] = &[
     "uppercase",
     "word_delimiter_graph",
     "word_delimiter",
+    "arabic_stem",
+    "bengali_normalization",
+    "brazilian_stem",
+    "czech_stem",
+    "dutch_stem",
+    "french_stem",
+    "german_stem",
+    "persian_stem",
+    "russian_stem",
+    "type_as_payload",
 ];
 
 /// Whether `name` is built in for `stage` (`analyzer`, `tokenizer`, `filter`, `char_filter`,
@@ -287,6 +302,21 @@ mod tests {
         assert!(!search_builtin("analyzer", "standard_x"));
         assert!(!search_builtin("filter", "icu_folding"));
         assert!(search_builtin("normalizer", "lowercase"));
+    }
+
+    #[test]
+    fn common_analysis_plugin_names_are_builtin() {
+        for n in [
+            "arabic_stem",
+            "bengali_normalization",
+            "german_stem",
+            "type_as_payload",
+        ] {
+            assert!(search_builtin("filter", n), "{n}");
+        }
+        for n in ["chinese", "snowball"] {
+            assert!(search_builtin("analyzer", n), "{n}");
+        }
     }
 
     #[test]
