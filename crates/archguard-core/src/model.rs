@@ -194,6 +194,9 @@ pub enum FindingKind {
     /// A broken `[views]` convention (ADR 0021/0022); its id
     /// `view-<rule>:<file>:<subject>` is what a baseline accepts.
     Convention,
+    /// An Elasticsearch/OpenSearch definition-quality rule (es-quality); its id
+    /// `es-<rule>:<scope>:<name>` is what a baseline accepts.
+    SearchQuality,
 }
 
 /// A recommendation to break a cycle: cutting the dependency `from` → `to`
@@ -368,6 +371,14 @@ mod tests {
         assert_eq!(json, "\"convention\"");
         let back: FindingKind = serde_json::from_str(&json).unwrap();
         assert_eq!(back, FindingKind::Convention);
+    }
+
+    #[test]
+    fn search_quality_kind_serializes_as_search_quality() {
+        let json = serde_json::to_string(&FindingKind::SearchQuality).unwrap();
+        assert_eq!(json, "\"search_quality\"");
+        let back: FindingKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, FindingKind::SearchQuality);
     }
 
     #[test]

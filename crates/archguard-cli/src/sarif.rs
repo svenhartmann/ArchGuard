@@ -119,6 +119,13 @@ fn rule_id(finding: &Finding) -> String {
         FindingKind::Orphan => "archguard/orphan",
         FindingKind::TargetArchitecture => "archguard/target-architecture",
         FindingKind::License => "archguard/license",
+        FindingKind::SearchQuality => {
+            let rule = finding.id.strip_prefix("es-").unwrap_or(&finding.id);
+            return format!(
+                "archguard/search-quality/{}",
+                rule.split(':').next().unwrap_or(rule)
+            );
+        }
         FindingKind::Convention => {
             let rule = finding.id.strip_prefix("view-").unwrap_or(&finding.id);
             return format!(
