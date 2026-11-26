@@ -3,6 +3,7 @@
 use archguard_engine::core::{SearchIndexDetail, ServiceTopology};
 use archguard_engine::{SearchGraph, SearchNode, search_analysis_parts, short_scope};
 
+use super::boxes::product;
 use super::types::{Group, Key};
 use crate::services_ui::search_origin::node_label;
 
@@ -23,7 +24,7 @@ pub struct ListRow {
     pub label: String,
     /// The full label (tooltip): `label` without the root suffix inside a root group.
     pub title: String,
-    /// The raw kind (analysis, processing); empty elsewhere.
+    /// The raw kind (analysis, processing), then the product of an OpenSearch artifact.
     pub side: String,
     pub writes: usize,
     pub reads: usize,
@@ -77,7 +78,7 @@ fn selected(title: &GroupTitle, group: Group) -> bool {
     )
 }
 
-fn node_row(g: &SearchGraph, i: usize) -> ListRow {
+fn node_row(t: &ServiceTopology, g: &SearchGraph, i: usize) -> ListRow {
     let n = &g.nodes[i];
     let count = |relation: &str| {
         g.edges
@@ -97,10 +98,10 @@ fn node_row(g: &SearchGraph, i: usize) -> ListRow {
         key: Key::Node(i),
         title: node_label(&n.label, false, project),
         label: node_label(name, false, project),
-        side: if processing {
-            n.kind.clone()
-        } else {
-            String::new()
+        side: match (processing, product(t, n)) {
+            (true, Some(p)) => format!("{} \u{b7} {p}", n.kind),
+            (true, None) => n.kind.clone(),
+            (false, p) => p.unwrap_or_default().to_string(),
         },
         writes: count("write"),
         reads: count("read"),
@@ -184,7 +185,7 @@ pub fn list(t: &ServiceTopology, g: &SearchGraph, query: &str, group: Group) -> 
             }),
         };
     for i in 0..g.nodes.len() {
-        place(title_of(&g.nodes[i]), node_row(g, i));
+        place(title_of(&g.nodes[i]), node_row(t, g, i));
     }
     for r in analysis_rows(t, g) {
         place(GroupTitle::Analysis, r);
