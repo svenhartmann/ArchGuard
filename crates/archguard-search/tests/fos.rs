@@ -136,7 +136,7 @@ fn env_and_parameter_names_and_unreadable_files_are_gaps() {
     };
     assert!(broken.starts_with("broken/fos_elastica.yaml: Definition file could not be read"));
     assert!(env.starts_with("config/packages/fos_elastica.yaml: Index name is not a literal"));
-    assert!(env.ends_with("Source line 37."), "{env}");
-    assert!(param.ends_with("Source line 41."), "{param}");
+    assert!(env.ends_with("Source line 33."), "{env}");
+    assert!(param.ends_with("Source line 37."), "{param}");
     assert!(!report.complete);
 }

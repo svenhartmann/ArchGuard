@@ -4,6 +4,7 @@ pub(crate) use crate::context::SourceOutput;
 
 pub(crate) mod code;
 pub(crate) mod constants;
+pub(crate) mod fos;
 pub(crate) mod json;
 pub(crate) mod json_files;
 pub(crate) mod pydsl;
@@ -30,4 +31,5 @@ pub(crate) const SOURCES: &[fn(&SearchContext) -> SourceOutput] = &[
     pydsl::extract_with,
     code::extract_with,
     spring::extract_with,
+    fos::extract_with,
 ];
