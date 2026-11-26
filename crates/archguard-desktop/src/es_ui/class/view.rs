@@ -1,7 +1,7 @@
 //! View wiring to Slint, ticket 12: the one place where the class models become Slint data.
 //!
-//! Glyphs, checked in the snapshot of 2026-11-26: ✎ 👁 ⌕ ◇ « » → ⚠ render in the app font, ⑂
-//! (U+2442) does not. The multi-field mark is therefore "›" (`es_class_canvas.slint`); the
+//! Glyphs, checked in the snapshots of 2026-11-26/27: ✎ ⌕ ◇ « » → ⚠ ↓ render in the app font, ⑂
+//! (U+2442) and 👁 (U+1F441) do not. The multi-field mark is therefore "›" (`es_class_canvas.slint`); the
 //! counters of the list use `boxes::WRITE_GLYPH` and `READ_GLYPH`.
 
 use archguard_engine::SearchGraph;
@@ -113,7 +113,11 @@ pub fn build(s: &mut EsState) -> EsClassModel {
 /// The selection's name in the scope line.
 fn crumb(g: &SearchGraph, k: &Key) -> String {
     match k {
-        Key::Node(i) => g.nodes.get(*i).map(|n| n.label.clone()).unwrap_or_default(),
+        Key::Node(i) => g
+            .nodes
+            .get(*i)
+            .map(|n| n.short_label.clone())
+            .unwrap_or_default(),
         Key::Part { name, .. } => name.clone(),
     }
 }
@@ -295,13 +299,13 @@ fn slint_edge(e: &PlacedEdge) -> EsClassEdge {
     }
 }
 
-/// "Fit": the whole canvas into `w` × `h` (the canvas's viewport).
+/// "Fit" (never enlarges): the whole canvas into `w` × `h` (the canvas's viewport).
 pub fn fit(s: &mut EsState, w: f32, h: f32) {
     let (cw, ch) = s.canvas;
     if cw > 0.0 && ch > 0.0 {
         s.zoom = ((w - 24.0).max(1.0) / cw)
             .min((h - 24.0).max(1.0) / ch)
-            .clamp(0.01, 3.0);
+            .clamp(0.01, 1.0);
     }
 }
 

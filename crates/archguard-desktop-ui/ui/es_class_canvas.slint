@@ -99,7 +99,8 @@ component ClassLine inherits HorizontalLayout {
     alignment: start;
     spacing: 6px * zoom;
     padding-left: l.depth * 12px * zoom;
-    Text {
+    // The name and type win: they keep their width, the note after them shortens.
+    main := Text {
         text: l.summary > 0 ? @tr("{0} fields", l.summary) : l.summary < 0 ? @tr("{0} more", -l.summary)
             : l.text == "not_read" ? @tr("Not read: the definition is not a literal.")
             : l.text == "not_declared" ? @tr("Not declared in this project.") : ClassText.mark(l.prefix) + l.text + (l.kind != "" ? " : " + l.kind : "");
@@ -108,6 +109,8 @@ component ClassLine inherits HorizontalLayout {
         font-size: max(6px, Theme.font-mono * zoom);
         vertical-alignment: center;
         overflow: elide;
+        horizontal-stretch: 0;
+        min-width: l.note == "" ? 0px : self.preferred-width;
     }
     if l.note != "": Text {
         text: l.note;
@@ -115,6 +118,9 @@ component ClassLine inherits HorizontalLayout {
         font-family: Theme.mono-family;
         font-size: max(6px, Theme.font-mono * zoom);
         vertical-alignment: center;
+        overflow: elide;
+        horizontal-stretch: 1;
+        min-width: 0px;
     }
 }
 
@@ -172,6 +178,8 @@ component ClassBox inherits Rectangle {
         height: 3 * rh;
         background: box.ghost ? transparent : analysis ? Theme.analysis.with-alpha(0.12) : Theme.panel-2;
         VerticalLayout {
+            padding-left: 6px * zoom;
+            padding-right: 6px * zoom;
             Text {
                 text: "\u{AB}" + box.stereotype + "\u{BB}";
                 color: Theme.muted;
@@ -249,6 +257,25 @@ export component EsClassCanvas inherits Rectangle {
     callback zoom-by(float);
     callback fit(float, float);
 
+    // Fit once the viewport has a size: on a new `fit-tick` and when first shown.
+    property <bool> waiting: true;
+    function refit() {
+        if (flick.width > 100px && flick.height > 100px) {
+            root.fit(flick.width / 1px, flick.height / 1px);
+            flick.viewport-x = 0;
+            flick.viewport-y = 0;
+            root.waiting = false;
+        } else {
+            root.waiting = true;
+        }
+    }
+    changed fit-tick => { root.waiting = true; root.refit(); }
+    property <length> view-w: flick.width;
+    property <length> view-h: flick.height;
+    changed view-w => { if (root.waiting) { root.refit(); } }
+    changed view-h => { if (root.waiting) { root.refit(); } }
+    init => { root.refit(); }
+
     flick := Flickable {
         content-width: max(self.width, root.canvas-w * root.zoom * 1px);
         content-height: max(self.height, root.canvas-h * root.zoom * 1px);
@@ -280,18 +307,28 @@ export component EsClassCanvas inherits Rectangle {
                     stroke: tone;
                     stroke-width: 1.4px * root.zoom;
                 }
-                if e.label != "": Text {
-                    x: e.lx * 1px * root.zoom;
-                    y: e.ly * 1px * root.zoom;
-                    text: e.label;
-                    color: Theme.muted;
-                    font-size: max(6px, Theme.font-micro * root.zoom);
-                }
             }
             for b[i] in root.boxes: ClassBox {
                 box: b;
                 zoom: root.zoom;
                 clicked => { root.select(i); }
+            }
+            // Labels lie above the boxes, on a background, so no box hides them.
+            for e in root.edges: Rectangle {
+                visible: e.label != "";
+                x: e.lx * 1px * root.zoom;
+                y: e.ly * 1px * root.zoom;
+                width: lab.preferred-width + 6px;
+                height: lab.preferred-height + 2px;
+                border-radius: 3px;
+                background: Theme.bg.with-alpha(0.85);
+                lab := Text {
+                    text: e.label;
+                    color: Theme.muted;
+                    font-size: max(6px, Theme.font-micro * root.zoom);
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
             }
         }
     }

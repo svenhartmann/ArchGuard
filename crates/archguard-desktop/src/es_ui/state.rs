@@ -125,10 +125,12 @@ impl EsState {
     pub(super) fn select(&mut self, key: Option<Key>) {
         self.selected = key;
         self.problem.clear();
+        self.fit_tick += 1;
     }
 
     pub(super) fn toggle_cluster(&mut self) {
         self.cluster = !self.cluster;
+        self.fit_tick += 1;
     }
 
     pub(super) fn set_switch(&mut self, switch: Switch, on: bool) {
@@ -139,6 +141,7 @@ impl EsState {
             Switch::MultiFields => s.multi_fields = on,
             Switch::CollapseFields => s.collapse_fields = on,
         }
+        self.fit_tick += 1;
     }
 
     /// The list row `i` (flat) is selected; an index out of range is ignored.

@@ -88,7 +88,7 @@ fn index_details() -> EsDetails {
         hint: EsDetailHint {
             field: s("title"),
             search_only: s("synonyme"),
-            index_only: s("-"),
+            index_only: s(""),
             tokenizer: false,
         },
         settings: model(vec![EsDetailPair {
@@ -249,7 +249,10 @@ fn details_texts_are_translated() {
         "built in",
         "not declared (plugin or Elasticsearch default)",
         "Definition",
-        "Index and search analyzer differ at {0}: search only {1}; index only {2}.",
+        "Index and search analyzer differ at {0}.",
+        "Search only: {0}",
+        "Index only: {0}",
+        "The tokenizer differs.",
         "Static hint, no rating.",
         "The file lies on the Elasticsearch nodes; its content cannot be read statically.",
         "Usage in code",

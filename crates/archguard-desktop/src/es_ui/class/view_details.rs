@@ -70,18 +70,9 @@ fn usage(u: &UsageRow) -> EsDetailUse {
     }
 }
 
-/// The names of a list, or a dash when it is empty (the hint sentence needs a word).
-fn names(items: &[String]) -> String {
-    if items.is_empty() {
-        "–".into()
-    } else {
-        items.join(", ")
-    }
-}
-
 fn label(g: &SearchGraph, key: &Key) -> String {
     match key {
-        Key::Node(i) => g.nodes.get(*i).map(|n| n.label.clone()),
+        Key::Node(i) => g.nodes.get(*i).map(|n| n.short_label.clone()),
         Key::Part { name, .. } => Some(name.clone()),
     }
     .unwrap_or_default()
@@ -90,9 +81,9 @@ fn label(g: &SearchGraph, key: &Key) -> String {
 pub fn hint(h: &Hint) -> EsDetailHint {
     EsDetailHint {
         field: h.field.as_str().into(),
-        search_only: names(&h.only_search).into(),
-        index_only: names(&h.only_index).into(),
-        ..Default::default()
+        search_only: h.only_search.join(", ").into(),
+        index_only: h.only_index.join(", ").into(),
+        tokenizer: h.tokenizer_differs,
     }
 }
 
