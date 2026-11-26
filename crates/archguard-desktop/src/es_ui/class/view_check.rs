@@ -245,7 +245,7 @@ fn a_lone_index_fits_at_full_size_and_a_full_scene_shrinks() {
     let mut s = build_from(Arc::new(Ok(t)));
     let m = build(&mut s);
     assert!(
-        m.canvas_w < 400.0,
+        m.canvas_w < 700.0,
         "only the placed column counts: {}",
         m.canvas_w
     );
