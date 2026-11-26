@@ -73,6 +73,7 @@ fn client_calls_become_artifacts_and_lookalikes_do_not() {
         "index os-v1 ts:search [opensearch]",
         "index partial-v1 ts:shop []",
         "index self-v1 ts:shop []",
+        "index umlaut-v1 ts:shop []",
     ];
     assert_eq!(
         got, want,
