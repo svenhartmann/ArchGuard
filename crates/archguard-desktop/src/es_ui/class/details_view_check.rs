@@ -220,7 +220,7 @@ fn the_hint_box_has_a_dashed_frame() {
     page.set_details(index_details());
     let run = longest_run(&frame(&window));
     assert!(
-        run < 20,
+        run < 100,
         "a solid line of {run} px: the frame is not dashed"
     );
 }

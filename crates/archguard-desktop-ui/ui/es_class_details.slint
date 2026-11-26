@@ -3,7 +3,7 @@ import { ScrollView } from "std-widgets.slint";
 import { SvcSearchDetail, SearchDetailBody } from "services_search.slint";
 import { Mono, Note, Heading } from "services_sections.slint";
 import { Theme } from "theme.slint";
-import { SectionHeading } from "widgets.slint";
+import { SectionHeading, Dashes } from "widgets.slint";
 
 export struct EsDetailHead {
     title: string,
@@ -139,9 +139,8 @@ export component EsClassDetails inherits Rectangle {
                 if details.chain.length > 0: SectionHeading { label: @tr("Analysis chain {0}", details.chain-name); }
                 ChainTable { rows: details.chain; }
                 if details.hint.field != "": Rectangle {
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    // Neutral: no warning colour or symbol.
+                    // Neutral: dashed frame, no warning colour or symbol.
+                    Dashes { width: parent.width; height: parent.height; tint: Theme.muted; }
                     VerticalLayout {
                         padding: 6px;
                         spacing: 2px;
