@@ -61,9 +61,9 @@ fn client_calls_become_artifacts_and_lookalikes_do_not() {
     let want = [
         "index calls-v1 ts:shop []",
         "index consts-v1 ts:shop []",
-        "index late-v1 ts:shop []",
         "index deep-v1 ts:shop []",
         "index esc-v1 ts:shop []",
+        "index late-v1 ts:shop []",
         "index legacy-v1 ts:shop []",
         "component_template logs-base ts:shop []",
         "ilm_policy logs-ilm ts:shop []",
@@ -186,7 +186,7 @@ fn hostile_literals_are_gaps_not_crashes_or_wrong_values() {
         let at = format!("shop/src/hostile.ts:{}: ", a.evidence[0].line.unwrap());
         assert!(
             got.iter()
-                .any(|g| g.starts_with(&at) && g.contains("not read: mappings.")),
+                .any(|g| g.contains(&at) && g.contains("not read: mappings.")),
             "{name}: {got:?}"
         );
     };

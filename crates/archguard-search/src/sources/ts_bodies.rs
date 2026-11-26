@@ -23,9 +23,14 @@ use crate::findings::{EsGap, es_gap};
 use archguard_core::{SearchArtifact, ServiceEvidence, ServiceTopology};
 use archguard_flow_common::support::{relative, test_path};
 use serde_json::{Map, Number, Value};
+use std::cell::Cell;
 use std::collections::HashMap;
 
 const MAX_FILES: usize = 5_000;
+/// Nesting of one literal, constants followed per chain, and constants followed per call.
+const MAX_NEST: u8 = 64;
+const MAX_CHAIN: u8 = 8;
+const MAX_LOOKUPS: u32 = 10_000;
 const EXTS: [&str; 8] = ["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"];
 const SKIPPED_DIRS: [&str; 3] = [".git", "node_modules", "dist"];
 const PACKAGES: [(&str, &str); 2] = [
@@ -170,6 +175,7 @@ struct FileScan<'a> {
     rel: &'a str,
     scope: String,
     newlines: Vec<usize>,
+    code: Vec<bool>,
     consts: HashMap<String, Option<usize>>,
     out: &'a mut ServiceTopology,
 }
@@ -181,6 +187,7 @@ impl<'a> FileScan<'a> {
             rel,
             scope,
             newlines: text.match_indices('\n').map(|(i, _)| i).collect(),
+            code: code_mask(text),
             consts: constants(text),
             out,
         }
@@ -190,6 +197,9 @@ impl<'a> FileScan<'a> {
         let clients = clients(self.text);
         for api in &APIS {
             for (p, _) in self.text.match_indices(api.method) {
+                if !self.code[p] {
+                    continue;
+                }
                 let Some(receiver) = receiver_of(self.text, p, api) else {
                     continue;
                 };
@@ -208,7 +218,8 @@ impl<'a> FileScan<'a> {
         let line = self.line(at);
         let open = self.text[at + api.method.len()..].trim_start();
         let from = self.text.len() - open.len() + 1;
-        let mut lit = Lit::new(self.text, from, &self.consts);
+        let steps = Cell::new(MAX_LOOKUPS);
+        let mut lit = Lit::new(self.text, from, &self.consts, &steps);
         let entries = lit.object_at().and_then(|()| lit.entries(true));
         let Some(mut entries) = entries else {
             return self.not_a_name(line);
@@ -311,6 +322,37 @@ fn receiver_of<'t>(text: &'t str, at: usize, api: &Api) -> Option<&'t str> {
     let head = dot(&text[..at])?.strip_suffix(api.ns)?;
     let name = last_ident(dot(head)?);
     (!name.is_empty()).then_some(name)
+}
+
+/// Per byte: true in code, false inside a comment or a string (quotes included), built in one
+/// pass. shortcut: regex literals and `${}` in template strings are not lexed; lift when a
+/// corpus needs it.
+fn code_mask(text: &str) -> Vec<bool> {
+    let b = text.as_bytes();
+    let mut mask = vec![true; b.len()];
+    let mut i = 0;
+    while i < b.len() {
+        let end = match b[i] {
+            b'/' if b.get(i + 1) == Some(&b'/') => text[i..].find('\n').map_or(b.len(), |n| i + n),
+            b'/' if b.get(i + 1) == Some(&b'*') => {
+                text[i + 2..].find("*/").map_or(b.len(), |n| i + n + 4)
+            }
+            q @ (b'\'' | b'"' | b'`') => {
+                let mut j = i + 1;
+                while j < b.len() && b[j] != q && (q == b'`' || b[j] != b'\n') {
+                    j += 1 + usize::from(b[j] == b'\\');
+                }
+                (j + 1).min(b.len())
+            }
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        mask[i..end].fill(false);
+        i = end;
+    }
+    mask
 }
 
 fn last_ident(s: &str) -> &str {
@@ -430,16 +472,25 @@ struct Lit<'a> {
     text: &'a str,
     i: usize,
     consts: &'a HashMap<String, Option<usize>>,
+    steps: &'a Cell<u32>,
     depth: u8,
+    nest: u8,
 }
 
 impl<'a> Lit<'a> {
-    fn new(text: &'a str, i: usize, consts: &'a HashMap<String, Option<usize>>) -> Self {
+    fn new(
+        text: &'a str,
+        i: usize,
+        consts: &'a HashMap<String, Option<usize>>,
+        steps: &'a Cell<u32>,
+    ) -> Self {
         Self {
             text,
             i,
             consts,
+            steps,
             depth: 0,
+            nest: 0,
         }
     }
 
@@ -486,8 +537,8 @@ impl<'a> Lit<'a> {
                 '\\' => out.push(match chars.next()?.1 {
                     'n' => '\n',
                     't' => '\t',
-                    'u' | 'x' | '\n' | '\r' => return None,
-                    other => other,
+                    c @ ('\\' | '\'' | '"' | '`') => c,
+                    _ => return None,
                 }),
                 '\n' if quote != b'`' => return None,
                 c if c == quote as char => {
@@ -528,8 +579,8 @@ impl<'a> Lit<'a> {
         self.ws();
         match self.at()? {
             b'\'' | b'"' | b'`' => self.string().map(Value::String),
-            b'{' => self.object(),
-            b'[' => self.array(),
+            b'{' => self.nested(Self::object),
+            b'[' => self.nested(Self::array),
             b'-' | b'0'..=b'9' => self.number(),
             _ => {
                 let word = self.ident()?;
@@ -544,12 +595,27 @@ impl<'a> Lit<'a> {
     /// The value of the one top-level constant `name`.
     fn lookup(&self, name: &str) -> Option<Value> {
         let at = (*self.consts.get(name)?)?;
+        let left = self.steps.get().checked_sub(1)?;
+        self.steps.set(left);
+        if self.depth >= MAX_CHAIN {
+            return None;
+        }
         let mut sub = Lit {
             depth: self.depth + 1,
-            ..Lit::new(self.text, at, self.consts)
+            ..Lit::new(self.text, at, self.consts, self.steps)
         };
-        let value = sub.value().filter(|_| sub.finished());
-        value.filter(|_| self.depth < 8)
+        sub.value().filter(|_| sub.finished())
+    }
+
+    /// `read` with the nesting counted; deeper than `MAX_NEST` is a gap, not a stack overflow.
+    fn nested(&mut self, read: fn(&mut Self) -> Option<Value>) -> Option<Value> {
+        if self.nest >= MAX_NEST {
+            return None;
+        }
+        self.nest += 1;
+        let value = read(self);
+        self.nest -= 1;
+        value
     }
 
     fn key(&mut self) -> Option<String> {
