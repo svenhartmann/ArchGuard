@@ -376,15 +376,34 @@ pub fn snapshot(s: &mut EsState) {
     let Ok(t) = (*s.topology).as_ref() else {
         return;
     };
-    let found = list(t, &s.graph, "", Group::All)
+    // `#<n>`: the n-th row of the list (the corpus probe prints n, so no names are needed).
+    let rows: Vec<_> = list(t, &s.graph, "", Group::All)
         .into_iter()
         .flat_map(|g| g.rows)
-        .find(|r| r.label == want || format!("{}:{}", r.side, r.label) == want);
-    s.selected = found.map(|r| r.key);
+        .collect();
+    let by_number = want.strip_prefix('#').and_then(|n| n.parse::<usize>().ok());
+    let found = match by_number {
+        Some(n) => rows.get(n),
+        None => rows
+            .iter()
+            .find(|r| r.label == want || format!("{}:{}", r.side, r.label) == want),
+    };
+    s.selected = found.map(|r| r.key.clone());
     if let (Some(key), Ok(path)) = (
         s.selected.clone(),
         std::env::var("ARCHGUARD_DESKTOP_ES_FIELD"),
     ) {
-        s.field = Some((key, path));
+        // `#<k>`: the k-th field of the selected index.
+        let by_number = path.strip_prefix('#').and_then(|k| k.parse::<usize>().ok());
+        let named = match (&key, by_number) {
+            (Key::Node(i), Some(k)) => (s.graph.nodes.get(*i))
+                .and_then(|n| n.artifact)
+                .and_then(|a| t.elasticsearch.artifacts.get(a))
+                .and_then(|a| a.detail.as_ref())
+                .and_then(|d| d.fields.get(k))
+                .map(|f| f.path.clone()),
+            _ => None,
+        };
+        s.field = Some((key, named.unwrap_or(path)));
     }
 }

@@ -136,3 +136,92 @@ fn chains_of_templates_resolve_in_their_own_detail() {
         "declared"
     );
 }
+
+/// Corpus probe (ticket 13): counts only, no names. See spec.md `## Abnahme-Probe`.
+#[test]
+#[ignore = "reads the corpus named by ARCHGUARD_ES_PROBE"]
+fn probe() {
+    use archguard_engine::{
+        SearchFieldRole, search_analysis_users, search_analyzer_difference, search_field_analyzers,
+        search_field_role,
+    };
+    use std::collections::{BTreeMap, BTreeSet};
+    let Ok(root) = std::env::var("ARCHGUARD_ES_PROBE") else {
+        return;
+    };
+    let r = analyze_services(Path::new(&root)).unwrap();
+    let arts = &r.elasticsearch.artifacts;
+    println!(
+        "artifacts: {}; usages: {}; index blocks: {}",
+        arts.len(),
+        r.elasticsearch.usages.len(),
+        arts.iter().filter(|a| a.kind == "index").count()
+    );
+    // One entry per resource block (file and line), not per module instance.
+    let mut seen = BTreeSet::new();
+    let blocks: Vec<_> = arts
+        .iter()
+        .filter(|a| {
+            let e = a.evidence.first();
+            seen.insert((
+                e.map(|e| e.file.clone()),
+                e.and_then(|e| e.line),
+                a.kind.clone(),
+            ))
+        })
+        .collect();
+    println!(
+        "index blocks (deduplicated): {}",
+        blocks.iter().filter(|a| a.kind == "index").count()
+    );
+    let mut declared: BTreeMap<String, usize> = BTreeMap::new();
+    let mut classes: BTreeMap<&str, usize> = BTreeMap::new();
+    let (mut analyzer, mut search, mut normalizer, mut multi, mut object, mut diff) =
+        (0, 0, 0, 0, 0, 0);
+    let (mut no_user, mut total, mut distinct) = (0, 0, BTreeSet::new());
+    for a in blocks {
+        let Some(d) = a.detail.as_ref() else { continue };
+        let ps = search_analysis_parts(d);
+        for p in &ps {
+            *declared.entry(p.kind.clone()).or_default() += 1;
+            total += 1;
+            distinct.insert((p.kind.clone(), p.name.clone(), p.definition.clone()));
+            let refs = p.char_filters.iter().chain(&p.tokenizer).chain(&p.filters);
+            for c in refs {
+                *classes.entry(c.class).or_default() += 1;
+            }
+        }
+        for u in search_analysis_users(d) {
+            if u.users.is_empty() {
+                no_user += 1;
+            }
+        }
+        for (i, f) in d.fields.iter().enumerate() {
+            analyzer += f.analyzer.is_some() as usize;
+            search += f.search_analyzer.is_some() as usize;
+            normalizer += f.normalizer.is_some() as usize;
+            match search_field_role(&d.fields, i) {
+                SearchFieldRole::MultiField => multi += 1,
+                SearchFieldRole::Property => object += 1,
+                SearchFieldRole::Field => {}
+            }
+            if search_field_analyzers(d, &f.path).is_some()
+                && search_analyzer_difference(d, &f.path).is_some()
+            {
+                diff += 1;
+            }
+        }
+    }
+    println!("declared parts per kind: {declared:?}");
+    println!("chain refs per class: {classes:?}");
+    println!(
+        "fields with analyzer/search_analyzer/normalizer: {analyzer} / {search} / {normalizer}"
+    );
+    println!(
+        "multi-fields: {multi}; object children: {object}; fields with differing index/search chain: {diff}"
+    );
+    println!(
+        "parts without user: {no_user}; merged parts (total - distinct): {}",
+        total - distinct.len()
+    );
+}
