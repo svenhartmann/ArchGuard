@@ -21,3 +21,6 @@ msgstr "{0} weitere"
 
 msgid "not declared"
 msgstr "nicht deklariert"
+
+msgid "Mapping not statically readable."
+msgstr "Mapping nicht statisch lesbar."

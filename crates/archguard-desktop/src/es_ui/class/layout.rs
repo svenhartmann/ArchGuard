@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use super::boxes::{BoxContent, Chip, Compartment};
 use super::diagram::{BoxKind, DEdge, Diagram, EdgeStyle};
 use super::types::{HEAD, Key, ROW};
+use super::wrap::{Lane, assign, counts};
 use crate::diagram::{HeadShape, Point, Stroke, curve_stroke, head_path, line_stroke};
 
 /// A positioned box. `comps` are the compartment tops (relative to the box); `chips` are
@@ -70,7 +71,7 @@ pub fn label_size(text: &str) -> (f32, f32) {
 fn place_chips(chips: &[Chip], w: f32, top: f32, out: &mut Vec<(f32, f32, f32)>) -> f32 {
     let (mut x, mut row) = (PAD, 0.0);
     for c in chips {
-        let cw = c.text.chars().count() as f32 * 7.0 + 16.0;
+        let cw = (c.text.chars().count() as f32 * 7.0 + 16.0).min(w - 2.0 * PAD);
         if x > PAD && x + cw > w - PAD {
             (x, row) = (PAD, row + 1.0);
         }
@@ -275,7 +276,8 @@ fn place_edge(
     (col, by_col): (&[usize], &[Vec<usize>]),
 ) -> PlacedEdge {
     let (a, b) = (&boxes[ia], &boxes[ib]);
-    let same = col[ia] == col[ib];
+    // One column and sub-column share their x.
+    let same = (a.x - b.x).abs() < 0.5;
     let (p, q) = ports(a, b, same);
     let (shape, dashed) = match e.style {
         EdgeStyle::Write | EdgeStyle::Read => (HeadShape::Filled, false),
@@ -342,6 +344,41 @@ fn neighbours(d: &Diagram) -> (Ends, Vec<Vec<usize>>) {
     (ends, nbrs)
 }
 
+/// A tall column is split into sub-columns so the scene keeps the shape of a canvas, then every
+/// column gets its x; the leftmost used column starts at the margin and empty columns take no
+/// room. Boxes of a sub-column keep their order and their distances.
+fn wrap_columns(boxes: &mut [Placed], by_col: &[Vec<usize>]) {
+    let lanes: Vec<Lane> = by_col
+        .iter()
+        .zip(COL_W)
+        .map(|(ids, w)| Lane {
+            height: ids.iter().map(|&i| boxes[i].h + GAP_Y).sum(),
+            boxes: ids.len(),
+            pitch: w + GAP_X,
+        })
+        .collect();
+    let k = counts(&lanes);
+    let first = by_col.iter().position(|v| !v.is_empty()).unwrap_or(0);
+    let mut x = MARGIN;
+    for (c, ids) in by_col.iter().enumerate() {
+        let mut ids = ids.clone();
+        ids.sort_by(|&a, &b| boxes[a].y.total_cmp(&boxes[b].y));
+        let heights: Vec<f32> = ids.iter().map(|&i| boxes[i].h + GAP_Y).collect();
+        let sub = assign(&heights, k[c]);
+        let mut top = vec![None; k[c]];
+        for (&i, &s) in ids.iter().zip(&sub) {
+            let shift = *top[s].get_or_insert(boxes[i].y) - MARGIN;
+            if k[c] > 1 {
+                boxes[i].y -= shift;
+            }
+            boxes[i].x = x + s as f32 * (COL_W[c] + GAP_X);
+        }
+        if c >= first {
+            x += k[c] as f32 * (COL_W[c] + GAP_X);
+        }
+    }
+}
+
 /// Positions, sizes, chip positions and edge paths in four columns. `contents` is index-aligned
 /// with `d.boxes`.
 pub fn layout(d: &Diagram, contents: &[BoxContent]) -> Scene {
@@ -351,23 +388,6 @@ pub fn layout(d: &Diagram, contents: &[BoxContent]) -> Scene {
         .map(|i| measure(contents.get(i), COL_W[col[i]]))
         .collect();
     let (ends, nbrs) = neighbours(d);
-    // The leftmost used column starts at the margin; empty columns take no room.
-    let mut x = MARGIN
-        - col
-            .iter()
-            .min()
-            .map_or(0.0, |&c| COL_W[..c].iter().map(|w| w + GAP_X).sum());
-    let xs: Vec<f32> = COL_W
-        .iter()
-        .map(|w| {
-            let at = x;
-            x += w + GAP_X;
-            at
-        })
-        .collect();
-    for (p, &c) in boxes.iter_mut().zip(&col) {
-        p.x = xs[c];
-    }
     // A part's `BoxContent::name` is its owner's label, so take the name from the key.
     let names: Vec<&str> = d
         .boxes
@@ -388,6 +408,7 @@ pub fn layout(d: &Diagram, contents: &[BoxContent]) -> Scene {
     for (i, &c) in col.iter().enumerate() {
         by_col[c].push(i);
     }
+    wrap_columns(&mut boxes, &by_col);
     let edges = d
         .edges
         .iter()

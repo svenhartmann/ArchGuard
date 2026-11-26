@@ -108,8 +108,9 @@ component ClassLine inherits HorizontalLayout {
     main := Text {
         text: l.summary > 0 ? @tr("{0} fields", l.summary) : l.summary < 0 ? @tr("{0} more", -l.summary)
             : l.text == "not_read" ? @tr("Not read: the definition is not a literal.")
+            : l.text == "mapping_not_read" ? @tr("Mapping not statically readable.")
             : l.text == "not_declared" ? @tr("Not declared in this project.") : ClassText.mark(l.prefix) + l.text + (l.kind != "" ? " : " + l.kind : "");
-        color: l.summary != 0 || l.text == "not_read" || l.text == "not_declared" ? Theme.muted : Theme.text;
+        color: l.summary != 0 || l.text == "not_read" || l.text == "mapping_not_read" || l.text == "not_declared" ? Theme.muted : Theme.text;
         font-family: Theme.mono-family;
         font-size: max(6px, Theme.font-mono * zoom);
         vertical-alignment: center;

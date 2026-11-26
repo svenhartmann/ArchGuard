@@ -7,6 +7,7 @@ pub mod layout;
 pub mod list;
 pub mod view;
 pub mod view_details;
+pub mod wrap;
 
 #[cfg(test)]
 mod boxes_check;
