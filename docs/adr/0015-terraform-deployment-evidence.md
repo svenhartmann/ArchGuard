@@ -103,6 +103,6 @@ contains secrets. ArchGuard must not do any of that.
 - **2026-11-25:** For Elasticsearch index detail, `for` expressions over
   literal collections and access on resolved literal values are evaluated too
   ([ADR 0023](0023-elasticsearch-artifacts.md)); nothing else in this ADR changes.
-- **2026-11-26:** For Elasticsearch, the evaluator also reads names through `local.*` and
+- **2026-11-26:** For Elasticsearch, the evaluator also reads the names of all artifacts through `local.*` and
   `jsondecode(file())` under the project root, with reference depth 5
   ([ADR 0023](0023-elasticsearch-artifacts.md)); nothing else in this ADR changes.

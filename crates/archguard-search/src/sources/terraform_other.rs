@@ -13,7 +13,7 @@
 // shortcut: names read no `var.x` (the elasticstack reader does); add when a user needs it.
 use super::json::search_definition;
 use super::terraform_detail::{Json, json_attr, read as read_index};
-use super::terraform_eval::value;
+use super::terraform_eval::{string, value};
 use super::terraform_scope::Scope;
 use crate::context::{Reader, SearchContext, SourceOutput};
 use crate::findings::{EsGap, es_gap};
@@ -261,7 +261,7 @@ fn read(
     let (_, _, kind, name_key, flavor, has_body) = *row;
     let body = &r.block.body;
     let path = &r.file.path;
-    let name = attr(body, name_key).and_then(literal);
+    let name = attr(body, name_key).and_then(|e| literal(e).or_else(|| string(e, &sc)));
     if name.is_none() {
         let what = format!("the {kind} name");
         es_gap(report, EsGap::NotLiteral, path, None, &[&r.address, &what]);

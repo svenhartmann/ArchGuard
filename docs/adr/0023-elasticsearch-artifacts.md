@@ -272,9 +272,9 @@ are code, but no analyzer measures them.
     artifact of that file (`find_file_artifact`, match by evidence path) instead of adding one.
   - Readers built on this: 22-28 (HTTP request files and curl, Spring annotations, code literals,
     Logstash, integration packages, further builders).
-- **2026-11-26:** Index names are evaluated by the same HCL evaluator as the detail values: literal
+- **2026-11-26:** Names of all Elasticsearch artifacts (index, alias, pipeline, template, ...; elasticstack, opensearch-project and phillbaker) are evaluated by the same HCL evaluator as the detail values: literal
   `local.*` (also `[n]` access) and `jsondecode(file("${path.module}/<file>.json"))`. `file()` reads
   only files whose canonical path lies under the project root (no `..` or symlink out), regular, at
   most 1 MiB, valid JSON; otherwise the name stays a gap. The reference chain depth for names and
   detail values is 5 (was 3); cycles stay gaps. Changes the 2026-11-23 rule that names are never
-  read from locals (ticket 30).
+  read from locals (ticket 30). Alias blocks of one name in one scope with a known index are one `alias` artifact referencing all those indices.

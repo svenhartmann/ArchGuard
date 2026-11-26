@@ -2,7 +2,7 @@
 //! (ADR 0023). Names are read from literals, `jsonencode({...})` and, for a plain `var.x`, from a
 //! non-sensitive `string`/`list(string)` literal module argument or `default`; anything else the
 //! provider would evaluate (locals, `each`, module outputs, functions) is a gap.
-use super::terraform_eval::value;
+use super::terraform_eval::string;
 use super::terraform_scope::Scope;
 use crate::context::SourceOutput;
 use crate::context::{Reader, SearchContext};
@@ -172,11 +172,7 @@ impl Read<'_, '_> {
 
     /// A string made of `local.*` and `jsondecode(file())` values (ticket 30).
     fn evaluated(&self, e: &Expression) -> Option<String> {
-        let scope = Scope::of(self.r, self.files.0, self.files.1);
-        match value(e, Some(&scope))? {
-            super::terraform_eval::Json::Str(s) => Some(s),
-            _ => None,
-        }
+        string(e, &Scope::of(self.r, self.files.0, self.files.1))
     }
 
     /// A literal name, or a gap diagnostic for `what` and `None`.

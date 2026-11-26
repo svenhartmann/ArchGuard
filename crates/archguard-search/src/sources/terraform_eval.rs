@@ -355,6 +355,14 @@ pub(super) fn value(e: &Expression, scope: Option<&Scope>) -> Option<Json> {
     )
 }
 
+/// A string value of `e` (local or `file()` JSON allowed), the one rule for names of all artifacts.
+pub(super) fn string(e: &Expression, scope: &Scope) -> Option<String> {
+    match value(e, Some(scope))? {
+        Json::Str(s) => Some(s),
+        _ => None,
+    }
+}
+
 /// `jsonencode(<literal>)` or a literal JSON text (string or heredoc). JSON is read as HCL,
 /// whose object syntax accepts it; `var.*` and unresolved references are not literal.
 pub(super) fn json_attr(e: &Expression, scope: Option<&Scope>) -> Option<Json> {
