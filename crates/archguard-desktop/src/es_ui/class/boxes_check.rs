@@ -67,7 +67,23 @@ fn index_box_like_the_wireframe() {
     );
     assert_eq!(
         f[2],
-        row(1, Prefix::Multi, "shingle", "text", "{shingle_a}")
+        row(
+            1,
+            Prefix::Multi,
+            "shingle",
+            "text",
+            "{shingle_a / ⌕ default_search}"
+        )
+    );
+    assert_eq!(
+        f[3],
+        row(
+            0,
+            Prefix::Field,
+            "body",
+            "text",
+            "{default / ⌕ default_search}"
+        )
     );
     assert_eq!(f[5], row(0, Prefix::Field, "author", "object", ""));
     assert_eq!(

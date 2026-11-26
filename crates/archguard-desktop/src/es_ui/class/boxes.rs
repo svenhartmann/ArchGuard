@@ -4,8 +4,9 @@
 
 use archguard_engine::core::{SearchIndexDetail, ServiceTopology};
 use archguard_engine::{
-    ChainRef, SearchAnalysisPart, SearchFieldRole, SearchGraph, SearchNode, search_analysis_parts,
-    search_analysis_users, search_field_depth, search_field_role, short_scope,
+    ChainRef, SearchAnalysisPart, SearchEdge, SearchFieldRole, SearchGraph, SearchNode,
+    search_analysis_parts, search_analysis_users, search_analyzer_difference, search_field_depth,
+    search_field_role, short_scope,
 };
 
 use super::types::{Key, Switches};
@@ -88,7 +89,7 @@ pub struct BoxContent {
 
 /// Glyphs of the Access compartment (ticket 12 may restyle them).
 pub const WRITE_GLYPH: &str = "✎";
-pub const READ_GLYPH: &str = "◁";
+pub const READ_GLYPH: &str = "👁";
 const MAX_SETTINGS: usize = 6;
 const DETAIL_KINDS: [&str; 3] = ["index", "index_template", "component_template"];
 const ANALYSIS_KINDS: [&str; 5] = [
@@ -132,6 +133,7 @@ pub fn content(t: &ServiceTopology, g: &SearchGraph, key: &Key, sw: &Switches) -
         ..Default::default()
     };
     if let Key::Part { kind, name, .. } = key {
+        b.name = name.clone();
         b.root = node.label.clone();
         if let Some(d) = detail {
             part_box(&mut b, d, kind, name);
@@ -165,37 +167,35 @@ fn node_box(b: &mut BoxContent, t: &ServiceTopology, g: &SearchGraph, i: usize, 
             }
         }
         ("alias", _) => {
-            let lines = edge_lines(g, i, |r| r == "reference", |_, to| to.label.clone());
+            let lines = edge_lines(g, |e| {
+                (e.from == i && e.relation == "reference").then(|| g.nodes[e.to].label.clone())
+            });
             b.compartments.push(comp(Title::PointsTo, lines));
         }
         ("service", _) => {
-            let lines = edge_lines(g, i, |r| r != "reference" && r != "covers", access_text);
+            // A write or unknown edge leaves the service, a read edge points at it.
+            let lines = edge_lines(g, |e| match e.relation {
+                "write" | "unknown" if e.from == i => Some(access_text(e.relation, &g.nodes[e.to])),
+                "read" if e.to == i => Some(access_text(e.relation, &g.nodes[e.from])),
+                _ => None,
+            });
             b.compartments.push(comp(Title::Access, lines));
         }
         _ => {}
     }
 }
 
-fn edge_lines(
-    g: &SearchGraph,
-    from: usize,
-    keep: impl Fn(&str) -> bool,
-    text: impl Fn(&str, &SearchNode) -> String,
-) -> Vec<Line> {
-    g.edges
-        .iter()
-        .filter(|e| e.from == from && keep(e.relation))
-        .map(|e| text_line(text(e.relation, &g.nodes[e.to])))
-        .collect()
+fn edge_lines(g: &SearchGraph, text: impl Fn(&SearchEdge) -> Option<String>) -> Vec<Line> {
+    g.edges.iter().filter_map(text).map(text_line).collect()
 }
 
-fn access_text(relation: &str, to: &SearchNode) -> String {
+fn access_text(relation: &str, other: &SearchNode) -> String {
     let glyph = match relation {
         "write" => WRITE_GLYPH,
         "read" => READ_GLYPH,
         _ => "?",
     };
-    format!("{glyph} {}", to.label)
+    format!("{glyph} {}", other.label)
 }
 
 fn index_compartments(
@@ -270,11 +270,15 @@ fn field_lines(d: &SearchIndexDetail, sw: &Switches) -> Vec<Line> {
             SearchFieldRole::MultiField => Prefix::Multi,
             SearchFieldRole::Property => Prefix::None,
         };
-        let analyzers = match (&f.analyzer, &f.search_analyzer) {
-            (Some(a), Some(s)) => Some(format!("{a} / ⌕ {s}")),
-            (Some(a), None) => Some(a.clone()),
-            (None, Some(s)) => Some(format!("⌕ {s}")),
-            (None, None) => None,
+        // The effective search analyzer comes from the engine (spec 2026-11-26), not a second rule.
+        let analyzers = match search_analyzer_difference(d, &f.path) {
+            Some(x) => Some(format!("{} / ⌕ {}", x.index, x.search)),
+            None => match (&f.analyzer, &f.search_analyzer) {
+                (Some(a), Some(s)) => Some(format!("{a} / ⌕ {s}")),
+                (Some(a), None) => Some(a.clone()),
+                (None, Some(s)) => Some(format!("⌕ {s}")),
+                (None, None) => None,
+            },
         };
         let parts: Vec<String> = analyzers
             .into_iter()
