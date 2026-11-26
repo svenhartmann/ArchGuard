@@ -77,10 +77,15 @@ fn every_rule_yields_its_kind_and_name_and_lookalikes_yield_nothing() {
         "http:docker index shop-docker ",
         "http:docker component_template shop-docker-comp ",
         "http:make index shop-make ",
+        "http:scripts index shop-attached ",
         "http:scripts ingest_pipeline shop-clean ",
+        "http:scripts index shop-eq ",
         "http:scripts index shop-from-file ",
+        "http:scripts index shop-glued ",
         "http:scripts ilm_policy shop-ilm2 ",
         "http:scripts ism_policy shop-ism2 opensearch",
+        "http:scripts index shop-json ",
+        "http:scripts index shop-lines ",
         "http:scripts index shop-logs ",
     ];
     assert_eq!(
@@ -180,4 +185,58 @@ fn variables_outside_files_and_unreadable_input_are_gaps_never_silent() {
             "{n} stays unknown"
         );
     }
+}
+
+#[test]
+fn a_data_file_is_one_artifact_not_two() {
+    let report = analyze();
+    for file in ["scripts/bodies/orders.json", "scripts/bodies/attached.json"] {
+        let owners: Vec<_> = report
+            .elasticsearch
+            .artifacts
+            .iter()
+            .filter(|a| a.evidence.iter().any(|e| e.file == file))
+            .map(|a| format!("{} {}", a.scope, a.name.as_deref().unwrap_or("?")))
+            .collect();
+        assert_eq!(owners.len(), 1, "{file}: {owners:?}");
+        assert!(owners[0].starts_with("http:scripts"), "{owners:?}");
+    }
+}
+
+#[test]
+fn attached_and_unusual_data_options_and_multiline_quotes_are_read() {
+    let report = analyze();
+    let paths = |n: &str| -> Vec<String> {
+        let d = named(&report, n).detail.as_ref().expect("detail");
+        d.fields.iter().map(|f| f.path.clone()).collect()
+    };
+    assert_eq!(paths("shop-attached"), ["att"], "-d@file");
+    assert_eq!(
+        named(&report, "shop-glued")
+            .detail
+            .as_ref()
+            .expect("detail")
+            .settings["number_of_shards"],
+        "4",
+        "-d'{{...}}'"
+    );
+    assert_eq!(
+        named(&report, "shop-eq")
+            .detail
+            .as_ref()
+            .expect("detail")
+            .settings["number_of_shards"],
+        "5",
+        "--data=..."
+    );
+    assert_eq!(paths("shop-json"), ["j"], "--json");
+    assert_eq!(paths("shop-lines"), ["m"], "a quote that spans lines");
+    assert_eq!(named(&report, "shop-lines").evidence[0].line, Some(7));
+    assert!(
+        http(&report)
+            .iter()
+            .all(|a| a.name.as_deref() != Some("shop-usage")),
+        "curl inside a quoted echo is text"
+    );
+    assert!(gaps(&report, "scripts/forms.sh").is_empty());
 }
