@@ -2,10 +2,14 @@
 // Unused until ticket 12.
 #![cfg_attr(not(test), allow(dead_code))]
 
-use archguard_engine::SearchGraph;
-use archguard_engine::core::ServiceTopology;
+use archguard_engine::core::{SearchIndexDetail, ServiceTopology};
+use archguard_engine::{
+    ChainRef, SearchAnalysisPart, SearchFieldRole, SearchGraph, SearchNode, search_analysis_parts,
+    search_analysis_users, search_field_depth, search_field_role, short_scope,
+};
 
 use super::types::{Key, Switches};
+use crate::es_ui::index_page::{DetailNote, IndexPage, index_page};
 
 /// Compartment titles; Slint translates them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,6 +86,279 @@ pub struct BoxContent {
     pub compartments: Vec<Compartment>,
 }
 
-pub fn content(_t: &ServiceTopology, _g: &SearchGraph, _key: &Key, _sw: &Switches) -> BoxContent {
-    BoxContent::default()
+/// Glyphs of the Access compartment (ticket 12 may restyle them).
+pub const WRITE_GLYPH: &str = "✎";
+pub const READ_GLYPH: &str = "◁";
+const MAX_SETTINGS: usize = 6;
+const DETAIL_KINDS: [&str; 3] = ["index", "index_template", "component_template"];
+const ANALYSIS_KINDS: [&str; 5] = [
+    "analyzer",
+    "normalizer",
+    "char_filter",
+    "tokenizer",
+    "filter",
+];
+
+fn comp(title: Title, lines: Vec<Line>) -> Compartment {
+    Compartment {
+        title,
+        lines,
+        chips: Vec::new(),
+    }
+}
+
+fn text_line(text: String) -> Line {
+    Line {
+        text,
+        ..Default::default()
+    }
+}
+
+/// The content of the box `key` selects; an unknown key gives an empty box.
+pub fn content(t: &ServiceTopology, g: &SearchGraph, key: &Key, sw: &Switches) -> BoxContent {
+    let owner = match key {
+        Key::Node(i) => *i,
+        Key::Part { owner, .. } => *owner,
+    };
+    let Some(node) = g.nodes.get(owner) else {
+        return BoxContent::default();
+    };
+    let artifact = node.artifact.and_then(|i| t.elasticsearch.artifacts.get(i));
+    let detail = artifact.and_then(|a| a.detail.as_ref());
+    let mut b = BoxContent {
+        stereotype: node.kind.clone(),
+        name: node.label.clone(),
+        ghost: !node.declared,
+        ..Default::default()
+    };
+    if let Key::Part { kind, name, .. } = key {
+        b.root = node.label.clone();
+        if let Some(d) = detail {
+            part_box(&mut b, d, kind, name);
+        }
+        return b;
+    }
+    if b.ghost {
+        return b;
+    }
+    if let Some(a) = artifact {
+        let line = a.evidence.first();
+        b.root = match line.and_then(|e| e.line.map(|l| (e, l))) {
+            Some((e, l)) => format!("{} · {}:{l}", short_scope(&a.scope), e.file),
+            None => short_scope(&a.scope).to_string(),
+        };
+    }
+    node_box(&mut b, t, g, owner, sw);
+    b
+}
+
+fn node_box(b: &mut BoxContent, t: &ServiceTopology, g: &SearchGraph, i: usize, sw: &Switches) {
+    let node = &g.nodes[i];
+    let artifact = node.artifact.and_then(|a| t.elasticsearch.artifacts.get(a));
+    match (node.kind.as_str(), artifact) {
+        (k, Some(a)) if DETAIL_KINDS.contains(&k) => {
+            let page = index_page(t, node);
+            index_compartments(b, a.detail.as_ref(), &page, sw);
+            if k == "index_template" {
+                let lines = a.patterns.iter().cloned().map(text_line).collect();
+                b.compartments.push(comp(Title::Patterns, lines));
+            }
+        }
+        ("alias", _) => {
+            let lines = edge_lines(g, i, |r| r == "reference", |_, to| to.label.clone());
+            b.compartments.push(comp(Title::PointsTo, lines));
+        }
+        ("service", _) => {
+            let lines = edge_lines(g, i, |r| r != "reference" && r != "covers", access_text);
+            b.compartments.push(comp(Title::Access, lines));
+        }
+        _ => {}
+    }
+}
+
+fn edge_lines(
+    g: &SearchGraph,
+    from: usize,
+    keep: impl Fn(&str) -> bool,
+    text: impl Fn(&str, &SearchNode) -> String,
+) -> Vec<Line> {
+    g.edges
+        .iter()
+        .filter(|e| e.from == from && keep(e.relation))
+        .map(|e| text_line(text(e.relation, &g.nodes[e.to])))
+        .collect()
+}
+
+fn access_text(relation: &str, to: &SearchNode) -> String {
+    let glyph = match relation {
+        "write" => WRITE_GLYPH,
+        "read" => READ_GLYPH,
+        _ => "?",
+    };
+    format!("{glyph} {}", to.label)
+}
+
+fn index_compartments(
+    b: &mut BoxContent,
+    detail: Option<&SearchIndexDetail>,
+    page: &IndexPage,
+    sw: &Switches,
+) {
+    let Some(d) = detail else {
+        let id = match page.note {
+            Some(DetailNote::NotRead) => "not_read",
+            _ => "not_declared",
+        };
+        b.compartments
+            .push(comp(Title::Fields, vec![text_line(id.into())]));
+        return;
+    };
+    let fields = field_lines(d, sw);
+    let fields = if sw.collapse_fields && !fields.is_empty() {
+        vec![Line {
+            summary: Some(fields.len() as isize),
+            ..Default::default()
+        }]
+    } else {
+        fields
+    };
+    let mut settings: Vec<Line> = page
+        .settings
+        .iter()
+        .map(|(k, v)| text_line(format!("{k} = {v}")))
+        .collect();
+    if settings.len() > MAX_SETTINGS {
+        let rest = settings.len() - MAX_SETTINGS;
+        settings.truncate(MAX_SETTINGS);
+        settings.push(Line {
+            summary: Some(-(rest as isize)),
+            ..Default::default()
+        });
+    }
+    let analysis = ANALYSIS_KINDS
+        .iter()
+        .filter_map(|k| {
+            let names: Vec<&str> = d
+                .analysis
+                .iter()
+                .filter(|a| a.kind == *k)
+                .map(|a| a.name.as_str())
+                .collect();
+            (!names.is_empty()).then(|| text_line(format!("{k} {}", names.join(", "))))
+        })
+        .collect();
+    for (title, lines) in [
+        (Title::Fields, fields),
+        (Title::Settings, settings),
+        (Title::Analysis, analysis),
+    ] {
+        if !lines.is_empty() {
+            b.compartments.push(comp(title, lines));
+        }
+    }
+}
+
+fn field_lines(d: &SearchIndexDetail, sw: &Switches) -> Vec<Line> {
+    let mut out = Vec::new();
+    for (i, f) in d.fields.iter().enumerate() {
+        let role = search_field_role(&d.fields, i);
+        if role == SearchFieldRole::MultiField && !sw.multi_fields {
+            continue;
+        }
+        let prefix = match role {
+            SearchFieldRole::Field => Prefix::Field,
+            SearchFieldRole::MultiField => Prefix::Multi,
+            SearchFieldRole::Property => Prefix::None,
+        };
+        let analyzers = match (&f.analyzer, &f.search_analyzer) {
+            (Some(a), Some(s)) => Some(format!("{a} / ⌕ {s}")),
+            (Some(a), None) => Some(a.clone()),
+            (None, Some(s)) => Some(format!("⌕ {s}")),
+            (None, None) => None,
+        };
+        let parts: Vec<String> = analyzers
+            .into_iter()
+            .chain(f.normalizer.as_ref().map(|n| format!("norm {n}")))
+            .collect();
+        out.push(Line {
+            depth: search_field_depth(&d.fields, i),
+            prefix,
+            text: f.path.rsplit('.').next().unwrap_or_default().into(),
+            kind_text: f.kind.clone(),
+            note: if parts.is_empty() {
+                String::new()
+            } else {
+                format!("{{{}}}", parts.join(", "))
+            },
+            summary: None,
+        });
+    }
+    out
+}
+
+fn chip_class(c: &str) -> ChainClass {
+    match c {
+        "declared" => ChainClass::Declared,
+        "builtin" => ChainClass::Builtin,
+        "inline" => ChainClass::Inline,
+        _ => ChainClass::Undeclared,
+    }
+}
+
+fn chips(p: &SearchAnalysisPart) -> Vec<Chip> {
+    let chip = |c: &ChainRef, stage| Chip {
+        text: c.name.clone(),
+        stage,
+        class: chip_class(c.class),
+    };
+    let cf = p.char_filters.iter().map(|c| chip(c, Stage::CharFilter));
+    let tk = p.tokenizer.iter().map(|c| chip(c, Stage::Tokenizer));
+    let f = p.filters.iter().map(|c| chip(c, Stage::Filter));
+    cf.chain(tk).chain(f).collect()
+}
+
+fn part_box(b: &mut BoxContent, d: &SearchIndexDetail, kind: &str, name: &str) {
+    let Some(p) = search_analysis_parts(d)
+        .into_iter()
+        .find(|p| p.kind == kind && p.name == name)
+    else {
+        return;
+    };
+    b.stereotype = match &p.kind_type {
+        Some(ty) => format!("{kind} · {ty}"),
+        None => kind.to_string(),
+    };
+    let chained = matches!(kind, "analyzer" | "normalizer");
+    if chained {
+        b.compartments.push(Compartment {
+            title: Title::Chain,
+            lines: Vec::new(),
+            chips: chips(&p),
+        });
+    }
+    if !chained || p.kind_type.as_deref().is_some_and(|t| t != "custom") {
+        let ty = p.kind_type.iter().map(|t| format!("type = {t}"));
+        let params = p.params.iter().map(|(k, v)| format!("{k} = {v}"));
+        let lines: Vec<Line> = ty.chain(params).map(text_line).collect();
+        if !lines.is_empty() {
+            b.compartments.push(comp(Title::Parameters, lines));
+        }
+    }
+    let users = search_analysis_users(d)
+        .into_iter()
+        .find(|u| u.kind == kind && u.name == name)
+        .map(|u| u.users)
+        .unwrap_or_default();
+    let lines = users
+        .into_iter()
+        .map(|u| Line {
+            note: if u.role == "search" {
+                "(search)".into()
+            } else {
+                String::new()
+            },
+            ..text_line(u.subject)
+        })
+        .collect();
+    b.compartments.push(comp(Title::UsedBy, lines));
 }
