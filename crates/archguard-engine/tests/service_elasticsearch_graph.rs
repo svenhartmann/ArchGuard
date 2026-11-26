@@ -617,7 +617,7 @@ fn the_short_label_has_no_root_part_and_keeps_real_parentheses() {
         }
     }
     let g = search_graph(&topo(&[], arts, vec![]));
-    let short: Vec<_> = g.nodes.iter().map(|n| n.short.as_str()).collect();
+    let short: Vec<_> = g.nodes.iter().map(|n| n.short_label.as_str()).collect();
     assert_eq!(
         short,
         [
