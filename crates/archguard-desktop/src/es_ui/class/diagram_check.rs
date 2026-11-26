@@ -26,11 +26,10 @@ fn topo() -> (ServiceTopology, SearchGraph) {
             analysis("tokenizer", "tok", r#"{"type":"pattern"}"#),
             analysis("filter", "my_stop", r#"{"type":"stop"}"#),
             analysis("normalizer", "lower_n", r#"{"type":"custom","filter":["my_stop"]}"#)]});
-    let other = json!({"analysis": [
+    let other = json!({"fields": [{"path": "name", "kind": "text", "analyzer": "title_fold"}], "analysis": [
         analysis("analyzer", "title_fold", r#"{"type":"custom","tokenizer":"tok","filter":["lowercase","my_stop","icu_x"]}"#),
         analysis("analyzer", "x", r#"{"tokenizer":"standard"}"#)]});
-    let mut t = ServiceTopology::default();
-    t.elasticsearch = serde_json::from_value(json!({
+    let elasticsearch = serde_json::from_value(json!({
         "artifacts": [
             art("index", "products", json!([{"kind": "ilm_policy", "name": "ilm1"}, {"kind": "ingest_pipeline", "name": "pipe"}]), products),
             art("alias", "prod-alias", json!([{"kind": "index", "name": "products"}]), Value::Null),
@@ -45,6 +44,10 @@ fn topo() -> (ServiceTopology, SearchGraph) {
         "findings": [{"kind": "undeclared_index", "subject": "missing", "services": ["ghosty"], "evidence": []}]
     }))
     .unwrap();
+    let t = ServiceTopology {
+        elasticsearch,
+        ..Default::default()
+    };
     let g = search_graph(&t);
     (t, g)
 }
