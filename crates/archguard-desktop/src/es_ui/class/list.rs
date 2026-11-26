@@ -50,6 +50,11 @@ const STAGES: [&str; 5] = [
 fn title_of(n: &SearchNode) -> GroupTitle {
     match n.kind.as_str() {
         "service" => GroupTitle::Services,
+        "index" if n.declared && n.foreign => GroupTitle::Indices(format!(
+            "[{}] {}",
+            n.projects.join(", "),
+            short_scope(&n.scope)
+        )),
         "index" if n.declared => GroupTitle::Indices(short_scope(&n.scope).to_string()),
         "index" => GroupTitle::IndicesUndeclared,
         "alias" => GroupTitle::Aliases,
@@ -74,6 +79,24 @@ fn selected(title: &GroupTitle, group: Group) -> bool {
     )
 }
 
+/// `label` without the ` (<folder tail>)` the graph adds for equal names in different roots;
+/// the tail (possibly cut in the middle with `…`) must belong to `scope`.
+fn without_root<'a>(label: &'a str, scope: &str) -> &'a str {
+    let Some(body) = label.strip_suffix(')') else {
+        return label;
+    };
+    let Some(at) = body.rfind(" (") else {
+        return label;
+    };
+    let tail = &body[at + 2..];
+    let (head, end) = tail.split_once('…').unwrap_or(("", tail));
+    if scope.ends_with(end) && scope.contains(head) {
+        &body[..at]
+    } else {
+        label
+    }
+}
+
 fn node_row(g: &SearchGraph, i: usize) -> ListRow {
     let n = &g.nodes[i];
     let count = |relation: &str| {
@@ -83,15 +106,17 @@ fn node_row(g: &SearchGraph, i: usize) -> ListRow {
             .count()
     };
     let project = n.foreign.then(|| n.projects.join(", "));
-    let processing = title_of(n) == GroupTitle::Processing;
+    let title = title_of(n);
+    let processing = title == GroupTitle::Processing;
+    let name = match title {
+        GroupTitle::Indices(_) => without_root(&n.label, short_scope(&n.scope)),
+        _ => &n.label,
+    };
+    let project = project.as_deref().filter(|p| !p.is_empty());
     ListRow {
         key: Key::Node(i),
-        title: String::new(),
-        label: node_label(
-            &n.label,
-            false,
-            project.as_deref().filter(|p| !p.is_empty()),
-        ),
+        title: node_label(&n.label, false, project),
+        label: node_label(name, false, project),
         side: if processing {
             n.kind.clone()
         } else {
@@ -146,18 +171,19 @@ fn analysis_rows(t: &ServiceTopology, g: &SearchGraph) -> Vec<ListRow> {
                 .filter(|o| o.kind == b.kind && o.name == b.name)
                 .count()
                 > 1;
+            let label = if clash {
+                format!("{} · {}", b.name, b.owner_label)
+            } else {
+                b.name.clone()
+            };
             ListRow {
                 key: Key::Part {
                     owner: b.owner,
                     kind: b.kind.clone(),
                     name: b.name.clone(),
                 },
-                title: String::new(),
-                label: if clash {
-                    format!("{} · {}", b.name, b.owner_label)
-                } else {
-                    b.name.clone()
-                },
+                title: label.clone(),
+                label,
                 side: b.kind.clone(),
                 writes: 0,
                 reads: 0,
