@@ -262,8 +262,8 @@ export component EsClassCanvas inherits Rectangle {
     function refit() {
         if (flick.width > 100px && flick.height > 100px) {
             root.fit(flick.width / 1px, flick.height / 1px);
-            flick.viewport-x = 0;
-            flick.viewport-y = 0;
+            flick.content-x = 0;
+            flick.content-y = 0;
             root.waiting = false;
         } else {
             root.waiting = true;
