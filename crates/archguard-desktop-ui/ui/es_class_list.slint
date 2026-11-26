@@ -53,7 +53,7 @@ export component EsClassList inherits Rectangle {
     out property <length> scroll-y: sv.content-y;
     // 12 sets the glyphs of the two counters.
     in property <string> write-glyph: "✎";
-    in property <string> read-glyph: "👁";
+    in property <string> read-glyph: "↓";
     callback select(int);
     callback search(string);
     callback choose-kind(int);
@@ -116,6 +116,8 @@ export component EsClassList inherits Rectangle {
                 for g in root.groups: VerticalLayout {
                     HorizontalLayout {
                         height: 30px;
+                        // Clear of the scrollbar.
+                        padding-right: 22px;
                         padding-top: 8px;
                         padding-bottom: 4px;
                         Text {

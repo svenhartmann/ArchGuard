@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), allow(dead_code))] // Removed in ticket 14: the class view replaced it.
 //! The model of the tab: the search graph as rows and arcs of the Services tree.
 
 use std::collections::HashMap;

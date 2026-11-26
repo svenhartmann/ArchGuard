@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), allow(dead_code))]
-// Unused until ticket 12.
 //! Column layout and edge paths, ticket 08.
 
 use std::collections::{BTreeMap, HashMap};
@@ -318,10 +316,12 @@ pub fn layout(d: &Diagram, contents: &[BoxContent]) -> Scene {
         })
         .collect();
     let bottom = boxes.iter().map(|p| p.y + p.h).fold(0.0, f32::max);
+    // Only the placed boxes count: empty columns would keep Fit from reaching 100 %.
+    let right = boxes.iter().map(|p| p.x + p.w).fold(0.0, f32::max);
     let (width, height) = if boxes.is_empty() {
         (0.0, 0.0)
     } else {
-        (xs[3] + COL_W[3] + MARGIN, bottom + MARGIN)
+        (right + MARGIN, bottom + MARGIN)
     };
     Scene {
         boxes,

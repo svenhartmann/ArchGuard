@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), allow(dead_code))]
-// Unused until ticket 12.
 //! Diagram graph (boxes, edges, neighborhood, cluster), ticket 04.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 

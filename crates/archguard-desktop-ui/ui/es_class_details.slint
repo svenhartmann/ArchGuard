@@ -35,6 +35,8 @@ export struct EsDetailHint {
     field: string,
     search-only: string,
     index-only: string,
+    // The tokenizers differ.
+    tokenizer: bool,
 }
 
 export struct EsDetailPair {
@@ -100,10 +102,11 @@ component ChainTable inherits VerticalLayout {
 component Pairs inherits VerticalLayout {
     in property <[EsDetailPair]> items;
     spacing: 2px;
+    if items.length == 0: Note { text: @tr("none"); }
     for p in items: VerticalLayout {
         HorizontalLayout {
             spacing: 8px;
-            Note { text: p.key; width: 110px; }
+            Note { text: p.key; width: 170px; }
             Mono { text: p.value; horizontal-stretch: 1; }
         }
         if p.key == "synonyms_path" || p.key == "stopwords_path": Note { text: @tr("The file lies on the Elasticsearch nodes; its content cannot be read statically."); }
@@ -133,9 +136,10 @@ export component EsClassDetails inherits Rectangle {
                 SectionHeading { label: @tr("Fields with analysis"); }
                 for f in details.fields: HorizontalLayout {
                     spacing: 8px;
-                    Mono { text: f.name; width: 110px; }
+                    Mono { text: f.name; width: 170px; }
                     Mono { text: f.kind + (f.analysis != "" ? " · " + f.analysis : ""); color: Theme.text; horizontal-stretch: 1; }
                 }
+                if details.fields.length == 0: Note { text: @tr("none"); }
                 if details.chain.length > 0: SectionHeading { label: @tr("Analysis chain {0}", details.chain-name); }
                 ChainTable { rows: details.chain; }
                 if details.hint.field != "": Rectangle {
@@ -144,7 +148,10 @@ export component EsClassDetails inherits Rectangle {
                     VerticalLayout {
                         padding: 6px;
                         spacing: 2px;
-                        Note { text: @tr("Index and search analyzer differ at {0}: search only {1}; index only {2}.", details.hint.field, details.hint.search-only, details.hint.index-only); }
+                        Note { text: @tr("Index and search analyzer differ at {0}.", details.hint.field); }
+                        if details.hint.search-only != "": Note { text: @tr("Search only: {0}", details.hint.search-only); }
+                        if details.hint.index-only != "": Note { text: @tr("Index only: {0}", details.hint.index-only); }
+                        if details.hint.tokenizer: Note { text: @tr("The tokenizer differs."); }
                         Note { text: @tr("Static hint, no rating."); }
                     }
                 }
@@ -153,9 +160,10 @@ export component EsClassDetails inherits Rectangle {
                 SectionHeading { label: @tr("Settings" => "Links"); }
                 Pairs { items: details.links; }
                 SectionHeading { label: @tr("Usage in code"); }
+                if details.usages.length == 0: Note { text: @tr("none"); }
                 for u in details.usages: Rectangle {
                     height: ul.preferred-height;
-                    ul := Mono { text: u.text; color: u.clickable ? Theme.accent : Theme.muted; }
+                    ul := Mono { width: parent.width; wrap: word-wrap; text: u.text; color: u.clickable ? Theme.accent : Theme.muted; }
                     if u.clickable: TouchArea {
                         mouse-cursor: pointer;
                         clicked => { root.open(u.file, u.line); }
@@ -170,6 +178,7 @@ export component EsClassDetails inherits Rectangle {
                 SectionHeading { label: @tr("Parameters"); }
                 Pairs { items: details.params; }
                 SectionHeading { label: @tr("Used by"); }
+                if details.used-by.length == 0: Note { text: @tr("none"); }
                 for u in details.used-by: Mono { text: u; }
                 SectionHeading { label: @tr("Definition"); }
                 Mono { text: details.definition; }

@@ -1,6 +1,4 @@
 //! Box contents (header, compartments, rows, chips), ticket 05.
-// Unused until ticket 12.
-#![cfg_attr(not(test), allow(dead_code))]
 
 use archguard_engine::core::{SearchField, SearchIndexDetail, ServiceTopology};
 use archguard_engine::{
@@ -89,7 +87,8 @@ pub struct BoxContent {
 
 /// Glyphs of the Access compartment (ticket 12 may restyle them).
 pub const WRITE_GLYPH: &str = "✎";
-pub const READ_GLYPH: &str = "👁";
+// 👁 (U+1F441) draws nothing in the canvas and list fonts (snapshot 2026-11-27); spec fallback "↓".
+pub const READ_GLYPH: &str = "↓";
 const MAX_SETTINGS: usize = 6;
 const DETAIL_KINDS: [&str; 3] = ["index", "index_template", "component_template"];
 const ANALYSIS_KINDS: [&str; 5] = [
@@ -128,7 +127,7 @@ pub fn content(t: &ServiceTopology, g: &SearchGraph, key: &Key, sw: &Switches) -
     let detail = artifact.and_then(|a| a.detail.as_ref());
     let mut b = BoxContent {
         stereotype: node.kind.clone(),
-        name: node.label.clone(),
+        name: node.short_label.clone(),
         ghost: !node.declared,
         ..Default::default()
     };

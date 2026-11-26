@@ -205,7 +205,7 @@ fn service_shows_writes_and_reads() {
     let (t, g) = small(vec![art("index", "docs", json!({}))], usages);
     let b = box_of(&t, &g, "service");
     let texts: Vec<String> = rows(&b, Title::Access).into_iter().map(|r| r.2).collect();
-    assert_eq!(texts, ["✎ docs", "👁 docs"]);
+    assert_eq!(texts, ["✎ docs", "↓ docs"]);
 }
 
 #[test]

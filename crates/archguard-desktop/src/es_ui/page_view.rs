@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), allow(dead_code))] // Removed in ticket 14: the class view replaced it.
 //! The index page model as Slint data (`es_index_page.slint`).
 
 use slint::SharedString;

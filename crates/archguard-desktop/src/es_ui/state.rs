@@ -26,20 +26,21 @@ pub struct EsState {
     /// The editor's error of the last usage click.
     pub(super) problem: String,
     /// Class view: the selected box.
-    // Unused until ticket 12.
-    #[allow(dead_code)]
     pub(super) selected: Option<Key>,
     /// Class view: whole cluster instead of the neighborhood.
-    #[allow(dead_code)]
     pub(super) cluster: bool,
-    #[allow(dead_code)]
     pub(super) switches: Switches,
     /// Class view: list search text.
-    #[allow(dead_code)]
     pub(super) query: String,
     /// Class view: list kind filter.
-    #[allow(dead_code)]
     pub(super) group: Group,
+    /// Class view, set by the last `class::view::build`: the key of every list row (flat) and
+    /// canvas box, and the canvas size at zoom 1 (what the callbacks' indices mean).
+    pub(super) row_keys: Vec<Key>,
+    pub(super) box_keys: Vec<Key>,
+    pub(super) canvas: (f32, f32),
+    /// Class view: counts up with every change of the selection or scope (the canvas refits).
+    pub(super) fit_tick: i32,
 }
 
 pub fn build_from(topology: Topology) -> EsState {
@@ -58,6 +59,10 @@ pub fn build_from(topology: Topology) -> EsState {
         switches: Switches::default(),
         query: String::new(),
         group: Group::All,
+        row_keys: Vec::new(),
+        box_keys: Vec::new(),
+        canvas: (0.0, 0.0),
+        fit_tick: 0,
     }
 }
 
@@ -80,6 +85,7 @@ impl EsState {
         DEFAULT.contains(&kind) != self.toggled.contains(kind)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))] // Removed in ticket 14.
     pub(super) fn toggle_kind(&mut self, i: usize) {
         let Some(kind) = self.kinds().into_iter().nth(i) else {
             return;
@@ -91,6 +97,7 @@ impl EsState {
     }
 
     /// A group row (no node) has no focus.
+    #[cfg_attr(not(test), allow(dead_code))] // Removed in ticket 14.
     pub(super) fn focus_on(&mut self, node: usize) {
         if node < self.graph.nodes.len() {
             self.focus = Some(node);
@@ -99,6 +106,7 @@ impl EsState {
     }
 
     /// "Show all": no focus.
+    #[cfg_attr(not(test), allow(dead_code))] // Removed in ticket 14.
     pub(super) fn clear_focus(&mut self) {
         self.focus = None;
         self.problem.clear();
@@ -113,16 +121,16 @@ impl EsState {
     }
 }
 
-// Unused until ticket 12.
-#[allow(dead_code)]
 impl EsState {
     pub(super) fn select(&mut self, key: Option<Key>) {
         self.selected = key;
         self.problem.clear();
+        self.fit_tick += 1;
     }
 
     pub(super) fn toggle_cluster(&mut self) {
         self.cluster = !self.cluster;
+        self.fit_tick += 1;
     }
 
     pub(super) fn set_switch(&mut self, switch: Switch, on: bool) {
@@ -133,6 +141,28 @@ impl EsState {
             Switch::MultiFields => s.multi_fields = on,
             Switch::CollapseFields => s.collapse_fields = on,
         }
+        self.fit_tick += 1;
+    }
+
+    /// The list row `i` (flat) is selected; an index out of range is ignored.
+    pub(super) fn pick_row(&mut self, i: usize) {
+        if let Some(key) = self.row_keys.get(i).cloned() {
+            self.select(Some(key));
+        }
+    }
+
+    /// The canvas box `i` is selected; an index out of range is ignored.
+    pub(super) fn pick_box(&mut self, i: usize) {
+        if let Some(key) = self.box_keys.get(i).cloned() {
+            self.select(Some(key));
+        }
+    }
+
+    /// A usage was clicked: open its file in the editor, an error goes into `problem`.
+    pub(super) fn open_usage(&mut self, file: &str, line: u32) {
+        self.problem = crate::editor::open(&self.root, file, line)
+            .err()
+            .unwrap_or_default();
     }
 
     pub(super) fn set_query(&mut self, query: &str) {
