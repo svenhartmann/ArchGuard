@@ -14,4 +14,7 @@ public class Catalog {
 
     @Field(type = FieldType.Auto)
     private String plain;
+
+    @Field(type = FieldType.Auto, analyzer = "folded")
+    private String auto;
 }

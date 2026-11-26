@@ -8,10 +8,14 @@ fn root() -> PathBuf {
 }
 
 fn analyze() -> ServiceTopology {
+    analyze_with(|p| std::fs::read_to_string(p).ok())
+}
+
+fn analyze_with(read: fn(&Path) -> Option<String>) -> ServiceTopology {
     let root = root();
     let mut report = ServiceTopology::default();
     let discovery = Discovery::new(&root, &mut report).expect("discovery");
-    let read = |_: &Path, p: &Path| std::fs::read_to_string(p).ok();
+    let read = move |_: &Path, p: &Path| read(p);
     archguard_search::analyze(&root, &discovery, &read, &mut report);
     report
 }
@@ -196,6 +200,21 @@ fn token_count_and_analyzer_only_fields_are_kept() {
         [
             "words [token_count] Some(\"folded\") None",
             "label [] Some(\"folded\") Some(\"folded_search\")",
+            "auto [] Some(\"folded\") None",
         ]
     );
+}
+
+#[test]
+fn an_unreadable_build_file_is_a_gap_not_a_silent_plain_flavor() {
+    let report = analyze_with(|p| {
+        (!p.ends_with("elastic-app/pom.xml")).then(|| std::fs::read_to_string(p).ok())?
+    });
+    let gaps: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|d| archguard_search::is_elasticsearch_gap(d))
+        .map(|d| d.file.as_str())
+        .collect();
+    assert!(gaps.contains(&"elastic-app/pom.xml"), "{gaps:?}");
 }
