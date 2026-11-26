@@ -234,3 +234,13 @@ are code, but no analyzer measures them.
 - **2026-11-25:** The readers, findings and graph moved from the engine to the
   crate `archguard-search` (pure move, [ADR 0025](0025-search-crate.md)); the
   engine re-exports the public API.
+- **2026-11-25:** Evaluation of the analysis (`archguard_search::search_analysis_parts`, view-neutral).
+  Each chain member of an analyzer or normalizer is `declared` (same kind in the same index or
+  template), `builtin` (fixed table of the Elasticsearch 8.x reference, URLs in `analysis.rs`),
+  `undeclared` or `inline` (object instead of a name). `undeclared` carries no warning, because
+  plugins (ICU, kuromoji, IK) would produce false ones. Rules the desktop applies on top
+  (es-classdiagram ticket 02, no further ADR change): a declared analyzer `default` is the index
+  analyzer of every `text` field without `analyzer`, `default_search` the search analyzer of every
+  `text` field without `search_analyzer`, and without a search analyzer the index analyzer applies;
+  a multi-field is a child of a field whose kind is not `object`/`nested`; the index chain is
+  compared with the search chain.

@@ -142,8 +142,9 @@ pub use arc42::{arc42_document, arc42_from_evidence};
 /// Source-root stripping, as module names spell project paths (ADR 0010).
 pub use archguard_extract::strip_root;
 pub use archguard_search::{
-    SearchEdge, SearchGraph, SearchNode, is_detail_gap, is_elasticsearch_gap,
-    search_artifact_covers, search_graph, short_scope,
+    ChainRef, SearchAnalysisPart, SearchEdge, SearchGraph, SearchNode, is_detail_gap,
+    is_elasticsearch_gap, search_analysis_parts, search_artifact_covers, search_builtin,
+    search_graph, short_scope,
 };
 pub use architecture::architecture_context;
 pub use cache::{
