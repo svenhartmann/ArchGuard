@@ -255,9 +255,10 @@ fn layout_time_grows_about_linearly() {
 /// The alias diamond lies outside the alias box, along the edge toward the target.
 #[test]
 fn the_alias_diamond_sits_outside_its_box() {
-    let mut d = Diagram::default();
-    d.boxes = vec![dbox(0, BoxKind::Alias), dbox(1, BoxKind::Index)];
-    d.edges = vec![dedge(0, 1, EdgeStyle::Alias)];
+    let d = Diagram {
+        boxes: vec![dbox(0, BoxKind::Alias), dbox(1, BoxKind::Index)],
+        edges: vec![dedge(0, 1, EdgeStyle::Alias)],
+    };
     let cs = vec![BoxContent::default(); 2];
     let s = layout(&d, &cs);
     let diamond = s.edges[0].head.split('Z').next().unwrap();
