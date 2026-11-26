@@ -371,6 +371,14 @@ mod tests {
     }
 
     #[test]
+    fn search_quality_kind_serializes_as_search_quality() {
+        let json = serde_json::to_string(&FindingKind::SearchQuality).unwrap();
+        assert_eq!(json, "\"search_quality\"");
+        let back: FindingKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, FindingKind::SearchQuality);
+    }
+
+    #[test]
     fn node_lookup_handles_dense_and_hand_built_ids() {
         let graph = Graph {
             schema_version: 1,
