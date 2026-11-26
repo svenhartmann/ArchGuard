@@ -242,3 +242,16 @@ fn filter_box_lists_type_first_and_users() {
     assert!(p[1].2.starts_with("synonyms = "));
     assert_eq!(rows(&b, Title::UsedBy)[0].2, "analyzer:qry_a");
 }
+
+#[test]
+fn declared_default_applies_to_text_fields_without_analyzer() {
+    let def = r#"{"type":"custom","tokenizer":"standard"}"#;
+    let detail = json!({"detail": {
+        "fields": [{"path": "t", "kind": "text"}, {"path": "k", "kind": "keyword"}],
+        "analysis": [{"kind": "analyzer", "name": "default", "definition": def}],
+    }});
+    let (t, g) = small(vec![art("index", "docs", detail)], json!([]));
+    let f = rows(&box_of(&t, &g, "index"), Title::Fields);
+    assert_eq!(f[0].4, "{default}");
+    assert_eq!(f[1].4, "");
+}
