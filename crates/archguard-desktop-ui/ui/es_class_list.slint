@@ -48,7 +48,7 @@ export component EsClassList inherits Rectangle {
     in property <[EsClassGroup]> groups;
     in property <string> query;
     in property <int> kind;
-    // Rows in all groups, for the arrow keys.
+    // Rows in all groups (the owner sets it), where the arrow keys stop.
     in property <int> count;
     out property <length> scroll-y: sv.content-y;
     // 12 sets the glyphs of the two counters.
@@ -65,6 +65,17 @@ export component EsClassList inherits Rectangle {
     width: 280px;
     background: Theme.panel;
     forward-focus: keys;
+
+    // Scroll the row at `y` (Rust-computed, 26 px high) into view.
+    function reveal(y: length) {
+        if y < -sv.content-y { sv.content-y = -y; }
+        else if y + 26px > -sv.content-y + sv.visible-height { sv.content-y = -(y + 26px - sv.visible-height); }
+    }
+
+    function step(to: int) {
+        root.cursor = max(0, min(root.count - 1, to));
+        root.select(root.cursor);
+    }
 
     function title(g: EsClassGroup) -> string {
         g.title == 0 ? @tr("Services")
@@ -102,6 +113,7 @@ export component EsClassList inherits Rectangle {
             VerticalLayout {
                 for g in root.groups: VerticalLayout {
                     HorizontalLayout {
+                        height: 30px;
                         padding-top: 8px;
                         padding-bottom: 4px;
                         Text {
@@ -119,7 +131,9 @@ export component EsClassList inherits Rectangle {
                         }
                     }
                     for r in g.rows: Rectangle {
-                        height: Theme.control-h-sm;
+                        height: 26px;
+                        property <bool> at: root.cursor == r.index;
+                        changed at => { if (self.at) { root.reveal(r.y); } }
                         property <bool> chosen: r.selected;
                         changed chosen => { if (self.chosen) { root.cursor = r.index; } }
                         init => { if (self.chosen) { root.cursor = r.index; } }
@@ -159,11 +173,11 @@ export component EsClassList inherits Rectangle {
         }
     }
 
-    // Up/Down step through the flat rows; the owner ignores indices out of range.
+    // Up/Down step through the flat rows, 0 to count - 1.
     keys := FocusScope {
         key-pressed(event) => {
-            if (event.text == Key.DownArrow) { root.select(root.cursor + 1); return accept; }
-            if (event.text == Key.UpArrow) { root.select(max(0, root.cursor - 1)); return accept; }
+            if (event.text == Key.DownArrow) { root.step(root.cursor + 1); return accept; }
+            if (event.text == Key.UpArrow) { root.step(root.cursor - 1); return accept; }
             reject
         }
     }
