@@ -193,6 +193,19 @@ fn hostile_unclosed_calls_end_as_gaps_without_panic() {
     assert!(code(&report).is_empty());
 }
 
+#[test]
+fn hostile_nested_java_calls_do_not_scan_quadratically() {
+    let root = scratch("hostile-java");
+    let text = "c.indices().create(".repeat(30_000) + &")".repeat(30_000);
+    std::fs::write(root.join("svc/Hostile.java"), text).unwrap();
+    let start = std::time::Instant::now();
+    let report = analyze(&root, &["svc"]);
+    let took = start.elapsed();
+    std::fs::remove_dir_all(&root).unwrap();
+    assert!(code(&report).is_empty());
+    assert!(took.as_secs() < 10, "took {took:?}");
+}
+
 const FIELD: &str = r#"{"mappings":{"properties":{"a":{"type":"keyword"}}}}"#;
 
 #[test]
