@@ -264,38 +264,6 @@ fn without_detail_the_note_says_not_read_when_a_gap_names_the_address_else_not_d
     assert_eq!(page(&t, "computed").note, Some(DetailNote::NotDeclared));
 }
 
-/// The Slint rows of the page: own usages open the editor at their line, foreign ones do not.
-#[test]
-fn the_page_view_keeps_own_usages_clickable_and_foreign_ones_not() {
-    use slint::Model;
-    let mut s = super::state::build_from(std::sync::Arc::new(Ok(topology())));
-    let at = s
-        .graph
-        .nodes
-        .iter()
-        .position(|n| n.title.starts_with("orders ·"));
-    s.focus_on(at.expect("orders"));
-    let p = super::page_view::page(&s).expect("an index has a page");
-    let rows: Vec<_> = p
-        .usages
-        .iter()
-        .map(|u| (u.text.to_string(), u.file.to_string(), u.line, u.clickable))
-        .collect();
-    assert_eq!(
-        rows,
-        [
-            ("writer · write · w.py:7".into(), "w.py".into(), 7, true),
-            ("reader · read · r.py:9".into(), "r.py".into(), 9, true),
-            (
-                "adapter:feed · write · adapter:f.py:2".into(),
-                "adapter:f.py".into(),
-                2,
-                false
-            ),
-        ]
-    );
-}
-
 /// The scope reads like the graph labels' root path: no `terraform:` prefix.
 #[test]
 fn the_overview_scope_is_the_short_root_path() {

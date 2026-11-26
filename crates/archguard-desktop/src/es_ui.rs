@@ -6,11 +6,7 @@ mod class;
 mod index_page;
 #[cfg(test)]
 mod index_page_check;
-mod page_view;
 mod state;
-mod view;
-#[cfg(test)]
-mod view_check;
 
 use slint::ComponentHandle;
 

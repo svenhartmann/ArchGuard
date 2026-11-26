@@ -81,11 +81,6 @@ pub fn layout(nodes: &[Node], links: &[Link], width: f32) -> Layout {
     layout_with(nodes, links, width, false)
 }
 
-/// As [`layout`], with the top level kept in name order (links reorder only below it).
-pub fn layout_fixed_roots(nodes: &[Node], links: &[Link], width: f32) -> Layout {
-    layout_with(nodes, links, width, true)
-}
-
 fn layout_with(nodes: &[Node], links: &[Link], width: f32, fixed_roots: bool) -> Layout {
     if nodes.is_empty() {
         return Layout::default();
