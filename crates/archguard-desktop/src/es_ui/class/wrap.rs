@@ -56,7 +56,9 @@ pub fn assign(heights: &[f32], k: usize) -> Vec<usize> {
 }
 
 /// `text` cut to what fits `width` px at `char_w` px per character, ending in "…" when cut
-/// (shortcut: a fixed glyph width, no font measuring in Rust).
+/// (shortcut: a fixed glyph width per text role, no font measuring in Rust; the caption sizes
+/// differ per OS (`Theme.font-*`), so upgrade when Slint offers a text-measuring API in Rust or
+/// when a cut shows too early or too late on one platform).
 pub fn fit_text(text: &str, width: f32, char_w: f32) -> String {
     let max = (width / char_w).floor().max(1.0) as usize;
     if text.chars().count() <= max {

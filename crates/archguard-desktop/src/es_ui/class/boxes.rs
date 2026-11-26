@@ -171,12 +171,15 @@ pub fn mapping_unread(t: &ServiceTopology, node: &SearchNode) -> bool {
     })
 }
 
-/// The owner line of a building block: the owner's short label, with its root only when another
-/// node has the same short label.
+/// The owner line of a building block: the owner's short label, plus ` · <root>` only when
+/// another owner of the same kind has the same short label.
 fn owner_root(g: &SearchGraph, node: &SearchNode) -> String {
-    let same = g.nodes.iter().filter(|n| n.short_label == node.short_label);
-    if same.count() > 1 {
-        node.label.clone()
+    let twins = g
+        .nodes
+        .iter()
+        .filter(|n| n.kind == node.kind && n.short_label == node.short_label);
+    if twins.count() > 1 {
+        format!("{} · {}", node.short_label, short_scope(&node.scope))
     } else {
         node.short_label.clone()
     }
