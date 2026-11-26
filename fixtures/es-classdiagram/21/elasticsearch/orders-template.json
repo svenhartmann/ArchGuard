@@ -1,0 +1,22 @@
+{
+  "index_patterns": ["orders-*"],
+  "composed_of": ["base-component"],
+  "priority": 200,
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": 3,
+        "lifecycle": { "name": "hot-ilm" },
+        "default_pipeline": "geo-pipeline",
+        "analysis": { "analyzer": { "folded": { "type": "custom", "tokenizer": "standard", "filter": ["lowercase"] } } }
+      }
+    },
+    "mappings": {
+      "properties": {
+        "title": { "type": "text", "analyzer": "folded", "fields": { "raw": { "type": "keyword" } } },
+        "placed": { "type": "date" }
+      }
+    },
+    "aliases": { "orders-current": {} }
+  }
+}

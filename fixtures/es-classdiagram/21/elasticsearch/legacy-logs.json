@@ -1,0 +1,6 @@
+{
+  "index_patterns": ["logs-*"],
+  "order": 1,
+  "settings": { "number_of_replicas": 1 },
+  "mappings": { "properties": { "message": { "type": "text" } } }
+}

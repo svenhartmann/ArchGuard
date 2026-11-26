@@ -1,0 +1,1 @@
+{ "template": "layout.html", "processors": [ { "name": "minify", "enabled": true } ], "policy": { "phases": [ "lint" ] } }
