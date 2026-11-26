@@ -234,10 +234,37 @@ fn channel(p: Point, q: Point, between: &[&Placed]) -> Option<f32> {
         .min_by(|a, b| (a - want).abs().total_cmp(&(b - want).abs()))
 }
 
+/// An edge within one column past boxes in between: out through the gap below or above the end
+/// box, down the channel right of the column, in through the gap at the other end.
+fn side_route(p: Point, q: Point, dashed: bool, between: &[&Placed]) -> (Stroke, Point) {
+    let x = between.iter().map(|b| b.x + b.w).fold(f32::MIN, f32::max) + GAP_X / 2.0;
+    let sign = (q.1 - p.1).signum();
+    let (up, dn) = (p.1 + sign * GAP_Y / 2.0, q.1 - sign * GAP_Y / 2.0);
+    let pts = [p, (p.0, up), (x, up), (x, dn), (q.0, dn), q];
+    let segs: Vec<Stroke> = pts
+        .windows(2)
+        .map(|w| line_stroke(w[0], w[1], dashed))
+        .collect();
+    let path = segs.iter().map(|s| s.path.as_str()).collect::<Vec<_>>();
+    let at = (x, (up + dn) / 2.0);
+    let tail = segs[segs.len() - 1].tail;
+    (
+        Stroke {
+            path: path.join(" "),
+            mid: at,
+            tail,
+        },
+        at,
+    )
+}
+
 /// The stroke of an edge from `p` to `q` and the centre of its label. Between non-adjacent
 /// columns it leaves into the gap, crosses the columns in between at a free height and enters
 /// through the gap before the target.
 fn route(p: Point, q: Point, same: bool, dashed: bool, between: &[&Placed]) -> (Stroke, Point) {
+    if same && !between.is_empty() {
+        return side_route(p, q, dashed, between);
+    }
     if same {
         let st = line_stroke(p, q, dashed);
         let at = st.mid;
@@ -287,10 +314,17 @@ fn place_edge(
         _ => (HeadShape::Open, false),
     };
     let (lo, hi) = (col[ia].min(col[ib]), col[ia].max(col[ib]));
-    let between: Vec<&Placed> = (lo + 1..hi)
-        .flat_map(|c| &by_col[c])
-        .map(|&i| &boxes[i])
-        .collect();
+    let (top, bottom) = (p.1.min(q.1) - 0.5, p.1.max(q.1) + 0.5);
+    let between: Vec<&Placed> = if same {
+        // Boxes of the column lying wholly between the two ports.
+        let inner = |b: &&Placed| (b.x - a.x).abs() < 0.5 && b.y >= top && b.y + b.h <= bottom;
+        boxes.iter().filter(inner).collect()
+    } else {
+        (lo + 1..hi)
+            .flat_map(|c| &by_col[c])
+            .map(|&i| &boxes[i])
+            .collect()
+    };
     let (st, at) = route(p, q, same, dashed, &between);
     let end = if shape == HeadShape::Diamond {
         HeadShape::Open

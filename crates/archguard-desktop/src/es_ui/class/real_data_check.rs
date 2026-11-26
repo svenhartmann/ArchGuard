@@ -11,6 +11,7 @@ use super::layout::{Placed, layout};
 use super::layout_check::{crosses, dedge, synthetic};
 use super::types::{Key, Switches};
 use super::view::fit;
+use super::wrap::{fit_box, fit_text};
 use crate::es_ui::state::build_from;
 
 const CHIP_H: f32 = 14.0;
@@ -249,4 +250,31 @@ fn a_declared_default_search_gets_the_same_uses_edge_as_default() {
     let uses = |to: Key| d.edges.iter().any(|e| e.from == Key::Node(0) && e.to == to);
     assert!(uses(part("default")), "default edge");
     assert!(uses(part("default_search")), "default_search edge");
+}
+
+#[test]
+fn long_texts_are_cut_per_row_with_an_ellipsis_and_hints_stay_whole() {
+    assert_eq!(fit_text("short", 100.0, 7.0), "short");
+    let cut = fit_text(&"n".repeat(80), 70.0, 7.0);
+    assert_eq!(cut.chars().count(), 10);
+    assert!(cut.ends_with('…'));
+    let line = |t: &str| super::boxes::Line {
+        text: t.into(),
+        ..Default::default()
+    };
+    let mut c = BoxContent {
+        name: "n".repeat(80),
+        root: "r".repeat(80),
+        compartments: vec![Compartment {
+            title: Title::UsedBy,
+            lines: vec![line(&"u".repeat(80)), line("mapping_not_read")],
+            chips: Vec::new(),
+        }],
+        ..Default::default()
+    };
+    fit_box(&mut c, 190.0);
+    assert!(c.name.ends_with('…') && c.name.chars().count() < 25);
+    assert!(c.root.ends_with('…'));
+    assert!(c.compartments[0].lines[0].text.ends_with('…'));
+    assert_eq!(c.compartments[0].lines[1].text, "mapping_not_read");
 }
