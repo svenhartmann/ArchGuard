@@ -5,24 +5,33 @@ use std::rc::Rc;
 use slint::platform::software_renderer::{
     MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType,
 };
-use slint::{ComponentHandle, ModelRc, PhysicalSize, VecModel};
+use slint::platform::{Key, PointerEventButton, WindowEvent};
+use slint::{ComponentHandle, LogicalPosition, ModelRc, PhysicalSize, VecModel};
 
 slint::slint! {
     import { EsClassList, EsClassGroup, EsClassRow } from "../archguard-desktop-ui/ui/es_class_list.slint";
     export { EsClassGroup, EsClassRow }
     export component Page inherits Window {
         in property <[EsClassGroup]> groups;
+        in property <int> count;
         in-out property <int> picked: -1;
+        out property <length> scroll-y: list.scroll-y;
         callback picked-row(int);
+        callback chosen-kind(int);
         list := EsClassList {
             groups: root.groups;
+            count: root.count;
             select(i) => { root.picked = i; root.picked-row(i); }
+            choose-kind(i) => { root.chosen-kind(i); }
         }
     }
 }
 
 const W: usize = 300;
 const H: usize = 400;
+/// The row pitch Rust computes `EsClassRow::y` with.
+const GROUP_H: f32 = 30.0;
+const ROW_H: f32 = 26.0;
 
 struct Pixels(Rc<MinimalSoftwareWindow>);
 
@@ -76,6 +85,7 @@ fn row(label: &str, writes: i32, reads: i32, selected: bool, index: i32) -> EsCl
         warn: false,
         selected,
         index,
+        y: GROUP_H + ROW_H * index as f32,
     }
 }
 
@@ -166,4 +176,118 @@ fn counters_show_only_above_zero() {
     let reads = frame(&window);
     assert!(!same(&none, &writes) && !same(&none, &reads) && !same(&writes, &reads));
     assert!(ink(&writes, band.0, band.1) > ink(&none, band.0, band.1));
+}
+
+fn press(window: &MinimalSoftwareWindow, key: Key) {
+    let text: slint::SharedString = key.into();
+    window.dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+    window.dispatch_event(WindowEvent::KeyReleased { text });
+}
+
+fn click(window: &MinimalSoftwareWindow, x: f32, y: f32) {
+    let position = LogicalPosition::new(x, y);
+    window.dispatch_event(WindowEvent::PointerMoved { position });
+    window.dispatch_event(WindowEvent::PointerPressed {
+        position,
+        button: PointerEventButton::Left,
+    });
+    window.dispatch_event(WindowEvent::PointerReleased {
+        position,
+        button: PointerEventButton::Left,
+    });
+}
+
+/// A list of `n` rows in one group; a click on the first row gives the list the focus.
+fn focused(
+    n: i32,
+) -> (
+    Rc<MinimalSoftwareWindow>,
+    Page,
+    Rc<std::cell::RefCell<Vec<i32>>>,
+) {
+    let rows = (0..n).map(|i| row("r", 0, 0, false, i)).collect();
+    let (window, page) = shown(vec![group(0, rows)]);
+    page.set_count(n);
+    let log = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let l = log.clone();
+    page.on_picked_row(move |i| l.borrow_mut().push(i));
+    window.dispatch_event(WindowEvent::WindowActiveChanged(true));
+    frame(&window);
+    // Search row (10 + 28 + 8) and the group header (30) lie above the first row.
+    click(&window, 100.0, 76.0 + ROW_H / 2.0);
+    (window, page, log)
+}
+
+#[test]
+fn arrow_keys_step_through_the_rows_and_stop_at_the_ends() {
+    let (window, _page, log) = focused(3);
+    for k in [
+        Key::DownArrow,
+        Key::DownArrow,
+        Key::DownArrow,
+        Key::UpArrow,
+        Key::UpArrow,
+        Key::UpArrow,
+    ] {
+        press(&window, k);
+    }
+    // The click picks row 0; the list keeps its own cursor, the owner's model need not follow.
+    assert_eq!(*log.borrow(), [0, 1, 2, 2, 1, 0, 0]);
+}
+
+#[test]
+fn the_view_follows_the_cursor_down_and_back_up() {
+    let (window, page, _log) = focused(30);
+    assert_eq!(page.get_scroll_y(), 0.0);
+    for _ in 0..20 {
+        press(&window, Key::DownArrow);
+    }
+    frame(&window);
+    let down = page.get_scroll_y();
+    // Row 20 ends at 30 + 21 * 26 = 576 px; the pane shows less than 400.
+    assert!(down < -150.0, "the view scrolled down: {down}");
+    for _ in 0..20 {
+        press(&window, Key::UpArrow);
+    }
+    frame(&window);
+    assert_eq!(page.get_scroll_y(), 0.0, "the view is back at the top");
+}
+
+#[test]
+fn choosing_a_kind_reports_its_index() {
+    let (window, page) = shown(vec![]);
+    let log = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let l = log.clone();
+    page.on_chosen_kind(move |i| l.borrow_mut().push(i));
+    window.dispatch_event(WindowEvent::WindowActiveChanged(true));
+    let closed = frame(&window);
+    // The combo sits right of the search field (x 115..270, y 10..38) and opens its popup below.
+    click(&window, 200.0, 24.0);
+    assert!(!same(&closed, &frame(&window)), "the popup opens");
+    // Sweep the popup top to bottom, opening it again before each click. The popup's list is a
+    // flickable: it forwards a press to a row only after a short delay, so the click is held.
+    for y in (44..=215).step_by(5) {
+        let position = LogicalPosition::new(200.0, y as f32);
+        window.dispatch_event(WindowEvent::PointerMoved { position });
+        window.dispatch_event(WindowEvent::PointerPressed {
+            position,
+            button: PointerEventButton::Left,
+        });
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        slint::platform::update_timers_and_animations();
+        window.dispatch_event(WindowEvent::PointerReleased {
+            position,
+            button: PointerEventButton::Left,
+        });
+        frame(&window);
+        click(&window, 200.0, 24.0);
+        frame(&window);
+    }
+    let mut chosen = log.borrow().clone();
+    chosen.dedup();
+    assert_eq!(
+        chosen,
+        [0, 1, 2, 3, 4, 5, 6],
+        "each entry reports its index, in order"
+    );
 }

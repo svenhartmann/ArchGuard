@@ -14,6 +14,9 @@ export struct EsClassRow {
     selected: bool,
     // Position in the flat list; the arrow keys step to the neighbours.
     index: int,
+    // Top of the row in the scrolled content, computed in Rust with a 30 px group header and
+    // 26 px rows (the view follows the keyboard cursor with it).
+    y: length,
 }
 
 // title: 0 Services, 1 Indices (with `root`), 2 Aliases, 3 Templates, 4 Analysis, 5 Processing.
@@ -45,6 +48,9 @@ export component EsClassList inherits Rectangle {
     in property <[EsClassGroup]> groups;
     in property <string> query;
     in property <int> kind;
+    // Rows in all groups, for the arrow keys.
+    in property <int> count;
+    out property <length> scroll-y: sv.content-y;
     // 12 sets the glyphs of the two counters.
     in property <string> write-glyph: "✎";
     in property <string> read-glyph: "👁";
@@ -91,7 +97,7 @@ export component EsClassList inherits Rectangle {
             wrap: word-wrap;
             horizontal-alignment: center;
         }
-        ScrollView {
+        sv := ScrollView {
             vertical-stretch: 1;
             VerticalLayout {
                 for g in root.groups: VerticalLayout {
