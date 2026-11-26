@@ -251,3 +251,25 @@ fn layout_time_grows_about_linearly() {
     let (small, large) = (best(200), best(800));
     assert!(large / small < 8.0, "{small} -> {large}");
 }
+
+/// The alias diamond lies outside the alias box, along the edge toward the target.
+#[test]
+fn the_alias_diamond_sits_outside_its_box() {
+    let d = Diagram {
+        boxes: vec![dbox(0, BoxKind::Alias), dbox(1, BoxKind::Index)],
+        edges: vec![dedge(0, 1, EdgeStyle::Alias)],
+    };
+    let cs = vec![BoxContent::default(); 2];
+    let s = layout(&d, &cs);
+    let diamond = s.edges[0].head.split('Z').next().unwrap();
+    let nums: Vec<f32> = diamond
+        .split_whitespace()
+        .filter_map(|w| w.parse().ok())
+        .collect();
+    let b = &s.boxes[0];
+    assert!(nums.len() >= 8, "{diamond}");
+    for xy in nums.chunks(2) {
+        let inside = xy[0] > b.x && xy[0] < b.x + b.w && xy[1] > b.y && xy[1] < b.y + b.h;
+        assert!(!inside, "{xy:?} inside {b:?}: {diamond}");
+    }
+}

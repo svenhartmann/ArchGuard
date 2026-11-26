@@ -226,12 +226,8 @@ fn place_edge(e: &DEdge, a: &Placed, b: &Placed, same: bool) -> PlacedEdge {
     };
     let mut head = head_path(end, st.tail, q);
     if shape == HeadShape::Diamond {
-        let back = if same {
-            (p.0, 2.0 * p.1 - q.1)
-        } else {
-            (2.0 * p.0 - q.0, p.1)
-        };
-        head = format!("{} {head}", head_path(HeadShape::Diamond, back, p));
+        // From the target: the body then extends from the start point toward it.
+        head = format!("{} {head}", head_path(HeadShape::Diamond, q, p));
     }
     let shape = if shape == HeadShape::Hollow || shape == HeadShape::Diamond {
         shape
