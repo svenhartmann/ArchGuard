@@ -79,7 +79,7 @@ fn index_details_list_fields_with_analysis_and_their_roles() {
     );
     assert_eq!(i.fields[0].search_analyzer.as_deref(), Some("qry_a"));
     assert_eq!(i.fields[1].normalizer.as_deref(), Some("fold_n"));
-    assert_eq!(i.page.mapping.len(), 8);
+    assert_eq!(i.page.mapping.len(), 9);
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn index_details_have_one_chain_table_per_used_declared_analyzer() {
     let names: Vec<&str> = i.chains.iter().map(|c| c.analyzer.as_str()).collect();
     assert_eq!(
         names,
-        ["idx_a", "qry_a", "shingle_a", "twin_a", "fold_n"],
+        ["idx_a", "qry_a", "twin_a", "shingle_a", "fold_n"],
         "unused_a, default and default_search have no field role"
     );
     let chain = |n: &str| i.chains.iter().find(|c| c.analyzer == n).unwrap();
@@ -124,7 +124,11 @@ fn index_details_hint_only_where_index_and_search_analyzers_differ() {
     let g = search_graph(&t);
     let hints = index(&t, &g).hints;
     let fields: Vec<&str> = hints.iter().map(|h| h.field.as_str()).collect();
-    assert_eq!(fields, ["title", "body"], "same: equal stages, no hint");
+    assert_eq!(
+        fields,
+        ["title", "title.shingle", "body", "author.name"],
+        "same: equal stages, no hint"
+    );
     let title = &hints[0];
     assert_eq!(
         (title.index.as_str(), title.search.as_str()),
