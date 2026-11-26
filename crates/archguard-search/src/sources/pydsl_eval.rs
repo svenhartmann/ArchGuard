@@ -1,7 +1,7 @@
 //! Python literals and DSL calls of a module read as JSON, as Elasticsearch stores them. All or
 //! nothing: one part that is not a literal (f-string with a hole, unknown name, other call,
 //! `**` spread) makes the whole value `None`. Names resolve to top-level constants of the file only.
-use super::pydsl_module::{Callee, Module};
+use super::pydsl_module::{Callee, Member, Module};
 use archguard_flow_common::lang_pyscan::{dotted, skip_ws};
 use archguard_flow_common::lang_python::{Arg, call_args, split_commas, string_value};
 use serde_json::{Map, Number, Value};
@@ -151,13 +151,16 @@ impl<'m, 'a> Eval<'m, 'a> {
         Some(Value::Object(def))
     }
 
-    /// The fields a class declares as `name = Text(…)`; other class attributes are no fields.
+    /// The fields a class declares as `name = Text(…)` or typed (`name: M[Keyword]`); other class
+    /// attributes are no fields. `None` when a typed field needs its type inferred.
     pub(super) fn properties(&mut self, class: usize, depth: u8) -> Option<Map<String, Value>> {
         let mut props = Map::new();
-        for (name, a, e) in self.m.body_assigns(&self.m.defs[class]) {
-            if self.m.is_field(a, e) {
-                props.insert(name, self.value((a, e), depth)?);
-            }
+        for (name, member) in self.m.members(&self.m.defs[class]) {
+            let value = match member {
+                Member::Call(a, e) => self.value((a, e), depth)?,
+                Member::Typed(ty) => serde_json::json!({ "type": ty? }),
+            };
+            props.insert(name, value);
         }
         Some(props)
     }

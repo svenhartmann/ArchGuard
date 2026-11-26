@@ -9,6 +9,7 @@ pub(crate) mod json_files;
 pub(crate) mod pydsl;
 pub(crate) mod pydsl_eval;
 pub(crate) mod pydsl_module;
+pub(crate) mod pydsl_project;
 pub(crate) mod search_templates;
 pub(crate) mod terraform;
 pub(crate) mod terraform_detail;
