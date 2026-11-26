@@ -54,12 +54,22 @@ fn documents_of_every_import_path_become_artifacts_and_lookalikes_do_not() {
         })
         .collect();
     let want = [
+        "index items python:djangodoc [] djangodoc/items.py:ItemDocument",
+        "index base-docs python:inherit [] inherit/base.py:BaseDoc",
+        "index base-docs python:inherit [] inherit/documents.py:Child",
+        "index mid python:inherit [] inherit/local.py:Mid",
+        "index mid python:inherit [] inherit/local.py:Leaf",
+        "index ? python:inherit [] inherit/local.py:Bare",
+        "index ? python:inherit [] inherit/local.py:NoName",
+        "index imported-index python:inherit [] inherit/named.py:Imported",
         "index ? python:shop [] shop/dynamic.py:Nameless",
         "index partial python:shop [] shop/dynamic.py:Partial",
         "index orders-v1 python:shop [] shop/orders.py:Order",
         "index events python:shop [opensearch] shop/others.py:Event",
         "index notes python:shop [] shop/others.py:Note",
         "index products python:shop [] shop/products.py:ProductDocument",
+        "index typed python:typed [] typed/typed.py:Typed",
+        "index untyped python:typed [] typed/untyped.py:Untyped",
     ];
     assert_eq!(got, want, "own `Document` classes must not match");
     // The unqualified `Text` of another library is no field either.
@@ -145,11 +155,98 @@ fn django_fields_and_multi_fields() {
     assert_eq!(d.settings["number_of_replicas"], "0");
 }
 
+fn by_address<'a>(report: &'a ServiceTopology, address: &str) -> &'a SearchArtifact {
+    (report.elasticsearch.artifacts.iter())
+        .find(|a| a.address == address)
+        .unwrap_or_else(|| panic!("no artifact {address}"))
+}
+
+fn fields_of(a: &SearchArtifact) -> Vec<String> {
+    let d = a.detail.as_ref().expect("detail");
+    (d.fields.iter())
+        .map(|f| format!("{}:{}", f.path, f.kind))
+        .collect()
+}
+
+#[test]
+fn local_base_documents_pass_index_and_fields_down_and_unresolved_bases_are_gaps() {
+    let report = analyze();
+    let child = by_address(&report, "inherit/documents.py:Child");
+    assert_eq!(fields_of(child), ["code:keyword", "title:text"]);
+    assert_eq!(
+        child.detail.as_ref().unwrap().settings["number_of_shards"],
+        "1"
+    );
+    let leaf = by_address(&report, "inherit/local.py:Leaf");
+    assert_eq!(fields_of(leaf), ["kind:keyword"]);
+    let gaps = gaps(&report);
+    assert!(
+        gaps.iter().any(|g| g.starts_with("inherit/documents.py: ")
+            && g.contains("Lost")
+            && g.contains("Thing")),
+        "{gaps:#?}"
+    );
+}
+
+#[test]
+fn documents_without_a_name_are_artifacts_without_name_and_a_gap() {
+    let report = analyze();
+    let gaps = gaps(&report);
+    for class in ["Bare", "NoName"] {
+        let a = by_address(&report, &format!("inherit/local.py:{class}"));
+        assert_eq!(a.name, None);
+    }
+    let n = gaps
+        .iter()
+        .filter(|g| g.starts_with("inherit/local.py: Index name is not a literal"))
+        .count();
+    assert_eq!(n, 2, "{gaps:#?}");
+}
+
+#[test]
+fn index_name_constants_resolve_across_files() {
+    let report = analyze();
+    assert_eq!(
+        by_address(&report, "inherit/named.py:Imported")
+            .name
+            .as_deref(),
+        Some("imported-index")
+    );
+}
+
+#[test]
+fn typed_fields_async_documents_and_numpy_vectors() {
+    let report = analyze();
+    let t = by_address(&report, "typed/typed.py:Typed");
+    assert_eq!(
+        fields_of(t),
+        ["tag:keyword", "title:text", "vec:dense_vector"]
+    );
+    let u = by_address(&report, "typed/untyped.py:Untyped");
+    assert!(u.detail.is_none(), "M[int] names no field class");
+    assert!(gaps(&report).iter().any(
+        |g| g.starts_with("typed/untyped.py: typed/untyped.py:Untyped")
+            && g.ends_with("not read: mappings.")
+    ));
+}
+
+#[test]
+fn django_model_fields_are_a_gap() {
+    let report = analyze();
+    assert!(
+        gaps(&report)
+            .iter()
+            .any(|g| g.starts_with("djangodoc/items.py: ")
+                && g.contains("djangodoc/items.py:ItemDocument")
+                && g.contains("Django.fields")),
+    );
+}
+
 #[test]
 fn non_literal_parts_are_gaps_that_name_the_attribute() {
     let report = analyze();
     let gaps = gaps(&report);
-    assert_eq!(gaps.len(), 2, "{gaps:#?}");
+    assert_eq!(gaps.len(), 7, "{gaps:#?}");
     assert!(gaps.iter().any(
         |g| g.starts_with("shop/dynamic.py: shop/dynamic.py:Partial")
             && g.ends_with("not read: mappings, settings.")
