@@ -2,7 +2,7 @@
 // Unused until ticket 12.
 #![cfg_attr(not(test), allow(dead_code))]
 
-use archguard_engine::core::{SearchIndexDetail, ServiceTopology};
+use archguard_engine::core::{SearchField, SearchIndexDetail, ServiceTopology};
 use archguard_engine::{
     ChainRef, SearchAnalysisPart, SearchEdge, SearchFieldRole, SearchGraph, SearchNode,
     search_analysis_parts, search_analysis_users, search_analyzer_difference, search_field_depth,
@@ -258,6 +258,32 @@ fn index_compartments(
     }
 }
 
+/// The engine knows the effective search analyzer only when it differs (spec 2026-11-26); when
+/// the stages match, the same order gives the names: `analyzer`/`default` and
+/// `search_analyzer`/`default_search` (text fields only), else `standard`.
+fn analyzer_note(d: &SearchIndexDetail, f: &SearchField) -> Option<String> {
+    if let Some(x) = search_analyzer_difference(d, &f.path) {
+        return Some(format!("{} / ⌕ {}", x.index, x.search));
+    }
+    let declared = |n: &str| {
+        f.kind == "text"
+            && d.analysis
+                .iter()
+                .any(|a| a.kind == "analyzer" && a.name == n)
+    };
+    let index = (f.analyzer.clone())
+        .or_else(|| declared("default").then(|| "default".to_string()))
+        .unwrap_or_else(|| "standard".into());
+    let search = (f.search_analyzer.clone())
+        .or_else(|| declared("default_search").then(|| "default_search".to_string()))
+        .unwrap_or_else(|| index.clone());
+    match (index == search, index == "standard") {
+        (true, true) => None,
+        (true, false) => Some(index),
+        _ => Some(format!("{index} / ⌕ {search}")),
+    }
+}
+
 fn field_lines(d: &SearchIndexDetail, sw: &Switches) -> Vec<Line> {
     let mut out = Vec::new();
     for (i, f) in d.fields.iter().enumerate() {
@@ -270,16 +296,7 @@ fn field_lines(d: &SearchIndexDetail, sw: &Switches) -> Vec<Line> {
             SearchFieldRole::MultiField => Prefix::Multi,
             SearchFieldRole::Property => Prefix::None,
         };
-        // The effective search analyzer comes from the engine (spec 2026-11-26), not a second rule.
-        let analyzers = match search_analyzer_difference(d, &f.path) {
-            Some(x) => Some(format!("{} / ⌕ {}", x.index, x.search)),
-            None => match (&f.analyzer, &f.search_analyzer) {
-                (Some(a), Some(s)) => Some(format!("{a} / ⌕ {s}")),
-                (Some(a), None) => Some(a.clone()),
-                (None, Some(s)) => Some(format!("⌕ {s}")),
-                (None, None) => None,
-            },
-        };
+        let analyzers = analyzer_note(d, f);
         let parts: Vec<String> = analyzers
             .into_iter()
             .chain(f.normalizer.as_ref().map(|n| format!("norm {n}")))
