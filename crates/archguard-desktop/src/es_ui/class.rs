@@ -27,6 +27,8 @@ mod list_view_check;
 #[cfg(test)]
 mod probe_check;
 #[cfg(test)]
+mod real_data_check;
+#[cfg(test)]
 mod state_check;
 #[cfg(test)]
 mod view_check;

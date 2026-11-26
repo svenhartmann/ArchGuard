@@ -159,7 +159,7 @@ fn dedge(a: usize, b: usize, style: EdgeStyle) -> DEdge {
 }
 
 /// `n` groups of service, alias, index, analyzer and tokenizer, wired in a chain.
-fn synthetic(n: usize) -> (Diagram, Vec<BoxContent>) {
+pub(super) fn synthetic(n: usize) -> (Diagram, Vec<BoxContent>) {
     let kinds = [
         BoxKind::Service,
         BoxKind::Alias,
