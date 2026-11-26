@@ -79,24 +79,6 @@ fn selected(title: &GroupTitle, group: Group) -> bool {
     )
 }
 
-/// `label` without the ` (<folder tail>)` the graph adds for equal names in different roots;
-/// the tail (possibly cut in the middle with `…`) must belong to `scope`.
-fn without_root<'a>(label: &'a str, scope: &str) -> &'a str {
-    let Some(body) = label.strip_suffix(')') else {
-        return label;
-    };
-    let Some(at) = body.rfind(" (") else {
-        return label;
-    };
-    let tail = &body[at + 2..];
-    let (head, end) = tail.split_once('…').unwrap_or(("", tail));
-    if scope.ends_with(end) && scope.contains(head) {
-        &body[..at]
-    } else {
-        label
-    }
-}
-
 fn node_row(g: &SearchGraph, i: usize) -> ListRow {
     let n = &g.nodes[i];
     let count = |relation: &str| {
@@ -109,7 +91,7 @@ fn node_row(g: &SearchGraph, i: usize) -> ListRow {
     let title = title_of(n);
     let processing = title == GroupTitle::Processing;
     let name = match title {
-        GroupTitle::Indices(_) => without_root(&n.label, short_scope(&n.scope)),
+        GroupTitle::Indices(_) => &n.short_label,
         _ => &n.label,
     };
     let project = project.as_deref().filter(|p| !p.is_empty());
