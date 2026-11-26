@@ -4,10 +4,12 @@
 //! import does not match.
 //!
 //! Class bodies are read member by member: a field is a call of a field class, a
-//! `mapped_field(Field())` call or a `M[...]` annotation (typed documents).
+//! `mapped_field(Field())` call or a `M[...]` annotation (typed documents). An assigned value
+//! wins over the annotation, as in the DSL. `Union[X, None]` and `Annotated[...]` end as gaps
+//! although the DSL reads them.
 use archguard_flow_common::lang_pyscan::{dotted, skip_ws};
 use archguard_flow_common::lang_python::{
-    Def, DefKind, Import, Stmt, assignment, call_args, code_statements, defs, imports, mask,
+    Arg, Def, DefKind, Import, Stmt, assignment, call_args, code_statements, defs, imports, mask,
     split_commas,
 };
 use std::collections::HashMap;
@@ -247,28 +249,65 @@ impl<'a> Module<'a> {
             hit.then(|| call_args(self.src, &self.masked, open))?
                 .filter(|(_, close)| *close == e - 1)
         };
-        if let Some(r) = val.filter(|&(a, e)| self.is_field(a, e)) {
+        let Some((va, ve)) = val else {
+            return ann.and_then(|(a, e)| self.annotation(&self.masked[a..e], false));
+        };
+        if self.is_field(va, ve) {
+            return Some(Member::Call(va, ve));
+        }
+        // The DSL lets an assigned value win over the annotation.
+        if let Some((args, _)) = call("mapped_field", (va, ve)) {
+            return self.mapped_member(&args, ann);
+        }
+        let b = self.masked.as_bytes();
+        let (mut name, j) = dotted(b, va);
+        if name.is_empty() || b.get(skip_ws(b, j)) != Some(&b'(') {
+            return ann.and_then(|(a, e)| self.annotation(&self.masked[a..e], false)); // a plain value
+        }
+        // A call: a local subclass chain of a field class, or a gap.
+        for _ in 0..8 {
+            if let Some(ty) = self.dsl(&name).and_then(|d| field_type(&d.0)) {
+                return Some(Member::Typed(Some(ty)));
+            }
+            let class = self.class_index(&name).map(|c| self.bases(&self.defs[c]));
+            match class.and_then(|bs| bs.into_iter().next()) {
+                Some(base) => name = base,
+                None => break,
+            }
+        }
+        Some(Member::Typed(None))
+    }
+
+    /// `mapped_field(...)`: a readable `field=`/positional field class wins, `exclude=True` drops
+    /// the member, an unreadable field is a gap; without a field the annotation decides.
+    fn mapped_member(&self, args: &[Arg], ann: Option<Range>) -> Option<Member> {
+        let field = args
+            .iter()
+            .find(|a| a.name == Some("field") || a.name.is_none());
+        // `value` is a slice of `src`; `at` would start at the argument name.
+        let r = field.map(|f| {
+            let at = f.value.as_ptr() as usize - self.src.as_ptr() as usize;
+            (at, at + f.value.len())
+        });
+        if let Some(r) = r.filter(|&(a, e)| self.is_field(a, e)) {
             return Some(Member::Call(r.0, r.1));
         }
-        let mapped = val.and_then(|r| call("mapped_field", r));
-        let field = mapped.as_ref().and_then(|(args, _)| {
-            let first = args.iter().find(|a| a.name.is_none())?;
-            let r = (first.at, first.at + first.value.len());
-            self.is_field(r.0, r.1).then_some(Member::Call(r.0, r.1))
-        });
-        field
-            .or_else(|| ann.and_then(|r| self.annotated(r)))
-            .or_else(|| mapped.map(|_| Member::Typed(None)))
+        let excluded = args
+            .iter()
+            .any(|a| a.name == Some("exclude") && a.value == "True");
+        match (field, excluded) {
+            (None, true) => None,
+            (None, false) => ann
+                .and_then(|(a, e)| self.annotation(&self.masked[a..e], false))
+                .or(Some(Member::Typed(None))),
+            (Some(_), _) => Some(Member::Typed(None)),
+        }
     }
 
     /// The annotation as the DSL reads it (`DocumentOptions`): `M`/`Mapped`/`Optional`/`X | None`
     /// are unwrapped, `list[...]` makes it multi, `str`/`int`/... map through a fixed table and a
     /// local `InnerDoc` is an object (nested in a list). `ClassVar` is no field; anything else,
     /// a field class (`M[Keyword]`) included, is a gap: the DSL raises a `TypeError` for it.
-    fn annotated(&self, (a, e): Range) -> Option<Member> {
-        self.annotation(&self.masked[a..e], false)
-    }
-
     fn annotation(&self, text: &str, multi: bool) -> Option<Member> {
         let text = text.trim();
         let parts = union_parts(text);
@@ -375,16 +414,14 @@ fn field_type(class: &str) -> Option<String> {
         "FileField" => "Text",
         c => c.strip_suffix("Field").unwrap_or(c),
     };
-    FIELDS.contains(&base).then(|| snake(base))
-}
-
-fn snake(camel: &str) -> String {
-    let mut out = String::new();
-    for (i, c) in camel.char_indices() {
-        if c.is_uppercase() && i > 0 {
-            out.push('_');
+    FIELDS.contains(&base).then(|| {
+        let mut out = String::new();
+        for (i, c) in base.char_indices() {
+            if c.is_uppercase() && i > 0 {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
         }
-        out.push(c.to_ascii_lowercase());
-    }
-    out
+        out
+    })
 }
