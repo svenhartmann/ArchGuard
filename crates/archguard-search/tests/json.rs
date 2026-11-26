@@ -100,7 +100,7 @@ fn unreadable_definition_under_an_elasticsearch_path_is_a_gap_elsewhere_it_is_no
     assert!(!report.complete);
 }
 
-/// Ratio only: twice the files must not cost more than a generous multiple of the time.
+/// Ratio only: four times the files must stay below 8x (linear ~4x, quadratic ~16x) of the time.
 #[test]
 fn scan_time_grows_linearly_with_the_file_count() {
     let time = |n: usize| {
@@ -120,9 +120,9 @@ fn scan_time_grows_linearly_with_the_file_count() {
         start.elapsed().as_secs_f64()
     };
     let best = |n| (0..3).map(|_| time(n)).fold(f64::MAX, f64::min);
-    let (small, large) = (best(300), best(600));
+    let (small, large) = (best(300), best(1200));
     assert!(
-        large < small * 6.0,
-        "2n files took {large}s, n files {small}s"
+        large < small * 8.0,
+        "4n files took {large}s, n files {small}s"
     );
 }
