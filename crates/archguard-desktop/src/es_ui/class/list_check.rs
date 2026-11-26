@@ -178,3 +178,15 @@ fn a_root_group_drops_the_root_suffix_but_keeps_the_full_label_as_title() {
         ]
     );
 }
+
+#[test]
+fn a_name_with_parentheses_stays_whole() {
+    let t = set_topology(&[art(
+        "index",
+        "logs (main)",
+        "terraform:infra/main",
+        json!(null),
+    )]);
+    let all = list(&t, &search_graph(&t), "", Group::All);
+    assert_eq!(rows(&all, 0), [row("logs (main)", "", 0, 0, false)]);
+}

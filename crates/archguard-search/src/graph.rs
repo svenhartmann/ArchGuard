@@ -12,6 +12,8 @@ const MAX_LABEL: usize = 32;
 pub struct SearchNode {
     pub kind: String,
     pub label: String,
+    /// The label without the root part ` (<folder tail>)`, unique within the root; the list of a root group shows it.
+    pub short: String,
     pub title: String,
     pub scope: String,
     pub artifact: Option<usize>,
@@ -81,6 +83,7 @@ fn node(kind: &str, label: &str, title: &str, scope: &str) -> SearchNode {
     SearchNode {
         kind: kind.into(),
         label: label.into(),
+        short: label.into(),
         title: title.into(),
         scope: scope.into(),
         artifact: None,
