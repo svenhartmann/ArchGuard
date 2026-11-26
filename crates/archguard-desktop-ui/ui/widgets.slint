@@ -577,7 +577,7 @@ export global Ratings {
 }
 
 // A dashed outline: what an unknown value keeps.
-component Dashes inherits Rectangle {
+export component Dashes inherits Rectangle {
     in property <color> tint;
     property <length> step: 6px;
     for i in max(0, floor((root.width - 8px) / step)): Rectangle {
