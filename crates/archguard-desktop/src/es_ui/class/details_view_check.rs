@@ -195,6 +195,36 @@ fn the_three_kinds_and_a_clickable_usage_render() {
     );
 }
 
+/// Longest horizontal run of one non-background colour: a solid frame line is long.
+fn longest_run(buf: &[PremultipliedRgbaColor]) -> usize {
+    let bg = key(&buf[W - 1]);
+    let mut best = 0;
+    for r in buf.chunks(W) {
+        let mut run = 0;
+        for i in 0..W {
+            let same = key(&r[i]) != bg && i > 0 && key(&r[i]) == key(&r[i - 1]);
+            run = if same { run + 1 } else { 0 };
+            best = best.max(run);
+        }
+    }
+    best
+}
+
+#[test]
+fn the_hint_box_has_a_dashed_frame() {
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    window.set_size(PhysicalSize::new(W as u32, H as u32));
+    slint::platform::set_platform(Box::new(Pixels(window.clone()))).ok();
+    let page = Page::new().expect("component");
+    page.show().expect("show");
+    page.set_details(index_details());
+    let run = longest_run(&frame(&window));
+    assert!(
+        run < 20,
+        "a solid line of {run} px: the frame is not dashed"
+    );
+}
+
 fn tr_texts(slint: &str) -> Vec<String> {
     slint
         .split("@tr(\"")
