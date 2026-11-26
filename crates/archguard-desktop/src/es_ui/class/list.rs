@@ -23,6 +23,8 @@ pub enum GroupTitle {
 pub struct ListRow {
     pub key: Key,
     pub label: String,
+    /// The full label (tooltip): `label` without the root suffix inside a root group.
+    pub title: String,
     /// The raw kind (analysis, processing); empty elsewhere.
     pub side: String,
     pub writes: usize,
@@ -84,6 +86,7 @@ fn node_row(g: &SearchGraph, i: usize) -> ListRow {
     let processing = title_of(n) == GroupTitle::Processing;
     ListRow {
         key: Key::Node(i),
+        title: String::new(),
         label: node_label(
             &n.label,
             false,
@@ -149,6 +152,7 @@ fn analysis_rows(t: &ServiceTopology, g: &SearchGraph) -> Vec<ListRow> {
                     kind: b.kind.clone(),
                     name: b.name.clone(),
                 },
+                title: String::new(),
                 label: if clash {
                     format!("{} · {}", b.name, b.owner_label)
                 } else {
