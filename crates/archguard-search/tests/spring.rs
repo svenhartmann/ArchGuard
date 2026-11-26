@@ -49,6 +49,8 @@ fn only_documents_of_the_spring_packages_are_artifacts() {
         })
         .collect();
     let want = [
+        "index archive-idx opensearch",
+        "index catalog-idx ",
         "index customers-v2 opensearch",
         "index escape-idx ",
         "index mapped-idx ",
@@ -97,10 +99,11 @@ fn fields_settings_and_evidence_of_an_annotated_class() {
 }
 
 #[test]
-fn constant_names_resolve_and_the_flavor_follows_the_import() {
+fn constant_names_resolve_and_the_flavor_follows_the_module_build_file() {
     let report = analyze();
     let a = named(&report, "customers-v2");
     assert_eq!(a.flavor, "opensearch");
+    assert_eq!(a.scope, "spring:opensearch-app");
     assert_eq!(a.detail.as_ref().expect("detail").fields[0].path, "email");
 }
 
@@ -149,4 +152,50 @@ fn unresolved_names_and_paths_are_gaps_never_silent() {
     assert_eq!(gaps, want);
     assert!(!report.complete);
     assert!(named(&report, "escape-idx").detail.is_none());
+}
+
+#[test]
+fn spring_annotations_without_an_opensearch_dependency_stay_plain() {
+    let report = analyze();
+    assert_eq!(
+        named(&report, "catalog-idx").flavor,
+        "",
+        "pom has only spring-data-elasticsearch"
+    );
+    assert_eq!(
+        named(&report, "orders-v1").flavor,
+        "",
+        "module has no build file"
+    );
+    assert_eq!(
+        named(&report, "archive-idx").flavor,
+        "opensearch",
+        "org.opensearch.data import"
+    );
+}
+
+#[test]
+fn token_count_and_analyzer_only_fields_are_kept() {
+    let report = analyze();
+    let d = named(&report, "catalog-idx")
+        .detail
+        .as_ref()
+        .expect("detail");
+    let fields: Vec<_> = d
+        .fields
+        .iter()
+        .map(|f| {
+            format!(
+                "{} [{}] {:?} {:?}",
+                f.path, f.kind, f.analyzer, f.search_analyzer
+            )
+        })
+        .collect();
+    assert_eq!(
+        fields,
+        [
+            "words [token_count] Some(\"folded\") None",
+            "label [] Some(\"folded\") Some(\"folded_search\")",
+        ]
+    );
 }

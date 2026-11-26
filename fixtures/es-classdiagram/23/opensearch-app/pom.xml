@@ -1,0 +1,13 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>demo</groupId>
+  <artifactId>opensearch-app</artifactId>
+  <version>1</version>
+  <dependencies>
+    <dependency>
+      <groupId>org.opensearch.client</groupId>
+      <artifactId>spring-data-opensearch-starter</artifactId>
+      <version>1.5.0</version>
+    </dependency>
+  </dependencies>
+</project>
