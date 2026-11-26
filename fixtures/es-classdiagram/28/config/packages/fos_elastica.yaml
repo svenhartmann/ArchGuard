@@ -1,0 +1,40 @@
+fos_elastica:
+    clients:
+        default: { host: localhost, port: 9200 }
+    indexes:
+        catalog:
+            settings:
+                index:
+                    number_of_shards: 3
+                    analysis:
+                        analyzer:
+                            title_an:
+                                type: custom
+                                tokenizer: standard
+                                filter: [lowercase]
+            properties:
+                title: { type: text, analyzer: title_an, search_analyzer: standard }
+                sku: { type: keyword, normalizer: lower_norm }
+                name:
+                    type: text
+                    fields:
+                        raw: { type: keyword }
+                address:
+                    type: object
+                    properties:
+                        city: { type: keyword }
+            persistence:
+                driver: orm
+                model: Acme\Shop\Entity\Product
+        shop_data:
+            index_name: shop_v2
+            properties:
+                price: { type: float }
+        env_idx:
+            index_name: '%env(ES_INDEX)%'
+            properties:
+                a: { type: keyword }
+        param_idx:
+            index_name: 'app_%kernel.environment%'
+            properties:
+                a: { type: keyword }

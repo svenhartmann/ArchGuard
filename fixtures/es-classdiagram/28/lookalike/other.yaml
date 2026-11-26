@@ -1,0 +1,12 @@
+# indexes outside fos_elastica: not an Elastica definition
+database:
+    indexes:
+        people_idx:
+            properties:
+                name: { type: text }
+nested:
+    fos_elastica:
+        indexes:
+            nested_idx:
+                properties:
+                    a: { type: keyword }

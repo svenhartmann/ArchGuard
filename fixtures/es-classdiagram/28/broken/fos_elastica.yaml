@@ -1,0 +1,5 @@
+fos_elastica:
+    indexes:
+        hidden_idx:
+            properties:
+                a: { type: text }
