@@ -54,7 +54,7 @@ fn documents_of_every_import_path_become_artifacts_and_lookalikes_do_not() {
         })
         .collect();
     let want = [
-        "index nameless python:shop [] shop/dynamic.py:Nameless",
+        "index ? python:shop [] shop/dynamic.py:Nameless",
         "index partial python:shop [] shop/dynamic.py:Partial",
         "index orders-v1 python:shop [] shop/orders.py:Order",
         "index events python:shop [opensearch] shop/others.py:Event",
