@@ -68,6 +68,8 @@ fn documents_of_every_import_path_become_artifacts_and_lookalikes_do_not() {
         "index events python:shop [opensearch] shop/others.py:Event",
         "index notes python:shop [] shop/others.py:Note",
         "index products python:shop [] shop/products.py:ProductDocument",
+        "index opaque python:typed [] typed/rhs.py:Opaque",
+        "index rhs python:typed [] typed/rhs.py:Rhs",
         "index typed python:typed [] typed/typed.py:Typed",
         "index invalid python:typed [] typed/untyped.py:Invalid",
         "index untyped python:typed [] typed/untyped.py:Untyped",
@@ -245,6 +247,24 @@ fn typed_fields_async_documents_and_numpy_vectors() {
 }
 
 #[test]
+fn a_right_hand_side_wins_over_the_annotation() {
+    let report = analyze();
+    // keyword from `field=`, `exclude=True` skipped, keyword from the local subclass, the
+    // annotation only without an assignment.
+    let r = by_address(&report, "typed/rhs.py:Rhs");
+    assert_eq!(fields_of(r), ["a:keyword", "c:keyword", "plain:integer"]);
+    // An assigned call that is no field class is a gap, never the annotation type.
+    let o = by_address(&report, "typed/rhs.py:Opaque");
+    assert!(o.detail.is_none());
+    assert!(
+        gaps(&report)
+            .iter()
+            .any(|g| g.starts_with("typed/rhs.py: typed/rhs.py:Opaque")
+                && g.ends_with("not read: mappings."))
+    );
+}
+
+#[test]
 fn django_model_fields_are_a_gap() {
     let report = analyze();
     assert!(
@@ -260,7 +280,7 @@ fn django_model_fields_are_a_gap() {
 fn non_literal_parts_are_gaps_that_name_the_attribute() {
     let report = analyze();
     let gaps = gaps(&report);
-    assert_eq!(gaps.len(), 7, "{gaps:#?}");
+    assert_eq!(gaps.len(), 8, "{gaps:#?}");
     assert!(gaps.iter().any(
         |g| g.starts_with("shop/dynamic.py: shop/dynamic.py:Partial")
             && g.ends_with("not read: mappings, settings.")
