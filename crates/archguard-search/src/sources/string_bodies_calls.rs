@@ -188,7 +188,7 @@ fn java_call(t: &Toks, i: usize, out: &mut Vec<Found>) {
         return;
     }
     let api = format!("indices().{}", t.word(i + 5));
-    let Some(span) = t.end(i + 6) else {
+    let Some(span) = t.span(i + 6) else {
         out.push(gap_call(t, i + 5, &api));
         return;
     };

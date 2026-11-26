@@ -63,7 +63,7 @@ impl Toks<'_> {
     /// The top-level arguments of the bracket at `open` as token ranges; `None` when it is
     /// never closed or spans more than `MAX_SPAN` tokens.
     pub(super) fn args(&self, open: usize) -> Option<Vec<(usize, usize)>> {
-        let end = *self.close.get(open).filter(|&&e| e - open <= MAX_SPAN)?;
+        let end = self.span(open)?;
         let (mut out, mut start, mut i) = (vec![], open + 1, open + 1);
         while i < end {
             match self.t[i].kind {
@@ -82,6 +82,14 @@ impl Toks<'_> {
             out.push((start, end));
         }
         Some(out)
+    }
+
+    /// The closer of the bracket at `open`; `None` when never closed or longer than `MAX_SPAN`.
+    pub(super) fn span(&self, open: usize) -> Option<usize> {
+        self.close
+            .get(open)
+            .copied()
+            .filter(|&e| e - open <= MAX_SPAN)
     }
 
     /// The index of the matching closer of the bracket at `open`.
