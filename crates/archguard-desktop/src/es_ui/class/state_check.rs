@@ -63,6 +63,7 @@ fn a_field_selection_is_an_index_key_and_a_path_that_another_selection_drops() {
     s.select(Some(Key::Node(3)));
     assert_eq!(s.field, None);
     s.set_field(Key::Node(2), "title");
+    s.row_keys = vec![Key::Node(5)];
     s.pick_row(0);
     assert_eq!(s.field, None, "a list row selects the index, not the field");
     s.set_field(Key::Node(2), "title");

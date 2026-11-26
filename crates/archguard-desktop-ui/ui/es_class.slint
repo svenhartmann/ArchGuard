@@ -41,6 +41,9 @@ export global EsClassData {
     // A list row (flat index) and a canvas box (index in `boxes`).
     callback select-row(int);
     callback select-box(int, float);
+    // A field of the shown index (path, from the details) and "back to the index".
+    callback select-field(string);
+    callback clear-field();
     callback search(string);
     callback choose-kind(int);
     callback toggle-cluster();
@@ -154,6 +157,7 @@ export component EsClassView inherits Rectangle {
                         zoom: m.zoom;
                         fit-tick: m.fit-tick;
                         select(i, y) => { EsClassData.select-box(i, y); }
+                        escape => { EsClassData.clear-field(); }
                         zoom-by(f) => { EsClassData.zoom-by(f); }
                         fit(w, h) => { EsClassData.fit(w, h); }
                     }
@@ -166,6 +170,7 @@ export component EsClassView inherits Rectangle {
                 height: root.side ? parent.height : parent.bar-h;
                 details: m.details;
                 open(file, line) => { EsClassData.open(file, line); }
+                select-field(path) => { EsClassData.select-field(path); }
             }
         }
     }

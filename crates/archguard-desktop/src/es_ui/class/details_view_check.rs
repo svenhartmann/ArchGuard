@@ -244,7 +244,11 @@ fn details_texts_are_translated() {
     // "Settings" is the Settings tab's own, in its context.
     texts.retain(|t| t != "Settings");
     for t in [
-        "Fields with analysis",
+        "Fields",
+        "Index chain {0}",
+        "Search chain {0}",
+        "Normalizer chain {0}",
+        "Role: multi-field",
         "Analysis chain {0}",
         "Char filter",
         "Tokenizer",

@@ -167,9 +167,13 @@ fn stages(detail: &SearchIndexDetail, name: &str) -> (Option<String>, BTreeSet<S
 
 /// The effective index and search analyzer names of field `path`. Search order (ES 8.19):
 /// `search_analyzer`, declared `default_search` (text fields), `analyzer`, declared `default`,
-/// `standard`; index order: `analyzer`, declared `default`, `standard`.
+/// `standard`; index order: `analyzer`, declared `default`, `standard`. `None` for an unknown
+/// field and for one analysis does not apply to (not `text` and no analyzer named).
 pub fn search_field_analyzers(detail: &SearchIndexDetail, path: &str) -> Option<(String, String)> {
     let f = detail.fields.iter().find(|f| f.path == path)?;
+    if f.kind != "text" && f.analyzer.is_none() && f.search_analyzer.is_none() {
+        return None;
+    }
     let declared = |n: &str| {
         detail
             .analysis

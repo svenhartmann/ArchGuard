@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::boxes::{BoxContent, Chip, Compartment};
 use super::diagram::{BoxKind, DEdge, Diagram, EdgeStyle};
-use super::types::Key;
+use super::types::{HEAD, Key, ROW};
 use crate::diagram::{HeadShape, Point, curve_stroke, head_path, line_stroke};
 
 /// A positioned box. `comps` are the compartment tops (relative to the box); `chips` are
@@ -45,8 +45,6 @@ const COL_W: [f32; 4] = [230.0, 300.0, 270.0, 190.0];
 const MARGIN: f32 = 20.0;
 const GAP_X: f32 = 80.0;
 const GAP_Y: f32 = 24.0;
-const ROW: f32 = 16.0;
-const HEAD: f32 = 3.0 * ROW;
 const CHIP_ROW: f32 = 18.0;
 const PAD: f32 = 8.0;
 
@@ -333,7 +331,14 @@ pub fn layout(d: &Diagram, contents: &[BoxContent]) -> Scene {
     }
 }
 
-/// The field lines of a box as (top, path), relative to the box.
-pub fn field_rows(_c: &BoxContent, _p: &Placed) -> Vec<(f32, String)> {
-    Vec::new()
+/// The field lines of a box as (top, path), relative to the box: what a click on the canvas hits.
+pub fn field_rows(c: &BoxContent, p: &Placed) -> Vec<(f32, String)> {
+    let lines = c.compartments.iter().zip(&p.comps).flat_map(|(k, &top)| {
+        let rows = k.lines.iter().enumerate();
+        rows.map(move |(i, l)| (top + ROW * (1 + i) as f32, l))
+    });
+    lines
+        .filter(|(_, l)| !l.path.is_empty())
+        .map(|(y, l)| (y, l.path.clone()))
+        .collect()
 }

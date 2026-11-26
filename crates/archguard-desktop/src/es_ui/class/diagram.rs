@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use archguard_engine::core::{SearchArtifact, SearchIndexDetail, ServiceTopology};
 use archguard_engine::{
     SearchAnalysisPart, SearchEdge, SearchGraph, SearchNode, search_analysis_parts,
+    search_field_analyzers,
 };
 
 use super::types::{Key, Switches};
@@ -65,6 +66,7 @@ pub struct Diagram {
 
 /// Search the graph for the neighbors, then lay out boxes and edges; a selected `Key` out of
 /// range gives an empty diagram.
+#[cfg(test)]
 pub fn diagram(
     t: &ServiceTopology,
     g: &SearchGraph,
@@ -82,7 +84,7 @@ pub fn diagram_field(
     selected: &Key,
     cluster: Option<&[Key]>,
     sw: &Switches,
-    _field: Option<&str>,
+    field: Option<&str>,
 ) -> Diagram {
     let cx = Cx::new(t, g, sw);
     let (mut nodes, parts) = match cluster {
@@ -90,7 +92,11 @@ pub fn diagram_field(
         None => cx.neighborhood(selected),
     };
     nodes.retain(|&i| sw.services || g.nodes[i].kind != "service");
-    cx.assemble(&nodes, &parts, selected)
+    let field = field.zip(match selected {
+        Key::Node(i) => Some(*i),
+        Key::Part { .. } => None,
+    });
+    cx.assemble(&nodes, &parts, selected, field.map(|(p, i)| (i, p)))
 }
 
 struct Cx<'a> {
@@ -262,8 +268,41 @@ impl<'a> Cx<'a> {
         map
     }
 
-    fn assemble(&self, nodes: &BTreeSet<usize>, parts: &BTreeSet<Key>, sel: &Key) -> Diagram {
+    /// The boxes a field's analysis uses: its index, the index and search analyzer, the
+    /// normalizer and their declared members; `None` for an unknown field.
+    fn lit(&self, owner: usize, path: &str, canon: &BTreeMap<Key, Key>) -> Option<BTreeSet<Key>> {
+        let d = Self::detail_of(self.t, self.g.nodes.get(owner)?)?;
+        let f = d.fields.iter().find(|f| f.path == path)?;
+        let (index, search) = search_field_analyzers(d, path).unzip();
+        let wanted = [
+            ("analyzer", index),
+            ("analyzer", search),
+            ("normalizer", f.normalizer.clone()),
+        ];
+        let mut keys = BTreeSet::from([Key::Node(owner)]);
+        for (kind, name) in wanted.into_iter().filter_map(|(k, n)| Some((k, n?))) {
+            let Some(p) = self.find_part(owner, kind, &name) else {
+                continue;
+            };
+            keys.insert(part_key(owner, kind, &name));
+            keys.extend(used(p).into_iter().map(|(k, n)| part_key(owner, k, n)));
+        }
+        Some(
+            keys.into_iter()
+                .map(|k| canon.get(&k).cloned().unwrap_or(k))
+                .collect(),
+        )
+    }
+
+    fn assemble(
+        &self,
+        nodes: &BTreeSet<usize>,
+        parts: &BTreeSet<Key>,
+        sel: &Key,
+        field: Option<(usize, &str)>,
+    ) -> Diagram {
         let canon = self.canon(parts);
+        let lit = field.and_then(|(owner, path)| self.lit(owner, path, &canon));
         let mut boxes: Vec<DBox> = nodes.iter().map(|&i| self.node_box(i, sel)).collect();
         let unique: BTreeSet<&Key> = canon.values().collect();
         boxes.extend(unique.into_iter().map(|k| part_box(k, sel)));
@@ -271,14 +310,21 @@ impl<'a> Cx<'a> {
         let mut edges = self.graph_edges(nodes);
         edges.extend(self.part_edges(nodes, &canon));
         let edges: BTreeSet<Edge> = edges.into_iter().collect();
+        let dim = |keys: &[&Key], uses: bool| {
+            lit.as_ref()
+                .is_some_and(|l| !(uses && keys.iter().all(|k| l.contains(*k))))
+        };
+        for b in &mut boxes {
+            b.dim = dim(&[&b.key], true);
+        }
         let edges = edges
             .into_iter()
             .map(|(from, to, style, label)| DEdge {
+                dim: dim(&[&from, &to], style == EdgeStyle::Uses),
                 from,
                 to,
                 style,
                 label,
-                dim: false,
             })
             .collect();
         Diagram { boxes, edges }

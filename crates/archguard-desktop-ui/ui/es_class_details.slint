@@ -122,6 +122,28 @@ component ChainTable inherits VerticalLayout {
     }
 }
 
+// The fields of an index as a tree; a click selects one.
+component FieldTree inherits VerticalLayout {
+    in property <[EsDetailField]> fields;
+    callback select(string);
+    spacing: 2px;
+    for f in fields: Rectangle {
+        height: row.preferred-height + 2px;
+        background: f.selected ? Theme.accent.with-alpha(0.25) : transparent;
+        row := HorizontalLayout {
+            spacing: 8px;
+            padding-left: f.depth * 12px;
+            Mono { text: f.name; width: 170px - f.depth * 12px; }
+            Mono { text: f.kind + (f.analysis != "" ? " · " + f.analysis : ""); color: Theme.text; horizontal-stretch: 1; }
+        }
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.select(f.path); }
+        }
+    }
+    if fields.length == 0: Note { text: @tr("none"); }
+}
+
 component Pairs inherits VerticalLayout {
     in property <[EsDetailPair]> items;
     spacing: 2px;
@@ -140,6 +162,8 @@ export component EsClassDetails inherits Rectangle {
     in property <EsDetails> details;
     // The file and line of a clickable usage.
     callback open(string, int);
+    // The path of a field in the tree.
+    callback select-field(string);
     background: Theme.panel;
     ScrollView {
         VerticalLayout {
@@ -154,15 +178,39 @@ export component EsClassDetails inherits Rectangle {
                 Mono { text: details.head.location; horizontal-stretch: 1; }
             }
 
+            if details.mode == 0 || details.mode == 3: VerticalLayout {
+                spacing: 6px;
+                SectionHeading { label: @tr("Fields"); }
+                FieldTree { fields: details.fields; select(p) => { root.select-field(p); } }
+            }
+
+            if details.mode == 3: VerticalLayout {
+                spacing: 6px;
+                SectionHeading { label: @tr("Field {0}", details.field.path); }
+                Note { text: @tr("Type: {0}", details.field.kind); }
+                Note { text: details.field.role == 0 ? @tr("Role: field") : details.field.role == 1 ? @tr("Role: multi-field") : @tr("Role: child of an object"); }
+                if details.field.index-name != "": SectionHeading { label: @tr("Index chain {0}", details.field.index-name); }
+                ChainTable { rows: details.field.index-chain; }
+                if details.field.search-name != "": SectionHeading { label: @tr("Search chain {0}", details.field.search-name); }
+                ChainTable { rows: details.field.search-chain; }
+                if details.field.norm-name != "": SectionHeading { label: @tr("Normalizer chain {0}", details.field.norm-name); }
+                ChainTable { rows: details.field.norm-chain; }
+                if details.field.hint.field != "": Rectangle {
+                    Dashes { width: parent.width; height: parent.height; tint: Theme.muted; }
+                    VerticalLayout {
+                        padding: 6px;
+                        spacing: 2px;
+                        Note { text: @tr("Index and search analyzer differ at {0}.", details.field.hint.field); }
+                        if details.field.hint.search-only != "": Note { text: @tr("Search only: {0}", details.field.hint.search-only); }
+                        if details.field.hint.index-only != "": Note { text: @tr("Index only: {0}", details.field.hint.index-only); }
+                        if details.field.hint.tokenizer: Note { text: @tr("The tokenizer differs."); }
+                        Note { text: @tr("Static hint, no rating."); }
+                    }
+                }
+            }
+
             if details.mode == 0: VerticalLayout {
                 spacing: 6px;
-                SectionHeading { label: @tr("Fields with analysis"); }
-                for f in details.fields: HorizontalLayout {
-                    spacing: 8px;
-                    Mono { text: f.name; width: 170px; }
-                    Mono { text: f.kind + (f.analysis != "" ? " · " + f.analysis : ""); color: Theme.text; horizontal-stretch: 1; }
-                }
-                if details.fields.length == 0: Note { text: @tr("none"); }
                 if details.chain.length > 0: SectionHeading { label: @tr("Analysis chain {0}", details.chain-name); }
                 ChainTable { rows: details.chain; }
                 if details.hint.field != "": Rectangle {

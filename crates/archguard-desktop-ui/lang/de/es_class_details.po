@@ -1,5 +1,26 @@
-msgid "Fields with analysis"
-msgstr "Felder mit Analyse"
+msgid "Field {0}"
+msgstr "Feld {0}"
+
+msgid "Type: {0}"
+msgstr "Typ: {0}"
+
+msgid "Role: field"
+msgstr "Rolle: Feld"
+
+msgid "Role: multi-field"
+msgstr "Rolle: Multi-Field"
+
+msgid "Role: child of an object"
+msgstr "Rolle: Kind eines Objekts"
+
+msgid "Index chain {0}"
+msgstr "Index-Kette {0}"
+
+msgid "Search chain {0}"
+msgstr "Such-Kette {0}"
+
+msgid "Normalizer chain {0}"
+msgstr "Normalizer-Kette {0}"
 
 msgid "Analysis chain {0}"
 msgstr "Analyse-Kette {0}"

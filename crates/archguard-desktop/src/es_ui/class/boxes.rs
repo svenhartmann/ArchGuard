@@ -305,7 +305,7 @@ fn field_lines(d: &SearchIndexDetail, sw: &Switches) -> Vec<Line> {
         out.push(Line {
             depth: search_field_depth(&d.fields, i),
             prefix,
-            path: String::new(),
+            path: f.path.clone(),
             text: f.path.rsplit('.').next().unwrap_or_default().into(),
             kind_text: f.kind.clone(),
             note: if parts.is_empty() {

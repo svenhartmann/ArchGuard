@@ -4,7 +4,8 @@
 use archguard_engine::core::{SearchArtifact, SearchIndexDetail, ServiceTopology};
 use archguard_engine::{
     ChainRef, SearchAnalysisPart, SearchFieldRole, SearchGraph, SearchNode, search_analysis_parts,
-    search_analysis_users, search_analyzer_difference, search_field_depth, search_field_role,
+    search_analysis_users, search_analyzer_difference, search_field_analyzers, search_field_depth,
+    search_field_role,
 };
 use serde_json::Value;
 
@@ -46,7 +47,6 @@ pub struct FieldRow {
     pub normalizer: Option<String>,
 }
 
-/// `None` for fields without an analyzer (keyword, numbers, objects).
 /// The analysis chain a field uses in one role: the effective analyzer or normalizer `name`;
 /// `stages` is empty when it is built in or not declared.
 #[derive(Debug, PartialEq, Eq)]
@@ -56,8 +56,9 @@ pub struct FieldChain {
     pub stages: Vec<StageRow>,
 }
 
-/// One field of an index: its role, the index and search chain, the normalizer chain and the
-/// neutral hint when index and search analysis differ.
+/// One field of an index: its role, the index and search chain (`None` without an analyzer: not
+/// a text field and none named), the normalizer chain and the neutral hint when index and search
+/// analysis differ.
 #[derive(Debug, PartialEq, Eq)]
 pub struct FieldDetails {
     pub path: String,
@@ -124,12 +125,40 @@ pub fn details(t: &ServiceTopology, g: &SearchGraph, key: &Key) -> Details {
 
 /// The details of field `path` of the index (or template) node `owner`.
 pub fn field_details(
-    _t: &ServiceTopology,
-    _g: &SearchGraph,
-    _owner: usize,
-    _path: &str,
+    t: &ServiceTopology,
+    g: &SearchGraph,
+    owner: usize,
+    path: &str,
 ) -> Option<FieldDetails> {
-    None
+    let node = g.nodes.get(owner)?;
+    let d = node
+        .artifact
+        .and_then(|i| t.elasticsearch.artifacts.get(i))?
+        .detail
+        .as_ref()?;
+    let i = d.fields.iter().position(|f| f.path == path)?;
+    let f = &d.fields[i];
+    let parts = search_analysis_parts(d);
+    let chain = |kind: &str, name: &str| {
+        let part = parts.iter().find(|p| p.kind == kind && p.name == name);
+        FieldChain {
+            name: name.to_string(),
+            declared: part.is_some(),
+            stages: part.map(|p| stage_rows(p, &parts)).unwrap_or_default(),
+        }
+    };
+    let (index, search) = search_field_analyzers(d, path).map_or((None, None), |(i, s)| {
+        (Some(chain("analyzer", &i)), Some(chain("analyzer", &s)))
+    });
+    Some(FieldDetails {
+        path: f.path.clone(),
+        kind: f.kind.clone(),
+        role: search_field_role(&d.fields, i),
+        index,
+        search,
+        normalizer: f.normalizer.as_deref().map(|n| chain("normalizer", n)),
+        hint: hints_of(d, path),
+    })
 }
 
 fn node_details(t: &ServiceTopology, n: &SearchNode) -> Option<Details> {
@@ -188,9 +217,6 @@ fn field_rows(d: &SearchIndexDetail) -> Vec<FieldRow> {
     d.fields
         .iter()
         .enumerate()
-        .filter(|(_, f)| {
-            f.analyzer.is_some() || f.search_analyzer.is_some() || f.normalizer.is_some()
-        })
         .map(|(i, f)| FieldRow {
             path: f.path.clone(),
             depth: search_field_depth(&d.fields, i),
@@ -274,20 +300,22 @@ fn stage_params(
     }
 }
 
+fn hints_of(d: &SearchIndexDetail, path: &str) -> Option<Hint> {
+    let x = search_analyzer_difference(d, path)?;
+    Some(Hint {
+        field: path.to_string(),
+        index: x.index,
+        search: x.search,
+        tokenizer_differs: x.tokenizer_differs,
+        only_index: x.only_index,
+        only_search: x.only_search,
+    })
+}
+
 fn hints(d: &SearchIndexDetail) -> Vec<Hint> {
     d.fields
         .iter()
-        .filter_map(|f| {
-            let x = search_analyzer_difference(d, &f.path)?;
-            Some(Hint {
-                field: f.path.clone(),
-                index: x.index,
-                search: x.search,
-                tokenizer_differs: x.tokenizer_differs,
-                only_index: x.only_index,
-                only_search: x.only_search,
-            })
-        })
+        .filter_map(|f| hints_of(d, &f.path))
         .collect()
 }
 

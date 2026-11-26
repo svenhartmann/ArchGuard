@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use archguard_engine::{SearchGraph, search_graph};
 
-use super::class::types::{Group, Key, Switch, Switches};
+use super::class::types::{Group, HEAD, Key, ROW, Switch, Switches};
 use crate::services_ui::search::KINDS;
 use crate::tab_support::Topology;
 
@@ -133,18 +133,30 @@ impl EsState {
 impl EsState {
     pub(super) fn select(&mut self, key: Option<Key>) {
         self.selected = key;
+        self.field = None;
         self.problem.clear();
         self.fit_tick += 1;
     }
 
     /// Field `path` of the index `key` is selected (the index is selected with it).
-    pub(super) fn set_field(&mut self, _key: Key, _path: &str) {}
+    pub(super) fn set_field(&mut self, key: Key, path: &str) {
+        if self.selected.as_ref() != Some(&key) {
+            self.select(Some(key.clone()));
+        }
+        self.field = Some((key, path.to_string()));
+    }
 
     /// Back to the index selection.
-    pub(super) fn clear_field(&mut self) {}
+    pub(super) fn clear_field(&mut self) {
+        self.field = None;
+    }
 
     /// A field of the shown index was clicked in the details.
-    pub(super) fn select_field(&mut self, _path: &str) {}
+    pub(super) fn select_field(&mut self, path: &str) {
+        if let Some(key) = self.shown.clone() {
+            self.set_field(key, path);
+        }
+    }
 
     pub(super) fn toggle_cluster(&mut self) {
         self.cluster = !self.cluster;
@@ -169,10 +181,22 @@ impl EsState {
         }
     }
 
-    /// The canvas box `i` is selected; an index out of range is ignored.
-    pub(super) fn pick_box(&mut self, i: usize, _y: f32) {
-        if let Some(key) = self.box_keys.get(i).cloned() {
-            self.select(Some(key));
+    /// The canvas box `i` is clicked `y` px below its top (zoom 1): a field row selects that
+    /// field of the index, the header of the index with a field in focus returns to the index,
+    /// else the box is selected. An index out of range is ignored.
+    pub(super) fn pick_box(&mut self, i: usize, y: f32) {
+        let Some(key) = self.box_keys.get(i).cloned() else {
+            return;
+        };
+        let hit = (self.box_rows.get(i).into_iter().flatten())
+            .find(|(top, _)| (*top..*top + ROW).contains(&y))
+            .map(|(_, path)| path.clone());
+        match hit {
+            Some(path) => self.set_field(key, &path),
+            None if self.field.as_ref().is_some_and(|(k, _)| *k == key) && y < HEAD => {
+                self.clear_field();
+            }
+            None => self.select(Some(key)),
         }
     }
 

@@ -11,9 +11,9 @@ use slint::SharedString;
 use super::boxes::{
     self, BoxContent, ChainClass, Chip, Compartment, Line, Prefix, Stage, Title, content,
 };
-use super::details::details;
-use super::diagram::{BoxKind, DBox, Diagram, EdgeStyle, diagram};
-use super::layout::{Placed, PlacedEdge, Scene, layout};
+use super::details::{details, field_details};
+use super::diagram::{BoxKind, DBox, Diagram, EdgeStyle, diagram_field};
+use super::layout::{Placed, PlacedEdge, Scene, field_rows, layout};
 use super::list::{GroupTitle, ListGroup, ListRow, list, members};
 use super::types::Key;
 use super::view_details::slint_details;
@@ -22,7 +22,7 @@ use crate::es_ui::state::EsState;
 use crate::tab_support::model;
 use crate::ui::{
     EsClassBox, EsClassChip, EsClassCompartment, EsClassEdge, EsClassGroup, EsClassLine,
-    EsClassModel, EsClassRow,
+    EsClassModel, EsClassRow, EsDetails,
 };
 
 /// Group header and row height of the list; `es_class_list.slint` draws the same pitch.
@@ -37,24 +37,57 @@ fn current(s: &EsState, rows: &[Key]) -> Option<Key> {
         .or_else(|| rows.iter().find(index).or(rows.first()).cloned())
 }
 
+/// The field of the selected index in focus.
+fn field_of<'a>(s: &'a EsState, key: &Key) -> Option<&'a str> {
+    let (k, path) = s.field.as_ref()?;
+    (k == key).then_some(path.as_str())
+}
+
+struct Canvas {
+    d: Diagram,
+    scene: Scene,
+    boxes: Vec<EsClassBox>,
+    /// Per box the (top, path) of its field lines.
+    rows: Vec<Vec<(f32, String)>>,
+}
+
 /// The diagram of `key` (the whole list with the cluster switch), laid out and as Slint boxes.
-fn canvas(
-    t: &ServiceTopology,
-    s: &EsState,
-    key: &Key,
-    rows: &[Key],
-) -> (Diagram, Scene, Vec<EsClassBox>) {
-    let d = diagram(t, &s.graph, key, s.cluster.then_some(rows), &s.switches);
+fn canvas(t: &ServiceTopology, s: &EsState, key: &Key, rows: &[Key]) -> Canvas {
+    let field = field_of(s, key);
+    let cluster = s.cluster.then_some(rows);
+    let d = diagram_field(t, &s.graph, key, cluster, &s.switches, field);
     let contents: Vec<BoxContent> = d
         .boxes
         .iter()
         .map(|b| content(t, &s.graph, &b.key, &s.switches))
         .collect();
     let scene = layout(&d, &contents);
-    let boxes = (d.boxes.iter().zip(&contents).zip(&scene.boxes))
-        .map(|((b, c), p)| slint_box(b, c, p))
+    let placed = d.boxes.iter().zip(&contents).zip(&scene.boxes);
+    let boxes = (placed.clone())
+        .map(|((b, c), p)| slint_box(b, c, p, field))
         .collect();
-    (d, scene, boxes)
+    let rows = placed.map(|((_, c), p)| field_rows(c, p)).collect();
+    Canvas {
+        d,
+        scene,
+        boxes,
+        rows,
+    }
+}
+
+fn details_model(t: &ServiceTopology, s: &EsState, key: &Key) -> EsDetails {
+    let field = field_of(s, key);
+    let focus = match (key, field) {
+        (Key::Node(i), Some(p)) => field_details(t, &s.graph, *i, p),
+        _ => None,
+    };
+    slint_details(
+        &s.graph,
+        key,
+        &details(t, &s.graph, key),
+        focus.as_ref(),
+        field,
+    )
 }
 
 /// The model of the whole view; remembers the keys the callbacks' indices stand for.
@@ -70,7 +103,12 @@ pub fn build(s: &mut EsState) -> EsClassModel {
     let rows = members(&groups);
     let current = current(s, &rows);
     let key = current.clone().unwrap_or(Key::Node(usize::MAX));
-    let (d, scene, boxes) = canvas(t, s, &key, &rows);
+    let Canvas {
+        d,
+        scene,
+        boxes,
+        rows: box_rows,
+    } = canvas(t, s, &key, &rows);
     let out = EsClassModel {
         state: 1,
         switches: model([
@@ -100,10 +138,12 @@ pub fn build(s: &mut EsState) -> EsClassModel {
         fit_tick: s.fit_tick,
         details: current
             .as_ref()
-            .map(|k| slint_details(&s.graph, k, &details(t, &s.graph, k)))
+            .map(|k| details_model(t, s, k))
             .unwrap_or_default(),
         problem: SharedString::from(s.problem.as_str()),
     };
+    s.shown = current;
+    s.box_rows = box_rows;
     s.row_keys = rows;
     s.box_keys = d.boxes.into_iter().map(|b| b.key).collect();
     s.canvas = (scene.width, scene.height);
@@ -186,13 +226,12 @@ fn box_code(k: BoxKind) -> i32 {
     }
 }
 
-fn slint_box(b: &DBox, c: &BoxContent, p: &Placed) -> EsClassBox {
+/// `field`: the path of the field in focus; only the selected box shows it.
+fn slint_box(b: &DBox, c: &BoxContent, p: &Placed, field: Option<&str>) -> EsClassBox {
     let mut chips = p.chips.iter();
-    let compartments = c
-        .compartments
-        .iter()
-        .zip(&p.comps)
-        .map(|(comp, &y)| slint_compartment(comp, y, &mut chips));
+    let focus = field.filter(|_| b.selected);
+    let compartments = (c.compartments.iter().zip(&p.comps))
+        .map(|(comp, &y)| slint_compartment(comp, y, focus, &mut chips));
     EsClassBox {
         x: p.x,
         y: p.y,
@@ -219,6 +258,7 @@ fn slint_box(b: &DBox, c: &BoxContent, p: &Placed) -> EsClassBox {
 fn slint_compartment<'a>(
     c: &Compartment,
     y: f32,
+    focus: Option<&str>,
     chips: &mut impl Iterator<Item = &'a (f32, f32, f32)>,
 ) -> EsClassCompartment {
     let placed: Vec<EsClassChip> = c
@@ -230,7 +270,7 @@ fn slint_compartment<'a>(
     EsClassCompartment {
         title: title_code(c.title),
         y,
-        lines: model(c.lines.iter().map(slint_line)),
+        lines: model(c.lines.iter().map(|l| slint_line(l, focus))),
         chips: model(placed),
     }
 }
@@ -268,7 +308,7 @@ fn slint_chip(c: &Chip, x: f32, y: f32, w: f32) -> EsClassChip {
     }
 }
 
-fn slint_line(l: &Line) -> EsClassLine {
+fn slint_line(l: &Line, focus: Option<&str>) -> EsClassLine {
     EsClassLine {
         depth: l.depth as i32,
         prefix: match l.prefix {
@@ -280,7 +320,7 @@ fn slint_line(l: &Line) -> EsClassLine {
         kind: l.kind_text.as_str().into(),
         note: l.note.as_str().into(),
         summary: l.summary.unwrap_or(0) as i32,
-        focus: false,
+        focus: !l.path.is_empty() && focus == Some(l.path.as_str()),
     }
 }
 
@@ -312,7 +352,7 @@ pub fn fit(s: &mut EsState, w: f32, h: f32) {
     }
 }
 
-/// The snapshot hooks of `es_ui.rs` (`ARCHGUARD_DESKTOP_ES_FOCUS`, `_ES_CLUSTER`, `_ES_KIND`).
+/// The snapshot hooks of `es_ui.rs` (`ARCHGUARD_DESKTOP_ES_FOCUS`, `_ES_FIELD`, `_ES_CLUSTER`, `_ES_KIND`).
 #[cfg(feature = "snapshot")]
 pub fn snapshot(s: &mut EsState) {
     use super::types::Group;
@@ -341,4 +381,10 @@ pub fn snapshot(s: &mut EsState) {
         .flat_map(|g| g.rows)
         .find(|r| r.label == want || format!("{}:{}", r.side, r.label) == want);
     s.selected = found.map(|r| r.key);
+    if let (Some(key), Ok(path)) = (
+        s.selected.clone(),
+        std::env::var("ARCHGUARD_DESKTOP_ES_FIELD"),
+    ) {
+        s.field = Some((key, path));
+    }
 }
