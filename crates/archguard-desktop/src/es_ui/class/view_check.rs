@@ -232,3 +232,27 @@ fn the_hint_names_only_the_sides_that_differ_and_the_tokenizer() {
         ("", "a, b", true)
     );
 }
+
+#[test]
+fn a_lone_index_fits_at_full_size_and_a_full_scene_shrinks() {
+    let es = json!({"artifacts": [{"kind": "index", "name": "solo", "address": "r.solo",
+        "scope": "terraform:infra", "patterns": [], "references": [], "evidence": []}],
+        "usages": [], "findings": []});
+    let t = archguard_engine::core::ServiceTopology {
+        elasticsearch: serde_json::from_value(es).unwrap(),
+        ..Default::default()
+    };
+    let mut s = build_from(Arc::new(Ok(t)));
+    let m = build(&mut s);
+    assert!(
+        m.canvas_w < 400.0,
+        "only the placed column counts: {}",
+        m.canvas_w
+    );
+    fit(&mut s, 1100.0, 900.0);
+    assert_eq!(s.zoom, 1.0, "nothing to shrink");
+    let mut full = state();
+    build(&mut full);
+    fit(&mut full, 600.0, 400.0);
+    assert!(full.zoom < 1.0, "{}", full.zoom);
+}
