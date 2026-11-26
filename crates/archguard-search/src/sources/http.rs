@@ -8,11 +8,11 @@
 //! variable (`${INDEX}`, `{{index}}`), a body that is no JSON object, an `-d @file` that is absolute,
 //! outside the root or unreadable, and an unreadable file are gaps. The body goes through
 //! `search_definition` with the kind from the path; `@file` is read relative to the script, then to
-//! the root, and named in the evidence. A curl counts only as the literal first word of a command.
+//! the root, and named in the evidence (the merge then drops the `json:` artifact of that file). A curl counts only as the literal first word of a command.
 //! `scope` = `http:<folder>`, evidence = the request line. Trust boundary: files below the root
 //! through the safe reader, at most 5 000 files, no test paths, no network, nothing executed.
 // shortcut: curl options without a value are skipped by prefix, unknown value options (`--proxy x`)
-// would make their value the URL; the file behind `@file` also stays an artifact of `json_files`.
+// would make their value the URL; combined short flags (`-sd`) are not split.
 use super::http_parse::{Body, Request, http_requests, shell_requests};
 use super::json::search_definition;
 use crate::context::{SearchContext, SourceOutput};

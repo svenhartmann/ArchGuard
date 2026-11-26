@@ -54,6 +54,7 @@ const DATA_FLAGS: &[&str] = &[
     "--data-raw",
     "--data-binary",
     "--data-ascii",
+    "--json",
 ];
 
 fn line_no(i: usize) -> u32 {
@@ -114,31 +115,44 @@ pub(super) fn http_requests(text: &str) -> Vec<Request> {
 }
 
 /// Shell, Dockerfile and Makefile text: every command whose first word is the literal `curl`
-/// (after `&&`, `;`, `|`, `RUN`, a leading `@` or `-`). Lines ending in `\` continue.
+/// (after `&&`, `;`, `|`, `RUN`, a leading `@` or `-`). Lines ending in `\` continue, and so does
+/// a quote that is still open at the end of a line.
 pub(super) fn shell_requests(text: &str) -> Vec<Request> {
-    let mut out = Vec::new();
-    let (mut joined, mut start) = (String::new(), 0);
-    for (i, raw) in text.lines().enumerate() {
-        if joined.is_empty() {
-            start = i;
-        }
-        match raw.trim_end().strip_suffix('\\') {
-            Some(head) => {
-                joined.push_str(head);
-                joined.push(' ');
-            }
-            None => {
-                joined.push_str(raw);
-                out.extend(
-                    commands(&joined)
-                        .iter()
-                        .filter_map(|c| curl(c, line_no(start))),
-                );
-                joined.clear();
-            }
-        }
+    let lines: Vec<&str> = text.lines().collect();
+    let (mut out, mut i) = (Vec::new(), 0);
+    while i < lines.len() {
+        let (cmds, next) = logical(&lines, i);
+        out.extend(cmds.iter().filter_map(|c| curl(c, line_no(i))));
+        i = next;
     }
     out
+}
+
+/// The commands of the logical line starting at `lines[i]` and the index after it.
+fn logical(lines: &[&str], i: usize) -> (Vec<Vec<String>>, usize) {
+    let mut lx = Lexer::default();
+    for (j, raw) in lines.iter().enumerate().skip(i) {
+        let head = lx
+            .quote
+            .is_none()
+            .then(|| raw.trim_end().strip_suffix('\\'))
+            .flatten();
+        lx.feed(head.unwrap_or(raw));
+        if lx.quote.is_some() {
+            lx.word.push('\n');
+        } else if head.is_some() {
+            lx.flush();
+        } else {
+            return (lx.finish(), j + 1);
+        }
+    }
+    // shortcut: a quote never closed (`echo don't`) falls back to its first line alone.
+    if lx.quote.is_some() && lines.len() > i + 1 {
+        let mut one = Lexer::default();
+        one.feed(lines[i]);
+        return (one.finish(), i + 1);
+    }
+    (lx.finish(), lines.len())
 }
 
 /// A curl command as a request: `-X`/`-XPUT`, one of the data flags, the first free word is the URL.
@@ -171,6 +185,7 @@ fn options<'a>(mut it: impl Iterator<Item = &'a str>) -> Options<'a> {
                 it.next();
             }
             w if w.starts_with("-X") => method = Some(w[2..].to_uppercase()),
+            w if attached_data(w).is_some() => body = attached_data(w).unwrap_or(Body::None),
             w if w.starts_with('-') => {}
             w => url = url.or(Some(w)),
         }
@@ -178,30 +193,24 @@ fn options<'a>(mut it: impl Iterator<Item = &'a str>) -> Options<'a> {
     (method, url, body)
 }
 
+/// `-d@file`, `-d'{..}'`, `--data=..`: the value written in the same word as the flag.
+fn attached_data(w: &str) -> Option<Body> {
+    if let Some((flag, value)) = w.split_once('=').filter(|(f, _)| f.starts_with("--")) {
+        return DATA_FLAGS.contains(&flag).then(|| data(value));
+    }
+    w.strip_prefix("-d")
+        .filter(|_| !w.starts_with("--"))
+        .map(data)
+}
+
 fn data(arg: &str) -> Body {
     arg.strip_prefix('@')
         .map_or_else(|| Body::Inline(arg.into()), |f| Body::File(f.into()))
 }
 
-/// Words of one logical line, split into commands at `&&`, `||`, `;` and `|`. Quotes group, a
-/// backslash escapes, `#` at the start of a word ends the line. Nothing is expanded.
-fn commands(line: &str) -> Vec<Vec<String>> {
-    let mut lx = Lexer::default();
-    let mut chars = line.chars();
-    while let Some(c) = chars.next() {
-        let go_on = match lx.quote {
-            Some(q) => lx.quoted(q, c, &mut chars),
-            None => lx.plain(c, &mut chars),
-        };
-        if !go_on {
-            break;
-        }
-    }
-    lx.flush();
-    lx.cmds.push(lx.cmd);
-    lx.cmds
-}
-
+/// Lexing of shell text: words are split into commands at `&&`, `||`, `;` and `|`. Quotes group
+/// (also across `feed` calls), a backslash escapes, `#` at the start of a word ends the line.
+/// Nothing is expanded.
 #[derive(Default)]
 struct Lexer {
     cmds: Vec<Vec<String>>,
@@ -213,6 +222,25 @@ struct Lexer {
 }
 
 impl Lexer {
+    fn feed(&mut self, line: &str) {
+        let mut chars = line.chars();
+        while let Some(c) = chars.next() {
+            let go_on = match self.quote {
+                Some(q) => self.quoted(q, c, &mut chars),
+                None => self.plain(c, &mut chars),
+            };
+            if !go_on {
+                break;
+            }
+        }
+    }
+
+    fn finish(mut self) -> Vec<Vec<String>> {
+        self.flush();
+        self.cmds.push(self.cmd);
+        self.cmds
+    }
+
     fn flush(&mut self) {
         if std::mem::take(&mut self.active) {
             self.cmd.push(std::mem::take(&mut self.word));

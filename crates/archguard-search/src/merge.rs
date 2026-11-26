@@ -5,7 +5,7 @@ use archguard_core::{
     ArchguardError, SearchArtifact, ServiceDiagnostic, ServiceEvidence, ServiceTopology,
 };
 use archguard_flow_common::support::diagnostic;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Puts the sources together: artifacts sorted by (scope, address), usages, gaps, then the findings.
@@ -18,8 +18,22 @@ pub(crate) fn apply(report: &mut ServiceTopology, outputs: Vec<SourceOutput>) {
     }
     let artifacts = &mut report.elasticsearch.artifacts;
     artifacts.sort_by(|a, b| (&a.scope, &a.address).cmp(&(&b.scope, &b.address)));
+    fold_body_files(artifacts);
     merge_aliases(artifacts);
     findings::augment(report);
+}
+
+/// A file that an http request reads as its body (`-d @file`, second evidence entry) is declared
+/// by that request, with name and kind; the `json:` artifact of the same file would be a second box.
+fn fold_body_files(artifacts: &mut Vec<SearchArtifact>) {
+    let files: HashSet<String> = artifacts
+        .iter()
+        .filter(|a| a.scope.starts_with("http:"))
+        .flat_map(|a| a.evidence.iter().skip(1).map(|e| e.file.clone()))
+        .collect();
+    artifacts.retain(|a| {
+        !(a.scope.starts_with("json:") && a.evidence.iter().any(|e| files.contains(&e.file)))
+    });
 }
 
 /// One alias artifact per (scope, flavor, name): alias blocks of several indices become one box
