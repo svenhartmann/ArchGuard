@@ -1,9 +1,10 @@
 //! Evaluates the literal part of Terraform expressions for index detail (ADR 0023): literals,
-//! `merge()`/`concat()`, `local.*` and sibling-index references up to depth 3 with cycle
-//! protection, and attribute/index access on resolved values. Everything else is `None`.
+//! `merge()`/`concat()`, `local.*` and sibling-index references up to depth 5 with cycle
+//! protection, `jsondecode(file("${path.module}/<name>.json"))` below the project root, and
+//! attribute/index access on resolved values. Everything else is `None`.
 use super::terraform_locals::{local, lookup};
+use super::terraform_scope::Scope;
 use archguard_terraform::hcl::{attr, literal};
-use archguard_terraform::module::ModuleCtx;
 use hcl_edit::expr::{
     BinaryOperator, Expression, ForExpr, ObjectKey, Traversal, TraversalOperator, UnaryOperator,
 };
@@ -70,8 +71,9 @@ impl Json {
     }
 }
 
-/// Reference hops allowed from an attribute: index -> local -> local is depth 3.
-const MAX_HOPS: usize = 2;
+/// Reference hops allowed from an attribute: index -> local x4 is depth 5. Raised from 3 on
+/// 2026-11-26 (ticket 30) for mappings built from chained locals.
+const MAX_HOPS: usize = 4;
 
 /// Elements one attribute may iterate over in `for` expressions before it is a gap.
 const MAX_FOR: usize = 10_000;
@@ -81,7 +83,7 @@ const MAX_FOR: usize = 10_000;
 /// number of `for` elements evaluated.
 #[derive(Default)]
 struct Cx<'a, 'c> {
-    ctx: Option<&'c ModuleCtx<'a>>,
+    scope: Option<&'c Scope<'a, 'c>>,
     path: Vec<usize>,
     env: Vec<(String, Json)>,
     used: usize,
@@ -121,7 +123,7 @@ fn follow<T>(
     cx: &mut Cx,
     read: impl FnOnce(&Expression, &mut Cx) -> Option<T>,
 ) -> Option<T> {
-    let found = lookup(cx.ctx?, e)?;
+    let found = lookup(cx.scope?.module, e)?;
     guard(found, cx, read)
 }
 
@@ -170,6 +172,21 @@ fn step(j: Json, op: &TraversalOperator, cx: &mut Cx) -> Option<Json> {
     }
 }
 
+/// `path.module`: the module directory relative to the root, as `file()` reads it.
+fn path_module(op: &TraversalOperator, cx: &Cx) -> Option<Json> {
+    let TraversalOperator::GetAttr(n) = op else {
+        return None;
+    };
+    let dir = cx.scope?.dir;
+    (n.as_str() == "module").then(|| {
+        Json::Str(if dir.is_empty() {
+            ".".into()
+        } else {
+            dir.into()
+        })
+    })
+}
+
 /// A traversal of a resolved value: a call result, a literal or a local, then access steps.
 fn access(t: &Traversal, cx: &mut Cx) -> Option<Json> {
     let mut ops = t.operators.iter();
@@ -178,9 +195,10 @@ fn access(t: &Traversal, cx: &mut Cx) -> Option<Json> {
             let TraversalOperator::GetAttr(n) = ops.next()?.value() else {
                 return None;
             };
-            let found = local(cx.ctx?, n.as_str())?;
+            let found = local(cx.scope?.module, n.as_str())?;
             guard(found, cx, tree)?
         }
+        Expression::Variable(v) if v.as_str() == "path" => path_module(ops.next()?.value(), cx)?,
         other => tree(other, cx)?,
     };
     ops.try_fold(base, |j, o| step(j, o.value(), cx))
@@ -327,49 +345,55 @@ fn tree(e: &Expression, cx: &mut Cx) -> Option<Json> {
 }
 
 /// The literal value of `e` (no JSON text parsing), `None` when any part is not literal.
-pub(super) fn value(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<Json> {
+pub(super) fn value(e: &Expression, scope: Option<&Scope>) -> Option<Json> {
     tree(
         e,
         &mut Cx {
-            ctx,
+            scope,
             ..Cx::default()
         },
     )
 }
 
 /// `jsonencode(<literal>)` or a literal JSON text (string or heredoc). JSON is read as HCL,
-/// whose object syntax accepts it; `file()`, `var.*` and unresolved references are not literal.
-pub(super) fn json_attr(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<Json> {
+/// whose object syntax accepts it; `var.*` and unresolved references are not literal.
+pub(super) fn json_attr(e: &Expression, scope: Option<&Scope>) -> Option<Json> {
     json_at(
         e,
         &mut Cx {
-            ctx,
+            scope,
             ..Cx::default()
         },
     )
 }
 
+/// A `jsonencode` reached through a reference is the text Terraform would send: sorted.
+fn json_ref(f: &Expression, cx: &mut Cx) -> Option<Json> {
+    let j = json_at(f, cx)?;
+    Some(match f {
+        Expression::FuncCall(c) if c.name.name.as_str() == "jsonencode" => j.sorted(),
+        _ => j,
+    })
+}
+
 fn json_at(e: &Expression, cx: &mut Cx) -> Option<Json> {
     if let Expression::Traversal(t) = e {
-        // a `jsonencode` reached through a reference is the text Terraform would send: sorted
-        let read = |f: &Expression, cx: &mut Cx| {
-            let j = json_at(f, cx)?;
-            Some(match f {
-                Expression::FuncCall(c) if c.name.name.as_str() == "jsonencode" => j.sorted(),
-                _ => j,
-            })
-        };
-        return follow(e, cx, read).or_else(|| access(t, cx));
+        return follow(e, cx, json_ref).or_else(|| access(t, cx));
     }
-    if let Expression::FuncCall(c) = e {
+    let text = if let Expression::FuncCall(c) = e {
         let mut args = c.args.iter();
-        return match (c.name.name.as_str(), args.next(), args.next()) {
-            ("jsonencode", Some(a), None) => tree(a, cx),
-            ("jsondecode", Some(a), None) => json_at(a, cx),
-            _ => None,
-        };
-    }
-    let text = literal(e).filter(|_| !matches!(e, Expression::Number(_) | Expression::Bool(_)))?;
+        match (c.name.name.as_str(), args.next(), args.next()) {
+            ("jsonencode", Some(a), None) => return tree(a, cx),
+            ("jsondecode", Some(a), None) => return json_at(a, cx),
+            ("file", Some(a), None) => match tree(a, cx)? {
+                Json::Str(rel) => cx.scope?.file(&rel)?,
+                _ => return None,
+            },
+            _ => return None,
+        }
+    } else {
+        literal(e).filter(|_| !matches!(e, Expression::Number(_) | Expression::Bool(_)))?
+    };
     let body = parser::parse_body(&format!("x = {text}")).ok()?;
     tree(attr(&body, "x")?, &mut Cx::default())
 }

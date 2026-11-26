@@ -2,8 +2,10 @@
 //! (ADR 0023). Names are read from literals, `jsonencode({...})` and, for a plain `var.x`, from a
 //! non-sensitive `string`/`list(string)` literal module argument or `default`; anything else the
 //! provider would evaluate (locals, `each`, module outputs, functions) is a gap.
-use crate::context::SearchContext;
+use super::terraform_eval::value;
+use super::terraform_scope::Scope;
 use crate::context::SourceOutput;
+use crate::context::{Reader, SearchContext};
 use crate::findings::{EsGap, es_gap};
 use archguard_core::{SearchArtifact, SearchIndexDetail, SearchReference, ServiceTopology};
 use archguard_terraform::hcl::{attr, block, get, literal, object};
@@ -12,6 +14,7 @@ use hcl_edit::Span;
 use hcl_edit::expr::{Expression, TraversalOperator};
 use hcl_edit::parser;
 use hcl_edit::structure::Body;
+use std::path::Path;
 
 const PREFIX: &str = "elasticstack_elasticsearch_";
 const KIBANA: &str = "elasticstack_kibana_";
@@ -42,16 +45,21 @@ pub(crate) fn extract_with(ctx: &SearchContext) -> SourceOutput {
         ctx.discovery,
         &mut scratch,
         ctx.read,
-        &mut augment,
+        &mut |report, scope, resources| augment(report, scope, resources, (ctx.root, ctx.read)),
     );
     SourceOutput::from_scratch(scratch)
 }
 
 /// Appends the artifacts of one module instance to `report.elasticsearch`.
-fn augment(report: &mut ServiceTopology, scope: &str, resources: &[Resource]) {
+fn augment(
+    report: &mut ServiceTopology,
+    scope: &str,
+    resources: &[Resource],
+    files: (&Path, &Reader),
+) {
     for r in resources {
         if let Some(suffix) = r.kind.strip_prefix(KIBANA) {
-            kibana(report, scope, r, suffix);
+            kibana(report, scope, r, suffix, files);
             continue;
         }
         let Some(suffix) = r.kind.strip_prefix(PREFIX) else {
@@ -64,6 +72,7 @@ fn augment(report: &mut ServiceTopology, scope: &str, resources: &[Resource]) {
             report,
             r,
             scope,
+            files,
             out: Vec::new(),
             sources: Vec::new(),
             detail: None,
@@ -75,7 +84,13 @@ fn augment(report: &mut ServiceTopology, scope: &str, resources: &[Resource]) {
 }
 
 /// Kibana data views and alerting rules; saved-object imports are noted, not read.
-fn kibana(report: &mut ServiceTopology, scope: &str, r: &Resource, suffix: &str) {
+fn kibana(
+    report: &mut ServiceTopology,
+    scope: &str,
+    r: &Resource,
+    suffix: &str,
+    files: (&Path, &Reader),
+) {
     if suffix == "import_saved_objects" {
         // Not a gap: the import is out of scope, so `complete` stays untouched.
         es_gap(
@@ -94,6 +109,7 @@ fn kibana(report: &mut ServiceTopology, scope: &str, r: &Resource, suffix: &str)
         report,
         r,
         scope,
+        files,
         out: Vec::new(),
         sources: Vec::new(),
         detail: None,
@@ -111,6 +127,8 @@ struct Read<'x, 'a> {
     report: &'x mut ServiceTopology,
     r: &'x Resource<'a>,
     scope: &'x str,
+    /// Project root and safe reader for `file()`.
+    files: (&'x Path, &'x Reader),
     out: Vec<SearchArtifact>,
     /// Where names came from when read through `var.x`; attached to the evidence.
     sources: Vec<String>,
@@ -152,12 +170,22 @@ impl Read<'_, '_> {
         Some(found)
     }
 
+    /// A string made of `local.*` and `jsondecode(file())` values (ticket 30).
+    fn evaluated(&self, e: &Expression) -> Option<String> {
+        let scope = Scope::of(self.r, self.files.0, self.files.1);
+        match value(e, Some(&scope))? {
+            super::terraform_eval::Json::Str(s) => Some(s),
+            _ => None,
+        }
+    }
+
     /// A literal name, or a gap diagnostic for `what` and `None`.
     fn text(&mut self, what: &str, e: Option<&Expression>) -> Option<String> {
         let text = e.and_then(literal).or_else(|| {
             let found = self.variable(e?)?;
             (!found.list).then(|| found.values.into_iter().next())?
         });
+        let text = text.or_else(|| self.evaluated(e?));
         if text.is_none() {
             let path = &self.r.file.path;
             es_gap(
@@ -315,7 +343,8 @@ impl Read<'_, '_> {
             name: n.clone(),
         });
         self.aliases(body, target);
-        let (mut detail, mut missed) = super::terraform_detail::read(body, &self.r.module);
+        let (mut detail, mut missed) =
+            super::terraform_detail::read(body, &Scope::of(self.r, self.files.0, self.files.1));
         let (legacy, bad) = super::terraform_links::legacy_settings(body);
         if !legacy.is_empty() {
             detail.get_or_insert_default().settings.extend(legacy);

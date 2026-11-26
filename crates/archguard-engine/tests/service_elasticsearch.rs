@@ -309,8 +309,8 @@ fn unresolvable_variable_values_stay_gaps() {
             .collect::<Vec<_>>()
     };
     let root = gaps("vars.tf");
-    assert_eq!(root.len(), 3, "{root:#?}");
-    for needle in ["index.secret", "index.unset", "index.from_local"] {
+    assert_eq!(root.len(), 2, "{root:#?}");
+    for needle in ["index.secret", "index.unset"] {
         assert!(
             root.iter().any(|m| m.contains(needle)),
             "{needle}: {root:#?}"
@@ -344,19 +344,22 @@ fn unresolvable_variable_values_stay_gaps() {
 }
 
 #[test]
-fn sensitive_defaults_locals_and_tfvars_are_never_read() {
+fn sensitive_defaults_and_tfvars_are_never_read_but_locals_are() {
     let r = fixture();
+    // changed 2026-11-26 (ticket 30): names may come from literal locals
+    assert_eq!(
+        named(&r, "elasticstack_elasticsearch_index.from_local")
+            .name
+            .as_deref(),
+        Some("local-must-not-appear")
+    );
     assert!(
         named(&r, "elasticstack_elasticsearch_index.secret")
             .name
             .is_none()
     );
     let all = format!("{:#?}{:#?}", r.elasticsearch, r.diagnostics);
-    for forbidden in [
-        "secret-must-not-appear",
-        "local-must-not-appear",
-        "tfvars-must-not-appear",
-    ] {
+    for forbidden in ["secret-must-not-appear", "tfvars-must-not-appear"] {
         assert!(!all.contains(forbidden), "{forbidden} leaked");
     }
 }

@@ -14,12 +14,14 @@
 use super::json::search_definition;
 use super::terraform_detail::{Json, json_attr, read as read_index};
 use super::terraform_eval::value;
-use crate::context::{SearchContext, SourceOutput};
+use super::terraform_scope::Scope;
+use crate::context::{Reader, SearchContext, SourceOutput};
 use crate::findings::{EsGap, es_gap};
 use archguard_core::{SearchArtifact, SearchIndexDetail, SearchReference, ServiceTopology};
 use archguard_terraform::hcl::{attr, block, get, literal};
 use archguard_terraform::module::{ModuleCtx, Resource};
 use hcl_edit::structure::Body;
+use std::path::Path;
 
 const NOTE: &str =
     "Declared Elasticsearch artifact read statically; no terraform run, state or cluster access.";
@@ -208,18 +210,23 @@ pub(crate) fn extract_with(ctx: &SearchContext) -> SourceOutput {
         ctx.discovery,
         &mut scratch,
         ctx.read,
-        &mut augment,
+        &mut |report, scope, resources| augment(report, scope, resources, (ctx.root, ctx.read)),
     );
     SourceOutput::from_scratch(scratch)
 }
 
-fn augment(report: &mut ServiceTopology, scope: &str, resources: &[Resource]) {
+fn augment(
+    report: &mut ServiceTopology,
+    scope: &str,
+    resources: &[Resource],
+    files: (&Path, &Reader),
+) {
     for r in resources {
         let Some(row) = ROWS.iter().find(|row| row.0 == r.kind) else {
             continue;
         };
         if declares(&r.module, r.kind, row.1) {
-            let out = read(report, scope, r, row);
+            let out = read(report, scope, r, row, files);
             report.elasticsearch.artifacts.extend(out);
         } else {
             let path = &r.file.path;
@@ -243,7 +250,14 @@ fn declares(ctx: &ModuleCtx, kind: &str, want: &str) -> bool {
     }
 }
 
-fn read(report: &mut ServiceTopology, scope: &str, r: &Resource, row: &Row) -> Vec<SearchArtifact> {
+fn read(
+    report: &mut ServiceTopology,
+    scope: &str,
+    r: &Resource,
+    row: &Row,
+    files: (&Path, &Reader),
+) -> Vec<SearchArtifact> {
+    let sc = Scope::of(r, files.0, files.1);
     let (_, _, kind, name_key, flavor, has_body) = *row;
     let body = &r.block.body;
     let path = &r.file.path;
@@ -256,14 +270,14 @@ fn read(report: &mut ServiceTopology, scope: &str, r: &Resource, row: &Row) -> V
     let mut a = make(r, scope, flavor, kind, name.clone(), "");
     let mut out = Vec::new();
     if kind == "index" {
-        let (detail, aliases) = index(r, &mut missed, &mut a);
+        let (detail, aliases) = index(r, &sc, &mut missed, &mut a);
         a.detail = detail;
         out = aliases
             .into_iter()
             .map(|x| make_alias(r, scope, flavor, &name, x))
             .collect();
     } else if has_body {
-        body_definition(r, &mut a, kind, &mut missed);
+        body_definition(r, &sc, &mut a, kind, &mut missed);
     } else if kind == "stored_script"
         && attr(body, "lang").and_then(literal).as_deref() == Some("mustache")
     {
@@ -327,6 +341,7 @@ fn make_alias(
 /// `patterns`, `references` and `detail` from the `body` JSON, with the kind as hint.
 fn body_definition(
     r: &Resource,
+    sc: &Scope,
     a: &mut SearchArtifact,
     kind: &'static str,
     missed: &mut Vec<&'static str>,
@@ -334,7 +349,7 @@ fn body_definition(
     let Some(e) = attr(&r.block.body, "body") else {
         return;
     };
-    let def = json_attr(e, Some(&r.module))
+    let def = json_attr(e, Some(sc))
         .and_then(|j| serde_json::from_str(&j.compact()).ok())
         .and_then(|v| search_definition(&v, Some(kind)));
     match def {
@@ -350,12 +365,13 @@ fn body_definition(
 /// Detail of an index resource and the names of its aliases; what was not literal goes to `missed`.
 fn index(
     r: &Resource,
+    sc: &Scope,
     missed: &mut Vec<&'static str>,
     a: &mut SearchArtifact,
 ) -> (Option<SearchIndexDetail>, Vec<String>) {
     let body = &r.block.body;
-    let ctx = Some(&*r.module);
-    let (mut detail, miss) = read_index(body, &r.module);
+    let ctx = Some(sc);
+    let (mut detail, miss) = read_index(body, sc);
     missed.extend(miss);
     for key in EXTRA_SETTINGS {
         let Some(e) = attr(body, key) else { continue };

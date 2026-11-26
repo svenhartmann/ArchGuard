@@ -287,18 +287,19 @@ fn unresolvable_references_are_one_gap_with_the_attribute_names() {
 }
 
 #[test]
-fn names_still_do_not_read_locals() {
+fn names_read_literal_locals() {
+    // changed 2026-11-26 (ticket 30): names may come from locals
     let r = locals();
     assert!(
         r.elasticsearch
             .artifacts
             .iter()
-            .all(|a| a.name.as_deref() != Some("named"))
+            .any(|a| a.name.as_deref() == Some("named"))
     );
     assert!(
         r.diagnostics
             .iter()
-            .any(|d| d.message.contains("name_local"))
+            .all(|d| !d.message.contains("name_local"))
     );
 }
 
@@ -316,20 +317,20 @@ fn analyzers(a: &SearchArtifact) -> Vec<String> {
 }
 
 #[test]
-fn merge_concat_and_chains_up_to_depth_three_are_read() {
+fn merge_concat_and_chains_up_to_depth_five_are_read() {
     let r = chains();
     // shallow merge: the right `properties` wins as a whole
     assert_eq!(fields(art(&r, "index", "merged")), ["b:text"]);
     let f = &art(&r, "index", "concat").detail.as_ref().unwrap().analysis[0];
     assert_eq!(f.definition, r#"{"type":"stop","stopwords":["a","b"]}"#);
     assert_eq!(fields(art(&r, "index", "local-chain")), ["c:date"]);
-    for name in ["a", "b", "c"] {
+    for name in ["a", "b", "c", "d"] {
         assert_eq!(analyzers(art(&r, "index", name)), ["std"], "{name}");
     }
 }
 
 #[test]
-fn deeper_chains_cycles_and_non_literals_are_one_gap_each() {
+fn cycles_and_non_literals_are_one_gap_each() {
     let r = chains();
     let gaps: Vec<_> = r
         .diagnostics
@@ -338,7 +339,6 @@ fn deeper_chains_cycles_and_non_literals_are_one_gap_each() {
         .map(|d| d.message.as_str())
         .collect();
     for (address, attr) in [
-        ("elasticstack_elasticsearch_index.d", "analysis_analyzer"),
         ("cyc_x", "analysis_analyzer"),
         ("cyc_y", "analysis_analyzer"),
         ("local_cycle", "mappings"),
@@ -351,7 +351,7 @@ fn deeper_chains_cycles_and_non_literals_are_one_gap_each() {
         assert_eq!(hits.len(), 1, "{address}: {gaps:#?}");
         assert!(hits[0].contains(attr), "{address}: {}", hits[0]);
     }
-    assert_eq!(gaps.len(), 8, "{gaps:#?}");
+    assert_eq!(gaps.len(), 7, "{gaps:#?}");
 }
 
 fn access() -> ServiceTopology {
