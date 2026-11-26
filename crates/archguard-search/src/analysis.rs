@@ -290,6 +290,21 @@ mod tests {
     }
 
     #[test]
+    fn common_analysis_plugin_names_are_builtin() {
+        for n in [
+            "arabic_stem",
+            "bengali_normalization",
+            "german_stem",
+            "type_as_payload",
+        ] {
+            assert!(search_builtin("filter", n), "{n}");
+        }
+        for n in ["chinese", "snowball"] {
+            assert!(search_builtin("analyzer", n), "{n}");
+        }
+    }
+
+    #[test]
     fn plugin_name_is_undeclared_and_same_name_other_kind_is_not_declared() {
         let d = detail(&[(
             "analyzer",
