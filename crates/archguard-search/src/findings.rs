@@ -100,6 +100,7 @@ es_gaps! {
     JsonTooLarge => "JSON file next to Terraform is larger than 1 MiB and contains a mustache lang; it is not evaluated as a search template.",
     DefinitionUnread => "Definition file could not be read or parsed (larger than 1 MiB, not a regular file, or invalid JSON/YAML); the definition in it is unknown.",
     DefinitionScanStop => "Definition file scan stopped after 5000 files; definitions in later files are unknown.",
+    UnknownProvider => ": resource of an unknown provider (no required_providers source opensearch-project/opensearch or phillbaker/elasticsearch declares it); not read.",
     SavedObjects => ": saved objects are not analyzed.",
     NotLiteral => ": Elasticsearch name is not a literal; ",
     NoParamsIndex => ": alerting rule has no top-level params index; its index comes from a data view or is unknown.",
@@ -119,7 +120,9 @@ impl EsGap {
         match self {
             Self::IndexNotLiteral => format!("{t}{}.", p(0)),
             Self::ScanStop => format!("{t}{}{SCAN_STOP_TAIL}", p(0)),
-            Self::SavedObjects | Self::NoParamsIndex => format!("{}{t}", p(0)),
+            Self::SavedObjects | Self::NoParamsIndex | Self::UnknownProvider => {
+                format!("{}{t}", p(0))
+            }
             Self::NotLiteral => format!("{}{t}{}{NOT_LITERAL_TAIL}", p(0), p(1)),
             Self::DetailNotLiteral => format!("{}{t}{}.", p(0), p(1)),
             _ => t.into(),
@@ -131,7 +134,7 @@ impl EsGap {
         match self {
             Self::IndexNotLiteral => m.starts_with(t),
             Self::ScanStop => m.starts_with(t) && m.ends_with(SCAN_STOP_TAIL),
-            Self::SavedObjects | Self::NoParamsIndex => m.ends_with(t),
+            Self::SavedObjects | Self::NoParamsIndex | Self::UnknownProvider => m.ends_with(t),
             Self::NotLiteral | Self::DetailNotLiteral => m.contains(t),
             _ => m == t,
         }
