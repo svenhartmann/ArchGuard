@@ -62,6 +62,8 @@ fn client_calls_become_artifacts_and_lookalikes_do_not() {
         "index calls-v1 ts:shop []",
         "index consts-v1 ts:shop []",
         "index late-v1 ts:shop []",
+        "index deep-v1 ts:shop []",
+        "index esc-v1 ts:shop []",
         "index legacy-v1 ts:shop []",
         "component_template logs-base ts:shop []",
         "ilm_policy logs-ilm ts:shop []",
@@ -70,6 +72,7 @@ fn client_calls_become_artifacts_and_lookalikes_do_not() {
         "index orders-v1 ts:shop []",
         "index os-v1 ts:search [opensearch]",
         "index partial-v1 ts:shop []",
+        "index self-v1 ts:shop []",
     ];
     assert_eq!(
         got, want,
@@ -166,4 +169,28 @@ fn module_constants_resolve_and_non_literals_are_gaps_per_attribute() {
             .any(|g| g.contains("lookalike") || g.contains("noimport")),
         "{got:?}"
     );
+}
+
+#[test]
+fn hostile_literals_are_gaps_not_crashes_or_wrong_values() {
+    let report = analyze();
+    let got = gaps(&report);
+    let gap = |name: &str| {
+        let a = named(&report, name);
+        assert_eq!(
+            a.detail.as_ref().unwrap().settings["number_of_shards"],
+            "1",
+            "the literal settings of {name} stay"
+        );
+        assert!(a.detail.as_ref().unwrap().fields.is_empty(), "{name}");
+        let at = format!("shop/src/hostile.ts:{}: ", a.evidence[0].line.unwrap());
+        assert!(
+            got.iter()
+                .any(|g| g.starts_with(&at) && g.contains("not read: mappings.")),
+            "{name}: {got:?}"
+        );
+    };
+    gap("self-v1");
+    gap("deep-v1");
+    gap("esc-v1");
 }
