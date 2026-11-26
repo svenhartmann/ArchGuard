@@ -17,6 +17,7 @@ use super::layout::{Placed, PlacedEdge, Scene, field_rows, layout};
 use super::list::{GroupTitle, ListGroup, ListRow, list, members};
 use super::types::Key;
 use super::view_details::slint_details;
+use super::wrap::fit_box;
 use crate::diagram::dash_rect;
 use crate::es_ui::state::EsState;
 use crate::tab_support::model;
@@ -56,12 +57,15 @@ fn canvas(t: &ServiceTopology, s: &EsState, key: &Key, rows: &[Key]) -> Canvas {
     let field = field_of(s, key);
     let cluster = s.cluster.then_some(rows);
     let d = diagram_field(t, &s.graph, key, cluster, &s.switches, field);
-    let contents: Vec<BoxContent> = d
+    let mut contents: Vec<BoxContent> = d
         .boxes
         .iter()
         .map(|b| content(t, &s.graph, &b.key, &s.switches))
         .collect();
     let scene = layout(&d, &contents);
+    for (c, p) in contents.iter_mut().zip(&scene.boxes) {
+        fit_box(c, p.w);
+    }
     let placed = d.boxes.iter().zip(&contents).zip(&scene.boxes);
     let boxes = (placed.clone())
         .map(|((b, c), p)| slint_box(b, c, p, field))
@@ -342,13 +346,16 @@ fn slint_edge(e: &PlacedEdge) -> EsClassEdge {
     }
 }
 
+/// Smallest zoom "Fit" sets; a larger canvas scrolls instead of shrinking below legibility.
+const MIN_FIT: f32 = 0.4;
+
 /// "Fit" (never enlarges): the whole canvas into `w` × `h` (the canvas's viewport).
 pub fn fit(s: &mut EsState, w: f32, h: f32) {
     let (cw, ch) = s.canvas;
     if cw > 0.0 && ch > 0.0 {
         s.zoom = ((w - 24.0).max(1.0) / cw)
             .min((h - 24.0).max(1.0) / ch)
-            .clamp(0.01, 1.0);
+            .clamp(MIN_FIT, 1.0);
     }
 }
 

@@ -9,6 +9,7 @@ use archguard_engine::{
 };
 use serde_json::Value;
 
+use super::boxes::mapping_unread;
 use super::types::Key;
 use crate::es_ui::index_page::{IndexPage, index_page};
 use crate::services_ui::{search, view::evidence};
@@ -30,6 +31,8 @@ pub enum Details {
 pub struct IndexDetails {
     pub page: IndexPage,
     pub fields: Vec<FieldRow>,
+    /// The mapping was not read (a gap): an empty field list is not "no fields".
+    pub mapping_unread: bool,
     pub chains: Vec<ChainTable>,
     pub hints: Vec<Hint>,
     pub writes: Vec<String>,
@@ -200,6 +203,7 @@ fn index_details(t: &ServiceTopology, n: &SearchNode) -> IndexDetails {
     let mut out = IndexDetails {
         page,
         fields: Vec::new(),
+        mapping_unread: mapping_unread(t, n),
         chains: Vec::new(),
         hints: Vec::new(),
         writes,
