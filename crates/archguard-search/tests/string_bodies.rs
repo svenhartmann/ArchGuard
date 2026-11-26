@@ -169,6 +169,18 @@ fn a_file_over_one_mib_is_a_gap_not_skipped() {
             .iter()
             .any(|d| d.file == "svc/big.py" && is_elasticsearch_gap(d))
     );
+    // Each reader reports the file once: the call scanner and the string-body reader.
+    let n = |r: &ServiceTopology| {
+        r.diagnostics
+            .iter()
+            .filter(|d| d.file == "svc/big.py")
+            .count()
+    };
+    assert_eq!(
+        n(&report),
+        2,
+        "this reader must report the unread file itself"
+    );
 }
 
 #[test]
@@ -179,4 +191,42 @@ fn hostile_unclosed_calls_end_as_gaps_without_panic() {
     let report = analyze(&root, &["svc"]);
     std::fs::remove_dir_all(&root).unwrap();
     assert!(code(&report).is_empty());
+}
+
+const FIELD: &str = r#"{"mappings":{"properties":{"a":{"type":"keyword"}}}}"#;
+
+#[test]
+fn a_reassigned_local_variable_is_a_gap_not_a_constant() {
+    let root = scratch("local");
+    let java = format!(
+        "class A {{ void f() {{ String body = \"{}\"; if (big) body = load(); CreateIndexRequest r = new CreateIndexRequest(\"local-v1\"); r.source(body, XContentType.JSON); }} }}\n",
+        FIELD.replace('"', "\\\"")
+    );
+    std::fs::write(root.join("svc/A.java"), java).unwrap();
+    let report = analyze(&root, &["svc"]);
+    std::fs::remove_dir_all(&root).unwrap();
+    assert!(code(&report).is_empty(), "a variable is no constant");
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|d| d.file == "svc/A.java" && is_elasticsearch_gap(d))
+    );
+}
+
+#[test]
+fn two_calls_with_one_name_in_one_file_keep_both_definitions() {
+    let root = scratch("dup");
+    let py = format!(
+        "es.indices.create(index='dup', body='{FIELD}')\nes.indices.put_mapping(index='dup', body='{{\"properties\":{{\"b\":{{\"type\":\"keyword\"}}}}}}')\n"
+    );
+    std::fs::write(root.join("svc/d.py"), py).unwrap();
+    let report = analyze(&root, &["svc"]);
+    std::fs::remove_dir_all(&root).unwrap();
+    assert_eq!(
+        code(&report).len(),
+        2,
+        "{:?}",
+        code(&report).iter().map(|a| &a.address).collect::<Vec<_>>()
+    );
 }
