@@ -3,7 +3,7 @@
 use archguard_engine::core::{SearchField, SearchIndexDetail, ServiceTopology};
 use archguard_engine::{
     ChainRef, SearchAnalysisPart, SearchEdge, SearchFieldRole, SearchGraph, SearchNode,
-    search_analysis_parts, search_analysis_users, search_analyzer_difference, search_field_depth,
+    search_analysis_parts, search_analysis_users, search_field_analyzers, search_field_depth,
     search_field_role, short_scope,
 };
 
@@ -259,25 +259,10 @@ fn index_compartments(
     }
 }
 
-/// The engine knows the effective search analyzer only when it differs (spec 2026-11-26); when
-/// the stages match, the same order gives the names: `analyzer`/`default` and
-/// `search_analyzer`/`default_search` (text fields only), else `standard`.
+/// The effective index and search analyzer of the field from the engine (one order rule, spec
+/// 2026-11-26); `None` when analysis does not apply or both are `standard`.
 fn analyzer_note(d: &SearchIndexDetail, f: &SearchField) -> Option<String> {
-    if let Some(x) = search_analyzer_difference(d, &f.path) {
-        return Some(format!("{} / ⌕ {}", x.index, x.search));
-    }
-    let declared = |n: &str| {
-        f.kind == "text"
-            && d.analysis
-                .iter()
-                .any(|a| a.kind == "analyzer" && a.name == n)
-    };
-    let index = (f.analyzer.clone())
-        .or_else(|| declared("default").then(|| "default".to_string()))
-        .unwrap_or_else(|| "standard".into());
-    let search = (f.search_analyzer.clone())
-        .or_else(|| declared("default_search").then(|| "default_search".to_string()))
-        .unwrap_or_else(|| index.clone());
+    let (index, search) = search_field_analyzers(d, &f.path)?;
     match (index == search, index == "standard") {
         (true, true) => None,
         (true, false) => Some(index),
