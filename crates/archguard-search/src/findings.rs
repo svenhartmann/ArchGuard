@@ -124,7 +124,7 @@ impl EsGap {
         }
     }
 
-    fn matches(self, m: &str) -> bool {
+    pub(crate) fn matches(self, m: &str) -> bool {
         let t = self.text();
         match self {
             Self::IndexNotLiteral => m.starts_with(t),
@@ -419,17 +419,15 @@ mod tests {
     }
 
     /// The constructor is the only place that builds a diagnostic: no other token sequence
-    /// `ServiceDiagnostic {` or `diagnostic (` in the three producers (whitespace and line
+    /// `ServiceDiagnostic {` or `diagnostic (` in the producers (whitespace and line
     /// breaks do not matter).
     #[test]
     fn producers_build_diagnostics_only_through_es_gap() {
         let files = [
-            ("code", include_str!("service_elasticsearch_code.rs")),
-            (
-                "constants",
-                include_str!("service_elasticsearch_constants.rs"),
-            ),
-            ("tf", include_str!("service_elasticsearch_tf.rs")),
+            ("code", include_str!("sources/code.rs")),
+            ("constants", include_str!("sources/constants.rs")),
+            ("tf", include_str!("sources/terraform.rs")),
+            ("templates", include_str!("sources/search_templates.rs")),
         ];
         for (name, text) in files {
             let text = text.split("#[cfg(test)]").next().unwrap();

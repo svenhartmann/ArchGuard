@@ -1,0 +1,17 @@
+[package]
+name = "archguard-search"
+description = "L2: the Elasticsearch map: sources (Terraform, search templates, code), merge, findings, graph (ADR 0025)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# ADR 0015: Terraform HCL with byte spans for file:line evidence; parser only.
+hcl-edit = "0.10.0"
+serde_json = "1"
+archguard-core = { path = "../archguard-core" }
+archguard-flow-common = { path = "../archguard-flow-common" }
+archguard-terraform = { path = "../archguard-terraform" }
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -107,9 +107,14 @@ contains = ["archguard-terraform", "archguard-terraform/**"]
 may_depend_on = ["core", "flow-common"]
 
 [[layers]]
+name = "search"
+contains = ["archguard-search", "archguard-search/**"]
+may_depend_on = ["core", "extract", "flow-common", "terraform"]
+
+[[layers]]
 name = "engine"
 contains = ["archguard-engine", "archguard-engine/**"]
-may_depend_on = ["flow-rust", "flow-server", "flow-node", "flow-web", "flow-python", "flow-dotnet", "flow-jvm", "core", "extract", "flow-common", "flow-clike", "flow-backend", "analysis", "report", "store", "terraform"]
+may_depend_on = ["flow-rust", "flow-server", "flow-node", "flow-web", "flow-python", "flow-dotnet", "flow-jvm", "core", "extract", "flow-common", "flow-clike", "flow-backend", "analysis", "report", "store", "terraform", "search"]
 
 [[layers]]
 name = "mcp"

@@ -1,6 +1,6 @@
 //! The Elasticsearch graph (ticket 20): one view-neutral model of services, declared artifacts
 //! and ghost nodes for what is used or referenced but not declared. Pure over the topology.
-use super::service_elasticsearch_findings::{index_parts, search_artifact_covers};
+use crate::findings::{index_parts, search_artifact_covers};
 use archguard_core::{SearchArtifact, ServiceTopology};
 use std::collections::{BTreeSet, HashMap, HashSet};
 

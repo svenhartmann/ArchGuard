@@ -1,7 +1,7 @@
 //! Literal mapping, settings and analysis of an `elasticstack_elasticsearch_index` (ADR 0023).
 //! All or nothing per attribute: one non-literal part and the attribute is not read.
-use super::service_elasticsearch_tf_eval::value;
-pub(super) use super::service_elasticsearch_tf_eval::{Json, json_attr};
+use super::terraform_eval::value;
+pub(super) use super::terraform_eval::{Json, json_attr};
 use archguard_core::{SearchAnalysis, SearchField, SearchIndexDetail};
 use archguard_terraform::hcl::attr;
 use archguard_terraform::module::ModuleCtx;

@@ -1,5 +1,5 @@
 //! ILM policy, legacy `settings {}` blocks and watch indices of Elasticsearch resources (ADR 0023).
-use super::service_elasticsearch_tf_detail::{Json, json_attr};
+use super::terraform_detail::{Json, json_attr};
 use archguard_core::{SearchIndexDetail, SearchReference};
 use archguard_terraform::hcl::{attr, literal};
 use hcl_edit::structure::Body;

@@ -59,8 +59,6 @@ pub(super) fn deployments(
     root: &Path,
     discovery: &Discovery,
     report: &mut ServiceTopology,
-    // Called once per module instance; keeps readers of other resource families out of this file.
-    each_instance: &mut dyn FnMut(&mut ServiceTopology, &str, &[Resource]),
 ) -> Vec<Deployment> {
     let mut out = Vec::new();
     terraform::module::walk(
@@ -68,10 +66,7 @@ pub(super) fn deployments(
         discovery,
         report,
         &read,
-        &mut |report, scope, resources| {
-            each_instance(report, scope, resources);
-            module_instance(report, scope, resources, &mut out);
-        },
+        &mut |report, scope, resources| module_instance(report, scope, resources, &mut out),
     );
     out
 }

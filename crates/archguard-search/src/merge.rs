@@ -1,11 +1,25 @@
-//! Project sets (ADR 0024): one `analyze_services` per project, only the Elasticsearch model merged.
-use super::service_elasticsearch_findings::{self, is_elasticsearch_gap};
+//! Merging (ADR 0025): the sources of one project, and project sets (ADR 0024) where only the Elasticsearch model is merged.
+use crate::context::SourceOutput;
+use crate::findings::{self, is_elasticsearch_gap};
 use archguard_core::{
     ArchguardError, SearchArtifact, ServiceDiagnostic, ServiceEvidence, ServiceTopology,
 };
 use archguard_flow_common::support::diagnostic;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+/// Puts the sources together: artifacts sorted by (scope, address), usages, gaps, then the findings.
+pub(crate) fn apply(report: &mut ServiceTopology, outputs: Vec<SourceOutput>) {
+    for o in outputs {
+        report.complete &= o.complete();
+        report.elasticsearch.artifacts.extend(o.artifacts);
+        report.elasticsearch.usages.extend(o.usages);
+        report.diagnostics.extend(o.diagnostics);
+    }
+    let artifacts = &mut report.elasticsearch.artifacts;
+    artifacts.sort_by(|a, b| (&a.scope, &a.address).cmp(&(&b.scope, &b.address)));
+    findings::augment(report);
+}
 
 /// (kind, literal name) -> index into the merged artifacts; the first artifact wins.
 type Seen = HashMap<(String, String), usize>;
@@ -15,10 +29,7 @@ type Analyze = fn(&Path) -> Result<ServiceTopology, ArchguardError>;
 /// Analyze each root on its own and merge the Elasticsearch maps; the first root is the primary
 /// project and supplies services, dependencies and datastores. One root equals `analyze`.
 /// `analyze` is passed in so that this file does not depend on `services.rs`.
-pub(super) fn merge(
-    roots: &[PathBuf],
-    analyze: Analyze,
-) -> Result<ServiceTopology, ArchguardError> {
+pub fn merge_set(roots: &[PathBuf], analyze: Analyze) -> Result<ServiceTopology, ArchguardError> {
     let [first, rest @ ..] = roots else {
         return Err(ArchguardError::Config(
             "a project set needs at least one project".into(),
@@ -59,7 +70,7 @@ pub(super) fn merge(
     });
     base.diagnostics.sort();
     base.diagnostics.dedup();
-    service_elasticsearch_findings::augment(&mut base);
+    findings::augment(&mut base);
     Ok(base)
 }
 
