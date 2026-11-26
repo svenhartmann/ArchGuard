@@ -79,6 +79,8 @@ export struct EsDetails {
     field: EsDetailFocus,
     head: EsDetailHead,
     fields: [EsDetailField],
+    // The mapping was not read (a gap), so an empty field list does not mean "no fields".
+    mapping-unread: bool,
     chain-name: string,
     chain: [EsDetailRow],
     hint: EsDetailHint,
@@ -125,6 +127,7 @@ component ChainTable inherits VerticalLayout {
 // The fields of an index as a tree; a click selects one.
 component FieldTree inherits VerticalLayout {
     in property <[EsDetailField]> fields;
+    in property <bool> unread;
     callback select(string);
     spacing: 2px;
     for f in fields: Rectangle {
@@ -141,7 +144,7 @@ component FieldTree inherits VerticalLayout {
             clicked => { root.select(f.path); }
         }
     }
-    if fields.length == 0: Note { text: @tr("none"); }
+    if fields.length == 0: Note { text: unread ? @tr("Mapping not statically readable.") : @tr("none"); }
 }
 
 component Pairs inherits VerticalLayout {
@@ -181,7 +184,7 @@ export component EsClassDetails inherits Rectangle {
             if details.mode == 0 || details.mode == 3: VerticalLayout {
                 spacing: 6px;
                 SectionHeading { label: @tr("Fields"); }
-                FieldTree { fields: details.fields; select(p) => { root.select-field(p); } }
+                FieldTree { fields: details.fields; unread: details.mapping-unread; select(p) => { root.select-field(p); } }
             }
 
             if details.mode == 3: VerticalLayout {

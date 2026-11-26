@@ -90,6 +90,12 @@ public pure function title(t: int) -> string {
         : "";
 }
 
+// Text size at a zoom: `scaled` (the theme size times the zoom), not below `floor` while legible, never above 85 %
+// of a 16 px row, so a row's text cannot reach into the next row at low zoom.
+public pure function fs(scaled: length, floor: length, zoom: float) -> length {
+    return min(13.6px * zoom, max(floor, scaled));
+}
+
 // prefix 0 none, 1 "+" (field), 2 multi-field mark (›).
 public pure function mark(p: int) -> string {
     return p == 1 ? "+ " : p == 2 ? "\u{203A} " : "";
@@ -108,10 +114,11 @@ component ClassLine inherits HorizontalLayout {
     main := Text {
         text: l.summary > 0 ? @tr("{0} fields", l.summary) : l.summary < 0 ? @tr("{0} more", -l.summary)
             : l.text == "not_read" ? @tr("Not read: the definition is not a literal.")
+            : l.text == "mapping_not_read" ? @tr("Mapping not statically readable.")
             : l.text == "not_declared" ? @tr("Not declared in this project.") : ClassText.mark(l.prefix) + l.text + (l.kind != "" ? " : " + l.kind : "");
-        color: l.summary != 0 || l.text == "not_read" || l.text == "not_declared" ? Theme.muted : Theme.text;
+        color: l.summary != 0 || l.text == "not_read" || l.text == "mapping_not_read" || l.text == "not_declared" ? Theme.muted : Theme.text;
         font-family: Theme.mono-family;
-        font-size: max(6px, Theme.font-mono * zoom);
+        font-size: ClassText.fs(Theme.font-mono * zoom, 6px, zoom);
         vertical-alignment: center;
         overflow: elide;
         horizontal-stretch: 0;
@@ -121,7 +128,7 @@ component ClassLine inherits HorizontalLayout {
         text: l.note;
         color: Theme.analysis;
         font-family: Theme.mono-family;
-        font-size: max(6px, Theme.font-mono * zoom);
+        font-size: ClassText.fs(Theme.font-mono * zoom, 6px, zoom);
         vertical-alignment: center;
         overflow: elide;
         horizontal-stretch: 1;
@@ -145,7 +152,8 @@ component ClassChip inherits Rectangle {
         text: chip.text;
         color: Theme.text;
         font-family: Theme.mono-family;
-        font-size: max(6px, Theme.font-micro * zoom);
+        // No floor: the pill is as wide as its text at every zoom, so the text never leaves it.
+        font-size: Theme.font-micro * zoom;
         horizontal-alignment: center;
         vertical-alignment: center;
         overflow: elide;
@@ -183,34 +191,44 @@ component ClassBox inherits Rectangle {
         y: 0;
         height: 3 * rh;
         background: box.ghost ? transparent : analysis ? Theme.analysis.with-alpha(0.12) : Theme.panel-2;
-        VerticalLayout {
-            padding-left: 6px * zoom;
-            padding-right: 6px * zoom;
-            Text {
-                text: "\u{AB}" + box.stereotype + "\u{BB}";
-                color: Theme.muted;
-                font-size: max(6px, Theme.font-caption * zoom);
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-            Text {
-                text: (box.warn ? "\u{26A0} " : "") + box.name;
-                color: box.warn ? Theme.warning : Theme.text;
-                font-size: max(7px, Theme.font-body * zoom);
-                font-weight: Theme.weight-strong;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-            Text {
-                text: box.root != "" ? box.root : box.ghost ? @tr("not declared") : "";
-                color: Theme.muted;
-                font-size: max(6px, Theme.font-caption * zoom);
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                overflow: elide;
-            }
+        // Three fixed rows: a text taller than its row (the font floors at low zoom) is centred
+        // on it and never pushes the next row down.
+        Text {
+            x: 6px * zoom;
+            y: 0px;
+            width: parent.width - 12px * zoom;
+            height: rh;
+            text: "\u{AB}" + box.stereotype + "\u{BB}";
+            color: Theme.muted;
+            font-size: ClassText.fs(Theme.font-caption * zoom, 6px, zoom);
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            x: 6px * zoom;
+            y: rh;
+            width: parent.width - 12px * zoom;
+            height: rh;
+            text: (box.warn ? "\u{26A0} " : "") + box.name;
+            color: box.warn ? Theme.warning : Theme.text;
+            font-size: ClassText.fs(Theme.font-body * zoom, 7px, zoom);
+            font-weight: Theme.weight-strong;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            x: 6px * zoom;
+            y: 2 * rh;
+            width: parent.width - 12px * zoom;
+            height: rh;
+            text: box.root != "" ? box.root : box.ghost ? @tr("not declared") : "";
+            color: Theme.muted;
+            font-size: ClassText.fs(Theme.font-caption * zoom, 6px, zoom);
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
         }
     }
     for c in box.compartments: Rectangle {
@@ -223,7 +241,7 @@ component ClassBox inherits Rectangle {
             x: 8px * zoom;
             text: ClassText.title(c.title);
             color: Theme.muted;
-            font-size: max(6px, Theme.font-micro * zoom);
+            font-size: ClassText.fs(Theme.font-micro * zoom, 6px, zoom);
             font-weight: Theme.weight-strong;
         }
         for ln[i] in c.lines: Rectangle {

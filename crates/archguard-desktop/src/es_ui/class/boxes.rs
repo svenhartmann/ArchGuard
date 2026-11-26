@@ -3,8 +3,8 @@
 use archguard_engine::core::{SearchField, SearchIndexDetail, ServiceTopology};
 use archguard_engine::{
     ChainRef, SearchAnalysisPart, SearchEdge, SearchFieldRole, SearchGraph, SearchNode,
-    search_analysis_parts, search_analysis_users, search_field_analyzers, search_field_depth,
-    search_field_role, short_scope,
+    is_detail_gap, search_analysis_parts, search_analysis_users, search_field_analyzers,
+    search_field_depth, search_field_role, short_scope,
 };
 
 use super::types::{Key, Switches};
@@ -51,7 +51,7 @@ pub enum ChainClass {
 }
 
 /// `summary` > 0: that many collapsed fields; < 0: that many more rows. A hint row has the
-/// identifier `not_read` or `not_declared` as `text`.
+/// identifier `not_read`, `mapping_not_read` or `not_declared` as `text`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Line {
     pub depth: usize,
@@ -135,7 +135,7 @@ pub fn content(t: &ServiceTopology, g: &SearchGraph, key: &Key, sw: &Switches) -
     };
     if let Key::Part { kind, name, .. } = key {
         b.name = name.clone();
-        b.root = node.label.clone();
+        b.root = owner_root(g, node);
         if let Some(d) = detail {
             part_box(&mut b, d, kind, name);
         }
@@ -155,13 +155,43 @@ pub fn content(t: &ServiceTopology, g: &SearchGraph, key: &Key, sw: &Switches) -
     b
 }
 
+/// Whether the index's mapping was not read (a `DetailNotLiteral` gap names `mappings` or `body`)
+/// although other parts of its detail were.
+pub fn mapping_unread(t: &ServiceTopology, node: &SearchNode) -> bool {
+    let Some(a) = node.artifact.and_then(|i| t.elasticsearch.artifacts.get(i)) else {
+        return false;
+    };
+    t.diagnostics.iter().any(|d| {
+        let missed = d.message.rsplit("not read: ").next().unwrap_or_default();
+        is_detail_gap(d, &a.address)
+            && missed
+                .trim_end_matches('.')
+                .split(", ")
+                .any(|m| m == "mappings" || m == "body")
+    })
+}
+
+/// The owner line of a building block: the owner's short label, plus ` · <root>` only when
+/// another owner of the same kind has the same short label.
+fn owner_root(g: &SearchGraph, node: &SearchNode) -> String {
+    let twins = g
+        .nodes
+        .iter()
+        .filter(|n| n.kind == node.kind && n.short_label == node.short_label);
+    if twins.count() > 1 {
+        format!("{} · {}", node.short_label, short_scope(&node.scope))
+    } else {
+        node.short_label.clone()
+    }
+}
+
 fn node_box(b: &mut BoxContent, t: &ServiceTopology, g: &SearchGraph, i: usize, sw: &Switches) {
     let node = &g.nodes[i];
     let artifact = node.artifact.and_then(|a| t.elasticsearch.artifacts.get(a));
     match (node.kind.as_str(), artifact) {
         (k, Some(a)) if DETAIL_KINDS.contains(&k) => {
             let page = index_page(t, node);
-            index_compartments(b, a.detail.as_ref(), &page, sw);
+            index_compartments(b, a.detail.as_ref(), (&page, mapping_unread(t, node)), sw);
             if k == "index_template" {
                 let lines = a.patterns.iter().cloned().map(text_line).collect();
                 b.compartments.push(comp(Title::Patterns, lines));
@@ -202,7 +232,7 @@ fn access_text(relation: &str, other: &SearchNode) -> String {
 fn index_compartments(
     b: &mut BoxContent,
     detail: Option<&SearchIndexDetail>,
-    page: &IndexPage,
+    (page, unread): (&IndexPage, bool),
     sw: &Switches,
 ) {
     let Some(d) = detail else {
@@ -220,6 +250,8 @@ fn index_compartments(
             summary: Some(fields.len() as isize),
             ..Default::default()
         }]
+    } else if fields.is_empty() && unread {
+        vec![text_line("mapping_not_read".into())]
     } else {
         fields
     };

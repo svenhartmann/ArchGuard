@@ -419,7 +419,10 @@ impl<'a> Cx<'a> {
                 .iter()
                 .filter_map(|f| f.normalizer.as_deref())
                 .map(|n| ("normalizer", n));
-            for (kind, name) in named.chain(norms).chain([("analyzer", "default")]) {
+            // `default` and `default_search` are used by the index itself, whether a field
+            // names them or not.
+            let implicit = [("analyzer", "default"), ("analyzer", "default_search")];
+            for (kind, name) in named.chain(norms).chain(implicit) {
                 uses(&Key::Node(i), part_key(i, kind, name));
             }
         }
