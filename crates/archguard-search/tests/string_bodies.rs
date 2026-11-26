@@ -132,7 +132,7 @@ fn what_is_not_readable_is_a_gap_with_its_line() {
         .collect();
     got.sort();
     let want = [
-        "cs-shop/Setup.cs:19",
+        "cs-shop/Setup.cs:10",
         "java-shop/src/main/java/demo/Setup.java:12",
         "java-shop/src/main/java/demo/Setup.java:13",
         "java-shop/src/main/java/demo/Setup.java:14",

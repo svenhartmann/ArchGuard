@@ -14,5 +14,6 @@ class Setup {
         c.indices().create(new CreateIndexRequest(prefix + "-v1").source(Bodies.PART, XContentType.JSON), DEFAULT);
         c.indices().create(new CreateTableRequest("lookalike-tbl").source(Bodies.ORDERS, XContentType.JSON), DEFAULT);
         client.indices().create(b -> b.index("modern-v1").withJson(new StringReader(Bodies.PART)));
+        client.tables().create(b -> b.index("lookalike-modern").withJson(new StringReader(Bodies.PART)));
     }
 }
