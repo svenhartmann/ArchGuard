@@ -7,6 +7,7 @@ pub(crate) mod constants;
 pub(crate) mod json;
 pub(crate) mod json_files;
 pub(crate) mod search_templates;
+pub(crate) mod spring;
 pub(crate) mod terraform;
 pub(crate) mod terraform_detail;
 pub(crate) mod terraform_eval;
@@ -22,4 +23,5 @@ pub(crate) const SOURCES: &[fn(&SearchContext) -> SourceOutput] = &[
     search_templates::extract_with,
     json_files::extract_with,
     code::extract_with,
+    spring::extract_with,
 ];
