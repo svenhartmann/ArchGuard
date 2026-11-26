@@ -150,11 +150,11 @@ fn module_constants_resolve_and_non_literals_are_gaps_per_attribute() {
     let got = gaps(&report);
     let has = |needle: &str| got.iter().any(|g| g.contains(needle));
     assert!(
-        has("shop/src/consts.ts:16: ") && has("not read: settings."),
+        has("shop/src/consts.ts:11: ") && has("not read: settings."),
         "{got:?}"
     );
     assert!(
-        has("shop/src/consts.ts:20: ") && has("not read: mappings."),
+        has("shop/src/consts.ts:16: ") && has("not read: mappings."),
         "{got:?}"
     );
     assert!(
