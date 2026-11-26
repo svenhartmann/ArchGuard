@@ -162,6 +162,7 @@ fn index_mode(g: &SearchGraph, key: &Key, d: &IndexDetails, selected: Option<&st
                 .into(),
         },
         fields: model(d.fields.iter().map(|f| field_row(f, selected))),
+        mapping_unread: d.mapping_unread && d.fields.is_empty(),
         chain_name: first
             .map(|c| c.analyzer.as_str())
             .unwrap_or_default()
