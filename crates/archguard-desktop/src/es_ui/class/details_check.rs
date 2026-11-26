@@ -61,25 +61,29 @@ fn stage(
 }
 
 #[test]
-fn index_details_list_fields_with_analysis_and_their_roles() {
+fn index_details_list_every_field_as_a_tree_with_roles_and_depth() {
     let t = topology();
     let g = search_graph(&t);
     let i = index(&t, &g);
-    let fields: Vec<(&str, SearchFieldRole)> =
-        i.fields.iter().map(|f| (f.path.as_str(), f.role)).collect();
     assert_eq!(
-        fields,
-        [
-            ("title", SearchFieldRole::Field),
-            ("title.raw", SearchFieldRole::MultiField),
-            ("title.shingle", SearchFieldRole::MultiField),
-            ("same", SearchFieldRole::Field),
-            ("author.name", SearchFieldRole::Property),
-        ]
+        i.fields.len(),
+        i.page.mapping.len(),
+        "all fields, not only analyzed ones"
     );
-    assert_eq!(i.fields[0].search_analyzer.as_deref(), Some("qry_a"));
-    assert_eq!(i.fields[1].normalizer.as_deref(), Some("fold_n"));
-    assert_eq!(i.page.mapping.len(), 9);
+    let row = |p: &str| {
+        i.fields
+            .iter()
+            .find(|f| f.path == p)
+            .unwrap_or_else(|| panic!("{p}"))
+    };
+    let shape = |p: &str| (row(p).role, row(p).depth);
+    assert_eq!(shape("title"), (SearchFieldRole::Field, 0));
+    assert_eq!(shape("title.raw"), (SearchFieldRole::MultiField, 1));
+    assert_eq!(shape("body"), (SearchFieldRole::Field, 0));
+    assert_eq!(shape("author.name"), (SearchFieldRole::Property, 1));
+    assert_eq!(shape("lines.sku"), (SearchFieldRole::Property, 1));
+    assert_eq!(row("title").search_analyzer.as_deref(), Some("qry_a"));
+    assert_eq!(row("title.raw").normalizer.as_deref(), Some("fold_n"));
 }
 
 #[test]
@@ -210,4 +214,72 @@ fn usages_own_are_clickable_foreign_are_not_and_writes_reads_list_services() {
         (i.writes, i.reads),
         (vec!["api".to_string()], vec!["other:web".to_string()])
     );
+}
+
+fn field(t: &ServiceTopology, g: &SearchGraph, path: &str) -> FieldDetails {
+    field_details(t, g, node(g, "index", "docs"), path).unwrap_or_else(|| panic!("{path}"))
+}
+
+#[test]
+fn field_details_resolve_the_index_and_the_search_chain() {
+    let t = topology();
+    let g = search_graph(&t);
+    let f = field(&t, &g, "title");
+    assert_eq!((f.kind.as_str(), f.role), ("text", SearchFieldRole::Field));
+    let (index, search) = (f.index.unwrap(), f.search.unwrap());
+    assert_eq!((index.name.as_str(), index.declared), ("idx_a", true));
+    assert_eq!(
+        index.stages[0],
+        stage(
+            "char_filter",
+            0,
+            "dash_map",
+            "declared",
+            &[("mappings", "- => _")]
+        )
+    );
+    assert_eq!(index.stages.len(), 4);
+    assert_eq!(search.name, "qry_a");
+    assert_eq!(
+        search.stages[2],
+        stage("filter", 2, "syn", "declared", &[("synonyms", "a, b")])
+    );
+    assert!(f.normalizer.is_none());
+    let hint = f.hint.expect("the stages differ");
+    assert!(hint.tokenizer_differs && hint.field == "title");
+}
+
+#[test]
+fn field_details_follow_the_search_order_of_the_spec() {
+    let t = topology();
+    let g = search_graph(&t);
+    // `body` names nothing: declared `default` indexes, declared `default_search` searches.
+    let f = field(&t, &g, "body");
+    let (index, search) = (f.index.unwrap(), f.search.unwrap());
+    assert_eq!(
+        (index.name.as_str(), search.name.as_str()),
+        ("default", "default_search")
+    );
+    assert!(index.declared && search.declared);
+    assert_eq!(search.stages.last().map(|s| s.name.as_str()), Some("trim"));
+    // `title.shingle` has an analyzer and no search analyzer: `default_search` still wins over it.
+    let f = field(&t, &g, "title.shingle");
+    assert_eq!(f.index.unwrap().name, "shingle_a");
+    assert_eq!(f.search.unwrap().name, "default_search");
+}
+
+#[test]
+fn field_details_have_the_normalizer_chain_and_none_for_fields_without_analysis() {
+    let t = topology();
+    let g = search_graph(&t);
+    let raw = field(&t, &g, "title.raw");
+    assert_eq!(raw.role, SearchFieldRole::MultiField);
+    assert!(raw.index.is_none() && raw.search.is_none() && raw.hint.is_none());
+    let n = raw.normalizer.expect("fold_n");
+    assert_eq!((n.name.as_str(), n.declared), ("fold_n", true));
+    assert_eq!(n.stages, [stage("filter", 1, "lowercase", "builtin", &[])]);
+    let sku = field(&t, &g, "lines.sku");
+    assert_eq!(sku.role, SearchFieldRole::Property);
+    assert!(sku.index.is_none() && sku.normalizer.is_none());
+    assert!(field_details(&t, &g, node(&g, "index", "docs"), "nope").is_none());
 }

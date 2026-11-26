@@ -255,3 +255,84 @@ fn declared_default_applies_to_text_fields_without_analyzer() {
     assert_eq!(f[0].4, "{default}");
     assert_eq!(f[1].4, "");
 }
+
+#[test]
+fn field_lines_carry_their_full_path_other_lines_none() {
+    let b = docs(&Switches::default());
+    let fields = b
+        .compartments
+        .iter()
+        .find(|c| c.title == Title::Fields)
+        .expect("fields");
+    let raw = fields
+        .lines
+        .iter()
+        .find(|l| l.text == "raw")
+        .expect("title.raw");
+    assert_eq!(raw.path, "title.raw");
+    assert!(
+        fields.lines.iter().all(|l| !l.path.is_empty()),
+        "every line is a field"
+    );
+    let other = b
+        .compartments
+        .iter()
+        .find(|c| c.title == Title::Analysis)
+        .expect("analysis");
+    assert!(other.lines.iter().all(|l| l.path.is_empty()));
+}
+
+fn note_topology() -> (ServiceTopology, SearchGraph) {
+    let std_def = r#"{"type":"custom","tokenizer":"standard"}"#;
+    let detail = json!({
+        "fields": [
+            {"path": "t", "kind": "text"},
+            {"path": "k", "kind": "keyword", "normalizer": "n"},
+            {"path": "s", "kind": "keyword", "search_analyzer": "default_search"}],
+        "analysis": [
+            {"kind": "analyzer", "name": "default", "definition": std_def},
+            {"kind": "analyzer", "name": "default_search", "definition": std_def},
+            {"kind": "normalizer", "name": "n", "definition": r#"{"type":"custom","filter":["lowercase"]}"#}]});
+    let es = json!({"artifacts": [{"kind": "index", "name": "ix", "address": "index.ix",
+        "scope": "terraform:infra", "patterns": [], "references": [], "evidence": [], "detail": detail}],
+        "usages": [], "findings": []});
+    let t = ServiceTopology {
+        elasticsearch: serde_json::from_value(es).unwrap(),
+        ..Default::default()
+    };
+    let g = search_graph(&t);
+    (t, g)
+}
+
+#[test]
+fn the_box_note_and_the_field_details_name_the_same_analyzers() {
+    use super::details::field_details;
+    let (t, g) = note_topology();
+    let i = g.nodes.iter().position(|n| n.kind == "index").unwrap();
+    let b = content(&t, &g, &Key::Node(i), &Switches::default());
+    let fields = b
+        .compartments
+        .iter()
+        .find(|c| c.title == Title::Fields)
+        .unwrap();
+    let note = |p: &str| {
+        fields
+            .lines
+            .iter()
+            .find(|l| l.text == p)
+            .unwrap()
+            .note
+            .clone()
+    };
+    let text = field_details(&t, &g, i, "t").unwrap();
+    let (a, s) = (text.index.unwrap().name, text.search.unwrap().name);
+    assert_eq!(note("t"), format!("{{{a} / \u{2315} {s}}}"));
+    // `default` applies to text fields only: a keyword field shows its normalizer alone.
+    let k = field_details(&t, &g, i, "k").unwrap();
+    assert!(k.index.is_none() && k.search.is_none());
+    assert_eq!(note("k"), "{norm n}");
+    // A keyword field naming a search analyzer is analyzed: `default` indexes it.
+    let s = field_details(&t, &g, i, "s").unwrap();
+    let (a, b) = (s.index.unwrap().name, s.search.unwrap().name);
+    assert_eq!(note("s"), format!("{{{a} / \u{2315} {b}}}"));
+}

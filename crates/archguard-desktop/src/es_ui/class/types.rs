@@ -1,5 +1,10 @@
 //! Shared class view types: selection key, kind filter, switches, ticket 03.
 
+/// Row pitch and header height of a canvas box at zoom 1: the layout places rows by them and a
+/// click on the canvas is matched against them.
+pub const ROW: f32 = 16.0;
+pub const HEAD: f32 = 3.0 * ROW;
+
 /// What is selected: a `search_graph` node or a part (analysis building block) of an index/template.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Key {

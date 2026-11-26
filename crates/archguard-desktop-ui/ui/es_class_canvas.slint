@@ -14,6 +14,8 @@ export struct EsClassLine {
     note: string,
     // > 0: "{n} fields" (collapsed); < 0: "{n} more"; 0: a normal row.
     summary: int,
+    // The field in focus.
+    focus: bool,
 }
 
 export struct EsClassChip {
@@ -51,6 +53,8 @@ export struct EsClassBox {
     ghost: bool,
     warn: bool,
     selected: bool,
+    // A field is in focus and this box is not part of its analysis.
+    dim: bool,
     // Ghost only: the dashed outline as path commands in box-local coordinates.
     border: string,
     compartments: [EsClassCompartment],
@@ -68,6 +72,7 @@ export struct EsClassEdge {
     label: string,
     lx: float,
     ly: float,
+    dim: bool,
 }
 
 // Compartment titles by index; -1 has none. Raw words are not translated.
@@ -150,7 +155,7 @@ component ClassChip inherits Rectangle {
 component ClassBox inherits Rectangle {
     in property <EsClassBox> box;
     in property <float> zoom;
-    callback clicked();
+    callback clicked(float);
     // kind 4: an analysis building block.
     property <bool> analysis: box.kind == 4;
     property <length> rh: 16px * zoom;
@@ -160,6 +165,7 @@ component ClassBox inherits Rectangle {
     height: box.h * 1px * zoom;
     border-radius: 6px * zoom;
     background: box.ghost ? transparent : Theme.panel;
+    opacity: box.dim ? Theme.dim-alpha : 1;
     // The header band must not paint over the rounded corners.
     clip: true;
     // A ghost's dashed outline comes from the model.
@@ -220,13 +226,19 @@ component ClassBox inherits Rectangle {
             font-size: max(6px, Theme.font-micro * zoom);
             font-weight: Theme.weight-strong;
         }
-        for ln[i] in c.lines: ClassLine {
-            x: 8px * zoom;
+        for ln[i] in c.lines: Rectangle {
             y: rh * (1 + i);
-            width: parent.width - 16px * zoom;
+            width: parent.width;
             height: rh;
-            l: ln;
-            zoom: zoom;
+            // The field in focus.
+            background: ln.focus ? Theme.accent.with-alpha(0.25) : transparent;
+            ClassLine {
+                x: 8px * zoom;
+                width: parent.width - 16px * zoom;
+                height: parent.height;
+                l: ln;
+                zoom: zoom;
+            }
         }
         for ch in c.chips: ClassChip {
             chip: ch;
@@ -241,7 +253,7 @@ component ClassBox inherits Rectangle {
     }
     TouchArea {
         mouse-cursor: pointer;
-        clicked => { root.clicked(); }
+        clicked => { root.clicked(self.mouse-y / 1px / zoom); }
     }
 }
 
@@ -253,7 +265,10 @@ export component EsClassCanvas inherits Rectangle {
     in property <float> zoom: 1.0;
     // A new value asks for `fit` once the viewport has a size.
     in property <int> fit-tick;
-    callback select(int);
+    // A box and the click's height below its top (px at zoom 1).
+    callback select(int, float);
+    // Escape: back from a field to its index.
+    callback escape();
     callback zoom-by(float);
     callback fit(float, float);
 
@@ -276,6 +291,18 @@ export component EsClassCanvas inherits Rectangle {
     changed view-h => { if (root.waiting) { root.refit(); } }
     init => { root.refit(); }
 
+    // Takes the keyboard on a click in a box; Escape leaves the field in focus.
+    keys := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(e) => {
+            if (e.text == Key.Escape) {
+                root.escape();
+                return accept;
+            }
+            return reject;
+        }
+    }
     flick := Flickable {
         content-width: max(self.width, root.canvas-w * root.zoom * 1px);
         content-height: max(self.height, root.canvas-h * root.zoom * 1px);
@@ -285,6 +312,7 @@ export component EsClassCanvas inherits Rectangle {
             width: root.canvas-w * root.zoom * 1px;
             height: root.canvas-h * root.zoom * 1px;
             for e in root.edges: Rectangle {
+                opacity: e.dim ? Theme.dim-alpha : 1;
                 property <color> tone: e.style == 1 ? Theme.outgoing : e.style == 2 ? Theme.incoming : Theme.edge;
                 Path {
                     width: root.canvas-w * root.zoom * 1px;
@@ -311,11 +339,12 @@ export component EsClassCanvas inherits Rectangle {
             for b[i] in root.boxes: ClassBox {
                 box: b;
                 zoom: root.zoom;
-                clicked => { root.select(i); }
+                clicked(y) => { keys.focus(); root.select(i, y); }
             }
             // Labels lie above the boxes, on a background, so no box hides them.
             for e in root.edges: Rectangle {
                 visible: e.label != "";
+                opacity: e.dim ? Theme.dim-alpha : 1;
                 x: e.lx * 1px * root.zoom;
                 y: e.ly * 1px * root.zoom;
                 width: lab.preferred-width + 6px;

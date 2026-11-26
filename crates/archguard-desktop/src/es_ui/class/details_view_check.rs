@@ -79,6 +79,9 @@ fn index_details() -> EsDetails {
             location: s("infra/indices.tf:42"),
         },
         fields: model(vec![EsDetailField {
+            path: s("title"),
+            depth: 0,
+            selected: false,
             name: s("title"),
             kind: s("text"),
             analysis: s("index: german_custom"),
@@ -241,7 +244,11 @@ fn details_texts_are_translated() {
     // "Settings" is the Settings tab's own, in its context.
     texts.retain(|t| t != "Settings");
     for t in [
-        "Fields with analysis",
+        "Fields",
+        "Index chain {0}",
+        "Search chain {0}",
+        "Normalizer chain {0}",
+        "Role: multi-field",
         "Analysis chain {0}",
         "Char filter",
         "Tokenizer",

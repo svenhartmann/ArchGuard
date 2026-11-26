@@ -1,14 +1,19 @@
 //! The detail models as Slint data (`es_class_details.slint`), ticket 12; called by `view`.
 
 use archguard_engine::SearchGraph;
-use slint::ModelRc;
+use slint::{ModelRc, SharedString};
 
-use super::details::{Details, FieldRow, Hint, IndexDetails, PartDetails, StageRow};
+use archguard_engine::SearchFieldRole;
+
+use super::details::{
+    Details, FieldChain, FieldDetails, FieldRow, Hint, IndexDetails, PartDetails, StageRow,
+};
 use super::types::Key;
 use crate::es_ui::index_page::UsageRow;
 use crate::tab_support::model;
 use crate::ui::{
-    EsDetailField, EsDetailHead, EsDetailHint, EsDetailPair, EsDetailRow, EsDetailUse, EsDetails,
+    EsDetailField, EsDetailFocus, EsDetailHead, EsDetailHint, EsDetailPair, EsDetailRow,
+    EsDetailUse, EsDetails,
 };
 
 fn at(file: &str, line: Option<u32>) -> String {
@@ -87,7 +92,55 @@ pub fn hint(h: &Hint) -> EsDetailHint {
     }
 }
 
-fn index_mode(g: &SearchGraph, key: &Key, d: &IndexDetails) -> EsDetails {
+/// A tree row: the last path segment, "\u{203A}" before a multi-field.
+fn field_row(f: &FieldRow, selected: Option<&str>) -> EsDetailField {
+    let last = f.path.rsplit('.').next().unwrap_or_default();
+    let mark = if f.role == SearchFieldRole::MultiField {
+        "\u{203A} "
+    } else {
+        ""
+    };
+    EsDetailField {
+        path: f.path.as_str().into(),
+        depth: f.depth as i32,
+        selected: selected == Some(f.path.as_str()),
+        name: format!("{mark}{last}").into(),
+        kind: f.kind.as_str().into(),
+        analysis: analysis_text(f).into(),
+    }
+}
+
+fn chain_rows(c: &Option<FieldChain>) -> (SharedString, ModelRc<EsDetailRow>) {
+    let name = c.as_ref().map(|c| c.name.as_str()).unwrap_or_default();
+    (
+        name.into(),
+        model(c.iter().flat_map(|c| c.stages.iter().map(stage_row))),
+    )
+}
+
+fn focus(f: &FieldDetails) -> EsDetailFocus {
+    let (index_name, index_chain) = chain_rows(&f.index);
+    let (search_name, search_chain) = chain_rows(&f.search);
+    let (norm_name, norm_chain) = chain_rows(&f.normalizer);
+    EsDetailFocus {
+        path: f.path.as_str().into(),
+        kind: f.kind.as_str().into(),
+        role: match f.role {
+            SearchFieldRole::Field => 0,
+            SearchFieldRole::MultiField => 1,
+            SearchFieldRole::Property => 2,
+        },
+        index_name,
+        index_chain,
+        search_name,
+        search_chain,
+        norm_name,
+        norm_chain,
+        hint: f.hint.as_ref().map(hint).unwrap_or_default(),
+    }
+}
+
+fn index_mode(g: &SearchGraph, key: &Key, d: &IndexDetails, selected: Option<&str>) -> EsDetails {
     let p = &d.page;
     let kind = match key {
         Key::Node(i) => g.nodes.get(*i).map(|n| n.kind.as_str()).unwrap_or_default(),
@@ -108,11 +161,7 @@ fn index_mode(g: &SearchGraph, key: &Key, d: &IndexDetails) -> EsDetails {
                 .unwrap_or_default()
                 .into(),
         },
-        fields: model(d.fields.iter().map(|f| EsDetailField {
-            name: f.path.as_str().into(),
-            kind: f.kind.as_str().into(),
-            analysis: analysis_text(f).into(),
-        })),
+        fields: model(d.fields.iter().map(|f| field_row(f, selected))),
         chain_name: first
             .map(|c| c.analyzer.as_str())
             .unwrap_or_default()
@@ -159,10 +208,21 @@ fn part_mode(p: &PartDetails) -> EsDetails {
     }
 }
 
-/// The details column for `key`; `d` is `details::details(t, g, key)`.
-pub fn slint_details(g: &SearchGraph, key: &Key, d: &Details) -> EsDetails {
+/// The details column for `key`; `d` is `details::details(t, g, key)`. An index with a field in
+/// focus (`field`, the details of the field `selected`) shows that field (mode 3).
+pub fn slint_details(
+    g: &SearchGraph,
+    key: &Key,
+    d: &Details,
+    field: Option<&FieldDetails>,
+    selected: Option<&str>,
+) -> EsDetails {
     match d {
-        Details::Index(i) => index_mode(g, key, i),
+        Details::Index(i) => EsDetails {
+            mode: if field.is_some() { 3 } else { 0 },
+            field: field.map(focus).unwrap_or_default(),
+            ..index_mode(g, key, i, selected)
+        },
         Details::Part(p) => part_mode(p),
         Details::Other(o) => EsDetails {
             mode: 2,

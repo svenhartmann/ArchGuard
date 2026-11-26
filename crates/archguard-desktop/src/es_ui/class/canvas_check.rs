@@ -70,6 +70,7 @@ fn line(text: &str) -> EsClassLine {
         kind: "keyword".into(),
         note: Default::default(),
         summary: 0,
+        focus: false,
     }
 }
 

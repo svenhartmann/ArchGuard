@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use archguard_engine::{SearchGraph, search_graph};
 
-use super::class::types::{Group, Key, Switch, Switches};
+use super::class::types::{Group, HEAD, Key, ROW, Switch, Switches};
 use crate::services_ui::search::KINDS;
 use crate::tab_support::Topology;
 
@@ -29,6 +29,8 @@ pub struct EsState {
     pub(super) selected: Option<Key>,
     /// Class view: whole cluster instead of the neighborhood.
     pub(super) cluster: bool,
+    /// Class view: the selected field, as index key and field path.
+    pub(super) field: Option<(Key, String)>,
     pub(super) switches: Switches,
     /// Class view: list search text.
     pub(super) query: String,
@@ -39,6 +41,10 @@ pub struct EsState {
     pub(super) row_keys: Vec<Key>,
     pub(super) box_keys: Vec<Key>,
     pub(super) canvas: (f32, f32),
+    /// Class view, set with `box_keys`: per canvas box the (top, path) of its field lines.
+    pub(super) box_rows: Vec<Vec<(f32, String)>>,
+    /// Class view, set by the last build: the shown selection (what a details click refers to).
+    pub(super) shown: Option<Key>,
     /// Class view: counts up with every change of the selection or scope (the canvas refits).
     pub(super) fit_tick: i32,
 }
@@ -56,12 +62,15 @@ pub fn build_from(topology: Topology) -> EsState {
         problem: String::new(),
         selected: None,
         cluster: false,
+        field: None,
         switches: Switches::default(),
         query: String::new(),
         group: Group::All,
         row_keys: Vec::new(),
         box_keys: Vec::new(),
         canvas: (0.0, 0.0),
+        box_rows: Vec::new(),
+        shown: None,
         fit_tick: 0,
     }
 }
@@ -124,8 +133,29 @@ impl EsState {
 impl EsState {
     pub(super) fn select(&mut self, key: Option<Key>) {
         self.selected = key;
+        self.field = None;
         self.problem.clear();
         self.fit_tick += 1;
+    }
+
+    /// Field `path` of the index `key` is selected (the index is selected with it).
+    pub(super) fn set_field(&mut self, key: Key, path: &str) {
+        if self.selected.as_ref() != Some(&key) {
+            self.select(Some(key.clone()));
+        }
+        self.field = Some((key, path.to_string()));
+    }
+
+    /// Back to the index selection.
+    pub(super) fn clear_field(&mut self) {
+        self.field = None;
+    }
+
+    /// A field of the shown index was clicked in the details.
+    pub(super) fn select_field(&mut self, path: &str) {
+        if let Some(key) = self.shown.clone() {
+            self.set_field(key, path);
+        }
     }
 
     pub(super) fn toggle_cluster(&mut self) {
@@ -151,10 +181,22 @@ impl EsState {
         }
     }
 
-    /// The canvas box `i` is selected; an index out of range is ignored.
-    pub(super) fn pick_box(&mut self, i: usize) {
-        if let Some(key) = self.box_keys.get(i).cloned() {
-            self.select(Some(key));
+    /// The canvas box `i` is clicked `y` px below its top (zoom 1): a field row selects that
+    /// field of the index, the header of the index with a field in focus returns to the index,
+    /// else the box is selected. An index out of range is ignored.
+    pub(super) fn pick_box(&mut self, i: usize, y: f32) {
+        let Some(key) = self.box_keys.get(i).cloned() else {
+            return;
+        };
+        let hit = (self.box_rows.get(i).into_iter().flatten())
+            .find(|(top, _)| (*top..*top + ROW).contains(&y))
+            .map(|(_, path)| path.clone());
+        match hit {
+            Some(path) => self.set_field(key, &path),
+            None if self.field.as_ref().is_some_and(|(k, _)| *k == key) && y < HEAD => {
+                self.clear_field();
+            }
+            None => self.select(Some(key)),
         }
     }
 

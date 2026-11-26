@@ -165,15 +165,15 @@ fn stages(detail: &SearchIndexDetail, name: &str) -> (Option<String>, BTreeSet<S
     (tokenizer, set)
 }
 
-/// The difference of the effective index and search analyzer of field `path`. Search order (ES
-/// 8.19): `search_analyzer`, declared `default_search`, `analyzer`, declared `default`, `standard`.
-/// `None` without a differing search analyzer or with equal stage names (analyzer names do not
-/// count).
-pub fn search_analyzer_difference(
-    detail: &SearchIndexDetail,
-    path: &str,
-) -> Option<SearchAnalyzerDifference> {
+/// The effective index and search analyzer names of field `path`. Search order (ES 8.19):
+/// `search_analyzer`, declared `default_search` (text fields), `analyzer`, declared `default`,
+/// `standard`; index order: `analyzer`, declared `default`, `standard`. `None` for an unknown
+/// field and for one analysis does not apply to (not `text` and no analyzer named).
+pub fn search_field_analyzers(detail: &SearchIndexDetail, path: &str) -> Option<(String, String)> {
     let f = detail.fields.iter().find(|f| f.path == path)?;
+    if f.kind != "text" && f.analyzer.is_none() && f.search_analyzer.is_none() {
+        return None;
+    }
     let declared = |n: &str| {
         detail
             .analysis
@@ -192,6 +192,17 @@ pub fn search_analyzer_difference(
             (f.kind == "text" && declared("default_search")).then(|| "default_search".to_string())
         })
         .unwrap_or_else(|| index.clone());
+    Some((index, search))
+}
+
+/// The difference of the effective index and search analyzer of field `path` (see
+/// [`search_field_analyzers`]). `None` without a differing search analyzer or with equal stage
+/// names (analyzer names do not count).
+pub fn search_analyzer_difference(
+    detail: &SearchIndexDetail,
+    path: &str,
+) -> Option<SearchAnalyzerDifference> {
+    let (index, search) = search_field_analyzers(detail, path)?;
     let ((it, is), (st, ss)) = (stages(detail, &index), stages(detail, &search));
     let list = |a: &BTreeSet<String>, b: &BTreeSet<String>| a.difference(b).cloned().collect();
     let d = SearchAnalyzerDifference {
