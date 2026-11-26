@@ -8,6 +8,7 @@ pub(crate) mod json;
 pub(crate) mod json_files;
 pub(crate) mod search_templates;
 pub(crate) mod spring;
+pub(crate) mod spring_syntax;
 pub(crate) mod terraform;
 pub(crate) mod terraform_detail;
 pub(crate) mod terraform_eval;

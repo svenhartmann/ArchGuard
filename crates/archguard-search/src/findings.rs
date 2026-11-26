@@ -101,6 +101,8 @@ es_gaps! {
     DefinitionUnread => "Definition file could not be read or parsed (larger than 1 MiB, not a regular file, or invalid JSON/YAML); the definition in it is unknown.",
     DefinitionScanStop => "Definition file scan stopped after 5000 files; definitions in later files are unknown.",
     UnknownProvider => ": resource of an unknown provider (no required_providers source opensearch-project/opensearch or phillbaker/elasticsearch declares it); not read.",
+    SpringNotLiteral => "Spring Data annotation value is not a literal (SpEL, placeholder, variable or expression) or its classpath resource is not a readable file below the project root; the value is unknown.",
+    SpringScanStop => "Spring Data scan stopped after 5000 source files; annotated classes in later files are unknown.",
     SavedObjects => ": saved objects are not analyzed.",
     NotLiteral => ": Elasticsearch name is not a literal; ",
     NoParamsIndex => ": alerting rule has no top-level params index; its index comes from a data view or is unknown.",

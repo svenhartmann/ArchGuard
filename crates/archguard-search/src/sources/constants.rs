@@ -62,7 +62,7 @@ impl Constants {
     /// Turns each waiting reference into a usage with call site and declaration, or a gap.
     pub(super) fn settle(self, found: &mut Found, report: &mut ServiceTopology) {
         for p in &self.pending {
-            match self.resolve(p) {
+            match self.resolve(&p.service, p.ext, &p.reference) {
                 Some((name, declared)) => {
                     let call = site(
                         &p.rel,
@@ -86,12 +86,17 @@ impl Constants {
 
     /// The literal of the one constant the reference names in its service (qualified: in its class); any other count, a
     /// non-literal value or a qualifier that is not the declaring class (file stem) is a gap.
-    fn resolve(&self, p: &Pending) -> Option<(String, ServiceEvidence)> {
-        let (qualifier, name) = match p.reference.rsplit_once('.') {
+    pub(super) fn resolve(
+        &self,
+        service: &str,
+        ext: &'static str,
+        reference: &str,
+    ) -> Option<(String, ServiceEvidence)> {
+        let (qualifier, name) = match reference.rsplit_once('.') {
             Some((q, n)) => (Some(q.rsplit('.').next().unwrap_or(q)), n),
-            None => (None, p.reference.as_str()),
+            None => (None, reference),
         };
-        let key = (p.service.clone(), p.ext, name.to_owned());
+        let key = (service.to_owned(), ext, name.to_owned());
         // A qualified reference needs one declaration of (owner, name), not of the name alone.
         let mut same = self
             .declared
@@ -130,7 +135,7 @@ pub(super) fn reference(arg: &str) -> Name {
 }
 
 /// `tsx` is `ts`: constants and references of one language group meet.
-fn lang(ext: &str) -> &'static str {
+pub(super) fn lang(ext: &str) -> &'static str {
     match ext {
         "java" => "java",
         "cs" => "cs",

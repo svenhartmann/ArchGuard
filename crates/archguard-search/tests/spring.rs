@@ -53,6 +53,7 @@ fn only_documents_of_the_spring_packages_are_artifacts() {
         "index escape-idx ",
         "index mapped-idx ",
         "index missing-idx ",
+        "index notes-idx ",
         "index orders-v1 ",
     ];
     assert_eq!(
@@ -101,6 +102,18 @@ fn constant_names_resolve_and_the_flavor_follows_the_import() {
     let a = named(&report, "customers-v2");
     assert_eq!(a.flavor, "opensearch");
     assert_eq!(a.detail.as_ref().expect("detail").fields[0].path, "email");
+}
+
+#[test]
+fn kotlin_properties_are_fields() {
+    let report = analyze();
+    let f = &named(&report, "notes-idx")
+        .detail
+        .as_ref()
+        .expect("detail")
+        .fields[0];
+    assert_eq!((f.path.as_str(), f.kind.as_str()), ("body", "text"));
+    assert_eq!(f.analyzer.as_deref(), Some("plain"));
 }
 
 #[test]
