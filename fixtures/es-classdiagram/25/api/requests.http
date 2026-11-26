@@ -1,0 +1,95 @@
+@host = http://localhost:9200
+
+### index with an inline body
+PUT {{host}}/shop-orders?pretty
+Content-Type: application/json
+
+{
+  "settings": {"number_of_shards": 2},
+  "mappings": {"properties": {"title": {"type": "text", "analyzer": "folded"}}}
+}
+
+### composable template
+PUT {{host}}/_index_template/shop-tpl
+Content-Type: application/json
+
+{"index_patterns": ["shop-*"], "template": {"settings": {"number_of_replicas": 1}}, "composed_of": ["shop-base"]}
+
+###
+PUT /_component_template/shop-base
+Content-Type: application/json
+
+{"template": {"settings": {"number_of_shards": 1}}}
+
+###
+# legacy template without a header line
+PUT /_template/shop-legacy
+{"index_patterns": ["old-*"], "settings": {"number_of_shards": 1}}
+
+###
+PUT /_ilm/policy/shop-ilm
+Content-Type: application/json
+
+{"policy": {"phases": {"hot": {"actions": {}}}}}
+
+###
+PUT /_plugins/_ism/policies/shop-ism
+Content-Type: application/json
+
+{"policy": {"states": [], "default_state": "a"}}
+
+###
+PUT /_opendistro/_ism/policies/shop-old-ism
+Content-Type: application/json
+
+{"policy": {"states": [], "default_state": "a"}}
+
+###
+PUT /_ingest/pipeline/shop-pipe
+Content-Type: application/json
+
+{"processors": [{"set": {"field": "a", "value": "b"}}]}
+
+###
+POST /_aliases
+Content-Type: application/json
+
+{"actions": [
+  {"add": {"index": "shop-orders", "alias": "shop-current"}},
+  {"add": {"indices": ["shop-a", "shop-b"], "alias": "shop-multi"}},
+  {"remove": {"index": "shop-old", "alias": "shop-gone"}},
+  {"add": {"index": "shop-orders", "alias": "{{alias}}"}}
+]}
+
+### lookalikes: no creation
+GET /shop-orders/_search
+Content-Type: application/json
+
+{"query": {"match_all": {}}}
+
+###
+DELETE /shop-orders
+
+###
+PUT /shop-orders/_doc/1
+Content-Type: application/json
+
+{"title": "x"}
+
+###
+PUT /_cluster/settings
+Content-Type: application/json
+
+{"persistent": {"cluster.routing.allocation.enable": "all"}}
+
+### variable in the name is a gap
+PUT /{{index}}
+Content-Type: application/json
+
+{"settings": {"number_of_shards": 1}}
+
+### a body that is no JSON is a gap
+PUT /shop-broken
+Content-Type: application/json
+
+{ not json
