@@ -107,18 +107,23 @@ fn a_chip_wider_than_the_box_is_cut_to_the_box() {
     }
 }
 
-fn parts_topology(same_name: bool) -> (ServiceTopology, SearchGraph) {
+/// Indices named `orders` in the given scopes, each with one analyzer `an`; `alias` adds an alias
+/// of the same name.
+fn parts_topology(scopes: &[&str], alias: bool) -> (ServiceTopology, SearchGraph) {
     let detail = json!({"fields": [], "settings": {},
         "analysis": [{"kind": "analyzer", "name": "an", "definition": r#"{"type":"custom","tokenizer":"standard"}"#}]});
     let art = |scope: &str| {
-        json!({"kind": "index", "name": "docs", "address": format!("{scope}.docs"), "scope": scope,
+        json!({"kind": "index", "name": "orders", "address": format!("{scope}.orders"), "scope": scope,
         "patterns": [], "references": [], "evidence": [], "detail": detail})
     };
-    let arts = if same_name {
-        vec![art("terraform:a"), art("terraform:b")]
-    } else {
-        vec![art("terraform:a")]
-    };
+    let mut arts: Vec<Value> = scopes.iter().map(|s| art(s)).collect();
+    if alias {
+        arts.push(
+            json!({"kind": "alias", "name": "orders", "address": "alias.orders",
+            "scope": scopes[0], "patterns": [], "references": [{"kind": "index", "name": "orders"}],
+            "evidence": [], "detail": Value::Null}),
+        );
+    }
     let elasticsearch =
         serde_json::from_value(json!({"artifacts": arts, "usages": [], "findings": []})).unwrap();
     let t = ServiceTopology {
@@ -129,7 +134,16 @@ fn parts_topology(same_name: bool) -> (ServiceTopology, SearchGraph) {
     (t, g)
 }
 
-fn part_root(t: &ServiceTopology, g: &SearchGraph, owner: usize) -> String {
+/// The owner line of the building block `an` of the index at graph position `at` among indices.
+fn part_root(t: &ServiceTopology, g: &SearchGraph, at: usize) -> String {
+    let owner = g
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.kind == "index")
+        .nth(at)
+        .map(|(i, _)| i)
+        .unwrap();
     let key = Key::Part {
         owner,
         kind: "analyzer".into(),
@@ -139,12 +153,24 @@ fn part_root(t: &ServiceTopology, g: &SearchGraph, owner: usize) -> String {
 }
 
 #[test]
-fn the_owner_line_of_a_building_block_is_the_short_label_and_a_root_only_when_it_tells_apart() {
-    let (t, g) = parts_topology(false);
-    assert_eq!(part_root(&t, &g, 0), g.nodes[0].short_label);
-    let (t, g) = parts_topology(true);
-    let (a, b) = (part_root(&t, &g, 0), part_root(&t, &g, 1));
-    assert_ne!(a, b, "two owners with one name need their root");
+fn the_owner_line_of_a_building_block_is_the_short_label() {
+    let (t, g) = parts_topology(&["terraform:infra"], false);
+    assert_eq!(part_root(&t, &g, 0), "orders");
+}
+
+#[test]
+fn two_owners_of_one_kind_with_one_short_label_add_their_root() {
+    let (t, g) = parts_topology(&["terraform:infra", "terraform:local/infra"], false);
+    let mut roots = [part_root(&t, &g, 0), part_root(&t, &g, 1)];
+    roots.sort();
+    assert_eq!(roots, ["orders · infra", "orders · local/infra"]);
+}
+
+#[test]
+fn an_index_and_an_alias_of_one_name_both_stay_short() {
+    // The engine's short label already tells the two apart by kind.
+    let (t, g) = parts_topology(&["terraform:infra"], true);
+    assert_eq!(part_root(&t, &g, 0), "orders [index]");
 }
 
 fn unread_topology() -> (ServiceTopology, SearchGraph) {
