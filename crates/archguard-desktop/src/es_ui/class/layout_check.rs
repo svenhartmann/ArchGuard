@@ -317,3 +317,198 @@ fn field_rows_give_the_top_of_every_field_line_relative_to_the_box() {
     );
     assert_eq!(p.comps[0], 48.0);
 }
+
+// ---- ticket 16: edges and labels never over a foreign box ----
+
+use super::layout::{PlacedEdge, label_size};
+use archguard_engine::analyze_services;
+
+/// Index selections and the full cluster of fixture 12, laid out.
+fn fixture_scenes() -> Vec<(Diagram, Scene)> {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/es-classdiagram/12");
+    let t = analyze_services(&root).expect("fixture");
+    let g = search_graph(&t);
+    let sw = Switches::default();
+    let all: Vec<Key> = (0..g.nodes.len()).map(Key::Node).collect();
+    let mut out = Vec::new();
+    for i in 0..g.nodes.len() {
+        for cluster in [None, Some(all.as_slice())] {
+            let d = diagram(&t, &g, &Key::Node(i), cluster, &sw);
+            let cs: Vec<_> = d
+                .boxes
+                .iter()
+                .map(|b| content(&t, &g, &b.key, &sw))
+                .collect();
+            let s = layout(&d, &cs);
+            out.push((d, s));
+        }
+    }
+    out
+}
+
+/// Points along the path commands (`M`, `L`, `C` sampled, `Z`), as separate sub-paths.
+fn polylines(path: &str) -> Vec<Vec<(f32, f32)>> {
+    let tok: Vec<&str> = path.split_whitespace().collect();
+    let num = |i: usize| {
+        (
+            tok[i].parse::<f32>().unwrap(),
+            tok[i + 1].parse::<f32>().unwrap(),
+        )
+    };
+    let (mut out, mut i): (Vec<Vec<(f32, f32)>>, usize) = (Vec::new(), 0);
+    while i < tok.len() {
+        match tok[i] {
+            "M" => {
+                out.push(vec![num(i + 1)]);
+                i += 3;
+            }
+            "L" => {
+                out.last_mut().unwrap().push(num(i + 1));
+                i += 3;
+            }
+            "C" => {
+                let cur = out.last().unwrap().last().copied().unwrap();
+                let (c1, c2, e) = (num(i + 1), num(i + 3), num(i + 5));
+                for s in 1..=20 {
+                    let (t, u) = (s as f32 / 20.0, 1.0 - s as f32 / 20.0);
+                    let f = |a: f32, b: f32, c: f32, d: f32| {
+                        u * u * u * a + 3.0 * u * u * t * b + 3.0 * u * t * t * c + t * t * t * d
+                    };
+                    out.last_mut()
+                        .unwrap()
+                        .push((f(cur.0, c1.0, c2.0, e.0), f(cur.1, c1.1, c2.1, e.1)));
+                }
+                i += 7;
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
+fn inside(p: (f32, f32), b: &super::layout::Placed) -> bool {
+    p.0 > b.x + 1.0 && p.0 < b.x + b.w - 1.0 && p.1 > b.y + 1.0 && p.1 < b.y + b.h - 1.0
+}
+
+fn crosses(line: &str, b: &super::layout::Placed) -> bool {
+    polylines(line).iter().any(|pl| {
+        pl.windows(2).any(|w| {
+            let n = ((w[1].0 - w[0].0).hypot(w[1].1 - w[0].1) / 2.0)
+                .ceil()
+                .max(1.0) as usize;
+            (0..=n).any(|k| {
+                let t = k as f32 / n as f32;
+                inside(
+                    (
+                        w[0].0 + (w[1].0 - w[0].0) * t,
+                        w[0].1 + (w[1].1 - w[0].1) * t,
+                    ),
+                    b,
+                )
+            })
+        })
+    })
+}
+
+fn ends_of(d: &Diagram, e: usize) -> (usize, usize) {
+    let at = |k: &Key| d.boxes.iter().position(|b| &b.key == k).unwrap();
+    (at(&d.edges[e].from), at(&d.edges[e].to))
+}
+
+#[test]
+fn no_edge_runs_through_a_foreign_box_in_fixture_12() {
+    for (d, s) in fixture_scenes() {
+        assert_eq!(s.edges.len(), d.edges.len());
+        for (n, e) in s.edges.iter().enumerate() {
+            let (a, b) = ends_of(&d, n);
+            for (i, p) in s
+                .boxes
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| i != a && i != b)
+            {
+                assert!(
+                    !crosses(&e.line, p),
+                    "{:?}: {:?} -> {:?} through {:?}",
+                    e.style,
+                    d.edges[n].from,
+                    d.edges[n].to,
+                    d.boxes[i].key
+                );
+            }
+        }
+    }
+}
+
+/// A service reaches an analyzer two columns away while an index stands between them.
+#[test]
+fn an_edge_across_a_column_goes_around_the_boxes_between() {
+    let kinds = [BoxKind::Service, BoxKind::Index, BoxKind::Analyzer];
+    let mut d = Diagram::default();
+    for (i, k) in kinds.iter().enumerate() {
+        d.boxes.push(dbox(i, *k));
+    }
+    d.edges.push(dedge(0, 2, EdgeStyle::Uses));
+    let line = Line {
+        text: "f".into(),
+        ..Default::default()
+    };
+    let tall = BoxContent {
+        compartments: vec![Compartment {
+            title: Title::Fields,
+            lines: vec![line; 12],
+            chips: Vec::new(),
+        }],
+        ..Default::default()
+    };
+    let cs = [BoxContent::default(), tall, BoxContent::default()];
+    let s = layout(&d, &cs);
+    assert!(
+        s.boxes[1].y <= s.boxes[0].y + 24.0,
+        "the index is in the way"
+    );
+    assert!(
+        !crosses(&s.edges[0].line, &s.boxes[1]),
+        "{}",
+        s.edges[0].line
+    );
+}
+
+fn label_rect(e: &PlacedEdge) -> (f32, f32, f32, f32) {
+    let (w, h) = label_size(&e.label);
+    (e.lx, e.ly, w, h)
+}
+
+#[test]
+fn no_edge_label_lies_over_a_box_in_fixture_12() {
+    let (mut named, mut kept) = (0, 0);
+    for (d, s) in fixture_scenes() {
+        for (n, e) in s.edges.iter().enumerate() {
+            named += usize::from(!d.edges[n].label.is_empty());
+            kept += usize::from(!e.label.is_empty());
+            if e.label.is_empty() {
+                continue;
+            }
+            let (x, y, w, h) = label_rect(e);
+            for (i, p) in s.boxes.iter().enumerate() {
+                let apart = x + w <= p.x || p.x + p.w <= x || y + h <= p.y || p.y + p.h <= y;
+                assert!(apart, "label {:?} over {:?}", e.label, d.boxes[i].key);
+            }
+        }
+    }
+    assert!(
+        named > 0 && kept > 0,
+        "labels exist and some are kept: {kept}/{named}"
+    );
+}
+
+#[test]
+fn a_single_index_starts_at_the_left_margin() {
+    let d = Diagram {
+        boxes: vec![dbox(0, BoxKind::Index)],
+        edges: Vec::new(),
+    };
+    let s = layout(&d, &[BoxContent::default()]);
+    assert_eq!((s.boxes[0].x, s.width), (20.0, 340.0));
+}

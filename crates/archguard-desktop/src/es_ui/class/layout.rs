@@ -47,6 +47,7 @@ const GAP_X: f32 = 80.0;
 const GAP_Y: f32 = 24.0;
 const CHIP_ROW: f32 = 18.0;
 const PAD: f32 = 8.0;
+const LABEL_H: f32 = 16.0;
 
 /// 0 services and processing, 1 aliases/templates/indices, 2 analyzers/normalizers,
 /// 3 tokenizers/filters/char filters.
@@ -57,6 +58,12 @@ fn column(k: BoxKind) -> usize {
         BoxKind::Analyzer | BoxKind::Normalizer => 2,
         _ => 3,
     }
+}
+
+/// Width and height of an edge label as the canvas draws it (shortcut: 6.6 px per character at
+/// the micro font, no text measuring in Rust).
+pub fn label_size(text: &str) -> (f32, f32) {
+    (text.chars().count() as f32 * 6.6 + 8.0, LABEL_H)
 }
 
 /// Chips of one compartment wrapped at the box width; returns the number of chip rows.
