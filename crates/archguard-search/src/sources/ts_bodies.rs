@@ -707,13 +707,13 @@ impl<'a> Lit<'a> {
     fn skip_member(&mut self) {
         let (mut depth, mut quote) = (0usize, None);
         while let Some(c) = self.at() {
-            let rest = &self.text[self.i..];
+            let rest = &self.text.as_bytes()[self.i..]; // bytes: self.i may sit inside a multibyte char
             match (quote, c) {
                 (Some(_), b'\\') => self.i += 1,
                 (Some(q), c) if c == q => quote = None,
                 (Some(_), _) => {}
                 (None, b'\'' | b'"' | b'`') => quote = Some(c),
-                (None, b'/') if rest.starts_with("//") || rest.starts_with("/*") => {
+                (None, b'/') if rest.starts_with(b"//") || rest.starts_with(b"/*") => {
                     self.ws();
                     continue;
                 }
