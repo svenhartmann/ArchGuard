@@ -18,7 +18,34 @@ pub(crate) fn apply(report: &mut ServiceTopology, outputs: Vec<SourceOutput>) {
     }
     let artifacts = &mut report.elasticsearch.artifacts;
     artifacts.sort_by(|a, b| (&a.scope, &a.address).cmp(&(&b.scope, &b.address)));
+    merge_aliases(artifacts);
     findings::augment(report);
+}
+
+/// One alias artifact per (scope, flavor, name): alias blocks of several indices become one box
+/// that references them all. The first artifact stays; references and evidence are appended.
+fn merge_aliases(artifacts: &mut Vec<SearchArtifact>) {
+    let mut first: HashMap<(String, String, String), usize> = HashMap::new();
+    let mut out: Vec<SearchArtifact> = Vec::with_capacity(artifacts.len());
+    for a in artifacts.drain(..) {
+        // an alias on an unknown index (no reference) stays its own artifact
+        let key = (a.kind == "alias" && !a.references.is_empty())
+            .then(|| a.name.clone())
+            .flatten()
+            .map(|n| (a.scope.clone(), a.flavor.clone(), n));
+        match key.as_ref().and_then(|k| first.get(k)) {
+            Some(&i) => {
+                let t = &mut out[i];
+                t.references.extend(a.references);
+                t.evidence.extend(a.evidence);
+            }
+            None => {
+                first.extend(key.map(|k| (k, out.len())));
+                out.push(a);
+            }
+        }
+    }
+    *artifacts = out;
 }
 
 /// (kind, flavor, literal name) -> index into the merged artifacts; the first artifact wins.

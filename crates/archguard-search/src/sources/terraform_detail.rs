@@ -2,9 +2,9 @@
 //! All or nothing per attribute: one non-literal part and the attribute is not read.
 use super::terraform_eval::value;
 pub(super) use super::terraform_eval::{Json, json_attr};
+use super::terraform_scope::Scope;
 use archguard_core::{SearchAnalysis, SearchField, SearchIndexDetail};
 use archguard_terraform::hcl::attr;
-use archguard_terraform::module::ModuleCtx;
 use hcl_edit::expr::Expression;
 use hcl_edit::structure::Body;
 
@@ -75,7 +75,7 @@ const ANALYSIS: &[(&str, &str)] = &[
     ("analysis_tokenizer", "tokenizer"),
 ];
 
-fn setting(e: &Expression, ctx: Option<&ModuleCtx>) -> Option<String> {
+fn setting(e: &Expression, ctx: Option<&Scope>) -> Option<String> {
     match value(e, ctx)? {
         Json::Str(s) => Some(s),
         Json::Null | Json::Obj(_) => None,
@@ -105,7 +105,7 @@ pub(super) fn fields(props: &Json, prefix: &str, out: &mut Vec<SearchField>) {
 /// Reads `mappings` into `detail.fields`; true when read.
 fn mapping(
     body: &Body,
-    ctx: Option<&ModuleCtx>,
+    ctx: Option<&Scope>,
     detail: &mut SearchIndexDetail,
     missed: &mut Vec<&'static str>,
 ) -> bool {
@@ -173,7 +173,7 @@ pub(super) fn read_template(body: &Body) -> (Option<SearchIndexDetail>, Vec<&'st
 }
 
 /// The detail of an index body and the attributes that were present but not read.
-pub(super) fn read(body: &Body, ctx: &ModuleCtx) -> (Option<SearchIndexDetail>, Vec<&'static str>) {
+pub(super) fn read(body: &Body, ctx: &Scope) -> (Option<SearchIndexDetail>, Vec<&'static str>) {
     let (mut detail, mut missed, mut any) = (SearchIndexDetail::default(), vec![], false);
     any |= mapping(body, Some(ctx), &mut detail, &mut missed);
     for (key, kind) in ANALYSIS {
