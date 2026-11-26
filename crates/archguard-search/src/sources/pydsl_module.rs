@@ -10,7 +10,7 @@
 use archguard_flow_common::lang_pyscan::{dotted, skip_ws};
 use archguard_flow_common::lang_python::{
     Arg, Def, DefKind, Import, Stmt, assignment, call_args, code_statements, defs, imports, mask,
-    split_commas,
+    split_commas, string_value,
 };
 use std::collections::HashMap;
 
@@ -213,7 +213,9 @@ impl<'a> Module<'a> {
         (inside.filter(|s| Some(s.indent) == indent))
             .filter_map(|s| {
                 let (name, ann, val) = self.member(s)?;
-                Some((name, self.member_kind(ann, val)?))
+                let mut renamed = None;
+                let kind = self.member_kind(ann, val, &mut renamed)?;
+                Some((renamed.unwrap_or(name), kind))
             })
             .collect()
     }
@@ -240,7 +242,12 @@ impl<'a> Module<'a> {
         Some((name, ann, val))
     }
 
-    fn member_kind(&self, ann: Option<Range>, val: Option<Range>) -> Option<Member> {
+    fn member_kind(
+        &self,
+        ann: Option<Range>,
+        val: Option<Range>,
+        renamed: &mut Option<String>,
+    ) -> Option<Member> {
         let call = |name: &str, (a, e): Range| {
             let b = self.masked.as_bytes();
             let (n, j) = dotted(b, a);
@@ -257,7 +264,7 @@ impl<'a> Module<'a> {
         }
         // The DSL lets an assigned value win over the annotation.
         if let Some((args, _)) = call("mapped_field", (va, ve)) {
-            return self.mapped_member(&args, ann);
+            return self.mapped_member(&args, ann, renamed);
         }
         let b = self.masked.as_bytes();
         let (mut name, j) = dotted(b, va);
@@ -265,10 +272,16 @@ impl<'a> Module<'a> {
             return ann.and_then(|(a, e)| self.annotation(&self.masked[a..e], false)); // a plain value
         }
         // A call: a local subclass chain of a field class, or a gap.
+        let (open, mut subclass) = (skip_ws(b, j), false);
         for _ in 0..8 {
             if let Some(ty) = self.dsl(&name).and_then(|d| field_type(&d.0)) {
-                return Some(Member::Typed(Some(ty)));
+                // shortcut: a subclass call without arguments maps to its base type; with
+                // arguments (or an overridden `__init__`) the DSL result differs, so it is a gap.
+                let bare =
+                    call_args(self.src, &self.masked, open).is_some_and(|(a, _)| a.is_empty());
+                return Some(Member::Typed((bare || !subclass).then_some(ty)));
             }
+            subclass = true;
             let class = self.class_index(&name).map(|c| self.bases(&self.defs[c]));
             match class.and_then(|bs| bs.into_iter().next()) {
                 Some(base) => name = base,
@@ -280,10 +293,24 @@ impl<'a> Module<'a> {
 
     /// `mapped_field(...)`: a readable `field=`/positional field class wins, `exclude=True` drops
     /// the member, an unreadable field is a gap; without a field the annotation decides.
-    fn mapped_member(&self, args: &[Arg], ann: Option<Range>) -> Option<Member> {
-        let field = args
-            .iter()
-            .find(|a| a.name == Some("field") || a.name.is_none());
+    fn mapped_member(
+        &self,
+        args: &[Arg],
+        ann: Option<Range>,
+        renamed: &mut Option<String>,
+    ) -> Option<Member> {
+        // `exclude` is checked before the field, as in `DocumentOptions.__init__`.
+        if (args.iter()).any(|a| a.name == Some("exclude") && a.value == "True") {
+            return None;
+        }
+        // `es_name` (or a positional string) is the index name of the field.
+        let text = |a: &&Arg| string_value(a.value);
+        *renamed = (args.iter())
+            .find(|a| a.name == Some("es_name") || (a.name.is_none() && text(a).is_some()))
+            .and_then(|a| text(&a));
+        let field = args.iter().find(|a| {
+            a.name == Some("field") || (a.name.is_none() && string_value(a.value).is_none())
+        });
         // `value` is a slice of `src`; `at` would start at the argument name.
         let r = field.map(|f| {
             let at = f.value.as_ptr() as usize - self.src.as_ptr() as usize;
@@ -292,15 +319,11 @@ impl<'a> Module<'a> {
         if let Some(r) = r.filter(|&(a, e)| self.is_field(a, e)) {
             return Some(Member::Call(r.0, r.1));
         }
-        let excluded = args
-            .iter()
-            .any(|a| a.name == Some("exclude") && a.value == "True");
-        match (field, excluded) {
-            (None, true) => None,
-            (None, false) => ann
+        match field {
+            None => ann
                 .and_then(|(a, e)| self.annotation(&self.masked[a..e], false))
                 .or(Some(Member::Typed(None))),
-            (Some(_), _) => Some(Member::Typed(None)),
+            Some(_) => Some(Member::Typed(None)),
         }
     }
 
