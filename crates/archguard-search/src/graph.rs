@@ -12,6 +12,8 @@ const MAX_LABEL: usize = 32;
 pub struct SearchNode {
     pub kind: String,
     pub label: String,
+    /// `label` without the root part ` (<folder tail>)`, unique within the root: what a root group, a box title and a details title show.
+    pub short_label: String,
     pub title: String,
     pub scope: String,
     pub artifact: Option<usize>,
@@ -81,6 +83,7 @@ fn node(kind: &str, label: &str, title: &str, scope: &str) -> SearchNode {
     SearchNode {
         kind: kind.into(),
         label: label.into(),
+        short_label: label.into(),
         title: title.into(),
         scope: scope.into(),
         artifact: None,
@@ -441,22 +444,26 @@ fn relabel(nodes: &mut [SearchNode], artifacts: &[SearchArtifact]) {
         .map(|(k, v)| (k.clone(), scope_tails(v)))
         .collect();
     let mut used = HashSet::new();
+    let mut used_short: HashMap<String, HashSet<String>> = HashMap::new();
     for n in nodes.iter_mut() {
         let (scope, inst) = (scope_of(n), instance(n));
         let mut parts = Vec::new();
-        if let Some(t) = tails.get(&n.label).filter(|_| !scope.is_empty()) {
+        let root = tails.get(&n.label).filter(|_| !scope.is_empty());
+        if let Some(t) = root {
             parts.push((" (", ")", t[&scope].clone()));
         }
         if !inst.is_empty() && by_scope[&(n.label.clone(), scope.clone())].len() > 1 {
             parts.push((" · ", "", display_instance(&inst)));
         }
-        let key = (n.label.clone(), scope, inst);
+        let key = (n.label.clone(), scope.clone(), inst);
         if by_inst[&key].len() > 1 {
             parts.push((" [", "]", n.kind.clone()));
         }
         if by_kind[&(key.0, key.1, key.2, n.kind.clone())].len() > 1 {
             parts.push((" {", "}", resource_of(n, artifacts)));
         }
+        let short_parts = &parts[usize::from(root.is_some())..];
+        n.short_label = fit_label(used_short.entry(scope).or_default(), &n.label, short_parts);
         n.label = fit_label(&mut used, &n.label, &parts);
     }
 }

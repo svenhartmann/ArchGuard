@@ -110,9 +110,10 @@ fn groups_counters_search_filter() {
     assert!(members(&all).contains(&Key::Node(0)));
 
     // Case-insensitive substring over the label: `ab` finds `xAby`, not `a-b`.
-    let hit = list(&t, &g, "ab", Group::Indices);
-    assert_eq!(hit.len(), 1, "{hit:?}");
+    let hit = list(&t, &g, "ab", Group::All);
+    assert_eq!(hit.len(), 2, "{hit:?}");
     assert_eq!(rows(&hit, 0), [row("xAby", "", 1, 0, false)]);
+    assert_eq!(rows(&hit, 1), [row("std2 · xAby", "analyzer", 0, 0, false)]);
 
     let only = list(&t, &g, "", Group::Aliases);
     assert_eq!(
@@ -122,4 +123,70 @@ fn groups_counters_search_filter() {
     let ix = list(&t, &g, "", Group::Indices);
     assert_eq!(ix.len(), 4 - 1);
     assert!(list(&t, &g, "zzz", Group::All).is_empty());
+}
+
+fn set_topology(arts: &[serde_json::Value]) -> ServiceTopology {
+    let es = json!({"findings": [], "usages": [], "projects": ["p", "q"], "artifacts": arts});
+    ServiceTopology {
+        elasticsearch: serde_json::from_value(es).unwrap(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn foreign_indices_get_their_own_root_group() {
+    let mut far = art("index", "far", "terraform:infra/main", json!(null));
+    far["origins"] = json!(["q"]);
+    let mut own = art("index", "own", "terraform:infra/main", json!(null));
+    own["origins"] = json!(["p"]);
+    let t = set_topology(&[own, far]);
+    let all = list(&t, &search_graph(&t), "", Group::All);
+    let titles: Vec<_> = all.iter().map(|x| x.title.clone()).collect();
+    assert_eq!(
+        titles,
+        [
+            Indices("infra/main".into()),
+            Indices("[q] infra/main".into())
+        ]
+    );
+    assert_eq!(rows(&all, 0), [row("own", "", 0, 0, false)]);
+    assert_eq!(rows(&all, 1), [row("[q] far", "", 0, 0, false)]);
+}
+
+#[test]
+fn a_root_group_drops_the_root_suffix_but_keeps_the_full_label_as_title() {
+    let t = set_topology(&[
+        art("index", "dup", "terraform:infra/main", json!(null)),
+        art("index", "dup", "terraform:infra/other", json!(null)),
+        art("index", "solo (x)", "terraform:infra/main", json!(null)),
+    ]);
+    let all = list(&t, &search_graph(&t), "", Group::All);
+    let shown: Vec<_> = all
+        .iter()
+        .map(|x| {
+            x.rows
+                .iter()
+                .map(|r| (r.label.as_str(), r.title.as_str()))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            vec![("dup", "dup (main)"), ("solo (x)", "solo (x)")],
+            vec![("dup", "dup (other)")]
+        ]
+    );
+}
+
+#[test]
+fn a_name_with_parentheses_stays_whole() {
+    let t = set_topology(&[art(
+        "index",
+        "logs (main)",
+        "terraform:infra/main",
+        json!(null),
+    )]);
+    let all = list(&t, &search_graph(&t), "", Group::All);
+    assert_eq!(rows(&all, 0), [row("logs (main)", "", 0, 0, false)]);
 }

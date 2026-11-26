@@ -21,6 +21,8 @@ pub enum GroupTitle {
 pub struct ListRow {
     pub key: Key,
     pub label: String,
+    /// The full label (tooltip): `label` without the root suffix inside a root group.
+    pub title: String,
     /// The raw kind (analysis, processing); empty elsewhere.
     pub side: String,
     pub writes: usize,
@@ -46,6 +48,11 @@ const STAGES: [&str; 5] = [
 fn title_of(n: &SearchNode) -> GroupTitle {
     match n.kind.as_str() {
         "service" => GroupTitle::Services,
+        "index" if n.declared && n.foreign => GroupTitle::Indices(format!(
+            "[{}] {}",
+            n.projects.join(", "),
+            short_scope(&n.scope)
+        )),
         "index" if n.declared => GroupTitle::Indices(short_scope(&n.scope).to_string()),
         "index" => GroupTitle::IndicesUndeclared,
         "alias" => GroupTitle::Aliases,
@@ -79,14 +86,17 @@ fn node_row(g: &SearchGraph, i: usize) -> ListRow {
             .count()
     };
     let project = n.foreign.then(|| n.projects.join(", "));
-    let processing = title_of(n) == GroupTitle::Processing;
+    let title = title_of(n);
+    let processing = title == GroupTitle::Processing;
+    let name = match title {
+        GroupTitle::Indices(_) => &n.short_label,
+        _ => &n.label,
+    };
+    let project = project.as_deref().filter(|p| !p.is_empty());
     ListRow {
         key: Key::Node(i),
-        label: node_label(
-            &n.label,
-            false,
-            project.as_deref().filter(|p| !p.is_empty()),
-        ),
+        title: node_label(&n.label, false, project),
+        label: node_label(name, false, project),
         side: if processing {
             n.kind.clone()
         } else {
@@ -141,17 +151,19 @@ fn analysis_rows(t: &ServiceTopology, g: &SearchGraph) -> Vec<ListRow> {
                 .filter(|o| o.kind == b.kind && o.name == b.name)
                 .count()
                 > 1;
+            let label = if clash {
+                format!("{} · {}", b.name, b.owner_label)
+            } else {
+                b.name.clone()
+            };
             ListRow {
                 key: Key::Part {
                     owner: b.owner,
                     kind: b.kind.clone(),
                     name: b.name.clone(),
                 },
-                label: if clash {
-                    format!("{} · {}", b.name, b.owner_label)
-                } else {
-                    b.name.clone()
-                },
+                title: label.clone(),
+                label,
                 side: b.kind.clone(),
                 writes: 0,
                 reads: 0,
