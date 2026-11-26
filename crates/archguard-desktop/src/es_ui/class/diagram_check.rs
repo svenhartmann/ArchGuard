@@ -371,3 +371,55 @@ fn a_normalizer_field_keeps_the_normalizer_and_no_field_dims_nothing() {
         "an unknown field dims nothing"
     );
 }
+
+#[test]
+fn an_owner_uses_a_declared_default_search_analyzer() {
+    let detail = json!({"fields": [{"path": "t", "kind": "text"}], "analysis": [
+        analysis("analyzer", "default_search", r#"{"tokenizer":"standard"}"#)]});
+    let es =
+        json!({"artifacts": [art("index", "ds", json!([]), detail)], "usages": [], "findings": []});
+    let t = ServiceTopology {
+        elasticsearch: serde_json::from_value(es).unwrap(),
+        ..Default::default()
+    };
+    let g = search_graph(&t);
+    let sel = node(&g, "index", "ds");
+    let d = diagram(&t, &g, &sel, None, &Switches::default());
+    assert!(has(
+        &d,
+        &sel,
+        &part(&g, "ds", "analyzer", "default_search"),
+        EdgeStyle::Uses,
+        ""
+    ));
+}
+
+#[test]
+fn a_field_focus_in_a_cluster_lights_the_merged_equal_blocks() {
+    let (t, g) = topo();
+    let sel = node(&g, "index", "other");
+    let all: Vec<Key> = (0..g.nodes.len()).map(Key::Node).collect();
+    let d = diagram_field(&t, &g, &sel, Some(&all), &Switches::default(), Some("name"));
+    // title_fold exists in both indices with one definition: one box, lit for `other.name`; the
+    // tokenizer and filter belong to `products` and are not part of this field's chain.
+    assert_eq!(dim_names(&d, false), ["#Index", "title_fold"]);
+    let dimmed = dim_names(&d, true);
+    for name in ["tok", "my_stop", "x", "lower_n", "default"] {
+        assert!(dimmed.iter().any(|n| n == name), "{name} dim: {dimmed:?}");
+    }
+    let sel = node(&g, "index", "products");
+    let d = diagram_field(
+        &t,
+        &g,
+        &sel,
+        Some(&all),
+        &Switches::default(),
+        Some("title"),
+    );
+    let lit = dim_names(&d, false);
+    assert_eq!(
+        lit,
+        ["#Index", "my_stop", "title_fold", "tok"],
+        "merged box once"
+    );
+}
