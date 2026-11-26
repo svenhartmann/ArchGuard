@@ -9,7 +9,7 @@ use archguard_engine::{
 };
 use serde_json::Value;
 
-use super::boxes::mapping_unread;
+use super::boxes::{mapping_unread, product};
 use super::types::Key;
 use crate::es_ui::index_page::{IndexPage, index_page};
 use crate::services_ui::{search, view::evidence};
@@ -165,8 +165,15 @@ pub fn field_details(
 }
 
 fn node_details(t: &ServiceTopology, n: &SearchNode) -> Option<Details> {
+    let tag = |scope: &mut String| {
+        if let Some(p) = product(t, n) {
+            *scope = format!("{p} \u{b7} {scope}");
+        }
+    };
     if PAGE_KINDS.contains(&n.kind.as_str()) {
-        return Some(Details::Index(index_details(t, n)));
+        let mut d = index_details(t, n);
+        tag(&mut d.page.overview.scope);
+        return Some(Details::Index(d));
     }
     if n.kind == "service" {
         return None;
@@ -181,7 +188,11 @@ fn node_details(t: &ServiceTopology, n: &SearchNode) -> Option<Details> {
         Some(i) => t.elasticsearch.artifacts.get(i)?,
         None => ghost.as_ref()?,
     };
-    Some(Details::Other(search::detail(a, t, evidence)))
+    let mut o = search::detail(a, t, evidence);
+    let mut scope = o.scope.to_string();
+    tag(&mut scope);
+    o.scope = scope.into();
+    Some(Details::Other(o))
 }
 
 fn index_details(t: &ServiceTopology, n: &SearchNode) -> IndexDetails {

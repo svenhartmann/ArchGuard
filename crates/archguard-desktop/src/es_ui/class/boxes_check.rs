@@ -336,3 +336,26 @@ fn the_box_note_and_the_field_details_name_the_same_analyzers() {
     let (a, b) = (s.index.unwrap().name, s.search.unwrap().name);
     assert_eq!(note("s"), format!("{{{a} / \u{2315} {b}}}"));
 }
+
+fn opensearch_topology() -> ServiceTopology {
+    let art = |kind: &str, name: &str| {
+        serde_json::json!({"kind": kind, "name": name, "address": format!("res.{name}"),
+            "scope": "terraform:infra/main", "flavor": "opensearch",
+            "patterns": [], "references": [], "evidence": []})
+    };
+    let es = serde_json::json!({"findings": [], "usages": [],
+        "artifacts": [art("index", "os-idx"), art("ism_policy", "os-ism")]});
+    ServiceTopology {
+        elasticsearch: serde_json::from_value(es).unwrap(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn opensearch_artifact_names_the_product_in_the_root_line() {
+    let t = opensearch_topology();
+    let g = search_graph(&t);
+    let i = g.nodes.iter().position(|n| n.kind == "index").unwrap();
+    let b = content(&t, &g, &Key::Node(i), &Switches::default());
+    assert_eq!(b.root, "OpenSearch \u{b7} infra/main");
+}

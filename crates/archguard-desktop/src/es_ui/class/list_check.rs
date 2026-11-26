@@ -190,3 +190,35 @@ fn a_name_with_parentheses_stays_whole() {
     let all = list(&t, &search_graph(&t), "", Group::All);
     assert_eq!(rows(&all, 0), [row("logs (main)", "", 0, 0, false)]);
 }
+
+fn opensearch_topology() -> ServiceTopology {
+    let art = |kind: &str, name: &str| {
+        serde_json::json!({"kind": kind, "name": name, "address": format!("res.{name}"),
+            "scope": "terraform:infra/main", "flavor": "opensearch",
+            "patterns": [], "references": [], "evidence": []})
+    };
+    let es = serde_json::json!({"findings": [], "usages": [],
+        "artifacts": [art("index", "os-idx"), art("ism_policy", "os-ism")]});
+    ServiceTopology {
+        elasticsearch: serde_json::from_value(es).unwrap(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn opensearch_artifacts_carry_the_product_next_to_the_name() {
+    let t = opensearch_topology();
+    let g = search_graph(&t);
+    let all = list(&t, &g, "", Group::All);
+    let side = |label: &str| {
+        all.iter()
+            .flat_map(|g| &g.rows)
+            .find(|r| r.label == label)
+            .map(|r| r.side.clone())
+    };
+    assert_eq!(side("os-idx").as_deref(), Some("OpenSearch"));
+    assert_eq!(
+        side("os-ism").as_deref(),
+        Some("ism_policy \u{b7} OpenSearch")
+    );
+}

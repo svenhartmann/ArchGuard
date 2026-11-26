@@ -116,6 +116,14 @@ fn text_line(text: String) -> Line {
     }
 }
 
+/// The product name of an OpenSearch artifact (raw, not translated); `None` for Elasticsearch.
+pub fn product(t: &ServiceTopology, node: &SearchNode) -> Option<&'static str> {
+    let a = node
+        .artifact
+        .and_then(|i| t.elasticsearch.artifacts.get(i))?;
+    (a.flavor == "opensearch").then_some("OpenSearch")
+}
+
 /// The content of the box `key` selects; an unknown key gives an empty box.
 pub fn content(t: &ServiceTopology, g: &SearchGraph, key: &Key, sw: &Switches) -> BoxContent {
     let owner = match key {
@@ -150,6 +158,9 @@ pub fn content(t: &ServiceTopology, g: &SearchGraph, key: &Key, sw: &Switches) -
             Some((e, l)) => format!("{} · {}:{l}", short_scope(&a.scope), e.file),
             None => short_scope(&a.scope).to_string(),
         };
+        if let Some(p) = product(t, node) {
+            b.root = format!("{p} · {}", b.root);
+        }
     }
     node_box(&mut b, t, g, owner, sw);
     b
