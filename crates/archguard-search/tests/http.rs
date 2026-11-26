@@ -257,7 +257,7 @@ fn a_body_ends_at_its_blank_line_so_comments_between_requests_do_not_break_it() 
     let bad = gaps(&report, "notes/comments.http");
     assert_eq!(bad.len(), 1, "only shop-bad is a gap");
     assert!(
-        bad[0].message.ends_with("Source line 19."),
+        bad[0].message.ends_with("Source line 20."),
         "the gap names the request line: {}",
         bad[0].message
     );

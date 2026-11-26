@@ -122,6 +122,7 @@ impl EsGap {
         });
         match self {
             Self::IndexNotLiteral | Self::BodyNotLiteral => format!("{t}{}.", p(0)),
+            Self::DefinitionUnread if !p(0).is_empty() => format!("{t} Source line {}.", p(0)),
             Self::ScanStop => format!("{t}{}{SCAN_STOP_TAIL}", p(0)),
             Self::SavedObjects | Self::NoParamsIndex | Self::UnknownProvider => {
                 format!("{}{t}", p(0))
@@ -135,7 +136,7 @@ impl EsGap {
     pub(crate) fn matches(self, m: &str) -> bool {
         let t = self.text();
         match self {
-            Self::IndexNotLiteral | Self::BodyNotLiteral => m.starts_with(t),
+            Self::IndexNotLiteral | Self::BodyNotLiteral | Self::DefinitionUnread => m.starts_with(t),
             Self::ScanStop => m.starts_with(t) && m.ends_with(SCAN_STOP_TAIL),
             Self::SavedObjects | Self::NoParamsIndex | Self::UnknownProvider => m.ends_with(t),
             Self::NotLiteral | Self::DetailNotLiteral => m.contains(t),

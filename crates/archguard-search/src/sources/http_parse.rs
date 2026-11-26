@@ -93,8 +93,16 @@ pub(super) fn http_requests(text: &str) -> Vec<Request> {
         while i < lines.len() && header(lines[i]) {
             i += 1;
         }
+        while i < lines.len() && lines[i].trim().is_empty() {
+            i += 1;
+        }
         let start = i;
-        while i < lines.len() && !separator(lines[i]) && request_line(lines[i]).is_none() {
+        // The body ends at the first blank line, `###` or the next request line.
+        while i < lines.len()
+            && !lines[i].trim().is_empty()
+            && !separator(lines[i])
+            && request_line(lines[i]).is_none()
+        {
             i += 1;
         }
         let body = lines[start..i].join("\n");

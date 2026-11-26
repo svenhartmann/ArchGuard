@@ -182,10 +182,10 @@ impl Scan<'_, '_> {
             return self.gap(EsGap::IndexNotLiteral, &[&req.line.to_string()]);
         }
         let Some((value, file)) = self.body(&req.body) else {
-            return self.gap(EsGap::DefinitionUnread, &[]);
+            return self.gap(EsGap::DefinitionUnread, &[&req.line.to_string()]);
         };
         let Some(def) = search_definition(&value, Some(kind)) else {
-            return self.gap(EsGap::DefinitionUnread, &[]);
+            return self.gap(EsGap::DefinitionUnread, &[&req.line.to_string()]);
         };
         let mut a = self.artifact(req, kind, name);
         (a.flavor, a.patterns) = (def.flavor.into(), def.patterns);
@@ -245,7 +245,7 @@ impl Scan<'_, '_> {
     /// `POST /_aliases`: each `add` action with literal names is an alias over its indices.
     fn aliases(&mut self, req: &Request) {
         let Some((value, _)) = self.body(&req.body) else {
-            return self.gap(EsGap::DefinitionUnread, &[]);
+            return self.gap(EsGap::DefinitionUnread, &[&req.line.to_string()]);
         };
         let actions = value.get("actions").and_then(Value::as_array);
         for add in actions.into_iter().flatten().filter_map(|a| a.get("add")) {
@@ -254,7 +254,7 @@ impl Scan<'_, '_> {
                 names(add, "alias", "aliases"),
             );
             let (Some(indices), Some(aliases)) = (indices, aliases) else {
-                self.gap(EsGap::DefinitionUnread, &[]);
+                self.gap(EsGap::DefinitionUnread, &[&req.line.to_string()]);
                 continue;
             };
             for alias in aliases {
