@@ -15,6 +15,13 @@ pub enum Decoded {
 /// (`FE FF`); without a mark UTF-8. UTF-32 and legacy code pages are not
 /// detected (shortcut: unmarked non-UTF-8 reads as `Lossy`, add a detector
 /// when real inputs in UTF-32 or a code page need their text).
+///
+/// One case lies: UTF-32LE starts with `FF FE 00 00`, the UTF-16LE mark, so
+/// such a file decodes as UTF-16LE into `Clean` text full of NUL characters —
+/// `Clean` then claims a faithfulness it does not have. Harmless while no
+/// caller reads `Clean` as an assurance; a caller that does (a diagnostic,
+/// say) needs the detector above first. UTF-32BE (`00 00 FE FF`) carries no
+/// mark this decoder knows and reads as `Lossy`.
 pub fn decode_text(bytes: &[u8]) -> Decoded {
     let utf16 = |rest: &[u8], unit: fn([u8; 2]) -> u16| {
         if !rest.len().is_multiple_of(2) {
