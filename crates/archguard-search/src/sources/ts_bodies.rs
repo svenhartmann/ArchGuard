@@ -126,7 +126,8 @@ pub(crate) fn extract_with(ctx: &SearchContext) -> SourceOutput {
             es_gap(&mut out, EsGap::Unread, rel, None, &[]);
             continue;
         };
-        if PACKAGES.iter().any(|(p, _)| text.contains(p)) {
+        // "ts": the script rule of code.rs covers import/require for every script extension.
+        if super::code::imports_client(&text, "ts") {
             let scope = package_scope(ctx, rel, &mut scopes);
             FileScan::new(&text, rel, scope, &mut out).run();
         }
