@@ -792,4 +792,60 @@ mod tests {
             "changed assembly bytes must invalidate semantic evidence"
         );
     }
+
+    /// Real-Roslyn tests run only where a .NET SDK is installed.
+    fn project_with(files: &[(&str, &[u8])]) -> Option<tempfile::TempDir> {
+        sdk().ok()?;
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("src")).unwrap();
+        for (name, bytes) in files {
+            fs::write(root.path().join("src").join(name), bytes).unwrap();
+        }
+        Some(root)
+    }
+    const GOOD: &[u8] = b"class A { void Run() { Helper(); } void Helper() {} }";
+
+    #[test]
+    fn an_undecodable_file_skips_only_itself_and_says_so() {
+        // Odd byte count after a UTF-16LE mark: decode_text yields Unreadable.
+        let Some(root) = project_with(&[("Bad.cs", b"\xFF\xFEa"), ("Good.cs", GOOD)]) else {
+            return;
+        };
+        let analysis = analyze_csharp_calls(root.path(), &Config::default());
+        assert_eq!(analysis.status, "partial", "{:?}", analysis.diagnostics);
+        assert!(
+            analysis
+                .calls
+                .iter()
+                .any(|c| c.target_label.contains("Helper"))
+        );
+        assert!(
+            analysis.diagnostics.iter().any(|d| d.contains("Bad.cs")),
+            "{:?}",
+            analysis.diagnostics
+        );
+        assert!(
+            analysis.analyzers[0]
+                .diagnostics
+                .iter()
+                .any(|d| d.contains("Bad.cs"))
+        );
+    }
+
+    #[test]
+    fn only_valid_files_give_a_ready_analysis_without_skip_diagnostics() {
+        // Latin-1 umlaut in a comment reads lossy, it is not skipped.
+        let latin1: &[u8] = b"// \xE4\nclass B { void Run() { Helper(); } void Helper() {} }";
+        let Some(root) = project_with(&[("Latin.cs", latin1), ("Good.cs", GOOD)]) else {
+            return;
+        };
+        let analysis = analyze_csharp_calls(root.path(), &Config::default());
+        assert_eq!(analysis.status, "ready", "{:?}", analysis.diagnostics);
+        assert_eq!(analysis.files, 2);
+        assert!(
+            analysis.diagnostics.is_empty(),
+            "{:?}",
+            analysis.diagnostics
+        );
+    }
 }
