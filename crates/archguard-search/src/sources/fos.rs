@@ -2,7 +2,8 @@
 //! only the root key `fos_elastica` counts (a nested one, `fos_elastica_x:` or `indexes:` elsewhere
 //! is none). Each `indexes.<key>` is an `index` named by a literal `index_name`, else by the key;
 //! `%env(…)%`, `%param%` and `${…}` in the name, in `settings`/`properties` values, or a
-//! `settings`/`properties` that is no mapping are a gap and the index is left out. `settings` (with
+//! `settings`/`properties` that is no mapping, an entry that is no mapping and the legacy `types`
+//! layout (not read) are a gap and the index is left out. `settings` (with
 //! `index.analysis`) and `properties.<field>.{type, analyzer, search_analyzer, normalizer, fields,
 //! properties}` fill the detail like a JSON mapping; `persistence.driver/model` only appear in the
 //! evidence text. `indexes` that is no mapping and `when@<env>` blocks are a gap. `scope` = `fos:<folder>`, evidence = the key's line. A file that cannot be
@@ -114,7 +115,13 @@ fn indexes_of<'a>(
     if in_env {
         es_gap(out, EsGap::DefinitionUnread, rel, None, &[]);
     }
-    let indexes = value.get(MARKER)?.get("indexes")?;
+    let root = value.get(MARKER)?;
+    if !root.is_object() && !root.is_null() {
+        // `fos_elastica: '%param%'`: nothing below it can be read.
+        es_gap(out, EsGap::DefinitionUnread, rel, None, &[]);
+        return None;
+    }
+    let indexes = root.get("indexes")?;
     let Some(indexes) = indexes.as_object() else {
         // `indexes: '%param%'` or `%env(json:…)%`: the names are unknown.
         let at = indexes_line.map(|l| l.to_string()).unwrap_or_default();
@@ -167,7 +174,8 @@ fn key_lines(text: &str) -> (HashMap<&str, u32>, Option<u32>) {
     (map, indexes_line)
 }
 
-/// `settings` or `properties` that is no mapping, or any `%…%`/`${…}` string below them: the
+/// An entry that is no mapping (or null), a legacy `types` layout, `settings` or `properties` that
+/// is no mapping, or any `%…%`/`${…}` string below them: the
 /// detail would be dropped or name an undeclared analyzer, so the index is a gap instead.
 fn has_variable(entry: &Value) -> bool {
     fn var(v: &Value) -> bool {
@@ -178,10 +186,12 @@ fn has_variable(entry: &Value) -> bool {
             _ => false,
         }
     }
-    ["settings", "properties"]
-        .iter()
-        .filter_map(|k| entry.get(k))
-        .any(|v| !v.is_object() || var(v))
+    !(entry.is_object() || entry.is_null())
+        || entry.get("types").is_some()
+        || ["settings", "properties"]
+            .iter()
+            .filter_map(|k| entry.get(k))
+            .any(|v| !v.is_object() || var(v))
 }
 
 /// The literal index name: `index_name` when given, else the key; `None` when it is not literal.
