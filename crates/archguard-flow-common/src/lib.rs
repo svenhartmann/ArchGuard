@@ -25,3 +25,4 @@ pub mod lang_ts_imports;
 mod lang_ts_tests;
 pub mod repo_file;
 pub mod support;
+pub mod text_decode;

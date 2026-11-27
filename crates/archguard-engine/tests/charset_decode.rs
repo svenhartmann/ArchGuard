@@ -29,7 +29,7 @@ fn imports_fresh(bytes: &[u8]) -> bool {
     let (graph, _) = analyze(dir.path(), &Config::default(), Level::Module).expect("analyze");
     let id = |part: &str| {
         let node = graph.nodes.iter().find(|n| n.name.contains(part));
-        node.map(|n| n.id.clone())
+        node.map(|n| n.id)
             .unwrap_or_else(|| panic!("no node {part}"))
     };
     let (from, to) = (id("importer"), id("fresh"));
