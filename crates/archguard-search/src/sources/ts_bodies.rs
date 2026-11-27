@@ -27,10 +27,11 @@ use std::cell::Cell;
 use std::collections::HashMap;
 
 const MAX_FILES: usize = 5_000;
-/// Nesting of one literal, constants followed per chain, and constants followed per call.
+/// Nesting of one literal, constants followed per chain, and work (values built plus constants
+/// followed) per call: a fat constant used many times runs the budget out and becomes a gap.
 const MAX_NEST: u8 = 64;
 const MAX_CHAIN: u8 = 8;
-const MAX_LOOKUPS: u32 = 10_000;
+const MAX_WORK: u32 = 100_000;
 const EXTS: [&str; 8] = ["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"];
 const SKIPPED_DIRS: [&str; 3] = [".git", "node_modules", "dist"];
 const PACKAGES: [(&str, &str); 2] = [
@@ -218,7 +219,7 @@ impl<'a> FileScan<'a> {
         let line = self.line(at);
         let open = self.text[at + api.method.len()..].trim_start();
         let from = self.text.len() - open.len() + 1;
-        let steps = Cell::new(MAX_LOOKUPS);
+        let steps = Cell::new(MAX_WORK);
         let mut lit = Lit::new(self.text, from, &self.consts, &steps);
         let entries = lit.object_at().and_then(|()| lit.entries(true));
         let Some(mut entries) = entries else {
@@ -576,6 +577,7 @@ impl<'a> Lit<'a> {
     }
 
     fn value(&mut self) -> Option<Value> {
+        self.charge()?;
         self.ws();
         match self.at()? {
             b'\'' | b'"' | b'`' => self.string().map(Value::String),
@@ -592,11 +594,15 @@ impl<'a> Lit<'a> {
         }
     }
 
+    fn charge(&self) -> Option<()> {
+        self.steps.set(self.steps.get().checked_sub(1)?);
+        Some(())
+    }
+
     /// The value of the one top-level constant `name`.
     fn lookup(&self, name: &str) -> Option<Value> {
         let at = (*self.consts.get(name)?)?;
-        let left = self.steps.get().checked_sub(1)?;
-        self.steps.set(left);
+        self.charge()?;
         if self.depth >= MAX_CHAIN {
             return None;
         }
