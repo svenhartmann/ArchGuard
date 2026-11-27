@@ -233,7 +233,8 @@ impl<'a> FileScan<'a> {
         let line = self.line(at);
         let open = self.text[at + api.method.len()..].trim_start();
         let from = self.text.len() - open.len() + 1;
-        let mut lit = Lit::new(self.text, from, &self.consts, &self.steps);
+        let steps = Cell::new(MAX_WORK);
+        let mut lit = Lit::new(self.text, from, &self.consts, &steps, &self.steps);
         let entries = lit.object_at().and_then(|()| lit.entries(true));
         let body_ref = lit.body_ref;
         let Some(mut entries) = entries else {
@@ -589,7 +590,10 @@ struct Lit<'a> {
     text: &'a str,
     i: usize,
     consts: &'a HashMap<String, Option<usize>>,
+    /// Budget of the literal being read: one call's own text.
     steps: &'a Cell<u32>,
+    /// Budget of the whole file, charged only by constants resolved under a reference.
+    shared: &'a Cell<u32>,
     depth: u8,
     nest: u8,
     /// A Client 7 `body` that names a module constant holding an object but could not be read.
@@ -602,12 +606,14 @@ impl<'a> Lit<'a> {
         i: usize,
         consts: &'a HashMap<String, Option<usize>>,
         steps: &'a Cell<u32>,
+        shared: &'a Cell<u32>,
     ) -> Self {
         Self {
             text,
             i,
             consts,
             steps,
+            shared,
             depth: 0,
             nest: 0,
             body_ref: false,
@@ -723,13 +729,14 @@ impl<'a> Lit<'a> {
     /// The value of the one top-level constant `name`.
     fn lookup(&self, name: &str) -> Option<Value> {
         let at = (*self.consts.get(name)?)?;
-        self.charge(1)?;
+        let shared = self.shared;
+        shared.set(shared.get().checked_sub(1)?);
         if self.depth >= MAX_CHAIN {
             return None;
         }
         let mut sub = Lit {
             depth: self.depth + 1,
-            ..Lit::new(self.text, at, self.consts, self.steps)
+            ..Lit::new(self.text, at, self.consts, self.shared, self.shared)
         };
         sub.value()
             .filter(|_| sub.statement_ends() || sub.finished())
