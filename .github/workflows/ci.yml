@@ -25,10 +25,16 @@ env:
 
 jobs:
   check:
-    name: fmt / clippy / test
+    # Three runners in parallel: each builds the Slint UI crate (one ~60 MB generated app.rs, ~9 GB
+    # rustc peak) only once, so wall time is the longest part instead of the sum (2026-11-27).
+    name: ${{ matrix.part }}
     runs-on: ubuntu-latest
     # Cold cache (new crates) needs ~36 min clippy + tests; a timeout skips the cache save.
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [lint, test-slim, test-db]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,6 +51,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          key: ${{ matrix.part }}
           cache-on-failure: true
 
       - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
@@ -79,6 +86,7 @@ jobs:
           sudo apt-get install --yes --no-install-recommends libfontconfig1-dev
 
       - name: Format check
+        if: matrix.part == 'lint'
         run: cargo fmt --all -- --check
 
       - name: Verify Node for the TypeScript compiler and shop example tests
@@ -88,35 +96,44 @@ jobs:
 
       # Exit 143 after ~20 min since 2026-11-27: systemd-oomd ends clippy under memory pressure; fewer jobs keep the peak lower.
       - name: Clippy
+        if: matrix.part == 'lint'
         run: cargo clippy -j 2 --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Test slim
+        if: matrix.part == 'test-slim'
         run: cargo test --workspace --locked
 
       - name: Test DB feature
+        if: matrix.part == 'test-db'
         run: cargo test --workspace --all-features --locked
 
       - name: Install advisory checker
+        if: matrix.part == 'test-db'
         run: cargo install cargo-audit --version 0.22.2 --locked
 
       - name: Advisory check
+        if: matrix.part == 'test-db'
         run: cargo audit --file Cargo.lock
 
       - name: Install license gate
+        if: matrix.part == 'test-db'
         run: cargo install cargo-deny --version 0.22.1 --locked
 
       - name: License gate
+        if: matrix.part == 'test-db'
         # Advisories stay on cargo-audit; deny covers licenses and registries
         # from the committed Cargo.lock (deny.toml).
         run: cargo deny check licenses sources
 
       - name: Install ripgrep for benchmark replays
+        if: matrix.part == 'test-db'
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends ripgrep
           rg --version
 
       - name: Workspace dependency allowlist
+        if: matrix.part == 'test-db'
         run: |
           cargo fetch --locked
           for suite in checks release benchmarks; do
@@ -126,11 +143,13 @@ jobs:
           python3 scripts/checks/check_architecture.py
 
       - name: Shop example business flows and service topology
+        if: matrix.part == 'test-db'
         run: |
           node --test examples/service-shop/test/*.test.js
           node scripts/integration/test_service_shop.js
 
       - name: Java call analysis with real compiler
+        if: matrix.part == 'test-db'
         run: |
           python3 scripts/integration/test_java_calls.py
           python3 scripts/integration/test_java_json_memory.py
@@ -139,17 +158,20 @@ jobs:
           python3 scripts/integration/test_method_complexity.py java
 
       - name: CSharp call analysis with real Roslyn compiler
+        if: matrix.part == 'test-db'
         run: |
           python3 scripts/integration/test_csharp_calls.py
           python3 scripts/integration/test_method_complexity.py csharp
           python3 scripts/integration/test_quality_gate_ranges.py
 
       - name: TypeScript compiler analysis in isolated tool directory
+        if: matrix.part == 'test-db'
         run: |
           npm install --prefix "$RUNNER_TEMP/archguard-typescript" --no-save --ignore-scripts --package-lock=false typescript@5.8.2
           python3 scripts/integration/test_typescript_calls.py --compiler "$RUNNER_TEMP/archguard-typescript/node_modules/typescript/lib/typescript.js"
 
       - name: CLI and MCP transport smoke test with DB
+        if: matrix.part == 'test-db'
         run: |
           cargo build -p archguard-cli --all-features --locked
           python3 scripts/integration/smoke_cli.py target/debug/archguard --db
@@ -165,6 +187,7 @@ jobs:
           python3 scripts/integration/test_workspace_live.py target/debug/archguard --out "$RUNNER_TEMP/archguard-workspace-example"
 
       - name: Source analysis (dogfooding with R30 review gates)
+        if: matrix.part == 'test-db'
         # The repo's own .archguard/archguard.toml scopes the gate to crates/ and
         # declares the [review] ceilings (dated baseline, R45). check exits
         # non-zero on any gate breach; review proves the full review
