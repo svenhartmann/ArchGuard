@@ -224,6 +224,29 @@ mod apps {
             && !test_path(rel)
     }
 
+    /// Directories whose `package.json` has a NestJS dependency; an unreadable one is a gap.
+    fn find_apps(
+        root: &Path,
+        files: &[String],
+        out: &mut Vec<UiFlowDiagnostic>,
+    ) -> BTreeMap<String, (String, Vec<String>)> {
+        let mut apps = BTreeMap::new();
+        for rel in files {
+            let (dir, name) = rel.rsplit_once('/').unwrap_or(("", rel));
+            if name != "package.json" {
+                continue;
+            }
+            match read_source(root, rel) {
+                Ok(t) if NEST_DEPS.iter().any(|d| has_dep(&t, d)) => {
+                    apps.insert(dir.into(), (dir_name(root, dir), vec![]));
+                }
+                Ok(_) => {}
+                Err(message) => gap(out, rel, 0, message),
+            }
+        }
+        apps
+    }
+
     /// NestJS applications below `root`; unreadable sources are gaps.
     pub(super) fn read(root: &Path, out: &mut Vec<UiFlowDiagnostic>) -> Vec<App> {
         let walk = match walk(root) {
@@ -233,15 +256,7 @@ mod apps {
                 return vec![];
             }
         };
-        let mut apps: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
-        for rel in &walk.files {
-            let (dir, name) = rel.rsplit_once('/').unwrap_or(("", rel));
-            if name == "package.json"
-                && read_source(root, rel).is_ok_and(|t| NEST_DEPS.iter().any(|d| has_dep(&t, d)))
-            {
-                apps.insert(dir.into(), (dir_name(root, dir), vec![]));
-            }
-        }
+        let mut apps = find_apps(root, &walk.files, out);
         if apps.is_empty() {
             return vec![];
         }

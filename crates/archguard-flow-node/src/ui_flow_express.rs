@@ -428,8 +428,15 @@ fn find_apps(
     let mut apps = BTreeMap::new();
     for rel in files {
         let (dir, name) = rel.rsplit_once('/').unwrap_or(("", rel));
-        let Some(Ok(text)) = (name == "package.json").then(|| read_source(root, rel)) else {
+        if name != "package.json" {
             continue;
+        }
+        let text = match read_source(root, rel) {
+            Ok(text) => text,
+            Err(message) => {
+                gap(out, rel, 0, message);
+                continue;
+            }
         };
         if has_dep(&text, "express") {
             apps.insert(dir.into(), (dir_name(root, dir), vec![]));
