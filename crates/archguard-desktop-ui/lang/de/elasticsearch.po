@@ -4,24 +4,6 @@ msgstr "Keine Elasticsearch-Artefakte in diesem Projekt."
 msgid "The service topology is unavailable."
 msgstr "Die Diensttopologie ist nicht verfügbar."
 
-msgid "Focus: {}"
-msgstr "Fokus: {}"
-
-msgid "Show all"
-msgstr "Alle zeigen"
-
-msgid "Writes"
-msgstr "Schreibt"
-
-msgid "Reads"
-msgstr "Liest"
-
-msgid "Reference"
-msgstr "Referenz"
-
-msgid "Unknown access (dashed)"
-msgstr "Zugriff unbekannt (gestrichelt)"
-
 msgid "Not declared in this project."
 msgstr "In diesem Projekt nicht deklariert."
 
@@ -39,9 +21,6 @@ msgstr "Feld"
 
 msgid "Type"
 msgstr "Typ"
-
-msgid "Analyzer"
-msgstr "Analyzer"
 
 msgid "Show whole cluster"
 msgstr "Ganzes Cluster zeigen"
