@@ -741,7 +741,8 @@ impl<'a> Lit<'a> {
         while let Some(c) = self.at() {
             let rest = &self.text.as_bytes()[self.i..]; // bytes: self.i may sit inside a multibyte char
             match (quote, c) {
-                (Some(_), b'\\') => self.i += 1,
+                // An escape skips the next byte, but never past the end (a trailing `\` would leave i > len).
+                (Some(_), b'\\') => self.i = (self.i + 1).min(self.text.len() - 1),
                 (Some(q), c) if c == q => quote = None,
                 (Some(_), _) => {}
                 (None, b'\'' | b'"' | b'`') => quote = Some(c),
