@@ -176,6 +176,11 @@ impl Scan<'_, '_> {
             return self.aliases(req);
         }
         let Some((kind, name)) = route(&req.method, &segs) else {
+            // A write whose path is empty or starts with a variable may name anything.
+            let hidden = segs.first().is_none_or(|s| s.contains(['$', '{']));
+            if hidden && matches!(req.method.as_str(), "PUT" | "POST") {
+                self.gap(EsGap::IndexNotLiteral, &[&req.line.to_string()]);
+            }
             return;
         };
         if !literal(name) {
