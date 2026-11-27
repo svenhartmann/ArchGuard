@@ -133,13 +133,22 @@ fn env_and_parameter_names_and_unreadable_files_are_gaps() {
         .map(|d| format!("{}: {}", d.file, d.message))
         .collect();
     gaps.sort();
-    let [broken, env, param] = gaps.as_slice() else {
+    let [broken, env, param, nonmap, whenenv] = gaps.as_slice() else {
         panic!("{gaps:?}")
     };
     assert!(broken.starts_with("broken/fos_elastica.yaml: Definition file could not be read"));
     assert!(env.starts_with("config/packages/fos_elastica.yaml: Index name is not a literal"));
     assert!(env.ends_with("Source line 33."), "{env}");
     assert!(param.ends_with("Source line 37."), "{param}");
+    assert!(
+        nonmap.starts_with("nonmap/fos_elastica.yaml: Index name is not a literal")
+            && nonmap.ends_with("Source line 2."),
+        "indexes given as a parameter is a gap: {nonmap}"
+    );
+    assert!(
+        whenenv.starts_with("whenenv/fos_elastica.yaml: Definition file could not be read"),
+        "when@<env> blocks are not read, so they are a gap: {whenenv}"
+    );
     assert!(!report.complete);
 }
 
