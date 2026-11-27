@@ -1028,6 +1028,14 @@ fn unreadable_discovery_settings_are_noted_in_the_service_pass() {
         .unwrap_or_else(|| panic!("no diagnostic names the walk: {:?}", flow.diagnostics));
     assert_eq!(note.severity, archguard_core::DiagnosticSeverity::Note);
     assert_eq!(flow.complete, complete, "a note must not flip `complete`");
+    // This fixture has no SIGNS and, with the walk failed, no descriptor either, so
+    // `apply` returns before reading anything. The note must not promise a reading
+    // that does not happen on this path.
+    assert!(
+        note.message.contains("unknown"),
+        "the note must name what stays unknown: {}",
+        note.message
+    );
 }
 
 fn ctl_src() -> String {
