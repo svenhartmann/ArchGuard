@@ -1,5 +1,5 @@
-//! The content of an index, template or ghost detail page as plain data (no Slint types; `page_view`
-//! converts it). Pure function of the topology; coverage is the engine's
+//! The content of an index, template or ghost detail page as plain data (no Slint types; the class view
+//! in `class/` renders it). Pure function of the topology; coverage is the engine's
 //! `search_artifact_covers`.
 
 use archguard_engine::core::{SearchArtifact, SearchIndexDetail, ServiceTopology};

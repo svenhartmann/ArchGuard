@@ -103,6 +103,7 @@ es_gaps! {
     UnknownProvider => ": resource of an unknown provider (no required_providers source opensearch-project/opensearch or phillbaker/elasticsearch declares it); not read.",
     SpringNotLiteral => "Spring Data annotation value is not a literal (SpEL, placeholder, variable or expression) or its classpath resource is not a readable file below the project root; the value is unknown.",
     SpringScanStop => "Spring Data scan stopped after 5000 source files; annotated classes in later files are unknown.",
+    BodyNotLiteral => "Elasticsearch index or template body passed as a string is not readable (composed, interpolated, variable, file, invalid JSON or an unresolvable name or constant); the definition stays unknown. Source line ",
     SavedObjects => ": saved objects are not analyzed.",
     NotLiteral => ": Elasticsearch name is not a literal; ",
     NoParamsIndex => ": alerting rule has no top-level params index; its index comes from a data view or is unknown.",
@@ -120,7 +121,7 @@ impl EsGap {
             parts.get(i).copied().unwrap_or_default()
         });
         match self {
-            Self::IndexNotLiteral => format!("{t}{}.", p(0)),
+            Self::IndexNotLiteral | Self::BodyNotLiteral => format!("{t}{}.", p(0)),
             Self::ScanStop => format!("{t}{}{SCAN_STOP_TAIL}", p(0)),
             Self::SavedObjects | Self::NoParamsIndex | Self::UnknownProvider => {
                 format!("{}{t}", p(0))
@@ -134,7 +135,7 @@ impl EsGap {
     pub(crate) fn matches(self, m: &str) -> bool {
         let t = self.text();
         match self {
-            Self::IndexNotLiteral => m.starts_with(t),
+            Self::IndexNotLiteral | Self::BodyNotLiteral => m.starts_with(t),
             Self::ScanStop => m.starts_with(t) && m.ends_with(SCAN_STOP_TAIL),
             Self::SavedObjects | Self::NoParamsIndex | Self::UnknownProvider => m.ends_with(t),
             Self::NotLiteral | Self::DetailNotLiteral => m.contains(t),

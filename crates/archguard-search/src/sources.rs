@@ -14,6 +14,9 @@ pub(crate) mod pydsl_project;
 pub(crate) mod search_templates;
 pub(crate) mod spring;
 pub(crate) mod spring_syntax;
+pub(crate) mod string_bodies;
+pub(crate) mod string_bodies_calls;
+pub(crate) mod string_bodies_lex;
 pub(crate) mod terraform;
 pub(crate) mod terraform_detail;
 pub(crate) mod terraform_eval;
@@ -32,4 +35,5 @@ pub(crate) const SOURCES: &[fn(&SearchContext) -> SourceOutput] = &[
     code::extract_with,
     spring::extract_with,
     fos::extract_with,
+    string_bodies::extract_with,
 ];

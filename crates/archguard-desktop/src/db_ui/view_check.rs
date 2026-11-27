@@ -9,8 +9,8 @@ use slint::{ComponentHandle, ModelRc, PhysicalSize, VecModel};
 
 slint::slint! {
     import { DbView, DatabaseData, DbModel, DbEngine, DbRow, DbRel } from "../archguard-desktop-ui/ui/db_view.slint";
-    import { ElasticsearchData, EsModel } from "../archguard-desktop-ui/ui/es_view.slint";
-    export { DatabaseData, DbModel, DbEngine, DbRow, DbRel, ElasticsearchData, EsModel }
+    import { EsClassData, EsClassModel } from "../archguard-desktop-ui/ui/es_class.slint";
+    export { DatabaseData, DbModel, DbEngine, DbRow, DbRel, EsClassData, EsClassModel }
     export component Page inherits Window {
         out property <bool> listed: view.listed;
         view := DbView {}
@@ -120,8 +120,8 @@ fn sub_items_and_the_list_appear_and_elasticsearch_shows_its_graph() {
     assert_ne!(strip, empty, "the sub-items appear");
     data.set_model(model(2, false, redis()));
     assert_ne!(frame(&window), strip, "the list rows appear");
-    let es = page.global::<ElasticsearchData>();
-    es.set_model(EsModel {
+    let es = page.global::<EsClassData>();
+    es.set_model(EsClassModel {
         state: 1,
         ..Default::default()
     });
