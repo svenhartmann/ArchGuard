@@ -1,0 +1,11 @@
+fos_elastica:
+    indexes:
+        base_idx:
+            properties:
+                a: { type: text }
+when@test:
+    fos_elastica:
+        indexes:
+            test_only:
+                properties:
+                    a: { type: text }

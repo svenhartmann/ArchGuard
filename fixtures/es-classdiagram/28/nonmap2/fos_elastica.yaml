@@ -1,0 +1,5 @@
+doctrine:
+    indexes: [a]
+other: 1
+fos_elastica:
+    indexes: '%app.indexes%'

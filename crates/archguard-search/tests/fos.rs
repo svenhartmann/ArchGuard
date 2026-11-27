@@ -47,7 +47,9 @@ fn only_indexes_below_the_fos_elastica_root_are_artifacts() {
         })
         .collect();
     let want = [
+        "index base_idx fos:mixed",
         "index catalog fos:config/packages",
+        "index cm_idx fos:commented",
         "index custom_idx fos:extra",
         "index dev_only fos:config/packages/dev",
         "index products fos:dup",
@@ -133,7 +135,7 @@ fn env_and_parameter_names_and_unreadable_files_are_gaps() {
         .map(|d| format!("{}: {}", d.file, d.message))
         .collect();
     gaps.sort();
-    let [broken, env, param, nonmap, whenenv] = gaps.as_slice() else {
+    let [broken, env, param, mixed, nonmap, nonmap2, whenenv] = gaps.as_slice() else {
         panic!("{gaps:?}")
     };
     assert!(broken.starts_with("broken/fos_elastica.yaml: Definition file could not be read"));
@@ -144,6 +146,14 @@ fn env_and_parameter_names_and_unreadable_files_are_gaps() {
         nonmap.starts_with("nonmap/fos_elastica.yaml: Index name is not a literal")
             && nonmap.ends_with("Source line 2."),
         "indexes given as a parameter is a gap: {nonmap}"
+    );
+    assert!(
+        mixed.starts_with("mixed/fos_elastica.yaml: Definition file could not be read"),
+        "a when@<env> block next to a root block is a gap too: {mixed}"
+    );
+    assert!(
+        nonmap2.ends_with("Source line 5."),
+        "the line is the one under fos_elastica, not doctrine: {nonmap2}"
     );
     assert!(
         whenenv.starts_with("whenenv/fos_elastica.yaml: Definition file could not be read"),
@@ -161,4 +171,15 @@ fn evidence_line_is_the_index_key_not_an_earlier_equal_key() {
         .find(|a| a.name.as_deref() == Some("user"))
         .expect("user");
     assert_eq!(user.evidence[0].line, Some(9), "not doctrine or a property");
+}
+
+#[test]
+fn evidence_line_survives_trailing_comments() {
+    let report = analyze();
+    let all = fos(&report);
+    let cm = all
+        .iter()
+        .find(|a| a.name.as_deref() == Some("cm_idx"))
+        .expect("cm_idx");
+    assert_eq!(cm.evidence[0].line, Some(3));
 }
