@@ -324,3 +324,36 @@ fn an_exported_top_level_constant_is_not_shadowed_by_itself() {
         gaps(&report)
     );
 }
+
+fn time_of(lines: usize) -> std::time::Duration {
+    let root =
+        std::env::temp_dir().join(format!("archguard-26-perf-{lines}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let text = "import { Client } from '@elastic/elasticsearch';\n".to_owned()
+        + &"// @elastic/elasticsearch\n".repeat(lines);
+    std::fs::write(root.join("a.ts"), text).unwrap();
+    let best = (0..3)
+        .map(|_| {
+            let mut report = ServiceTopology::default();
+            let discovery = Discovery::new(&root, &mut report).expect("discovery");
+            let read = |_: &Path, p: &Path| std::fs::read_to_string(p).ok();
+            let start = std::time::Instant::now();
+            archguard_search::analyze(&root, &discovery, &read, &mut report);
+            start.elapsed()
+        })
+        .min()
+        .unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    best
+}
+
+#[test]
+fn package_mentions_in_comments_do_not_scan_quadratically() {
+    let (small, large) = (time_of(2_000), time_of(8_000));
+    // 4x the input: linear is about 4x, quadratic about 16x.
+    assert!(
+        large < small * 9 + std::time::Duration::from_millis(50),
+        "{small:?} -> {large:?}"
+    );
+}
