@@ -6,7 +6,8 @@
 //! layout (not read) are a gap and the index is left out. `settings` (with
 //! `index.analysis`) and `properties.<field>.{type, analyzer, search_analyzer, normalizer, fields,
 //! properties}` fill the detail like a JSON mapping; `persistence.driver/model` only appear in the
-//! evidence text. `indexes` that is no mapping and `when@<env>` blocks are a gap. `scope` = `fos:<folder>`, evidence = the key's line. A file that cannot be
+//! evidence text. `indexes` that is no mapping, `when@<env>` blocks and the root siblings
+//! `index_templates`/`index_prototype` (not read) are a gap; a lone `%` is literal. `scope` = `fos:<folder>`, evidence = the key's line. A file that cannot be
 //! read or parsed is a gap when it is named `fos_elastica.y*ml` or has a root `fos_elastica:` line. Trust
 //! boundary: files below the root through the safe reader, at most 5 000 YAML files, no test
 //! paths, no network, no aliases; contents are data.
@@ -82,7 +83,7 @@ fn read_file(ctx: &SearchContext, rel: &str, out: &mut ServiceTopology) {
     };
     let (lines, indexes_line, root_line) = key_lines(&text);
     let indexes_line = indexes_line.or(root_line);
-    let Some(indexes) = indexes_of(&value, indexes_line, rel, out) else {
+    let Some(indexes) = indexes_of(&value, &text, (indexes_line, root_line), rel, out) else {
         return;
     };
     for (key, entry) in indexes {
@@ -103,7 +104,8 @@ fn read_file(ctx: &SearchContext, rel: &str, out: &mut ServiceTopology) {
 /// The `fos_elastica.indexes` mapping; a gap is reported when it exists but cannot be read.
 fn indexes_of<'a>(
     value: &'a Value,
-    indexes_line: Option<u32>,
+    text: &str,
+    (indexes_line, root_line): (Option<u32>, Option<u32>),
     rel: &str,
     out: &mut ServiceTopology,
 ) -> Option<&'a Map<String, Value>> {
@@ -122,6 +124,16 @@ fn indexes_of<'a>(
         es_gap(out, EsGap::DefinitionUnread, rel, None, &[]);
         return None;
     }
+    // Root siblings that define index structure (templates, settings merged into every index).
+    for key in ["index_templates", "index_prototype"] {
+        if root.get(key).is_some() {
+            let at = key_line(text, key)
+                .or(root_line)
+                .map(|l| l.to_string())
+                .unwrap_or_default();
+            es_gap(out, EsGap::DefinitionUnread, rel, None, &[&at]);
+        }
+    }
     let indexes = root.get("indexes")?;
     let Some(indexes) = indexes.as_object() else {
         // `indexes: '%param%'` or `%env(json:…)%`: the names are unknown.
@@ -130,6 +142,16 @@ fn indexes_of<'a>(
         return None;
     };
     Some(indexes)
+}
+
+/// Line of the first indented `<key>:` below the root `fos_elastica:` line.
+fn key_line(text: &str, key: &str) -> Option<u32> {
+    let mut lines = text.lines().enumerate();
+    lines.find(|(_, l)| l.starts_with("fos_elastica:"))?;
+    lines
+        .take_while(|(_, l)| l.is_empty() || l.starts_with([' ', '\t', '#']))
+        .find(|(_, l)| l.trim_start().starts_with(&format!("{key}:")))
+        .and_then(|(i, _)| u32::try_from(i + 1).ok())
 }
 
 fn has_alias(text: &str) -> bool {
@@ -178,13 +200,25 @@ fn key_lines(text: &str) -> (HashMap<&str, u32>, Option<u32>, Option<u32>) {
     (map, indexes_line, root_line)
 }
 
+/// Symfony resolves `%name%` (regex `%([^%\s]+)%`) after `%%` is unescaped; a lone `%` is literal.
+fn has_parameter(s: &str) -> bool {
+    let t = s.replace("%%", "");
+    let parts: Vec<&str> = t.split('%').collect();
+    parts
+        .get(1..parts.len().saturating_sub(1))
+        .is_some_and(|mid| {
+            mid.iter()
+                .any(|p| !p.is_empty() && !p.contains(char::is_whitespace))
+        })
+}
+
 /// An entry that is no mapping (or null), a legacy `types` layout, `settings` or `properties` that
 /// is no mapping, or any `%…%`/`${…}` string below them: the
 /// detail would be dropped or name an undeclared analyzer, so the index is a gap instead.
 fn has_variable(entry: &Value) -> bool {
     fn var(v: &Value) -> bool {
         match v {
-            Value::String(s) => s.replace("%%", "").contains('%') || s.contains("${"),
+            Value::String(s) => has_parameter(s) || s.contains("${"),
             Value::Array(a) => a.iter().any(var),
             Value::Object(m) => m.values().any(var),
             _ => false,
