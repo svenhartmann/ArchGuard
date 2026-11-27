@@ -32,6 +32,8 @@ const MAX_FILES: usize = 5_000;
 const MAX_NEST: u8 = 64;
 const MAX_CHAIN: u8 = 8;
 const MAX_WORK: u32 = 100_000;
+/// Bytes of built string per work unit: a long string used many times runs the budget out too.
+const STRING_BYTES: usize = 16;
 const EXTS: [&str; 8] = ["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"];
 const SKIPPED_DIRS: [&str; 3] = [".git", "node_modules", "dist"];
 const PACKAGES: [(&str, &str); 2] = [
@@ -555,6 +557,7 @@ impl<'a> Lit<'a> {
                 c if c == quote as char => {
                     self.i = start + k + 1;
                     let raw = &self.text[start..start + k];
+                    self.charge(out.len() / STRING_BYTES)?;
                     return (quote != b'`' || !raw.contains("${")).then_some(out);
                 }
                 c => out.push(c),
@@ -587,7 +590,7 @@ impl<'a> Lit<'a> {
     }
 
     fn value(&mut self) -> Option<Value> {
-        self.charge()?;
+        self.charge(1)?;
         self.ws();
         match self.at()? {
             b'\'' | b'"' | b'`' => self.string().map(Value::String),
@@ -604,15 +607,16 @@ impl<'a> Lit<'a> {
         }
     }
 
-    fn charge(&self) -> Option<()> {
-        self.steps.set(self.steps.get().checked_sub(1)?);
+    fn charge(&self, n: usize) -> Option<()> {
+        self.steps
+            .set(self.steps.get().checked_sub(u32::try_from(n).ok()?)?);
         Some(())
     }
 
     /// The value of the one top-level constant `name`.
     fn lookup(&self, name: &str) -> Option<Value> {
         let at = (*self.consts.get(name)?)?;
-        self.charge()?;
+        self.charge(1)?;
         if self.depth >= MAX_CHAIN {
             return None;
         }
