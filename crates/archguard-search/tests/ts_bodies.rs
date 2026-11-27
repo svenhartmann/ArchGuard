@@ -59,6 +59,7 @@ fn client_calls_become_artifacts_and_lookalikes_do_not() {
         })
         .collect();
     let want = [
+        "index asi-v1 ts:shop []",
         "index bomb-v1 ts:shop []",
         "index calls-v1 ts:shop []",
         "index consts-v1 ts:shop []",
@@ -225,4 +226,11 @@ fn a_constant_referenced_many_times_is_a_gap_not_a_memory_bomb() {
         "{:?}",
         gaps(&report)
     );
+}
+
+#[test]
+fn constants_without_a_trailing_semicolon_resolve() {
+    let report = analyze();
+    let a = named(&report, "asi-v1");
+    assert_eq!(fields(a), ["a:text:"]);
 }
