@@ -15,3 +15,5 @@ curl -X DELETE "$HOST/shop-logs"
 echo curl -X PUT $HOST/shop-echo -d '{}'
 # curl -X PUT $HOST/shop-commented -d '{}'
 mycurl -X PUT $HOST/shop-mycurl -d '{}'
+curl -X PUT "$ES_URL" -d '{}'
+curl -X PUT "$ES/$API/shop-x" -d '{}'

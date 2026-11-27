@@ -93,3 +93,9 @@ PUT /shop-broken
 Content-Type: application/json
 
 { not json
+
+### the whole target is a variable, a gap
+PUT {{target}}
+Content-Type: application/json
+
+{"settings": {}}

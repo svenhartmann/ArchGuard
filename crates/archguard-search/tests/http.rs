@@ -165,13 +165,13 @@ fn variables_outside_files_and_unreadable_input_are_gaps_never_silent() {
     let report = analyze();
     assert_eq!(
         gaps(&report, "api/requests.http").len(),
-        3,
-        "name variable, bad body, alias variable"
+        4,
+        "name variable, bad body, alias variable, path variable"
     );
     assert_eq!(
         gaps(&report, "scripts/setup.sh").len(),
-        3,
-        "${{INDEX}}, outside the root, absolute"
+        5,
+        "${{INDEX}}, outside the root, absolute, URL variable, API variable"
     );
     assert_eq!(gaps(&report, "broken/unreadable.sh").len(), 1);
     assert!(gaps(&report, "docker/Dockerfile").is_empty());
