@@ -8,8 +8,24 @@ fn root() -> PathBuf {
 }
 
 fn analyze() -> ServiceTopology {
+    analyze_with(&[])
+}
+
+/// With `services` registered, a service owns the files below its directory.
+fn analyze_with(services: &[&str]) -> ServiceTopology {
     let root = root();
     let mut report = ServiceTopology::default();
+    for dir in services {
+        report.services.push(archguard_core::Service {
+            id: (*dir).into(),
+            name: (*dir).into(),
+            compose_file: String::new(),
+            build_context: Some((*dir).into()),
+            networks: vec![],
+            profiles: vec![],
+            project: None,
+        });
+    }
     let discovery = Discovery::new(&root, &mut report).expect("discovery");
     let read = |_: &Path, p: &Path| std::fs::read_to_string(p).ok();
     archguard_search::analyze(&root, &discovery, &read, &mut report);
@@ -77,6 +93,8 @@ fn client_calls_become_artifacts_and_lookalikes_do_not() {
         "index_template logs-tpl ts:shop []",
         "index orders-v1 ts:shop []",
         "index os-v1 ts:search [opensearch]",
+        "index p1 ts:shop []",
+        "index p3 ts:shop []",
         "index partial-v1 ts:shop []",
         "index sbomb-v1 ts:shop []",
         "index self-v1 ts:shop []",
@@ -354,6 +372,56 @@ fn package_mentions_in_comments_do_not_scan_quadratically() {
     // 4x the input: linear is about 4x, quadratic about 16x.
     assert!(
         large < small * 9 + std::time::Duration::from_millis(50),
+        "{small:?} -> {large:?}"
+    );
+}
+
+#[test]
+fn an_unread_body_constant_is_never_silent() {
+    let report = analyze_with(&["shop"]);
+    for file in ["probe_const_body", "probe_factory_body", "probe_param_body"] {
+        let at = format!("shop/src/{file}.ts");
+        assert!(
+            gaps(&report).iter().any(|g| g.contains(&at)),
+            "{file}: {:?}",
+            gaps(&report)
+        );
+    }
+}
+
+fn time_of_refs(calls: usize) -> std::time::Duration {
+    let root =
+        std::env::temp_dir().join(format!("archguard-26-refs-{calls}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let mut text = "import { Client } from '@elastic/elasticsearch';\n".to_owned()
+        + "const client = new Client({ node: 'http://localhost:9200' });\n"
+        + &format!("const BIG = [{}];\n", "0,".repeat(20_000));
+    for i in 0..calls {
+        text += &format!("client.indices.create({{ index: 'i{i}', settings: BIG }});\n");
+    }
+    std::fs::write(root.join("a.ts"), text).unwrap();
+    let best = (0..3)
+        .map(|_| {
+            let mut report = ServiceTopology::default();
+            let discovery = Discovery::new(&root, &mut report).expect("discovery");
+            let read = |_: &Path, p: &Path| std::fs::read_to_string(p).ok();
+            let start = std::time::Instant::now();
+            archguard_search::analyze(&root, &discovery, &read, &mut report);
+            start.elapsed()
+        })
+        .min()
+        .unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    best
+}
+
+#[test]
+fn many_references_to_a_huge_constant_share_one_budget_per_file() {
+    let (small, large) = (time_of_refs(100), time_of_refs(400));
+    // 4x the calls: one budget per file stays flat, a budget per call grows about 4x.
+    assert!(
+        large < small * 2 + std::time::Duration::from_millis(50),
         "{small:?} -> {large:?}"
     );
 }
