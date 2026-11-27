@@ -86,8 +86,9 @@ jobs:
           node --version
           node -e 'if (Number(process.versions.node.split(".")[0]) < 20) throw new Error("TypeScript compiler and shop example tests require Node 20+")'
 
+      # Exit 143 after ~20 min since 2026-11-27: systemd-oomd ends clippy under memory pressure; fewer jobs keep the peak lower.
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        run: cargo clippy -j 2 --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Test slim
         run: cargo test --workspace --locked
