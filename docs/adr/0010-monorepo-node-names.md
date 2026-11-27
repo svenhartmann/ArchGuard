@@ -9,7 +9,7 @@ Java, Kotlin, C# and PHP files are named after their declared package or
 namespace (ARCHITECTURE.md Section 5.1), not after their directory. In a
 monorepo whose projects share a package, this merged the projects.
 
-Example: ElasticSearchIK has four Azure Functions under `functions/*`, each with
+Example: one customer project has four Azure Functions under `functions/*`, each with
 its own `pom.xml`, and all four declare `de.union.investment.ikonline`. The graph
 had one tree `de/union/investment/ikonline`. Three different
 `common/LogHelper.java` files became one node, and so did eight other classes
