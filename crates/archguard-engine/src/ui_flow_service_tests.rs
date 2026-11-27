@@ -1002,3 +1002,34 @@ fn applications_that_disagree_on_method_security_give_a_hint_and_a_gap() {
     assert_eq!(l[0].0, ServiceHow::Hint, "{l:?}");
     assert!(gap_with(&flow, "differ"), "{:#?}", flow.diagnostics);
 }
+
+/// A walk that fails after the controllers were read (the endpoints stay) must
+/// say why the service checks were not made, as a note: the flow is already
+/// incomplete through the reader that built it, so a second gap adds nothing.
+#[test]
+fn unreadable_discovery_settings_are_noted_in_the_service_pass() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctl = dir.path().join("svc-walk/src/main/java/app/Ctl.java");
+    std::fs::create_dir_all(ctl.parent().unwrap()).unwrap();
+    std::fs::write(dir.path().join("svc-walk/pom.xml"), SPRING_POM).unwrap();
+    std::fs::write(&ctl, ctl_src()).unwrap();
+    let root = dir.path().join("svc-walk");
+    let mut flow = crate::ui_flow::analyze(&root).unwrap();
+    assert!(flow.endpoints.iter().any(|e| e.handler.is_some()));
+    std::fs::write(root.join("archguard.toml"), b"[project]\nexclude = 1\n").unwrap();
+    let config = archguard_core::Config::default();
+    let ctx = archguard_flow_common::extract_ctx::ExtractContext::new(&root, &config);
+    let complete = flow.complete;
+    crate::ui_flow_service::apply(&ctx, &mut flow);
+    let note = flow
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains("ejb-jar.xml"))
+        .unwrap_or_else(|| panic!("no diagnostic names the walk: {:?}", flow.diagnostics));
+    assert_eq!(note.severity, archguard_core::DiagnosticSeverity::Note);
+    assert_eq!(flow.complete, complete, "a note must not flip `complete`");
+}
+
+fn ctl_src() -> String {
+    ctl("return \"x\";", "")
+}
