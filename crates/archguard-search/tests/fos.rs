@@ -55,9 +55,12 @@ fn only_indexes_below_the_fos_elastica_root_are_artifacts() {
         "index empty_props_idx fos:valid",
         "index flow_idx fos:flow",
         "index flowroot_idx fos:flowroot",
+        "index lone_pct_idx fos:valid",
         "index pct_idx fos:valid",
         "index products fos:dup",
+        "index proto_idx fos:proto",
         "index shop_v2 fos:config/packages",
+        "index tmpl_idx fos:tmpl",
         "index user fos:dup",
     ];
     assert_eq!(
@@ -150,8 +153,10 @@ fn env_and_parameter_names_and_unreadable_files_are_gaps() {
         p_idx,
         a_idx,
         s_idx,
+        proto,
         rootstr,
         strentry,
+        tmpl,
         whenenv,
     ] = gaps.as_slice()
     else {
@@ -195,6 +200,14 @@ fn env_and_parameter_names_and_unreadable_files_are_gaps() {
             && strentry.ends_with("Source line 3."),
         "an index entry that is a parameter is a gap: {strentry}"
     );
+    for (gap, dir, line) in [(proto, "proto", 2), (tmpl, "tmpl", 2)] {
+        assert!(
+            gap.starts_with(&format!(
+                "{dir}/fos_elastica.yaml: Definition file could not be read"
+            )) && gap.ends_with(&format!("Source line {line}.")),
+            "index_templates and index_prototype are not read, so they are a gap: {gap}"
+        );
+    }
     assert!(
         whenenv.starts_with("whenenv/fos_elastica.yaml: Definition file could not be read"),
         "when@<env> blocks are not read, so they are a gap: {whenenv}"
