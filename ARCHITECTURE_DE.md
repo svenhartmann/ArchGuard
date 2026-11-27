@@ -214,8 +214,8 @@ archguard/
 
 | Crate | Verantwortung | Externe Abhängigkeiten |
 | --- | --- | --- |
-| `archguard-core` | `Node`, `Edge`, `Ref`, `Graph`, `GraphBuilder`, `Finding`, `Report`, `Config`, `ArchguardError` | `serde`, `serde_json`, `thiserror` |
-| `archguard-extract` | Dateisuche (`.gitignore`-aware), `Extractor`-Trait, Scanner für Java, C#, Python, TS/JS, PHP, Rust, Go; zweistufige Auflösung (Pfad + Deklarations-Map/PSR-4) | `ignore`, `globset`, `serde_json` |
+| `archguard-core` | `Node`, `Edge`, `Ref`, `Graph`, `GraphBuilder`, `Finding`, `Report`, `Config`, `ArchguardError`, `Excludes` | `globset`, `serde`, `serde_json`, `thiserror` |
+| `archguard-extract` | Dateisuche (`.gitignore`-aware), `Extractor`-Trait, Scanner für Java, C#, Python, TS/JS, PHP, Rust, Go; zweistufige Auflösung (Pfad + Deklarations-Map/PSR-4) | `ignore`, `serde_json` |
 | `archguard-analysis` | SCC, begrenzte Zyklen-Aufzählung, Fan-in/out, Instabilität, Layer-Check, **Layer-Ableitung (Ranking + Namensaffinität)**, Cut-Scoring, Baseline-Diff | `petgraph` |
 | `archguard-report` | Serialisierung der `Report`-Typen in alle Ausgabeformate | `serde_json` |
 | `archguard-store` | `LadybugStore`-DB-Spiegel + read-only openCypher-Queries, Query-Sanitizer | `lbug = "=0.22.1"` (LadybugDB, nur hinter Cargo-Feature `db`) |
@@ -331,7 +331,7 @@ Kanten nur zwischen `file`-Knoten. Alle Listen stabil sortiert.
 
 1. **Deklaration laden:** die Projektconfig nach der [Dateipriorität](README_DE.md#konfiguration-und-projektdaten) lesen — nicht geschriebene Abschnitte und Werte erhalten ihren dokumentierten Default (Kap. 11); ein Abschnittskopf ohne Werte deklariert nichts. Auflösung: `deklariert ⇐ abgeleitet ⇐ Default`.
 2. **Vorarbeit ableiten:** `[project]` nicht deklariert → Source-Roots + Sprachen aus Manifesten (PSR-4, `Cargo.toml`, tsconfig, pyproject) und Endungs-Statistik (Kap. 7, „Projekt-Ableitung").
-3. **Walken:** `ignore`-Crate (respektiert `.gitignore`), Filter nach bekannten Endungen + `exclude`-Globs (an der Wurzel verankert; ein getroffenes Verzeichnis fällt samt Inhalt weg, ein abschließendes `/` trifft nur Verzeichnisse; eine Regel in `archguard_extract::Excludes`).
+3. **Walken:** `ignore`-Crate (respektiert `.gitignore`), Filter nach bekannten Endungen + `exclude`-Globs (an der Wurzel verankert; ein getroffenes Verzeichnis fällt samt Inhalt weg, ein abschließendes `/` trifft nur Verzeichnisse; eine Regel in `archguard_core::Excludes`).
 4. **Extrahieren:** je Datei der passende Scanner → Importe (`RawImport` mit `TargetSpec::Path` für relative Pfade oder `TargetSpec::Symbol` für Paket-/Namespace-Importe) **und** Deklarationen (`package`/`namespace` der Datei).
 5. **Auflösen (zweistufig):** Pfad-Specs gegen den Dateibaum; Symbol-Specs gegen die **Deklarations-Map** (Modulpfad → deklarierende Dateien, bei PHP ergänzt um das PSR-4-Mapping aus `composer.json`). Eindeutige Datei → Datei-Kante; nur Paket bekannt → Pseudoknoten `paket/*`; nichts gefunden → extern, Warnung, keine Kante.
 6. **Graph bauen:** `GraphBuilder` legt je Datei den Knoten **samt Verzeichnis-Vorfahrenkette** an (`ensure_path`); Kanten nur Datei → Datei (Interning, Dedup, Selbstkanten verwerfen).
