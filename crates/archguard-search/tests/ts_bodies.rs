@@ -267,3 +267,20 @@ fn a_client_7_body_that_is_not_an_object_literal_is_a_gap() {
         );
     }
 }
+
+#[test]
+fn a_backslash_as_the_last_byte_of_a_skipped_member_is_a_gap_not_a_panic() {
+    // The call never closes, so there is no artifact; the reader must neither panic nor stay silent.
+    let report = analyze();
+    let arts = &report.elasticsearch.artifacts;
+    assert!(
+        !arts.iter().any(|a| a.name.as_deref() == Some("eof-v1")),
+        "{arts:?}"
+    );
+    let g = gaps(&report);
+    assert!(
+        g.iter()
+            .any(|g| g.starts_with("shop/src/eofescape.ts: ") && g.contains("Source line 5.")),
+        "{g:?}"
+    );
+}
