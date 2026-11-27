@@ -107,8 +107,20 @@ pub fn extract(root: &Path) -> UiFlow {
 /// [`extract`] for one run.
 pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     let mut flow = UiFlow::default();
-    let Ok(walk) = walk(ctx.root) else {
-        return flow;
+    let walk = match walk(ctx.root) {
+        Ok(walk) => walk,
+        Err(e) => {
+            // UiFlow::default() is complete, so returning it here would claim
+            // "everything read, nothing found" for a tree nobody could walk.
+            gap(
+                &mut flow.diagnostics,
+                ".",
+                0,
+                format!("Discovery settings not read: {e}"),
+            );
+            finish(&mut flow);
+            return flow;
+        }
     };
     let files: BTreeSet<&str> = walk.files.iter().map(String::as_str).collect();
     let apps: Vec<&str> = (files.iter())

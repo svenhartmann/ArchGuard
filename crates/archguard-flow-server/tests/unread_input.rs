@@ -87,7 +87,11 @@ fn unreadable_oathkeeper_candidate_is_reported() {
 #[test]
 fn laravel_unreadable_discovery_settings_are_a_gap() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("archguard.toml"), b"[project]\nexclude = 1\n").unwrap();
+    std::fs::write(
+        dir.path().join("archguard.toml"),
+        b"[project]\nexclude = 1\n",
+    )
+    .unwrap();
     std::fs::write(dir.path().join("artisan"), b"#!/usr/bin/env php\n").unwrap();
     let flow = archguard_flow_server::ui_flow_laravel::extract(dir.path());
     assert!(
