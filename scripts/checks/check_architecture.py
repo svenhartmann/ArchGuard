@@ -19,7 +19,7 @@ ALLOWED = {
     "analysis": {"core"},
     "report": {"core"},
     "store": {"core"},
-    "flow-common": {"core", "extract"},
+    "flow-common": {"core"},
     "flow-clike": {"flow-common"},
     "flow-backend": {"core", "flow-common", "flow-clike"},
     "flow-jvm": {"core", "flow-common", "flow-clike"},

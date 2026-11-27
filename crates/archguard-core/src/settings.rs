@@ -9,7 +9,7 @@ pub struct ProjectConfig {
     pub source_roots: Vec<String>,
     /// Globs excluded from the analysis, anchored at the project root; a
     /// matched directory is excluded with everything below it, and a
-    /// trailing `/` matches directories only (`archguard_extract::Excludes`).
+    /// trailing `/` matches directories only (`crate::Excludes`).
     pub exclude: Vec<String>,
     /// `"auto"` or explicit language ids, e.g. `["ts", "py"]`.
     pub languages: Vec<String>,

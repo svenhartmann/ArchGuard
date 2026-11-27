@@ -22,11 +22,13 @@ pub use diagrams::{
     ElementKind, RelationKind, SequenceStep, sequence_steps,
 };
 mod evaluation;
+mod excludes;
 mod licenses;
 pub use evaluation::{
     Assessment, AssessmentMeta, ExpectedKind, ExpectedProblem, JudgedFinding, Verdict,
     finding_kind_name,
 };
+pub use excludes::Excludes;
 pub use licenses::{LicenseState, LicensesConfig, UnknownLicense, is_spdx_expression};
 mod model;
 mod quality_goal;
