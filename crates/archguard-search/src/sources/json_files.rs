@@ -4,6 +4,7 @@
 //! `elasticsearch/`, `opensearch/`, `mappings/` or with `template` in its name. Search templates
 //! (`"lang": "mustache"`) stay with `search_templates`. Trust boundary: files below the root read
 //! through the safe reader (no symlinks, 1 MiB), at most 5 000 files, no test paths; no network.
+use super::http_parse::is_console;
 use super::json::{Definition, search_definition};
 use super::search_templates::mustache_lang;
 use crate::context::{SearchContext, SourceOutput};
@@ -65,6 +66,10 @@ fn read_file(ctx: &SearchContext, rel: &str, out: &mut ServiceTopology) {
         return;
     }
     let Some(value) = text.as_deref().and_then(|t| parse(rel, t)) else {
+        // Console text is read, and gapped, by `devtools`.
+        if text.as_deref().is_some_and(is_console) {
+            return;
+        }
         if gap_path(rel) {
             es_gap(out, EsGap::DefinitionUnread, rel, None, &[]);
         }

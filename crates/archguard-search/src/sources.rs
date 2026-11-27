@@ -4,6 +4,7 @@ pub(crate) use crate::context::SourceOutput;
 
 pub(crate) mod code;
 pub(crate) mod constants;
+pub(crate) mod devtools;
 pub(crate) mod fos;
 pub(crate) mod http;
 pub(crate) mod http_parse;
@@ -39,4 +40,5 @@ pub(crate) const SOURCES: &[fn(&SearchContext) -> SourceOutput] = &[
     fos::extract_with,
     string_bodies::extract_with,
     http::extract_with,
+    devtools::extract_with,
 ];

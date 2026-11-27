@@ -291,3 +291,86 @@ impl Lexer {
         true
     }
 }
+
+/// A console request line: `METHOD path` from column 0, nothing else on the line.
+fn console_line(line: &str) -> Option<(String, String)> {
+    let two = line.split_whitespace().count() == 2;
+    let (method, url) =
+        request_line(line).filter(|_| two && !line.starts_with(char::is_whitespace))?;
+    Some((method, url))
+}
+
+fn comment(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with('#') || t.starts_with("//")
+}
+
+/// Whether the text has a console request line (a host URL is not one) followed by `{` or by the
+/// end of the text, comments and blank lines skipped.
+pub(super) fn is_console(text: &str) -> bool {
+    let lines: Vec<&str> = text.lines().collect();
+    lines.iter().enumerate().any(|(i, l)| {
+        console_line(l).is_some_and(|(_, url)| !url.contains("://"))
+            && lines[i + 1..]
+                .iter()
+                .find(|n| !n.trim().is_empty() && !comment(n))
+                .is_none_or(|n| n.trim_start().starts_with('{'))
+    })
+}
+
+/// Kibana console text: `METHOD path` from column 0 (no leading slash needed), the JSON body on
+/// the lines below up to the next request line, whole-line `#` and `//` comments dropped, a
+/// `"""` string in the body becomes a JSON string. Blank lines inside a body are kept.
+pub(super) fn console_requests(text: &str) -> Vec<Request> {
+    let lines: Vec<&str> = text.lines().collect();
+    let (mut out, mut i) = (Vec::new(), 0);
+    while i < lines.len() {
+        let Some((method, url)) = console_line(lines[i]) else {
+            i += 1;
+            continue;
+        };
+        let line = line_no(i);
+        let (mut body, mut open) = (String::new(), false);
+        i += 1;
+        while i < lines.len() && (open || console_line(lines[i]).is_none()) {
+            if open || !comment(lines[i]) {
+                body.push_str(lines[i]);
+                body.push('\n');
+            }
+            open ^= lines[i].matches("\"\"\"").count() % 2 == 1;
+            i += 1;
+        }
+        let url = if url.starts_with('/') || url.contains("://") {
+            url
+        } else {
+            format!("/{url}")
+        };
+        let body = match body.trim() {
+            "" => Body::None,
+            b => Body::Inline(triple_quotes(b)),
+        };
+        out.push(Request {
+            method,
+            url,
+            line,
+            body,
+        });
+    }
+    out
+}
+
+/// Each `"""text"""` as a JSON string; an unclosed one stays and fails the JSON parse later.
+fn triple_quotes(body: &str) -> String {
+    let mut out = String::new();
+    let mut rest = body;
+    while let Some((head, tail)) = rest.split_once("\"\"\"") {
+        let Some((inner, after)) = tail.split_once("\"\"\"") else {
+            break;
+        };
+        out.push_str(head);
+        out.push_str(&serde_json::to_string(inner).unwrap_or_default());
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}

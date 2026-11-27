@@ -1,0 +1,8 @@
+PUT _ilm/policy/notes-ilm
+{
+  "policy": {
+    "phases": {
+      "hot": { "actions": {} }
+    }
+  }
+}
