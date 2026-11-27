@@ -1,0 +1,11 @@
+fos_elastica:
+    index_templates:
+        tpl_logs:
+            template_name: logs
+            index_patterns: ["logs-*"]
+            properties:
+                msg: { type: text }
+    indexes:
+        tmpl_idx:
+            properties:
+                id: { type: keyword }

@@ -1,0 +1,14 @@
+fos_elastica:
+    indexes:
+        p_idx:
+            settings: '%app.es_settings%'
+            properties: '%app.props%'
+        a_idx:
+            properties:
+                t: { type: text, analyzer: '%env(AN)%' }
+        s_idx:
+            settings:
+                index:
+                    analysis:
+                        analyzer:
+                            x: { type: custom, tokenizer: '${TOK}' }

@@ -1,0 +1,2 @@
+fos_elastica:
+  indexes: { flow_idx: { properties: { b: { type: text } } } }
