@@ -3,7 +3,7 @@
 //! the API decides: a method of the same name on any other object does not match.
 use super::constants::Name;
 use super::string_bodies_lex::{Kind, Lang, Toks};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// What stands where a body is expected.
 pub(super) enum Arg {
@@ -364,19 +364,6 @@ pub(super) fn json_constants(t: &Toks) -> Vec<(String, String, u32)> {
         }
     }
     out
-}
-
-/// `body: NAME` where `NAME = {` is an object literal, in a TypeScript file that imports a client:
-/// ts_bodies.rs reads or gaps it, never twice.
-pub(super) fn leave_object_bodies(t: &Toks, found: &mut Vec<Found>, ext: &str, text: &str) {
-    if !ext.starts_with("ts") || !super::code::imports_client(text, "ts") {
-        return;
-    }
-    let objects: HashSet<&str> = (2..t.t.len())
-        .filter(|&i| t.is(i, b'{') && t.is(i - 1, b'='))
-        .map(|i| t.word(i - 2))
-        .collect();
-    found.retain(|f| !matches!(&f.body, Arg::Ref(r) if objects.contains(r.as_str())));
 }
 
 /// Whether nothing is joined to the string literal at `i`: `+`, `.format`, `%`, a second literal.

@@ -11,7 +11,6 @@
 //!   found by its name (qualified: the file stem). Two declarations of one name are a gap; two calls with one name in one file keep both (`:line` suffix).
 //! - Composed strings (`+`, `%`, `format`, interpolation), unknown escapes, files, variables, invalid
 //!   JSON and spans over 2 000 tokens are a gap (`BodyNotLiteral`); object literals are not string bodies.
-//!   A TypeScript `body: NAME` where `NAME = {` in a client-importing file is left to ts_bodies.rs.
 //! - The kind comes from the shape of the JSON (`search_definition`); a body without ES shape yields nothing.
 //!   `scope` = `code:<service>`; `flavor` is `opensearch` when the file imports an OpenSearch client.
 //! - Trust boundary: files below the root through the safe reader (1 MiB, no symlinks), at most 5 000 files
@@ -19,7 +18,7 @@
 // shortcut: constants are matched by name over the service, not by scope; `Class.NAME` compares the file stem.
 use super::constants::{Constants, Name, declared_lines, lang, short, site};
 use super::json::search_definition;
-use super::string_bodies_calls::{Arg, Found, find, json_constants, leave_object_bodies};
+use super::string_bodies_calls::{Arg, Found, find, json_constants};
 use super::string_bodies_lex::{Lang, lex};
 use crate::context::{SearchContext, SourceOutput};
 use crate::findings::{EsGap, es_gap};
@@ -80,8 +79,7 @@ pub(crate) fn extract_with(ctx: &SearchContext) -> SourceOutput {
         };
         let text = String::from_utf8_lossy(&bytes);
         let toks = lex(&text, ext);
-        let mut found = find(&toks, Lang::of(ext));
-        leave_object_bodies(&toks, &mut found, ext, &text);
+        let found = find(&toks, Lang::of(ext));
         let [service] = owners.as_slice() else {
             for s in owners.iter().filter(|_| !found.is_empty()) {
                 es_gap(&mut report, EsGap::SameDir, &rel, Some(short(s)), &[]);

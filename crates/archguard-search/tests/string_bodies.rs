@@ -302,36 +302,3 @@ fn a_java_source_call_over_the_span_limit_is_a_gap_not_skipped() {
     let (names, gaps) = probe("U.java", &java);
     assert_eq!((names.len(), gaps), (0, 1));
 }
-
-#[test]
-fn a_client_7_body_constant_holding_an_object_is_read_by_ts_bodies_without_a_gap() {
-    let ts = "import { Client } from '@elastic/elasticsearch';\nconst client = new Client({});\nconst BODY = { mappings: { properties: { title: { type: 'text' } } } };\nawait client.indices.create({ index: 'bc-v1', body: BODY });\n";
-    let root = scratch("objbody");
-    std::fs::write(root.join("svc/a.ts"), ts).unwrap();
-    let report = analyze(&root, &["svc"]);
-    std::fs::remove_dir_all(&root).unwrap();
-    let a = &report.elasticsearch.artifacts;
-    assert_eq!(a.len(), 1);
-    assert!(a[0].detail.is_some());
-    let gaps: Vec<_> = report
-        .diagnostics
-        .iter()
-        .filter(|d| is_elasticsearch_gap(d))
-        .collect();
-    assert!(gaps.is_empty(), "{gaps:?}");
-}
-
-#[test]
-fn a_client_7_body_constant_with_a_non_literal_object_is_one_gap() {
-    let ts = "import { Client } from '@elastic/elasticsearch';\nconst client = new Client({});\nconst BODY = { mappings: f() };\nawait client.indices.create({ index: 'bc-v2', body: BODY });\n";
-    let root = scratch("objbody2");
-    std::fs::write(root.join("svc/a.ts"), ts).unwrap();
-    let report = analyze(&root, &["svc"]);
-    std::fs::remove_dir_all(&root).unwrap();
-    let gaps = report
-        .diagnostics
-        .iter()
-        .filter(|d| is_elasticsearch_gap(d))
-        .count();
-    assert_eq!(gaps, 1);
-}

@@ -188,6 +188,8 @@ struct FileScan<'a> {
     consts: HashMap<String, Option<usize>>,
     /// A service owns the file: string_bodies.rs already gaps its unreadable bodies.
     owned: bool,
+    /// One work budget per file: references to a huge constant must not re-pay it per call.
+    steps: Cell<u32>,
     out: &'a mut ServiceTopology,
 }
 
@@ -201,6 +203,7 @@ impl<'a> FileScan<'a> {
             code: code_mask(text),
             consts: constants(text),
             owned: false,
+            steps: Cell::new(MAX_WORK),
             out,
         }
     }
@@ -230,8 +233,7 @@ impl<'a> FileScan<'a> {
         let line = self.line(at);
         let open = self.text[at + api.method.len()..].trim_start();
         let from = self.text.len() - open.len() + 1;
-        let steps = Cell::new(MAX_WORK);
-        let mut lit = Lit::new(self.text, from, &self.consts, &steps);
+        let mut lit = Lit::new(self.text, from, &self.consts, &self.steps);
         let entries = lit.object_at().and_then(|()| lit.entries(true));
         let body_ref = lit.body_ref;
         let Some(mut entries) = entries else {
