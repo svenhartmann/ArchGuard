@@ -14,7 +14,7 @@ pub struct ArchitectureFindingsParams {
     pub page: crate::engineering_tools::EngineeringParams,
     /// Exact category: architecture, quality, security, duplication, contract, tests or mutations.
     pub category: Option<String>,
-    /// Exact structural kind: cycle, layer_violation, layer_unranked, metric_threshold, dependency_rule, ownership_rule, orphan or target_architecture.
+    /// Exact structural kind: cycle, layer_violation, layer_unranked, metric_threshold, dependency_rule, ownership_rule, orphan, target_architecture or search_quality.
     pub kind: Option<String>,
     /// Exact severity: error, warning, info, critical, high, medium, low, note or unknown.
     pub severity: Option<String>,
@@ -46,6 +46,7 @@ const KINDS: &[&str] = &[
     "ownership_rule",
     "orphan",
     "target_architecture",
+    "search_quality",
 ];
 const CATEGORIES: &[&str] = &[
     "architecture",
@@ -432,6 +433,16 @@ mod tests {
         assert_eq!(empty["metadata"]["findings_total"], 80);
         assert!(empty["metadata"]["evidence_gaps_total"].as_u64().unwrap() > 0);
         assert!(list_value(&report, "changed", &params).is_err());
+    }
+
+    #[test]
+    fn kind_search_quality_is_a_valid_filter() {
+        let (_dir, report, _) = fixture();
+        let params = ArchitectureFindingsParams {
+            kind: Some("search_quality".into()),
+            ..Default::default()
+        };
+        assert_eq!(list_value(&report, "r", &params).unwrap()["total"], 0);
     }
 
     #[test]
