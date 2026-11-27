@@ -231,3 +231,26 @@ fn flow_style_indexes_use_the_indexes_line_as_evidence() {
         .expect("flow_idx");
     assert_eq!(flow.evidence[0].line, Some(2));
 }
+
+#[test]
+fn null_properties_and_escaped_percent_are_literal_indexes() {
+    let report = analyze();
+    let all = fos(&report);
+    for name in ["empty_props_idx", "pct_idx"] {
+        assert!(
+            all.iter().any(|a| a.name.as_deref() == Some(name)),
+            "{name} is literal (null mapping, `%%` escape) and must be an artifact"
+        );
+    }
+}
+
+#[test]
+fn flow_style_root_uses_the_root_line_as_evidence() {
+    let report = analyze();
+    let all = fos(&report);
+    let a = all
+        .iter()
+        .find(|a| a.name.as_deref() == Some("flowroot_idx"))
+        .expect("flowroot_idx");
+    assert_eq!(a.evidence[0].line, Some(1));
+}
