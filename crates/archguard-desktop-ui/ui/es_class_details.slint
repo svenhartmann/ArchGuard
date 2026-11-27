@@ -194,7 +194,7 @@ export component EsClassDetails inherits Rectangle {
                 SectionHeading { label: @tr("Field {0}", details.field.path); }
                 Note { text: @tr("Type: {0}", details.field.kind); }
                 Note { text: details.field.role == 0 ? @tr("Role: field") : details.field.role == 1 ? @tr("Role: multi-field") : @tr("Role: child of an object"); }
-                for p in details.field.params: Note { text: "\{p.key}: \{p.value}"; }
+                for p in details.field.params: Note { text: "\{p.key}: \{p.value == "" ? @tr("default endpoint") : p.value}"; }
                 if details.field.index-name != "": SectionHeading { label: @tr("Index chain {0}", details.field.index-name); }
                 ChainTable { rows: details.field.index-chain; }
                 if details.field.search-name != "": SectionHeading { label: @tr("Search chain {0}", details.field.search-name); }

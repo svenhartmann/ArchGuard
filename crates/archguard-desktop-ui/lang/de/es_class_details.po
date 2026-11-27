@@ -60,3 +60,6 @@ msgstr "Statischer Hinweis, keine Bewertung."
 
 msgid "The file lies on the Elasticsearch nodes; its content cannot be read statically."
 msgstr "Die Datei liegt auf den Elasticsearch-Knoten; ihr Inhalt ist statisch nicht lesbar."
+
+msgid "default endpoint"
+msgstr "Standard-Endpunkt"

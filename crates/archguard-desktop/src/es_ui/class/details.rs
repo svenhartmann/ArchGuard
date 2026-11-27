@@ -129,6 +129,7 @@ pub fn details(t: &ServiceTopology, g: &SearchGraph, key: &Key) -> Details {
     found.unwrap_or_else(|| Details::Other(SvcSearchDetail::default()))
 }
 
+/// An empty value means "default endpoint"; the view translates it.
 fn field_params(f: &SearchField) -> Vec<(String, String)> {
     let mut p: Vec<_> = f
         .params
@@ -136,7 +137,7 @@ fn field_params(f: &SearchField) -> Vec<(String, String)> {
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
     if f.kind == "semantic_text" && !f.params.contains_key("inference_id") {
-        p.insert(0, ("inference_id".into(), "default endpoint".into()));
+        p.insert(0, ("inference_id".into(), String::new()));
     }
     p
 }
