@@ -610,7 +610,19 @@ impl<'a> Lit<'a> {
             depth: self.depth + 1,
             ..Lit::new(self.text, at, self.consts, self.steps)
         };
-        sub.value().filter(|_| sub.finished())
+        sub.value()
+            .filter(|_| sub.statement_ends() || sub.finished())
+    }
+
+    /// ASI style: the value is followed by a line break and the next statement.
+    fn statement_ends(&self) -> bool {
+        let rest = &self.text.as_bytes()[self.i..];
+        let gap = rest.iter().take_while(|c| c.is_ascii_whitespace()).count();
+        let next = rest.get(gap);
+        rest[..gap].contains(&b'\n')
+            && next.is_some_and(|c| {
+                c.is_ascii_alphabetic() || b"_$".contains(c) || rest[gap..].starts_with(b"//")
+            })
     }
 
     /// `read` with the nesting counted; deeper than `MAX_NEST` is a gap, not a stack overflow.
