@@ -500,6 +500,8 @@ fn shadowed(text: &str) -> Vec<String> {
     let mut out = vec![];
     for line in text.lines() {
         let indented = line.starts_with([' ', '\t']);
+        // `export const X` at column 0 is a top-level declaration, not a shadow.
+        let line = line.strip_prefix("export ").unwrap_or(line);
         for kw in ["const ", "let ", "var "] {
             for (at, _) in line.match_indices(kw) {
                 let word_start = !line[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_');
