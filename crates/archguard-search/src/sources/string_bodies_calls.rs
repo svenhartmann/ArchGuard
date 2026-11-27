@@ -141,6 +141,23 @@ fn has_positional(t: &Toks, args: &[(usize, usize)]) -> bool {
         .any(|&(a, _)| !(t.is(a + 1, b'=') && !t.is(a + 2, b'=')))
 }
 
+/// The properties of the options object of a TypeScript call; a non-object first argument (a
+/// variable) is a gap, an empty argument list is nothing to read.
+fn ts_options(
+    t: &Toks,
+    call_args: &[(usize, usize)],
+    at: usize,
+    api: &str,
+    out: &mut Vec<Found>,
+) -> Option<Vec<(usize, usize)>> {
+    let &(a, _) = call_args.first()?;
+    let inner = t.is(a, b'{').then(|| t.args(a)).flatten();
+    if inner.is_none() {
+        out.push(gap_call(t, at, api)); // a variable or over-long argument is not read
+    }
+    inner
+}
+
 /// `.indices.create(index="x", body=B)` and `.indices.create({ index: 'x', body: B })`.
 fn keyword_call(t: &Toks, i: usize, py: bool, out: &mut Vec<Found>) {
     if !(t.is(i, b'.') && t.is(i + 2, b'.') && t.is(i + 4, b'(')) {
@@ -161,11 +178,7 @@ fn keyword_call(t: &Toks, i: usize, py: bool, out: &mut Vec<Found>) {
     let args = if py {
         call_args
     } else {
-        let Some(&(a, _)) = call_args.first().filter(|&&(a, _)| t.is(a, b'{')) else {
-            return;
-        };
-        let Some(inner) = t.args(a) else {
-            out.push(gap_call(t, i + 3, &api));
+        let Some(inner) = ts_options(t, &call_args, i + 3, &api, out) else {
             return;
         };
         inner
