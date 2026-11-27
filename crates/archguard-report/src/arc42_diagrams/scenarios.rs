@@ -585,7 +585,7 @@ mod tests {
     }
 
     /// Tests call production code but are no runtime entry: two tests of
-    /// `run` add no scenario (ElasticSearchIK showed one per test).
+    /// `run` add no scenario (one customer project showed it per test).
     #[test]
     fn tests_are_no_entry_points() {
         let mut builder = archguard_core::GraphBuilder::new();
