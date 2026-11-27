@@ -1,0 +1,4 @@
+PUT /books
+Content-Type: application/json
+
+{ "mappings": {

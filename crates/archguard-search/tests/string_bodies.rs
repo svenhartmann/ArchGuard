@@ -302,3 +302,24 @@ fn a_java_source_call_over_the_span_limit_is_a_gap_not_skipped() {
     let (names, gaps) = probe("U.java", &java);
     assert_eq!((names.len(), gaps), (0, 1));
 }
+
+/// Ticket 36: `new SearchRequest("docs")` names an index read; a longer class name or a file
+/// without an Elasticsearch import does not.
+#[test]
+fn literal_search_request_is_a_read_usage_and_lookalikes_are_not() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/es-classdiagram/36");
+    let report = analyze(&root, &["shop"]);
+    let got: Vec<String> = report
+        .elasticsearch
+        .usages
+        .iter()
+        .map(|u| {
+            let e = &u.evidence[0];
+            format!(
+                "{} {} {} {}:{:?}",
+                u.service, u.index, u.access, e.file, e.line
+            )
+        })
+        .collect();
+    assert_eq!(got, ["shop docs read shop/src/Literal.java:Some(6)"]);
+}

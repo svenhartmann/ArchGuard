@@ -77,9 +77,10 @@ const fn call(needle: &'static str, ext: &'static str, skip: usize, flags: [bool
     }
 }
 
-const CALLS: [Call; 7] = [
+const CALLS: [Call; 8] = [
     call(".index(", "java", 0, [true, false, false]),
     call("new IndexRequest(", "java", 0, [false, true, true]),
+    call("new SearchRequest(", "java", 0, [false, true, true]),
     call("IndexCoordinates.of(", "java", 0, [false, false, true]),
     call(".Index(", "cs", 0, [false, false, false]),
     call("IndexMany(", "cs", 1, [false, true, true]),

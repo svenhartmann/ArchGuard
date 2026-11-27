@@ -1,0 +1,4 @@
+POST /_aliases
+Content-Type: application/json
+
+{ "actions": [ { "add": { "index": "books-1", "alias": "{{alias}}" } } ] }

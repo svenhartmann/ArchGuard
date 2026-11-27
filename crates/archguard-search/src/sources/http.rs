@@ -277,8 +277,10 @@ impl<'a, 'b> Scan<'a, 'b> {
         let Some((value, _)) = self.body(&req.body) else {
             return self.gap(EsGap::DefinitionUnread, &[&req.line.to_string()]);
         };
-        let actions = value.get("actions").and_then(Value::as_array);
-        for add in actions.into_iter().flatten().filter_map(|a| a.get("add")) {
+        let Some(actions) = value.get("actions").and_then(Value::as_array) else {
+            return self.gap(EsGap::DefinitionUnread, &[&req.line.to_string()]);
+        };
+        for add in actions.iter().filter_map(|a| a.get("add")) {
             let (indices, aliases) = (
                 names(add, "index", "indices"),
                 names(add, "alias", "aliases"),
