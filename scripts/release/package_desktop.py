@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from xml.sax.saxutils import quoteattr
 import zipfile
 
@@ -188,8 +189,16 @@ def macos(binary, target, out, work, identity=None, keychain=None, notary_profil
     (work / 'stage/Applications').symlink_to('/Applications')
     out.mkdir(parents=True, exist_ok=True)
     dmg = out / packages(target)[0]
-    run('hdiutil', 'create', '-volname', 'ArchGuard ' + release.version(), '-srcfolder', work / 'stage',
-        '-fs', 'HFS+', '-format', 'UDZO', '-ov', dmg)
+    # GitHub's macOS runners fail hdiutil create now and then with "Resource busy" (v0.3.5); retry a few times.
+    for attempt in range(5):
+        try:
+            run('hdiutil', 'create', '-volname', 'ArchGuard ' + release.version(), '-srcfolder', work / 'stage',
+                '-fs', 'HFS+', '-format', 'UDZO', '-ov', dmg)
+            break
+        except subprocess.CalledProcessError:
+            if attempt == 4:
+                raise
+            time.sleep(10 * (attempt + 1))
     if notary_profile:
         run('xcrun', 'notarytool', 'submit', dmg, '--keychain-profile', notary_profile,
             '--keychain', keychain, '--wait')
