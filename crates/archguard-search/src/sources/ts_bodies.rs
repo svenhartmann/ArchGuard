@@ -16,7 +16,10 @@
 //! files below the root through the safe reader, at most 5 000 files, no test paths, no
 //! network, nothing executed; contents are data.
 // shortcut: constants of other files, class members and `let` are not resolved (gap); the
-// receiver check is per file by name, not by scope; lift when a corpus needs it.
+// receiver check is per file by name, not by scope; a constant name that is also declared
+// (const/let/var, destructuring) at a non-column-0 position or is a parameter of a one-line
+// `function`/arrow anywhere in the file is a gap, scope is not tracked (multi-line parameter
+// lists are missed); lift when a corpus needs it.
 use super::json::search_definition;
 use crate::context::{SearchContext, SourceOutput};
 use crate::findings::{EsGap, es_gap};
@@ -279,11 +282,20 @@ impl<'a> FileScan<'a> {
             // A Client 7 `body` that is no object literal comes back as None: a gap, not skipped.
             let listed = api.attrs.contains(&key.as_str())
                 || key == "..."
-                || (key == "body" && value.is_none() && !self.owned);
+                || (key == "body"
+                    && (matches!(value, Some(Value::Object(_)))
+                        || (value.is_none() && !self.owned)));
             if !listed {
                 continue;
             }
             match value {
+                // A Client 7 `body` that resolved to an object: lift its listed members.
+                Some(Value::Object(body)) if key == "body" => {
+                    attrs.extend(
+                        body.into_iter()
+                            .filter(|(k, _)| api.attrs.contains(&k.as_str())),
+                    );
+                }
                 Some(v) => drop(attrs.insert(key, v)),
                 None => es_gap(
                     self.out,
@@ -475,7 +487,58 @@ fn constants(text: &str) -> HashMap<String, Option<usize>> {
         }
         at += line.len();
     }
+    for name in shadowed(text) {
+        if let Some(v) = out.get_mut(&name) {
+            *v = None;
+        }
+    }
     out
+}
+
+/// Names bound somewhere below column 0, or as parameters: they may hide a top-level constant.
+fn shadowed(text: &str) -> Vec<String> {
+    let mut out = vec![];
+    for line in text.lines() {
+        let indented = line.starts_with([' ', '\t']);
+        for kw in ["const ", "let ", "var "] {
+            for (at, _) in line.match_indices(kw) {
+                let word_start = !line[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_');
+                if word_start && (indented || at > 0) {
+                    let decl = &line[at + kw.len()..];
+                    out.extend(idents(decl.split('=').next().unwrap_or(decl)));
+                }
+            }
+        }
+        out.extend(parameters(line));
+    }
+    out
+}
+
+/// Parameters of a one-line `function f(a, b)` or arrow `(a, b) =>` / `a =>`.
+fn parameters(line: &str) -> Vec<String> {
+    let mut out = vec![];
+    for (at, _) in line.match_indices("function") {
+        let rest = &line[at..];
+        if let (Some(o), Some(c)) = (rest.find('('), rest.find(')'))
+            && o < c
+        {
+            out.extend(idents(&rest[o..c]));
+        }
+    }
+    if let Some(arrow) = line.find("=>") {
+        let head = line[..arrow].trim_end();
+        let open = head.rfind('(').filter(|_| head.ends_with(')'));
+        let word = |c: char| !(c.is_alphanumeric() || c == '_' || c == '$');
+        let params = open.map_or_else(|| head.rsplit(word).next().unwrap_or(""), |o| &head[o..]);
+        out.extend(idents(params));
+    }
+    out
+}
+
+fn idents(s: &str) -> impl Iterator<Item = String> + '_ {
+    s.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+        .filter(|w| !w.is_empty())
+        .map(str::to_owned)
 }
 
 type Entries = Vec<(String, Option<Value>)>;
