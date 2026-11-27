@@ -80,7 +80,8 @@ fn read_file(ctx: &SearchContext, rel: &str, out: &mut ServiceTopology) {
         }
         return;
     };
-    let (lines, indexes_line) = key_lines(&text);
+    let (lines, indexes_line, root_line) = key_lines(&text);
+    let indexes_line = indexes_line.or(root_line);
     let Some(indexes) = indexes_of(&value, indexes_line, rel, out) else {
         return;
     };
@@ -143,10 +144,10 @@ fn has_alias(text: &str) -> bool {
 /// First line of every direct child key of `fos_elastica: indexes:` plus the line of `indexes:`
 /// itself, built once per file. Trailing ` #` comments are ignored (shortcut: a ` #` inside a
 /// quoted key would be cut).
-fn key_lines(text: &str) -> (HashMap<&str, u32>, Option<u32>) {
+fn key_lines(text: &str) -> (HashMap<&str, u32>, Option<u32>, Option<u32>) {
     let indent = |l: &str| l.len() - l.trim_start().len();
     let mut map = HashMap::new();
-    let mut indexes_line = None;
+    let (mut indexes_line, mut root_line) = (None, None);
     let (mut in_root, mut in_indexes, mut child) = (false, false, None::<usize>);
     for (i, l) in text.lines().enumerate() {
         let t = l.trim();
@@ -157,6 +158,9 @@ fn key_lines(text: &str) -> (HashMap<&str, u32>, Option<u32>) {
         let (ind, no) = (indent(l), u32::try_from(i + 1).unwrap_or(u32::MAX));
         if ind == 0 {
             in_root = t == "fos_elastica:";
+            if t.starts_with("fos_elastica:") {
+                root_line.get_or_insert(no);
+            }
             in_indexes = false;
         } else if in_indexes {
             let c = *child.get_or_insert(ind);
@@ -171,7 +175,7 @@ fn key_lines(text: &str) -> (HashMap<&str, u32>, Option<u32>) {
             in_indexes = t == "indexes:";
         }
     }
-    (map, indexes_line)
+    (map, indexes_line, root_line)
 }
 
 /// An entry that is no mapping (or null), a legacy `types` layout, `settings` or `properties` that
@@ -180,7 +184,7 @@ fn key_lines(text: &str) -> (HashMap<&str, u32>, Option<u32>) {
 fn has_variable(entry: &Value) -> bool {
     fn var(v: &Value) -> bool {
         match v {
-            Value::String(s) => s.contains('%') || s.contains("${"),
+            Value::String(s) => s.replace("%%", "").contains('%') || s.contains("${"),
             Value::Array(a) => a.iter().any(var),
             Value::Object(m) => m.values().any(var),
             _ => false,
@@ -191,7 +195,7 @@ fn has_variable(entry: &Value) -> bool {
         || ["settings", "properties"]
             .iter()
             .filter_map(|k| entry.get(k))
-            .any(|v| !v.is_object() || var(v))
+            .any(|v| !(v.is_object() || v.is_null()) || var(v))
 }
 
 /// The literal index name: `index_name` when given, else the key; `None` when it is not literal.
