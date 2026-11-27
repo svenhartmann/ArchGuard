@@ -267,3 +267,72 @@ fn a_wrapped_signature_of_the_house_formatter_is_matched() {
     assert_eq!((l[0].0, l[0].1.as_str()), (ServiceHow::Hint, "Docs.Read"));
     assert!(service_gaps(&flow).is_empty(), "{:?}", service_gaps(&flow));
 }
+
+/// `methods` annotated methods of one class in one file, every one read through `attributes`.
+fn read_all_attributes(methods: u32) -> std::time::Duration {
+    use crate::ui_flow_service_cs::World;
+    use archguard_core::{CallAnalysis, CallClass, CallMethod};
+    use archguard_flow_clike::source::Source;
+    use std::collections::{HashMap, HashSet};
+
+    let text: String =
+        std::iter::once("public class Docs {\n".to_string())
+            .chain((0..methods).map(|i| {
+                format!("  [Authorize] public Task<bool> M{i}(int id) {{ return null; }}\n")
+            }))
+            .chain(["}\n".to_string()])
+            .collect();
+    let class = CallClass {
+        language: None,
+        id: "Docs".into(),
+        name: "Docs".into(),
+        package: String::new(),
+        file: "Svc.cs".into(),
+        graph_node: "Svc.cs".into(),
+        line: 1,
+        kind: "class".into(),
+        is_abstract: Some(false),
+        visibility: None,
+        supertypes: vec![],
+        supertype_sites: None,
+        declaration_files: None,
+    };
+    let analysis = CallAnalysis {
+        classes: vec![class.clone()],
+        methods: (0..methods)
+            .map(|i| CallMethod {
+                id: format!("m{i}"),
+                class_id: "Docs".into(),
+                name: format!("M{i}"),
+                signature: format!("M{i}(int)"),
+                file: "Svc.cs".into(),
+                line: i + 2,
+                end_line: Some(i + 2),
+                is_static: false,
+                complexity: None,
+            })
+            .collect(),
+        ..CallAnalysis::default()
+    };
+    let sources = HashMap::from([("Svc.cs".to_string(), Source::new("Svc.cs".into(), &text))]);
+    let scanned = HashSet::from(["Svc.cs".to_string()]);
+    let mut world = World::new(&analysis, &sources, &scanned);
+    let start = std::time::Instant::now();
+    let found: usize = analysis
+        .methods
+        .iter()
+        .map(|m| world.attributes(&class, m, "Other", "Docs.M").len())
+        .sum();
+    let took = start.elapsed();
+    assert_eq!(found, methods as usize);
+    took
+}
+
+#[test]
+fn reading_the_attributes_of_a_file_is_linear_in_its_methods() {
+    let best = |n| (0..3).map(|_| read_all_attributes(n)).min().unwrap();
+    let (small, large) = (best(200), best(800));
+    // 4x the methods: linear is about 4, a parse of the file per method about 16
+    let ratio = large.as_secs_f64() / small.as_secs_f64().max(1e-9);
+    assert!(ratio < 8.0, "ratio {ratio:.1} ({small:?} -> {large:?})");
+}

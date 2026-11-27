@@ -123,7 +123,7 @@ fn scan(ctx: &ExtractContext, flow: &mut UiFlow) -> (HashMap<String, Source>, Ha
     (sources, scanned)
 }
 
-struct World<'a> {
+pub(crate) struct World<'a> {
     analysis: &'a CallAnalysis,
     sources: &'a HashMap<String, Source>,
     scanned: &'a HashSet<String>,
@@ -136,7 +136,7 @@ struct World<'a> {
 }
 
 impl<'a> World<'a> {
-    fn new(
+    pub(crate) fn new(
         analysis: &'a CallAnalysis,
         sources: &'a HashMap<String, Source>,
         scanned: &'a HashSet<String>,
@@ -346,7 +346,7 @@ impl<'a> World<'a> {
     }
 
     /// `[Authorize]` on the class or method that declares `m`.
-    fn attributes(
+    pub(crate) fn attributes(
         &mut self,
         cls: &CallClass,
         m: &CallMethod,
