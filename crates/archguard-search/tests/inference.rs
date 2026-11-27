@@ -94,3 +94,16 @@ fn every_unread_form_yields_a_gap_naming_its_file() {
             .all(|a| !a.evidence[0].file.starts_with("unread/"))
     );
 }
+
+#[test]
+fn a_post_runs_inference_and_declares_nothing() {
+    let r = analyze();
+    let f = "lookalike/run.console";
+    assert!(
+        r.elasticsearch
+            .artifacts
+            .iter()
+            .all(|a| a.evidence[0].file != f)
+    );
+    assert!(r.diagnostics.iter().all(|d| d.file != f));
+}
