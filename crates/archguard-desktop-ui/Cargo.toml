@@ -5,6 +5,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+# No tests here: a test target would compile the generated ~60 MB app.rs a second
+# time (~9 GB rustc peak), which ended CI jobs with exit 143 (2026-11-27).
+[lib]
+test = false
+doctest = false
+
 # Its own crate so that Rust changes in the desktop app do not recompile
 # the generated code (ADR 0009).
 [dependencies]
