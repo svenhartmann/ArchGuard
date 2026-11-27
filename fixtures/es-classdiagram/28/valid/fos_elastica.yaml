@@ -1,0 +1,25 @@
+fos_elastica:
+  indexes:
+    empty_props_idx:
+      properties:
+    pct_idx:
+      settings:
+        index:
+          analysis:
+            char_filter:
+              digits:
+                type: pattern_replace
+                pattern: '(\d+)%%'
+                replacement: ''
+    lone_pct_idx:
+      settings:
+        index:
+          analysis:
+            char_filter:
+              pct:
+                type: mapping
+                mappings: ["% => percent"]
+            filter:
+              half:
+                type: stop
+                stopwords: ["50%"]

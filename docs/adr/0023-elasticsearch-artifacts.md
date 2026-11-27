@@ -231,3 +231,50 @@ are code, but no analyzer measures them.
   read through it appear sorted, parents before children. A `jsonencode`
   written directly in the index attribute and all other paths keep the written
   order.
+- **2026-11-25:** The readers, findings and graph moved from the engine to the
+  crate `archguard-search` (pure move, [ADR 0025](0025-search-crate.md)); the
+  engine re-exports the public API.
+- **2026-11-25:** Evaluation of the analysis (`archguard_search::search_analysis_parts`, view-neutral).
+  Each chain member of an analyzer or normalizer is `declared` (same kind in the same index or
+  template), `builtin` (fixed table of the Elasticsearch 8.x reference, URLs in `analysis.rs`),
+  `undeclared` or `inline` (object instead of a name). `undeclared` carries no warning, because
+  plugins (ICU, kuromoji, IK) would produce false ones. Rules the desktop applies on top
+  (es-classdiagram ticket 02, no further ADR change): a declared analyzer `default` is the index
+  analyzer of every `text` field without `analyzer`, `default_search` the search analyzer of every
+  `text` field without `search_analyzer`, and without a search analyzer the index analyzer applies;
+  a multi-field is a child of a field whose kind is not `object`/`nested`; the index chain is
+  compared with the search chain.
+- **2026-11-25:** `SearchArtifact.flavor: String` (empty = Elasticsearch, `opensearch` =
+  OpenSearch; omitted from JSON when empty, goldens stay byte-identical). Reasons: OpenSearch has
+  the same artifact kinds and analysis models, so no second model; `scope` stays the source; per
+  artifact because a project set can mix both. A string like `kind`, no enum in the core. The
+  merge key (sources and project set) is (kind, flavor, name): same name with another product is
+  two artifacts. ISM policies are the new kind `ism_policy`. CLI text appends ` (opensearch)`.
+- **2026-11-25 (source formats, ticket 21):** one rule set for every further input format (tickets
+  22-28), each format one module in `archguard-search/src/sources/` and one row in `SOURCES`.
+  - Classifier: `sources/json.rs` `search_definition` decides the kind from top-level key shapes
+    only (rules in its module comment); lookalikes (package.json, tsconfig, OpenAPI, JSON Schema,
+    Kubernetes, editor settings) do not match, every heuristic has a negative fixture. A body
+    carrying `$schema`, `openapi`, `swagger` or `apiVersion`, or a mustache script, is none.
+  - Name = literal name of the API position; a raw definition file without a name is named after the
+    file stem (Q2), like search templates. `scope` = `<source>:<folder>` (`json:<folder>`);
+    `flavor` as above (ISM = `opensearch`). Evidence = file and the line of the deciding key.
+  - Gaps: a file without ES shape yields nothing. A file that does not parse (or cannot be read) is
+    a gap (`is_elasticsearch_gap`) under `**/elasticsearch/**`, `**/opensearch/**`,
+    `**/mappings/**` or with `template` in its name, never silently dropped. Paths outside the root,
+    absolute paths, variables, SpEL and environment values are a gap too, never followed.
+  - Trust boundary (research-formats.md): files below the project root only, through the safe
+    reader (no symlinks, at most 1 MiB), at most 5 000 files per source, test paths and
+    `.terraform`/`.git`/`node_modules` excluded, no network, no execution; file content is data.
+    YAML with aliases is refused.
+  - Search templates (`"lang": "mustache"`) stay with `search_templates`; no double count. A
+    later source that names the same file (curl `-d @file`, Spring `mappingPath`) completes the
+    artifact of that file (`find_file_artifact`, match by evidence path) instead of adding one.
+  - Readers built on this: 22-28 (HTTP request files and curl, Spring annotations, code literals,
+    Logstash, integration packages, further builders).
+- **2026-11-26:** Names of all Elasticsearch artifacts (index, alias, pipeline, template, ...; elasticstack, opensearch-project and phillbaker) are evaluated by the same HCL evaluator as the detail values: literal
+  `local.*` (also `[n]` access) and `jsondecode(file("${path.module}/<file>.json"))`. `file()` reads
+  only files whose canonical path lies under the project root (no `..` or symlink out), regular, at
+  most 1 MiB, valid JSON; otherwise the name stays a gap. The reference chain depth for names and
+  detail values is 5 (was 3); cycles stay gaps. Changes the 2026-11-23 rule that names are never
+  read from locals (ticket 30). Alias blocks of one name in one scope with a known index are one `alias` artifact referencing all those indices.

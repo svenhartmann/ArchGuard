@@ -1,0 +1,5 @@
+fos_elastica:
+    indexes:
+        dev_only:
+            properties:
+                note: { type: text }

@@ -1,0 +1,5 @@
+fos_elastica:
+    indexes:
+        custom_idx:
+            properties:
+                label: { type: keyword }

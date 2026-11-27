@@ -47,6 +47,8 @@ pub struct ModuleCtx<'a> {
     /// `locals` blocks and `resource` blocks of this instance only; read by ES detail (ADR 0023).
     pub locals: Vec<&'a Block>,
     pub resources: Vec<&'a Block>,
+    /// `terraform` blocks of this instance (`required_providers`); read by the ES provider sources.
+    pub terraform: Vec<&'a Block>,
     call: Option<(&'a Block, &'a TfFile)>,
     parent: Option<Rc<ModuleCtx<'a>>>,
     /// Module nesting level; the root is 0.
@@ -263,6 +265,7 @@ fn instance<'a>(
             .collect(),
         locals: files.iter().flat_map(|f| blocks(f, "locals")).collect(),
         resources: files.iter().flat_map(|f| blocks(f, "resource")).collect(),
+        terraform: files.iter().flat_map(|f| blocks(f, "terraform")).collect(),
         call: caller.as_ref().map(|c| (c.1, c.2)),
         depth: caller.as_ref().map_or(0, |c| c.0.depth + 1),
         parent: caller.map(|c| c.0),

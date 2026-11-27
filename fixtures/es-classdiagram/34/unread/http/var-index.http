@@ -1,0 +1,4 @@
+PUT {{index}}
+Content-Type: application/json
+
+{ "mappings": {} }

@@ -56,4 +56,4 @@ pub use scala::ScalaExtractor;
 pub use swift::SwiftExtractor;
 pub use ts::TsExtractor;
 pub use visibility::{Visibility, scan_visibility};
-pub use walk::{Excludes, Lang, SourceFile, walk};
+pub use walk::{Lang, SourceFile, walk};

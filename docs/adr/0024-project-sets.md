@@ -79,3 +79,6 @@ ADR records how.
 ## History
 
 - **2026-11-24:** Proposed and accepted.
+- **2026-11-25:** The merge of project sets (decisions 2 and 3) moved with the
+  Elasticsearch code to `archguard-search` (`merge_set`,
+  [ADR 0025](0025-search-crate.md)); the engine passes `analyze_services` in.

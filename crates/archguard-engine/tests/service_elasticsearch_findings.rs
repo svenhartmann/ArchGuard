@@ -265,6 +265,7 @@ fn gap_check_splits_elasticsearch_from_compose_diagnostics() {
 #[test]
 fn artifact_covers_comma_lists_like_the_findings_logic() {
     let art = |name: &str| SearchArtifact {
+        flavor: String::new(),
         kind: "index".into(),
         name: Some(name.into()),
         address: String::new(),

@@ -1,10 +1,10 @@
 // Database tab: one sub-item per datastore engine (src/db_ui.rs). Elasticsearch embeds the
-// unchanged EsView; every other engine lists its datastores.
+// class view (es_class.slint); every other engine lists its datastores.
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Tab, EmptyState } from "widgets.slint";
 import { Fmt } from "format.slint";
-import { EsView } from "es_view.slint";
+import { EsClassView } from "es_class.slint";
 import { Mono } from "services_sections.slint";
 
 export struct DbEngine {
@@ -38,7 +38,7 @@ export struct DbModel {
     state: int,
     engines: [DbEngine],
     active: int,
-    // The active sub-item is Elasticsearch: the graph instead of the list.
+    // The active sub-item is Elasticsearch: the class view instead of the list.
     es: bool,
     // The active sub-item is relational: `rel` instead of `rows`.
     relational: bool,
@@ -145,7 +145,7 @@ export component DbView inherits Rectangle {
                 : m.state == 2 ? @tr("The service topology is unavailable.")
                 : @tr("No datastores in this project.");
         }
-        if m.es: EsView { vertical-stretch: 1; }
+        if m.es: EsClassView { vertical-stretch: 1; }
         if m.problem != "": Mono { text: m.problem; color: Theme.warning; }
         if m.relational: ScrollView {
             vertical-stretch: 1;

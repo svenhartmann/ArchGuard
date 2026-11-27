@@ -59,6 +59,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
+use archguard_flow_common::text_decode::{Decoded, decode_text};
+
 use archguard_analysis::{
     check_layers, compute_metrics, find_sccs, sample_cycles_bounded, suggest_cuts, summarize,
 };
@@ -249,7 +251,13 @@ fn scan(files: &[SourceFile], config: &Config) -> Result<Vec<ScannedFile>, Archg
             let Some(extractor) = archguard_extract::extractor_for(file.lang) else {
                 continue; // a language walk accepted but no scanner registered
             };
-            let content = String::from_utf8_lossy(&fs::read(&file.path)?).into_owned();
+            let bytes = fs::read(&file.path)?;
+            let content = match decode_text(&bytes) {
+                Decoded::Clean(text) | Decoded::Lossy(text) => text,
+                // shortcut: no gap channel in this build, the file keeps its node with
+                // lossy text as before; report unread files here once the build has one
+                Decoded::Unreadable => String::from_utf8_lossy(&bytes).into_owned(),
+            };
             let stripped =
                 archguard_extract::strip_root(&file.rel_path, &config.project.source_roots);
             let extraction = source_names::extract(extractor.as_ref(), &stripped, &content);

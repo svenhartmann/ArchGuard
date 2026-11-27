@@ -1,0 +1,267 @@
+// The right column of the Elasticsearch class diagram (model: src/es_ui/class/details.rs).
+import { ScrollView } from "std-widgets.slint";
+import { SvcSearchDetail, SearchDetailBody } from "services_search.slint";
+import { Mono, Note, Heading } from "services_sections.slint";
+import { Theme } from "theme.slint";
+import { SectionHeading, Dashes } from "widgets.slint";
+
+export struct EsDetailHead {
+    title: string,
+    // Stereotype and Terraform root.
+    subtitle: string,
+    // `file:line` of the declaration.
+    location: string,
+}
+
+export struct EsDetailField {
+    // The full path (what a click selects); `name` is the last segment, "›" before a multi-field.
+    path: string,
+    // Indent level, 12 px each.
+    depth: int,
+    // The field in focus.
+    selected: bool,
+    name: string,
+    kind: string,
+    // Index and search analyzer, as text.
+    analysis: string,
+}
+
+// One row of an analysis chain. stage 0 char filter, 1 tokenizer, 2 filter (`n` counts from 1);
+// class 0 declared (`params` is its parameter line), 1 built in, 2 not declared.
+export struct EsDetailRow {
+    stage: int,
+    n: int,
+    chip: string,
+    class: int,
+    params: string,
+}
+
+// Static note about differing index and search analyzers; empty `field`: none.
+export struct EsDetailHint {
+    field: string,
+    search-only: string,
+    index-only: string,
+    // The tokenizers differ.
+    tokenizer: bool,
+}
+
+export struct EsDetailPair {
+    key: string,
+    value: string,
+}
+
+export struct EsDetailUse {
+    text: string,
+    file: string,
+    line: int,
+    clickable: bool,
+}
+
+// A field in focus: its chains as the engine resolves them.
+export struct EsDetailFocus {
+    path: string,
+    kind: string,
+    // 0 field, 1 multi-field, 2 child of an object.
+    role: int,
+    index-name: string,
+    index-chain: [EsDetailRow],
+    search-name: string,
+    search-chain: [EsDetailRow],
+    // Empty: no normalizer.
+    norm-name: string,
+    norm-chain: [EsDetailRow],
+    // Vector parameters: key and value as written.
+    params: [EsDetailPair],
+    hint: EsDetailHint,
+}
+
+export struct EsDetails {
+    // 0 index, 1 building block, 2 other (`other`), 3 index with a field in focus (`field`).
+    mode: int,
+    field: EsDetailFocus,
+    head: EsDetailHead,
+    fields: [EsDetailField],
+    // The mapping was not read (a gap), so an empty field list does not mean "no fields".
+    mapping-unread: bool,
+    chain-name: string,
+    chain: [EsDetailRow],
+    hint: EsDetailHint,
+    settings: [EsDetailPair],
+    links: [EsDetailPair],
+    usages: [EsDetailUse],
+    params: [EsDetailPair],
+    used-by: [string],
+    definition: string,
+    other: SvcSearchDetail,
+}
+
+// A chain building block: a pill coloured by stage, outline only when built in.
+component Pill inherits Rectangle {
+    in property <EsDetailRow> item;
+    border-width: 1px;
+    border-radius: 8px;
+    border-color: item.stage == 1 ? Theme.priority : item.stage == 2 ? Theme.analysis : Theme.muted;
+    background: item.class == 0 ? self.border-color.with-alpha(0.15) : transparent;
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        Text { text: item.chip; color: Theme.text; font-family: Theme.mono-family; font-size: Theme.font-small; }
+    }
+}
+
+component ChainTable inherits VerticalLayout {
+    in property <[EsDetailRow]> rows;
+    spacing: 4px;
+    for r in rows: HorizontalLayout {
+        spacing: 8px;
+        Note { text: r.stage == 0 ? @tr("Char filter") : r.stage == 1 ? @tr("Tokenizer") : @tr("Filter {0}", r.n); width: 80px; }
+        VerticalLayout {
+            spacing: 2px;
+            horizontal-stretch: 1;
+            HorizontalLayout { alignment: start; Pill { item: r; } }
+            if r.class == 1: Note { text: @tr("built in"); }
+            if r.class == 2: Note { text: @tr("not declared (plugin or Elasticsearch default)"); }
+            if r.class == 0 && r.params != "": Mono { text: r.params; }
+        }
+    }
+}
+
+// The fields of an index as a tree; a click selects one.
+component FieldTree inherits VerticalLayout {
+    in property <[EsDetailField]> fields;
+    in property <bool> unread;
+    callback select(string);
+    spacing: 2px;
+    for f in fields: Rectangle {
+        height: row.preferred-height + 2px;
+        background: f.selected ? Theme.accent.with-alpha(0.25) : transparent;
+        row := HorizontalLayout {
+            spacing: 8px;
+            padding-left: f.depth * 12px;
+            Mono { text: f.name; width: 170px - f.depth * 12px; }
+            Mono { text: f.kind + (f.analysis != "" ? " · " + f.analysis : ""); color: Theme.text; horizontal-stretch: 1; }
+        }
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.select(f.path); }
+        }
+    }
+    if fields.length == 0: Note { text: unread ? @tr("Mapping not statically readable.") : @tr("none"); }
+}
+
+component Pairs inherits VerticalLayout {
+    in property <[EsDetailPair]> items;
+    spacing: 2px;
+    if items.length == 0: Note { text: @tr("none"); }
+    for p in items: VerticalLayout {
+        HorizontalLayout {
+            spacing: 8px;
+            Note { text: p.key; width: 170px; }
+            Mono { text: p.value; horizontal-stretch: 1; }
+        }
+        if p.key == "synonyms_path" || p.key == "stopwords_path": Note { text: @tr("The file lies on the Elasticsearch nodes; its content cannot be read statically."); }
+    }
+}
+
+export component EsClassDetails inherits Rectangle {
+    in property <EsDetails> details;
+    // The file and line of a clickable usage.
+    callback open(string, int);
+    // The path of a field in the tree.
+    callback select-field(string);
+    background: Theme.panel;
+    ScrollView {
+        VerticalLayout {
+            padding: 8px;
+            spacing: 6px;
+            alignment: start;
+            Heading { text: details.head.title; }
+            if details.head.subtitle != "": Note { text: details.head.subtitle; }
+            if details.head.location != "": HorizontalLayout {
+                spacing: 8px;
+                Note { text: @tr("Declaration"); width: 110px; }
+                Mono { text: details.head.location; horizontal-stretch: 1; }
+            }
+
+            if details.mode == 0 || details.mode == 3: VerticalLayout {
+                spacing: 6px;
+                SectionHeading { label: @tr("Fields"); }
+                FieldTree { fields: details.fields; unread: details.mapping-unread; select(p) => { root.select-field(p); } }
+            }
+
+            if details.mode == 3: VerticalLayout {
+                spacing: 6px;
+                SectionHeading { label: @tr("Field {0}", details.field.path); }
+                Note { text: @tr("Type: {0}", details.field.kind); }
+                Note { text: details.field.role == 0 ? @tr("Role: field") : details.field.role == 1 ? @tr("Role: multi-field") : @tr("Role: child of an object"); }
+                for p in details.field.params: Note { text: "\{p.key}: \{p.value == "" ? @tr("default endpoint") : p.value}"; }
+                if details.field.index-name != "": SectionHeading { label: @tr("Index chain {0}", details.field.index-name); }
+                ChainTable { rows: details.field.index-chain; }
+                if details.field.search-name != "": SectionHeading { label: @tr("Search chain {0}", details.field.search-name); }
+                ChainTable { rows: details.field.search-chain; }
+                if details.field.norm-name != "": SectionHeading { label: @tr("Normalizer chain {0}", details.field.norm-name); }
+                ChainTable { rows: details.field.norm-chain; }
+                if details.field.hint.field != "": Rectangle {
+                    Dashes { width: parent.width; height: parent.height; tint: Theme.muted; }
+                    VerticalLayout {
+                        padding: 6px;
+                        spacing: 2px;
+                        Note { text: @tr("Index and search analyzer differ at {0}.", details.field.hint.field); }
+                        if details.field.hint.search-only != "": Note { text: @tr("Search only: {0}", details.field.hint.search-only); }
+                        if details.field.hint.index-only != "": Note { text: @tr("Index only: {0}", details.field.hint.index-only); }
+                        if details.field.hint.tokenizer: Note { text: @tr("The tokenizer differs."); }
+                        Note { text: @tr("Static hint, no rating."); }
+                    }
+                }
+            }
+
+            if details.mode == 0: VerticalLayout {
+                spacing: 6px;
+                if details.chain.length > 0: SectionHeading { label: @tr("Analysis chain {0}", details.chain-name); }
+                ChainTable { rows: details.chain; }
+                if details.hint.field != "": Rectangle {
+                    // Neutral: dashed frame, no warning colour or symbol.
+                    Dashes { width: parent.width; height: parent.height; tint: Theme.muted; }
+                    VerticalLayout {
+                        padding: 6px;
+                        spacing: 2px;
+                        Note { text: @tr("Index and search analyzer differ at {0}.", details.hint.field); }
+                        if details.hint.search-only != "": Note { text: @tr("Search only: {0}", details.hint.search-only); }
+                        if details.hint.index-only != "": Note { text: @tr("Index only: {0}", details.hint.index-only); }
+                        if details.hint.tokenizer: Note { text: @tr("The tokenizer differs."); }
+                        Note { text: @tr("Static hint, no rating."); }
+                    }
+                }
+                SectionHeading { label: @tr("Settings" => "Settings"); }
+                Pairs { items: details.settings; }
+                SectionHeading { label: @tr("Settings" => "Links"); }
+                Pairs { items: details.links; }
+                SectionHeading { label: @tr("Usage in code"); }
+                if details.usages.length == 0: Note { text: @tr("none"); }
+                for u in details.usages: Rectangle {
+                    height: ul.preferred-height;
+                    ul := Mono { width: parent.width; wrap: word-wrap; text: u.text; color: u.clickable ? Theme.accent : Theme.muted; }
+                    if u.clickable: TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.open(u.file, u.line); }
+                    }
+                }
+            }
+
+            if details.mode == 1: VerticalLayout {
+                spacing: 6px;
+                SectionHeading { label: @tr("Chain"); }
+                ChainTable { rows: details.chain; }
+                SectionHeading { label: @tr("Parameters"); }
+                Pairs { items: details.params; }
+                SectionHeading { label: @tr("Used by"); }
+                if details.used-by.length == 0: Note { text: @tr("none"); }
+                for u in details.used-by: Mono { text: u; }
+                SectionHeading { label: @tr("Definition"); }
+                Mono { text: details.definition; }
+            }
+
+            if details.mode == 2: SearchDetailBody { detail: details.other; }
+        }
+    }
+}

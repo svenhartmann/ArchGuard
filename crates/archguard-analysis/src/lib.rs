@@ -16,6 +16,7 @@ mod baseline;
 mod cuts;
 mod cycles;
 mod derive;
+mod dsm;
 mod goals;
 // Declared here, not in goals.rs: a test file importing its parent back
 // would close a file cycle.
@@ -48,6 +49,7 @@ pub use baseline::{Baseline, BaselineDiff, cycle_hash, diff};
 pub use cuts::suggest_cuts;
 pub use cycles::{CycleSample, DEFAULT_EDGE_BUDGET, sample_cycles, sample_cycles_bounded};
 pub use derive::{DerivedLayers, infer_layers, suggest_depth};
+pub use dsm::dsm_layout;
 pub use goals::{assess_goals, finding_attribute, goal_evidence_sources};
 pub use health::health_index;
 pub use lakos::lakos_metrics;

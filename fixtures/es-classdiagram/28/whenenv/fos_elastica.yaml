@@ -1,0 +1,6 @@
+when@prod:
+    fos_elastica:
+        indexes:
+            prod_idx:
+                properties:
+                    a: { type: text }

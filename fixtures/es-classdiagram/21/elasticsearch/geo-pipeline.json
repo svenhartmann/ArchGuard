@@ -1,0 +1,7 @@
+{
+  "description": "enrich orders",
+  "processors": [
+    { "set": { "field": "env", "value": "prod" } },
+    { "geoip": { "field": "ip" } }
+  ]
+}

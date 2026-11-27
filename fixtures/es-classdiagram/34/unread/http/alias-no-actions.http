@@ -1,0 +1,4 @@
+POST /_aliases
+Content-Type: application/json
+
+{ "actions": "none" }

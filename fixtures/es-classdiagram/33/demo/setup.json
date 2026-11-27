@@ -1,0 +1,46 @@
+# Create the books index
+PUT books
+{
+  "settings": {
+    "number_of_shards": 1
+  },
+  "mappings": {
+    "properties": {
+      "title": { "type": "text" },
+      "blurb": { "type": "semantic_text" }
+    }
+  }
+}
+
+// Template for the monthly indices
+PUT _index_template/books-template
+{
+  "index_patterns": ["books-*"],
+  "template": {
+    "settings": { "number_of_shards": 1 }
+  }
+}
+
+PUT _ingest/pipeline/books-pipe
+{
+  "processors": [
+    {
+      "script": {
+        "source": """
+# a painless line that is no comment
+ctx.title = ctx.title.trim();
+"""
+      }
+    }
+  ]
+}
+
+GET books/_search
+{
+  "query": { "match_all": {} }
+}
+
+POST _search
+{
+  "size": 1
+}

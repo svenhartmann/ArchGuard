@@ -78,15 +78,6 @@ const MIN_REACH: f32 = 28.0;
 
 /// Lay out `nodes` and `links` for a viewport `width` (0 = unknown).
 pub fn layout(nodes: &[Node], links: &[Link], width: f32) -> Layout {
-    layout_with(nodes, links, width, false)
-}
-
-/// As [`layout`], with the top level kept in name order (links reorder only below it).
-pub fn layout_fixed_roots(nodes: &[Node], links: &[Link], width: f32) -> Layout {
-    layout_with(nodes, links, width, true)
-}
-
-fn layout_with(nodes: &[Node], links: &[Link], width: f32, fixed_roots: bool) -> Layout {
     if nodes.is_empty() {
         return Layout::default();
     }
@@ -103,11 +94,7 @@ fn layout_with(nodes: &[Node], links: &[Link], width: f32, fixed_roots: bool) ->
     let mut deps: Vec<usize> = (0..links.len()).collect();
     deps.sort_by(|&a, &b| links[a].key.cmp(&links[b].key));
     let pairs: Vec<(usize, usize)> = deps.iter().map(|&d| (links[d].from, links[d].to)).collect();
-    let roots = children.get(&None).cloned();
     crate::tree_order::construction_order(&mut children, &pairs, &rank, &parent);
-    if let (true, Some(roots)) = (fixed_roots, roots) {
-        children.insert(None, roots);
-    }
     // Parents precede their children in preorder.
     let mut depth = vec![0; nodes.len()];
     let ordered: Vec<(usize, usize)> = crate::tree_order::preorder(&children)

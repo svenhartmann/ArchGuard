@@ -1,0 +1,5 @@
+fos_elastica_extra:
+    indexes:
+        look_idx:
+            properties:
+                a: { type: text }

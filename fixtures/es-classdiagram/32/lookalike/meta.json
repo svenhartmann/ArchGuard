@@ -1,0 +1,4 @@
+{
+  "_meta": { "inference": { "model_id": "not-a-reference" } },
+  "processors": [ { "set": { "field": "a", "value": "b" } } ]
+}

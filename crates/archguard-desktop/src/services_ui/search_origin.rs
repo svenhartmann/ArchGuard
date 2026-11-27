@@ -46,6 +46,7 @@ mod tests {
 
     fn art(name: &str, origins: &[&str]) -> SearchArtifact {
         SearchArtifact {
+            flavor: String::new(),
             kind: "index".into(),
             name: Some(name.into()),
             address: format!("index.{name}"),

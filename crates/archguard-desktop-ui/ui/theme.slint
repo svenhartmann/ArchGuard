@@ -21,10 +21,14 @@ export global Theme {
     out property <color> node: solarized ? (dark ? #4FA3E0 : #268BD2) : (dark ? #7FB0F7 : #2563EB);
     // Cycles only: edges, nodes and groups that form a cycle.
     out property <color> cycle: solarized ? (dark ? #F0605D : #DC322F) : (dark ? #FF6B61 : #D92D20);
+    // Opacity of what a focus pushes into the background (class diagram: a field in focus).
+    out property <float> dim-alpha: 0.3;
     out property <color> dim: solarized ? (dark ? #12424E : #E6DFCA) : (dark ? #33415A : #D7DEE9);
     out property <color> edge: solarized ? (dark ? #839496 : #657B83) : (dark ? #8FA0B5 : #64748B);
     out property <color> incoming: solarized ? (dark ? #3DBDB3 : #1A7A73) : (dark ? #38BDF8 : #0369A1);
     out property <color> outgoing: solarized ? (dark ? #9A9EE0 : #6C71C4) : (dark ? #C4B5FD : #7C3AED);
+    // Analysis building blocks (class diagram): teal.
+    out property <color> analysis: solarized ? (dark ? #35B8AE : #1F8A82) : (dark ? #2DD4BF : #0F766E);
     out property <color> package: solarized ? (dark ? #1B392E : #FBEFCB) : (dark ? #302B20 : #FFFAED);
     out property <color> package-tab: solarized ? (dark ? #364726 : #EAD9A2) : (dark ? #55452A : #F1D998);
     out property <color> package-border: solarized ? (dark ? #B58900 : #B58900) : (dark ? #BFA16A : #A77D32);

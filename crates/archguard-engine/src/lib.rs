@@ -128,6 +128,9 @@ pub mod ui_flow_roles;
 #[cfg(test)]
 mod ui_flow_roles_tests;
 pub mod ui_flow_service;
+pub(crate) mod ui_flow_service_cs;
+#[cfg(test)]
+mod ui_flow_service_cs_tests;
 #[cfg(test)]
 mod ui_flow_service_tests;
 pub mod view_conventions;
@@ -141,6 +144,13 @@ pub use api_contracts::{
 pub use arc42::{arc42_document, arc42_from_evidence};
 /// Source-root stripping, as module names spell project paths (ADR 0010).
 pub use archguard_extract::strip_root;
+pub use archguard_search::{
+    ChainRef, SearchAnalysisPart, SearchAnalysisUse, SearchAnalysisUser, SearchAnalyzerDifference,
+    SearchEdge, SearchFieldRole, SearchGraph, SearchNode, is_detail_gap, is_elasticsearch_gap,
+    search_analysis_parts, search_analysis_users, search_analyzer_difference,
+    search_artifact_covers, search_builtin, search_field_analyzers, search_field_depth,
+    search_field_role, search_graph, short_scope,
+};
 pub use architecture::architecture_context;
 pub use cache::{
     fingerprint, load_graph_if_fresh, save_graph, source_content_fingerprint, source_fingerprint,
@@ -233,10 +243,6 @@ pub use security::{
     scan_security, security_fingerprint,
 };
 pub use semantic_calls::{analyze_calls, semantic_fingerprints};
-pub use services::{
-    SearchEdge, SearchGraph, SearchNode, is_detail_gap, is_elasticsearch_gap,
-    search_artifact_covers, search_graph, short_scope,
-};
 pub use services::{analyze_service_set, analyze_services};
 pub use share_report::share_report;
 pub use snapshot::{

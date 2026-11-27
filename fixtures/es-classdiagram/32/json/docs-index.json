@@ -1,0 +1,10 @@
+{
+  "mappings": {
+    "properties": {
+      "body": { "type": "semantic_text", "inference_id": "my-e5" },
+      "summary": { "type": "semantic_text", "inference_id": "my-e5", "search_inference_id": "ghost-endpoint" },
+      "plain": { "type": "semantic_text" },
+      "title": { "type": "text" }
+    }
+  }
+}

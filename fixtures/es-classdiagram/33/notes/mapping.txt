@@ -1,0 +1,8 @@
+PUT notes-idx
+{
+  "mappings": {
+    "properties": {
+      "body": { "type": "text" }
+    }
+  }
+}

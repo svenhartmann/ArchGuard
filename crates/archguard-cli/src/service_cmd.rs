@@ -247,8 +247,13 @@ fn elasticsearch_lines(model: &archguard_engine::core::ElasticsearchModel) -> Ve
         } else {
             format!(" [from {}]", a.origins.join(", "))
         };
+        let flavor = if a.flavor.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", a.flavor)
+        };
         format!(
-            "elasticsearch {}: {} ({}){origin}",
+            "elasticsearch {}: {} ({}){flavor}{origin}",
             a.kind,
             a.name.as_deref().unwrap_or("-"),
             a.address
@@ -286,6 +291,7 @@ mod tests {
         assert!(elasticsearch_lines(&ElasticsearchModel::default()).is_empty());
         let model = ElasticsearchModel {
             artifacts: vec![SearchArtifact {
+                flavor: String::new(),
                 kind: "index_template".into(),
                 name: Some("t1".into()),
                 address: "es_index_template.t1".into(),

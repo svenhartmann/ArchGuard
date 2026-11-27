@@ -1,0 +1,1 @@
+fos_elastica: { indexes: { flowroot_idx: { properties: { a: { type: text } } } } }

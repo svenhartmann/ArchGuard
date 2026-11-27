@@ -13,6 +13,7 @@ use archguard_core::{
 use crate::lang_ts::{Item, Value};
 use crate::repo_file::read_repo_file;
 use crate::support::{Discovery, excluded, relative, test_path};
+use crate::text_decode::{Decoded, decode_text};
 
 /// One extraction run: the analysed root and the configuration in force.
 pub struct ExtractContext<'a> {
@@ -218,12 +219,22 @@ pub fn cap(paths: &mut Vec<String>, max: usize) -> Option<String> {
     dropped
 }
 
-/// A file below `root` as text: at most `max` bytes, a UTF-8 byte order mark
-/// dropped, invalid UTF-8 replaced.
+/// A file below `root` as text: at most `max` bytes, decoded by
+/// [`decode_text`]. Invalid UTF-8 is read lossily (identifiers are usually
+/// ASCII and survive); bytes that give no text at all (broken UTF-16) are an
+/// `InvalidData` error, so every caller's gap path reports them.
+// shortcut: lossily decoded UTF-8 is read without a per-file diagnostic; upgrade when the
+// ctx gets a diagnostic channel at this call (read_text is a free function without one).
 pub fn read_text(root: &Path, rel: &str, max: u64) -> std::io::Result<String> {
     let bytes = read_repo_file(root, Path::new(rel), max)?;
-    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
-    Ok(String::from_utf8_lossy(bytes).into_owned())
+    match decode_text(&bytes) {
+        Decoded::Clean(text) | Decoded::Lossy(text) => Ok(text),
+        Decoded::Unreadable => Err(invalid("UTF-16 with a broken byte sequence")),
+    }
+}
+
+fn invalid(why: &str) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, why.to_owned())
 }
 
 /// A web front-end source up to 1 MiB ([`read_text`]); the gap message when

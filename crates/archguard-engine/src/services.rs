@@ -23,30 +23,6 @@ mod service_datastore_settings;
 mod service_datastores;
 #[path = "service_deployments.rs"]
 mod service_deployments;
-#[path = "service_elasticsearch_code.rs"]
-mod service_elasticsearch_code;
-#[path = "service_elasticsearch_findings.rs"]
-mod service_elasticsearch_findings;
-pub use service_elasticsearch_findings::{
-    is_detail_gap, is_elasticsearch_gap, search_artifact_covers,
-};
-#[path = "service_elasticsearch_graph.rs"]
-mod service_elasticsearch_graph;
-pub use service_elasticsearch_graph::{
-    SearchEdge, SearchGraph, SearchNode, search_graph, short_scope,
-};
-#[path = "service_elasticsearch_tf.rs"]
-mod service_elasticsearch_tf;
-#[path = "service_elasticsearch_tf_detail.rs"]
-mod service_elasticsearch_tf_detail;
-#[path = "service_elasticsearch_tf_eval.rs"]
-mod service_elasticsearch_tf_eval;
-#[path = "service_elasticsearch_tf_links.rs"]
-mod service_elasticsearch_tf_links;
-#[path = "service_elasticsearch_tf_locals.rs"]
-mod service_elasticsearch_tf_locals;
-#[path = "service_set.rs"]
-mod service_set;
 #[path = "service_spring.rs"]
 mod service_spring;
 #[path = "service_tables.rs"]
@@ -86,7 +62,7 @@ pub fn analyze_services(root: &Path) -> Result<ServiceTopology, ArchguardError> 
 }
 /// Analyze several projects and merge their Elasticsearch maps (ADR 0024); one root equals `analyze_services`.
 pub fn analyze_service_set(roots: &[PathBuf]) -> Result<ServiceTopology, ArchguardError> {
-    service_set::merge(roots, analyze_services)
+    archguard_search::merge_set(roots, analyze_services)
 }
 pub(crate) fn analyze_services_with(
     root: &Path,
@@ -119,15 +95,7 @@ pub(crate) fn analyze_services_with(
     parsed.sort_by(|a, b| a.service.id.cmp(&b.service.id));
     compose_dependencies(parsed, &mut report);
     crate::service_projects::augment(&root, &discovery, &mut report)?;
-    let terraform = service_terraform::deployments(
-        &root,
-        &discovery,
-        &mut report,
-        &mut service_elasticsearch_tf::augment,
-    );
-    service_elasticsearch_tf::search_templates(&root, &discovery, &mut report);
-    let artifacts = &mut report.elasticsearch.artifacts;
-    artifacts.sort_by(|a, b| (&a.scope, &a.address).cmp(&(&b.scope, &b.address)));
+    let terraform = service_terraform::deployments(&root, &discovery, &mut report);
     let (deployments, rendered) =
         service_deployments::augment(&root, &discovery, &mut report, tools, terraform);
     service_communications::augment(&root, &mut report);
@@ -135,8 +103,8 @@ pub(crate) fn analyze_services_with(
     service_clients::augment(&root, &mut report, &deployments);
     service_datastores::augment(&mut report, &deployments, &spring_datasources);
     service_tables::augment(&root, &discovery, &mut report);
-    service_elasticsearch_code::augment(&root, &discovery, &mut report);
-    service_elasticsearch_findings::augment(&mut report);
+    // After the tables: no step above reads `report.elasticsearch` (checked with rg).
+    archguard_search::analyze(&root, &discovery, &service_deployments::read, &mut report);
     service_traces::augment(&root, &mut report);
     crate::service_flows::augment(&root, &mut report);
     crate::graphql_contracts::augment(&root, &discovery, &mut report);

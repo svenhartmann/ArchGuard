@@ -1,0 +1,7 @@
+fos_elastica:
+    index_prototype:
+        settings: '%app.settings%'
+    indexes:
+        proto_idx:
+            properties:
+                id: { type: keyword }

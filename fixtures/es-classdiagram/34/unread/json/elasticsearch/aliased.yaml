@@ -1,0 +1,5 @@
+base: &base
+  type: text
+mappings:
+  properties:
+    a: *base

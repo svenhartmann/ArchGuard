@@ -1,0 +1,4 @@
+fos_elastica:
+  indexes:
+    books:
+      index_name: "%env(INDEX)%"

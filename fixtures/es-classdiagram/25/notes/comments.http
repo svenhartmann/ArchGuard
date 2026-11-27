@@ -1,0 +1,23 @@
+PUT /shop-one
+Content-Type: application/json
+
+{"settings": {"number_of_shards": 1}}
+
+# then the template
+PUT /_index_template/shop-two
+Content-Type: application/json
+
+{"index_patterns": ["shop-*"], "template": {}}
+
+PUT /shop-three
+Content-Type: application/json
+
+{"settings": {"number_of_shards": 1}}
+
+// trailing note
+
+###
+PUT /shop-bad
+Content-Type: application/json
+
+{ not json

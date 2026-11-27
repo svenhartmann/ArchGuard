@@ -1,0 +1,5 @@
+fos_elastica:
+  indexes:
+    books: &b
+      properties: { a: { type: text } }
+    more: *b

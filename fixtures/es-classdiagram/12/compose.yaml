@@ -1,0 +1,6 @@
+# Static example only. No containers are started by archguard.
+services:
+  katalog-import:
+    build: ./katalog-import
+  suche-api:
+    build: ./suche-api

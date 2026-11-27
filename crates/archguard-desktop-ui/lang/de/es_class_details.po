@@ -1,0 +1,65 @@
+msgid "Field {0}"
+msgstr "Feld {0}"
+
+msgid "Type: {0}"
+msgstr "Typ: {0}"
+
+msgid "Role: field"
+msgstr "Rolle: Feld"
+
+msgid "Role: multi-field"
+msgstr "Rolle: Multi-Field"
+
+msgid "Role: child of an object"
+msgstr "Rolle: Kind eines Objekts"
+
+msgid "Index chain {0}"
+msgstr "Index-Kette {0}"
+
+msgid "Search chain {0}"
+msgstr "Such-Kette {0}"
+
+msgid "Normalizer chain {0}"
+msgstr "Normalizer-Kette {0}"
+
+msgid "Analysis chain {0}"
+msgstr "Analyse-Kette {0}"
+
+msgid "Char filter"
+msgstr "Char-Filter"
+
+msgid "Tokenizer"
+msgstr "Tokenizer"
+
+msgid "Filter {0}"
+msgstr "Filter {0}"
+
+msgid "built in"
+msgstr "eingebaut"
+
+msgid "not declared (plugin or Elasticsearch default)"
+msgstr "nicht deklariert (Plugin oder Elasticsearch-Standard)"
+
+msgid "Definition"
+msgstr "Definition"
+
+msgid "Index and search analyzer differ at {0}."
+msgstr "Index- und Such-Analyzer unterscheiden sich bei {0}."
+
+msgid "Search only: {0}"
+msgstr "Nur Suche: {0}"
+
+msgid "Index only: {0}"
+msgstr "Nur Index: {0}"
+
+msgid "The tokenizer differs."
+msgstr "Der Tokenizer unterscheidet sich."
+
+msgid "Static hint, no rating."
+msgstr "Statischer Hinweis, keine Bewertung."
+
+msgid "The file lies on the Elasticsearch nodes; its content cannot be read statically."
+msgstr "Die Datei liegt auf den Elasticsearch-Knoten; ihr Inhalt ist statisch nicht lesbar."
+
+msgid "default endpoint"
+msgstr "Standard-Endpunkt"

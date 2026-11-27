@@ -22,6 +22,7 @@ fn svc(name: &str) -> Service {
 
 fn art(kind: &str, name: Option<&str>, address: &str, scope: &str) -> SearchArtifact {
     SearchArtifact {
+        flavor: String::new(),
         kind: kind.into(),
         name: name.map(Into::into),
         address: address.into(),
@@ -605,4 +606,29 @@ fn probe() {
     println!("ghosts: {ghosts}, nodes without literal name: {unnamed}");
     println!("longest label: {longest}, duplicate labels: {dup}");
     println!("default view rows: {}", shown.len() + groups);
+}
+
+#[test]
+fn the_short_label_has_no_root_part_and_keeps_real_parentheses() {
+    let mut arts = Vec::new();
+    for scope in ["infra/main", "infra/other"] {
+        arts.push(tf("logs (main)", scope, ""));
+        for module in ["module.a.", "module.b."] {
+            arts.push(tf("doka", scope, module));
+        }
+    }
+    let g = search_graph(&topo(&[], arts, vec![]));
+    let short: Vec<_> = g.nodes.iter().map(|n| n.short_label.as_str()).collect();
+    assert_eq!(
+        short,
+        [
+            "logs (main)",
+            "doka · module.a",
+            "doka · module.b",
+            "logs (main)",
+            "doka · module.a",
+            "doka · module.b"
+        ]
+    );
+    assert_eq!(g.nodes[0].label, "logs (main) (main)");
 }

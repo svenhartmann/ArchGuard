@@ -18,13 +18,14 @@ use crate::ui::{
 pub const PAGE: usize = 20;
 
 /// The kinds in the documentation order of `SearchArtifact`; unknown kinds follow.
-pub(crate) const KINDS: [&str; 14] = [
+pub(crate) const KINDS: [&str; 15] = [
     "index",
     "alias",
     "index_template",
     "component_template",
     "ilm_policy",
     "ingest_pipeline",
+    "inference_endpoint",
     "transform",
     "watch",
     "enrich_policy",
@@ -205,6 +206,7 @@ mod tests {
 
     fn art(kind: &str, name: &str, patterns: &[&str], refs: &[(&str, &str)]) -> SearchArtifact {
         SearchArtifact {
+            flavor: String::new(),
             kind: kind.into(),
             name: Some(name.into()),
             address: format!("{kind}.{name}"),

@@ -1,0 +1,4 @@
+{
+  "settings": {"number_of_shards": 3},
+  "mappings": {"properties": {"sku": {"type": "keyword"}}}
+}
