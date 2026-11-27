@@ -186,6 +186,8 @@ def violations(kind, ceilings, before, after):
 
 
 def main():
+    if len(sys.argv) < 4:
+        sys.exit(__doc__.split("\n\n")[1])
     binary, head_tree, staged_tree = sys.argv[1:4]
     before = measure(calls(binary, head_tree)) if head_tree != "-" else ({}, {})
     after = measure(calls(binary, staged_tree))
