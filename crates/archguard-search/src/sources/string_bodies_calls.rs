@@ -135,6 +135,12 @@ fn keyed(t: &Toks, args: &[(usize, usize)], key: &str, py: bool) -> Option<(usiz
     })
 }
 
+/// Whether a Python call has an argument that is not `key=value`.
+fn has_positional(t: &Toks, args: &[(usize, usize)]) -> bool {
+    args.iter()
+        .any(|&(a, _)| !(t.is(a + 1, b'=') && !t.is(a + 2, b'=')))
+}
+
 /// `.indices.create(index="x", body=B)` and `.indices.create({ index: 'x', body: B })`.
 fn keyword_call(t: &Toks, i: usize, py: bool, out: &mut Vec<Found>) {
     if !(t.is(i, b'.') && t.is(i + 2, b'.') && t.is(i + 4, b'(')) {
@@ -165,8 +171,18 @@ fn keyword_call(t: &Toks, i: usize, py: bool, out: &mut Vec<Found>) {
         inner
     };
     let body = keyed(t, &args, "body", py).map(|r| classify(t, r));
+    if py && body.is_none() && has_positional(t, &args) {
+        out.push(gap_call(t, i + 3, &api)); // a positional index or body is not read
+        return;
+    }
+    // elasticsearch-py 7.x and @elastic/elasticsearch 7.x name the lifecycle `policy`.
+    let alt = (group == "ilm")
+        .then(|| keyed(t, &args, "policy", py))
+        .flatten();
     if let Some(body @ (Arg::Text(_) | Arg::Ref(_) | Arg::Gap)) = body {
-        let name = keyed(t, &args, row.3, py).map_or(Name::Gap, |r| name_of(classify(t, r)));
+        let name = keyed(t, &args, row.3, py)
+            .or(alt)
+            .map_or(Name::Gap, |r| name_of(classify(t, r)));
         out.push(Found {
             name,
             body,
@@ -239,12 +255,12 @@ fn java_request_calls(t: &Toks) -> Vec<Found> {
             .then(|| sources.get(t.word(i.wrapping_sub(2))))
             .flatten();
         let source = chained.or_else(|| held.and_then(|v| v.iter().copied().find(|&s| s > close)));
-        let body = source
-            .and_then(|s| t.args(s))
-            .and_then(|a| a.first().copied());
-        let Some(body) = body.map(|r| classify(t, r)) else {
+        let Some(source) = source else { continue };
+        let Some(body) = t.args(source).and_then(|a| a.first().copied()) else {
+            out.push(gap_call(t, i + 1, &api)); // unclosed or longer than MAX_SPAN
             continue;
         };
+        let body = classify(t, body);
         let name = args.first().map_or(Name::Gap, |&r| name_of(classify(t, r)));
         out.push(Found {
             name,
@@ -331,7 +347,7 @@ pub(super) fn json_constants(t: &Toks) -> Vec<(String, String, u32)> {
         let argument = t.is(at.wrapping_sub(1), b'(') || t.is(at.wrapping_sub(1), b',');
         let name = t.word(at);
         if !name.is_empty() && !argument {
-            out.push((name.to_owned(), text.clone(), t.line(i)));
+            out.push((name.to_owned(), text.clone(), t.line(at)));
         }
     }
     out
