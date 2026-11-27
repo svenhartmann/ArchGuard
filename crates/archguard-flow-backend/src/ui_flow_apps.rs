@@ -43,7 +43,11 @@ fn read_pom(text: &str) -> Option<(String, Vec<String>, bool)> {
 impl Modules {
     /// The dependencies between the build-file directories `dirs` of `root`;
     /// an artifactId that two modules declare resolves to nothing.
-    pub(crate) fn read<'a>(root: &Path, dirs: impl Iterator<Item = &'a String>) -> Self {
+    pub(crate) fn read<'a>(
+        root: &Path,
+        dirs: impl Iterator<Item = &'a String>,
+        unread: &mut dyn FnMut(&str, String),
+    ) -> Self {
         let mut poms = Vec::new();
         for dir in dirs {
             let rel = if dir.is_empty() {
@@ -51,10 +55,19 @@ impl Modules {
             } else {
                 format!("{dir}/pom.xml")
             };
-            if let Some((artifact, deps, pom)) = read_text(root, &rel, MAX_BYTES)
-                .ok()
-                .and_then(|t| read_pom(&t))
-            {
+            let text = match read_text(root, &rel, MAX_BYTES) {
+                Ok(text) => text,
+                // Gradle-only directories have no pom.xml.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    unread(
+                        &rel,
+                        format!("pom.xml not read: {e}; its module dependencies are unknown."),
+                    );
+                    continue;
+                }
+            };
+            if let Some((artifact, deps, pom)) = read_pom(&text) {
                 poms.push((dir.clone(), artifact, deps, pom));
             }
         }
