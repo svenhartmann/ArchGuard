@@ -1,0 +1,17 @@
+{
+  "mappings": {
+    "properties": {
+      "title": { "type": "text", "analyzer": "standard" },
+      "embedding": {
+        "type": "dense_vector",
+        "dims": 384,
+        "similarity": "cosine",
+        "element_type": "float",
+        "index_options": { "type": "bbq_hnsw", "m": 16, "ef_construction": 100 }
+      },
+      "body": { "type": "semantic_text", "inference_id": "my-e5-endpoint", "search_inference_id": "my-e5-search" },
+      "summary": { "type": "semantic_text" },
+      "tokens": { "type": "sparse_vector" }
+    }
+  }
+}
