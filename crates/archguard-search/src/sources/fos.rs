@@ -4,7 +4,7 @@
 //! `%env(…)%`, `%param%` and `${…}` are a gap and the index is left out. `settings` (with
 //! `index.analysis`) and `properties.<field>.{type, analyzer, search_analyzer, normalizer, fields,
 //! properties}` fill the detail like a JSON mapping; `persistence.driver/model` only appear in the
-//! evidence text. `scope` = `fos:<folder>`, evidence = the key's line. A file that cannot be
+//! evidence text. `indexes` that is no mapping and `when@<env>` blocks are a gap. `scope` = `fos:<folder>`, evidence = the key's line. A file that cannot be
 //! read or parsed is a gap when it is named `fos_elastica.y*ml` or mentions the marker. Trust
 //! boundary: files below the root through the safe reader, at most 5 000 YAML files, no test
 //! paths, no network, no aliases; contents are data.
@@ -70,11 +70,7 @@ fn read_file(ctx: &SearchContext, rel: &str, out: &mut ServiceTopology) {
         es_gap(out, EsGap::DefinitionUnread, rel, None, &[]);
         return;
     };
-    let Some(indexes) = value
-        .get(MARKER)
-        .and_then(|f| f.get("indexes"))
-        .and_then(Value::as_object)
-    else {
+    let Some(indexes) = indexes_of(&value, &text, rel, out) else {
         return;
     };
     let lines = key_lines(&text);
@@ -91,6 +87,37 @@ fn read_file(ctx: &SearchContext, rel: &str, out: &mut ServiceTopology) {
             }
         }
     }
+}
+
+/// The `fos_elastica.indexes` mapping; a gap is reported when it exists but cannot be read.
+fn indexes_of<'a>(
+    value: &'a Value,
+    text: &str,
+    rel: &str,
+    out: &mut ServiceTopology,
+) -> Option<&'a Map<String, Value>> {
+    let Some(root) = value.get(MARKER) else {
+        // Symfony `when@<env>:` blocks are not read; an unseen block must not vanish silently.
+        let in_env = value.as_object().is_some_and(|m| {
+            m.iter()
+                .any(|(k, v)| k.starts_with("when@") && v.get(MARKER).is_some())
+        });
+        if in_env {
+            es_gap(out, EsGap::DefinitionUnread, rel, None, &[]);
+        }
+        return None;
+    };
+    let indexes = root.get("indexes")?;
+    let Some(indexes) = indexes.as_object() else {
+        // `indexes: '%param%'` or `%env(json:…)%`: the names are unknown.
+        let at = text
+            .lines()
+            .position(|l| l.trim_start().starts_with("indexes:"));
+        let at = at.map(|i| (i + 1).to_string()).unwrap_or_default();
+        es_gap(out, EsGap::IndexNotLiteral, rel, None, &[&at]);
+        return None;
+    };
+    Some(indexes)
 }
 
 fn has_alias(text: &str) -> bool {
