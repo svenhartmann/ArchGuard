@@ -243,3 +243,55 @@ fn two_calls_with_one_name_in_one_file_keep_both_definitions() {
         code(&report).iter().map(|a| &a.address).collect::<Vec<_>>()
     );
 }
+
+/// Artifact names and gap count of one scratch file.
+fn probe(file: &str, text: &str) -> (Vec<String>, usize) {
+    let root = scratch(file);
+    std::fs::write(root.join("svc").join(file), text).unwrap();
+    let report = analyze(&root, &["svc"]);
+    std::fs::remove_dir_all(&root).unwrap();
+    let names = code(&report)
+        .iter()
+        .map(|a| format!("{} {}", a.kind, a.name.clone().unwrap_or_default()))
+        .collect();
+    let gaps = report
+        .diagnostics
+        .iter()
+        .filter(|d| is_elasticsearch_gap(d))
+        .count();
+    (names, gaps)
+}
+
+#[test]
+fn a_java_constant_wrapped_after_the_equals_sign_is_read() {
+    let java = format!(
+        "class A {{\n static final String BODY =\n  \"{}\";\n void f() {{ new CreateIndexRequest(\"wrap-v1\").source(BODY, XContentType.JSON); }} }}\n",
+        FIELD.replace('"', "\\\"")
+    );
+    let (names, gaps) = probe("A.java", &java);
+    assert_eq!((names, gaps), (vec!["index wrap-v1".to_owned()], 0));
+}
+
+#[test]
+fn ilm_put_lifecycle_takes_the_policy_keyword_of_the_body_form() {
+    let py = "es.ilm.put_lifecycle(policy='p1', body='{\"policy\":{\"phases\":{\"hot\":{\"actions\":{}}}}}')\n";
+    let (names, gaps) = probe("p.py", py);
+    assert_eq!((names, gaps), (vec!["ilm_policy p1".to_owned()], 0));
+}
+
+#[test]
+fn a_recognized_python_call_with_positional_arguments_is_a_gap() {
+    let py = format!("es.indices.create('pos', '{FIELD}')\n");
+    let (names, gaps) = probe("q.py", &py);
+    assert_eq!((names.len(), gaps), (0, 1));
+}
+
+#[test]
+fn a_java_source_call_over_the_span_limit_is_a_gap_not_skipped() {
+    let java = format!(
+        "class A {{ void f() {{ new CreateIndexRequest(\"long-v1\").source(BODY{}, XContentType.JSON); }} }}\n",
+        ", x".repeat(1_100)
+    );
+    let (names, gaps) = probe("U.java", &java);
+    assert_eq!((names.len(), gaps), (0, 1));
+}
