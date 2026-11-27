@@ -46,12 +46,7 @@ pub(crate) fn extract_with(ctx: &SearchContext) -> SourceOutput {
             Mode::Http => http_requests(&text),
             Mode::Shell => shell_requests(&text),
         };
-        let mut scan = Scan {
-            ctx,
-            rel: &rel,
-            out: &mut out,
-            n: 0,
-        };
+        let mut scan = Scan::new(ctx, &rel, &mut out, "http");
         requests.iter().for_each(|r| scan.request(r));
     }
     SourceOutput::from_scratch(out)
@@ -154,14 +149,31 @@ fn below_root(dir: &str, path: &str) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
-struct Scan<'a, 'b> {
+/// Turns the requests of one file into artifacts; `prefix` starts the `scope` (`http`, `devtools`).
+pub(super) struct Scan<'a, 'b> {
     ctx: &'a SearchContext<'b>,
     rel: &'a str,
     out: &'a mut ServiceTopology,
+    prefix: &'a str,
     n: usize,
 }
 
-impl Scan<'_, '_> {
+impl<'a, 'b> Scan<'a, 'b> {
+    pub(super) fn new(
+        ctx: &'a SearchContext<'b>,
+        rel: &'a str,
+        out: &'a mut ServiceTopology,
+        prefix: &'a str,
+    ) -> Self {
+        Scan {
+            ctx,
+            rel,
+            out,
+            prefix,
+            n: 0,
+        }
+    }
+
     fn folder(&self) -> &str {
         self.rel.rsplit_once('/').map_or(".", |(d, _)| d)
     }
@@ -170,7 +182,7 @@ impl Scan<'_, '_> {
         es_gap(self.out, kind, self.rel, None, parts);
     }
 
-    fn request(&mut self, req: &Request) {
+    pub(super) fn request(&mut self, req: &Request) {
         let segs = segments(&req.url);
         if req.method == "POST" && segs == ["_aliases"] {
             return self.aliases(req);
@@ -210,7 +222,7 @@ impl Scan<'_, '_> {
             kind: kind.into(),
             name: Some(name.into()),
             address: format!("{}#{}", self.rel, self.n),
-            scope: format!("http:{}", self.folder()),
+            scope: format!("{}:{}", self.prefix, self.folder()),
             evidence: vec![ServiceEvidence {
                 file: self.rel.into(),
                 pointer: format!("{} {}", req.method, req.url),
