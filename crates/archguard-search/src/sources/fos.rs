@@ -70,10 +70,10 @@ fn read_file(ctx: &SearchContext, rel: &str, out: &mut ServiceTopology) {
         es_gap(out, EsGap::DefinitionUnread, rel, None, &[]);
         return;
     };
-    let Some(indexes) = indexes_of(&value, &text, rel, out) else {
+    let (lines, indexes_line) = key_lines(&text);
+    let Some(indexes) = indexes_of(&value, indexes_line, rel, out) else {
         return;
     };
-    let lines = key_lines(&text);
     for (key, entry) in indexes {
         let line = lines.get(key.as_str()).copied();
         match name_of(key, entry) {
@@ -92,28 +92,23 @@ fn read_file(ctx: &SearchContext, rel: &str, out: &mut ServiceTopology) {
 /// The `fos_elastica.indexes` mapping; a gap is reported when it exists but cannot be read.
 fn indexes_of<'a>(
     value: &'a Value,
-    text: &str,
+    indexes_line: Option<u32>,
     rel: &str,
     out: &mut ServiceTopology,
 ) -> Option<&'a Map<String, Value>> {
-    let Some(root) = value.get(MARKER) else {
-        // Symfony `when@<env>:` blocks are not read; an unseen block must not vanish silently.
-        let in_env = value.as_object().is_some_and(|m| {
-            m.iter()
-                .any(|(k, v)| k.starts_with("when@") && v.get(MARKER).is_some())
-        });
-        if in_env {
-            es_gap(out, EsGap::DefinitionUnread, rel, None, &[]);
-        }
-        return None;
-    };
-    let indexes = root.get("indexes")?;
+    // Symfony `when@<env>:` blocks are not read; an unseen block must not vanish silently,
+    // also next to a root block.
+    let in_env = value.as_object().is_some_and(|m| {
+        m.iter()
+            .any(|(k, v)| k.starts_with("when@") && v.get(MARKER).is_some())
+    });
+    if in_env {
+        es_gap(out, EsGap::DefinitionUnread, rel, None, &[]);
+    }
+    let indexes = value.get(MARKER)?.get("indexes")?;
     let Some(indexes) = indexes.as_object() else {
         // `indexes: '%param%'` or `%env(json:…)%`: the names are unknown.
-        let at = text
-            .lines()
-            .position(|l| l.trim_start().starts_with("indexes:"));
-        let at = at.map(|i| (i + 1).to_string()).unwrap_or_default();
+        let at = indexes_line.map(|l| l.to_string()).unwrap_or_default();
         es_gap(out, EsGap::IndexNotLiteral, rel, None, &[&at]);
         return None;
     };
@@ -129,17 +124,21 @@ fn has_alias(text: &str) -> bool {
     })
 }
 
-/// First line of every direct child key of `fos_elastica: indexes:`, built once per file.
-fn key_lines(text: &str) -> HashMap<&str, u32> {
+/// First line of every direct child key of `fos_elastica: indexes:` plus the line of `indexes:`
+/// itself, built once per file. Trailing ` #` comments are ignored (shortcut: a ` #` inside a
+/// quoted key would be cut).
+fn key_lines(text: &str) -> (HashMap<&str, u32>, Option<u32>) {
     let indent = |l: &str| l.len() - l.trim_start().len();
     let mut map = HashMap::new();
+    let mut indexes_line = None;
     let (mut in_root, mut in_indexes, mut child) = (false, false, None::<usize>);
     for (i, l) in text.lines().enumerate() {
         let t = l.trim();
+        let t = t.split(" #").next().unwrap_or(t).trim_end();
         if t.is_empty() || t.starts_with('#') {
             continue;
         }
-        let ind = indent(l);
+        let (ind, no) = (indent(l), u32::try_from(i + 1).unwrap_or(u32::MAX));
         if ind == 0 {
             in_root = t == "fos_elastica:";
             in_indexes = false;
@@ -148,15 +147,15 @@ fn key_lines(text: &str) -> HashMap<&str, u32> {
             if ind < c {
                 in_indexes = false;
             } else if let (true, Some((k, _))) = (ind == c, t.split_once(':')) {
-                map.entry(k.trim_matches(['\'', '"']))
-                    .or_insert(u32::try_from(i + 1).unwrap_or(u32::MAX));
+                map.entry(k.trim_matches(['\'', '"'])).or_insert(no);
             }
         }
-        if in_root && !in_indexes && child.is_none() && t == "indexes:" {
-            in_indexes = true;
+        if in_root && !in_indexes && child.is_none() && t.starts_with("indexes:") {
+            indexes_line.get_or_insert(no);
+            in_indexes = t == "indexes:";
         }
     }
-    map
+    (map, indexes_line)
 }
 
 /// The literal index name: `index_name` when given, else the key; `None` when it is not literal.
