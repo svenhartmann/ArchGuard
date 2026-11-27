@@ -15,6 +15,8 @@ use archguard_flow_common::text_decode::{Decoded, decode_text};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::call_skips::with_skipped;
+
 const HELPER: &str = include_str!("ArchguardCallScanner.cs");
 /// Bounds for one helper process, grown with the analyzed source text. File
 /// counts mislead: dotnet/roslyn averages 8 KB per file, its C# compiler 21 KB.
@@ -177,23 +179,6 @@ fn read_or_skip(
     None
 }
 
-/// Skipped files make a ready analysis partial and are named in the diagnostics.
-fn with_skipped(mut analysis: CallAnalysis, skipped: &[String]) -> CallAnalysis {
-    if skipped.is_empty() {
-        return analysis;
-    }
-    if analysis.status == "ready" {
-        analysis.status = "partial".into();
-    }
-    analysis.diagnostics.extend_from_slice(skipped);
-    for analyzer in &mut analysis.analyzers {
-        if analyzer.status == "ready" {
-            analyzer.status = "partial".into();
-        }
-        analyzer.diagnostics.extend_from_slice(skipped);
-    }
-    analysis
-}
 fn prepare(root: &Path, config: &Config) -> Result<Input, String> {
     let root = root.canonicalize().map_err(|e| e.to_string())?;
     if !root.is_dir() {
