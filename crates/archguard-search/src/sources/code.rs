@@ -422,7 +422,7 @@ fn builder_variable(text: &str, at: usize) -> bool {
 }
 
 /// Whether the file imports an Elasticsearch client; only import lines count.
-fn imports_client(text: &str, ext: &str) -> bool {
+pub(crate) fn imports_client(text: &str, ext: &str) -> bool {
     let mut lines = text.lines().map(str::trim_start);
     match ext {
         // elasticsearch_dsl and similar siblings count: they wrap the same client.
@@ -430,7 +430,8 @@ fn imports_client(text: &str, ext: &str) -> bool {
             .any(|l| l.starts_with("from elasticsearch") || l.starts_with("import elasticsearch")),
         "ts" | "tsx" => lines.any(|l| {
             (l.starts_with("import ") || l.contains("require("))
-                && l.contains("@elastic/elasticsearch")
+                && (l.contains("@elastic/elasticsearch")
+                    || l.contains("@opensearch-project/opensearch"))
         }),
         _ => IMPORTS.iter().any(|i| text.contains(i)),
     }

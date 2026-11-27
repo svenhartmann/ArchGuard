@@ -27,6 +27,7 @@ pub(crate) mod terraform_links;
 pub(crate) mod terraform_locals;
 pub(crate) mod terraform_other;
 pub(crate) mod terraform_scope;
+pub(crate) mod ts_bodies;
 
 /// Order matters only for equal sort keys of the merged artifacts: terraform before templates.
 pub(crate) const SOURCES: &[fn(&SearchContext) -> SourceOutput] = &[
@@ -41,4 +42,5 @@ pub(crate) const SOURCES: &[fn(&SearchContext) -> SourceOutput] = &[
     string_bodies::extract_with,
     http::extract_with,
     devtools::extract_with,
+    ts_bodies::extract_with,
 ];
