@@ -62,6 +62,7 @@ fn client_calls_become_artifacts_and_lookalikes_do_not() {
         "index asi-v1 ts:shop []",
         "index body-call-v1 ts:shop []",
         "index body-var-v1 ts:shop []",
+        "index bodyconst-v1 ts:shop []",
         "index bomb-v1 ts:shop []",
         "index calls-v1 ts:shop []",
         "index consts-v1 ts:shop []",
@@ -78,6 +79,8 @@ fn client_calls_become_artifacts_and_lookalikes_do_not() {
         "index partial-v1 ts:shop []",
         "index sbomb-v1 ts:shop []",
         "index self-v1 ts:shop []",
+        "index shadow-param-v1 ts:shop []",
+        "index shadow-v1 ts:shop []",
         "index umlaut-v1 ts:shop []",
     ];
     assert_eq!(
@@ -283,4 +286,27 @@ fn a_backslash_as_the_last_byte_of_a_skipped_member_is_a_gap_not_a_panic() {
             .any(|g| g.starts_with("shop/src/eofescape.ts: ") && g.contains("Source line 5.")),
         "{g:?}"
     );
+}
+
+#[test]
+fn a_client_7_body_that_is_a_module_constant_is_lifted() {
+    let report = analyze();
+    assert_eq!(fields(named(&report, "bodyconst-v1")), ["title:text:"]);
+}
+
+#[test]
+fn a_name_that_is_also_bound_in_a_function_is_a_gap_not_the_top_level_value() {
+    let report = analyze();
+    for name in ["shadow-v1", "shadow-param-v1"] {
+        let a = named(&report, name);
+        assert!(a.detail.is_none(), "{name}: {:?}", a.detail);
+        let at = format!("shop/src/shadow.ts:{}: ", a.evidence[0].line.unwrap());
+        assert!(
+            gaps(&report)
+                .iter()
+                .any(|g| g.contains(&at) && g.contains("not read: settings")),
+            "{name}: {:?}",
+            gaps(&report)
+        );
+    }
 }
