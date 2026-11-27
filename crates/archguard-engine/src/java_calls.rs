@@ -17,6 +17,8 @@ use archguard_extract::{Extractor, JavaExtractor, Lang, strip_root};
 use archguard_flow_common::text_decode::{Decoded, decode_text};
 use sha2::{Digest, Sha256};
 
+use crate::call_skips::with_skipped;
+
 const HELPER: &str = include_str!("ArchguardCallScanner.java");
 // Large source snapshots include calls, type uses and method metrics. Keep a
 // hard bound while allowing their streamed output beyond the former 64 MiB cap.
@@ -264,24 +266,6 @@ fn read_or_skip(
     hash_part(hash, format!("skipped:{}:{why}", path.display()).as_bytes());
     skipped.push(format!("Java source {rel} skipped: {why}"));
     None
-}
-
-/// Skipped files make a ready analysis partial and are named in the diagnostics.
-fn with_skipped(mut analysis: CallAnalysis, skipped: &[String]) -> CallAnalysis {
-    if skipped.is_empty() {
-        return analysis;
-    }
-    if analysis.status == "ready" {
-        analysis.status = "partial".into();
-    }
-    analysis.diagnostics.extend_from_slice(skipped);
-    for analyzer in &mut analysis.analyzers {
-        if analyzer.status == "ready" {
-            analyzer.status = "partial".into();
-        }
-        analyzer.diagnostics.extend_from_slice(skipped);
-    }
-    analysis
 }
 
 fn hash_part(hash: &mut Sha256, value: &[u8]) {

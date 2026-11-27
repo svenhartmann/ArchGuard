@@ -44,6 +44,7 @@ pub use staged::{
     compare_staged, compare_staged_cancellable, list_git_branches,
 };
 mod arc42_context;
+mod call_skips;
 mod compiler_sandbox;
 mod compiler_trust;
 mod config;
