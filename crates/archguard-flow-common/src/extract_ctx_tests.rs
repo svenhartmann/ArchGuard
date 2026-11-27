@@ -154,10 +154,20 @@ fn read_text_decodes_utf16_with_bom() {
 }
 
 #[test]
-fn read_text_reports_invalid_utf8_instead_of_replacing_it() {
+fn read_text_keeps_the_text_of_a_file_with_invalid_utf8() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("bad.cs"), b"// caf\xe9\nclass A {}").unwrap();
-    let err = read_text(dir.path(), "bad.cs", 100).expect_err("loss must be reported");
+    assert_eq!(
+        read_text(dir.path(), "bad.cs", 100).unwrap(),
+        "// caf\u{FFFD}\nclass A {}"
+    );
+}
+
+#[test]
+fn read_text_reports_broken_utf16() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("odd.cs"), b"\xFF\xFEa").unwrap();
+    let err = read_text(dir.path(), "odd.cs", 100).expect_err("unreadable bytes are an error");
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
 }
 
