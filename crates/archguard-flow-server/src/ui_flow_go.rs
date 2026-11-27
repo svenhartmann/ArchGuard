@@ -59,8 +59,18 @@ pub fn extract(root: &Path) -> UiFlow {
 
 pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     let mut flow = UiFlow::default();
-    let Ok(files) = walk(ctx.root) else {
-        return flow;
+    let files = match walk(ctx.root) {
+        Ok(files) => files,
+        Err(e) => {
+            gap(
+                &mut flow.diagnostics,
+                ".",
+                0,
+                format!("Discovery settings not read: {e}"),
+            );
+            finish(&mut flow);
+            return flow;
+        }
     };
     let mut go: Vec<&String> = (files.files.iter())
         .filter(|f| f.ends_with(".go") && !f.ends_with("_test.go") && !test_path(f))
@@ -76,7 +86,15 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     let mods: Vec<Module> = (files.files.iter())
         .filter(|f| *f == "go.mod" || f.ends_with("/go.mod"))
         .filter_map(|f| {
-            let text = read_text(ctx.root, f, 1 << 20).ok()?;
+            let text = match read_text(ctx.root, f, 1 << 20) {
+                Ok(text) => text,
+                Err(e) => {
+                    let message =
+                        format!("go.mod not read: {e}; its module path and sources are unknown.");
+                    gap(&mut flow.diagnostics, f, 0, message);
+                    return None;
+                }
+            };
             let dir = f.strip_suffix("go.mod")?.trim_end_matches('/').to_string();
             let path = archguard_extract::go::module_path(&text)?;
             Some(Module {

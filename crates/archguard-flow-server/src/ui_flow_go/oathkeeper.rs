@@ -26,8 +26,22 @@ impl Site<'_> {
 pub(super) fn oathkeeper(ctx: &ExtractContext, files: &[String], flow: &mut UiFlow) {
     let yaml = |f: &&String| [".yml", ".yaml", ".json"].iter().any(|e| f.ends_with(e));
     for rel in files.iter().filter(yaml).take(5_000) {
-        let Ok(text) = read_text(ctx.root, rel, 1 << 20) else {
-            continue;
+        let text = match read_text(ctx.root, rel, 1 << 20) {
+            Ok(text) => text,
+            Err(e) => {
+                // shortcut: a note, not a gap: every YAML/JSON file is a candidate and a
+                // lock file over 1 MiB would make each Go flow incomplete; upgrade to a gap
+                // once the candidate test (keywords) can run before the read.
+                flow.diagnostics.push(UiFlowDiagnostic {
+                    file: rel.clone(),
+                    line: 0,
+                    message: format!(
+                        "File not read ({e}); an Oathkeeper rule in it would be unknown."
+                    ),
+                    severity: DiagnosticSeverity::Note,
+                });
+                continue;
+            }
         };
         if !["authenticators", "authorizer", "match"]
             .iter()
