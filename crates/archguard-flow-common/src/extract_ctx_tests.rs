@@ -123,3 +123,50 @@ fn access_condition_reads_meanings_arguments_and_fallbacks() {
     assert_eq!(cond("maybe", &[]), Ok(S::Protected(C::Authenticated)));
     assert_eq!(cond("maybe", &one), Ok(S::Protected(C::Role("a".into()))));
 }
+
+fn utf16(text: &str, bom: [u8; 2], le: bool) -> Vec<u8> {
+    let mut out = bom.to_vec();
+    for unit in text.encode_utf16() {
+        out.extend(if le {
+            unit.to_le_bytes()
+        } else {
+            unit.to_be_bytes()
+        });
+    }
+    out
+}
+
+#[test]
+fn read_text_decodes_utf16_with_bom() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("le.cs"),
+        utf16("[Authorize]", [0xFF, 0xFE], true),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("be.cs"),
+        utf16("[Authorize]", [0xFE, 0xFF], false),
+    )
+    .unwrap();
+    assert_eq!(read_text(dir.path(), "le.cs", 100).unwrap(), "[Authorize]");
+    assert_eq!(read_text(dir.path(), "be.cs", 100).unwrap(), "[Authorize]");
+}
+
+#[test]
+fn read_text_reports_invalid_utf8_instead_of_replacing_it() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("bad.cs"), b"// caf\xe9\nclass A {}").unwrap();
+    let err = read_text(dir.path(), "bad.cs", 100).expect_err("loss must be reported");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn read_text_leaves_plain_utf8_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("ok.cs"), "// café\nclass A {}").unwrap();
+    assert_eq!(
+        read_text(dir.path(), "ok.cs", 100).unwrap(),
+        "// café\nclass A {}"
+    );
+}
