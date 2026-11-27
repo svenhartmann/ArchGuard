@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use archguard_core::{CallAnalysis, CallAnalyzer, Config};
 use archguard_extract::{Extractor, JavaExtractor, Lang, strip_root};
+use archguard_flow_common::text_decode::{Decoded, decode_text};
 use sha2::{Digest, Sha256};
 
 const HELPER: &str = include_str!("ArchguardCallScanner.java");
@@ -45,6 +46,8 @@ struct Input {
     context: Vec<u8>,
     fingerprint: [u8; 32],
     files: usize,
+    /// One message per source file left out of the analysis.
+    skipped: Vec<String>,
 }
 
 /// Java class/method call sites for the effective source configuration. The
@@ -61,6 +64,10 @@ pub fn analyze_java_calls(root: &Path, config: &Config) -> CallAnalysis {
         }
     };
     let files = scopes.iter().map(|(_, input)| input.files).sum();
+    let skipped: Vec<String> = scopes.iter().flat_map(|(_, i)| i.skipped.clone()).collect();
+    if files == 0 && !skipped.is_empty() {
+        return unavailable(0, skipped.join("; "));
+    }
     if files == 0 {
         return CallAnalysis::default();
     }
@@ -87,6 +94,9 @@ pub(crate) fn analyze_java_workspace_calls(
         Ok(input) => input,
         Err(error) => return unavailable(files.len(), error),
     };
+    if input.files == 0 && !input.skipped.is_empty() {
+        return unavailable(0, input.skipped.join("; "));
+    }
     if input.files == 0 {
         return CallAnalysis::default();
     }
@@ -95,6 +105,7 @@ pub(crate) fn analyze_java_workspace_calls(
         input.fingerprint,
         || {
             let result = run_helper(&input, Path::new("java"))
+                .map(|analysis| with_skipped(analysis, &input.skipped))
                 .unwrap_or_else(|error| unavailable(input.files, error));
             match prepare_sources(root, config, files) {
                 Ok(current) if current.fingerprint == input.fingerprint => result,
@@ -130,7 +141,9 @@ fn scopes_fingerprint(scopes: &[(String, Input)]) -> [u8; 32] {
 /// share names; their identities get the project directory as a prefix.
 fn analyze_scopes(scopes: &[(String, Input)]) -> CallAnalysis {
     let run = |input: &Input| {
-        run_helper(input, Path::new("java")).unwrap_or_else(|error| unavailable(input.files, error))
+        run_helper(input, Path::new("java"))
+            .map(|analysis| with_skipped(analysis, &input.skipped))
+            .unwrap_or_else(|error| unavailable(input.files, error))
     };
     if let [(_, input)] = scopes {
         return run(input);
@@ -221,6 +234,56 @@ fn unavailable(files: usize, message: String) -> CallAnalysis {
     }
 }
 
+/// The source's directories up to the root; their build descriptors are inputs.
+fn add_directories(directories: &mut BTreeSet<PathBuf>, path: &Path, root: &Path) {
+    for directory in path
+        .ancestors()
+        .skip(1)
+        .take_while(|path| path.starts_with(root))
+    {
+        directories.insert(directory.to_path_buf());
+    }
+}
+
+/// The text of a source file, or `None` after recording why it is left out.
+/// The fingerprint sees the skip, so fixing the file invalidates the cache.
+fn read_or_skip(
+    path: &Path,
+    rel: &str,
+    hash: &mut Sha256,
+    skipped: &mut Vec<String>,
+) -> Option<String> {
+    let why = match fs::read(path)
+        .map_err(|e| e.to_string())
+        .map(|b| decode_text(&b))
+    {
+        Ok(Decoded::Clean(text) | Decoded::Lossy(text)) => return Some(text),
+        Ok(Decoded::Unreadable) => "not decodable (broken UTF-16)".to_string(),
+        Err(why) => why,
+    };
+    hash_part(hash, format!("skipped:{}:{why}", path.display()).as_bytes());
+    skipped.push(format!("Java source {rel} skipped: {why}"));
+    None
+}
+
+/// Skipped files make a ready analysis partial and are named in the diagnostics.
+fn with_skipped(mut analysis: CallAnalysis, skipped: &[String]) -> CallAnalysis {
+    if skipped.is_empty() {
+        return analysis;
+    }
+    if analysis.status == "ready" {
+        analysis.status = "partial".into();
+    }
+    analysis.diagnostics.extend_from_slice(skipped);
+    for analyzer in &mut analysis.analyzers {
+        if analyzer.status == "ready" {
+            analyzer.status = "partial".into();
+        }
+        analyzer.diagnostics.extend_from_slice(skipped);
+    }
+    analysis
+}
+
 fn hash_part(hash: &mut Sha256, value: &[u8]) {
     hash.update((value.len() as u64).to_le_bytes());
     hash.update(value);
@@ -266,7 +329,11 @@ fn conflict_free_groups(
 ) -> Option<Vec<Vec<String>>> {
     let mut owners: std::collections::BTreeMap<String, BTreeSet<&str>> = Default::default();
     for file in files.iter().filter(|f| f.lang == Lang::Java) {
-        let Ok(content) = fs::read_to_string(&file.path) else {
+        // An unreadable file is reported by `prepare_sources`, which reads
+        // every Java file of the scope again; here it only has no owner entry.
+        let Some(Decoded::Clean(content) | Decoded::Lossy(content)) =
+            fs::read(&file.path).ok().map(|bytes| decode_text(&bytes))
+        else {
             continue;
         };
         let stripped = strip_root(&file.rel_path, &config.project.source_roots);
@@ -323,6 +390,7 @@ fn prepare_sources(
         context: Vec::new(),
         fingerprint: [0; 32],
         files: 0,
+        skipped: Vec::new(),
     };
     if !config.project.languages.is_empty()
         && !config
@@ -346,19 +414,15 @@ fn prepare_sources(
         {
             continue;
         }
-        let content = fs::read_to_string(&file.path).map_err(|e| e.to_string())?;
+        let Some(content) = read_or_skip(&file.path, &file.rel_path, &mut hash, &mut input.skipped)
+        else {
+            continue;
+        };
         let stripped = strip_root(&file.rel_path, &config.project.source_roots);
         let extraction = JavaExtractor.extract(&stripped, &content);
         let node = crate::pipeline::file_node_name(file, &stripped, &extraction.declarations);
         let absolute = file.path.to_str().ok_or("Java source path is not UTF-8")?;
-        for directory in file
-            .path
-            .ancestors()
-            .skip(1)
-            .take_while(|path| path.starts_with(&root))
-        {
-            directories.insert(directory.to_path_buf());
-        }
+        add_directories(&mut directories, &file.path, &root);
         for field in [absolute, &stripped, &node] {
             input.manifest.extend_from_slice(field.as_bytes());
             input.manifest.push(0);
@@ -653,6 +717,90 @@ fn run_helper(input: &Input, executable: &Path) -> Result<CallAnalysis, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Real-javac tests run only where a JDK is installed.
+    fn project_with(files: &[(&str, &[u8])]) -> Option<tempfile::TempDir> {
+        let jdk = |tool: &str| {
+            Command::new(tool)
+                .arg("--version")
+                .output()
+                .is_ok_and(|o| o.status.success())
+        };
+        if !(jdk("java") && jdk("javac")) {
+            return None;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("src/main/java/de/x");
+        fs::create_dir_all(&dir).unwrap();
+        for (name, bytes) in files {
+            fs::write(dir.join(name), bytes).unwrap();
+        }
+        Some(root)
+    }
+    const GOOD: &[u8] =
+        b"package de.x;\npublic class Good { void run() { help(); } void help() {} }\n";
+
+    #[test]
+    fn an_undecodable_file_skips_only_itself_and_says_so() {
+        // Odd byte count after a UTF-16LE mark: decode_text yields Unreadable.
+        let Some(root) = project_with(&[("Bad.java", b"\xFF\xFEa"), ("Good.java", GOOD)]) else {
+            return;
+        };
+        let analysis = analyze_java_calls(root.path(), &Config::default());
+        assert_eq!(analysis.status, "partial", "{:?}", analysis.diagnostics);
+        assert!(analysis.calls.iter().any(|c| c.code == "help()"));
+        assert!(analysis.diagnostics.iter().any(|d| d.contains("Bad.java")));
+        assert!(
+            analysis.analyzers[0]
+                .diagnostics
+                .iter()
+                .any(|d| d.contains("Bad.java"))
+        );
+    }
+
+    #[test]
+    fn only_unreadable_files_give_unavailable_with_their_messages() {
+        let Some(root) = project_with(&[("Bad.java", b"\xFF\xFEa")]) else {
+            return;
+        };
+        let analysis = analyze_java_calls(root.path(), &Config::default());
+        assert_eq!(analysis.status, "unavailable", "{:?}", analysis.diagnostics);
+        assert!(analysis.diagnostics.iter().any(|d| d.contains("Bad.java")));
+    }
+
+    #[test]
+    fn a_latin1_file_is_read_and_not_reported_as_skipped() {
+        let latin1: &[u8] = b"package de.x;\n// \xE4\npublic class Latin { void run() { help(); } void help() {} }\n";
+        let Some(root) = project_with(&[("Latin.java", latin1), ("Good.java", GOOD)]) else {
+            return;
+        };
+        let analysis = analyze_java_calls(root.path(), &Config::default());
+        assert_eq!(analysis.files, 2, "{:?}", analysis.diagnostics);
+        assert!(analysis.calls.len() >= 2);
+        assert!(!analysis.diagnostics.iter().any(|d| d.contains("skipped")));
+    }
+
+    #[test]
+    fn grouping_reads_latin1_and_utf16_like_the_scan() {
+        // Same-named class in two projects forces conflict_free_groups; the
+        // Latin-1 twin must still count as an owner, the broken one must not panic.
+        let root = tempfile::tempdir().unwrap();
+        for (project, bytes) in [
+            ("a", &b"package de.x;\n// \xE4\nclass T {}\n"[..]),
+            ("b", GOOD_T),
+        ] {
+            let dir = root.path().join(project).join("src/main/java/de/x");
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(root.path().join(project).join("pom.xml"), "<project/>").unwrap();
+            fs::write(dir.join("T.java"), bytes).unwrap();
+            fs::write(dir.join("Bad.java"), b"\xFF\xFEa").unwrap();
+        }
+        let config = Config::default();
+        let files = crate::pipeline::walk_files(root.path(), &config).unwrap();
+        let groups = conflict_free_groups(&files, &config).expect("twin T.java");
+        assert_eq!(groups.len(), 2, "{groups:?}");
+    }
+    const GOOD_T: &[u8] = b"package de.x;\nclass T {}\n";
 
     #[test]
     fn no_java_does_not_require_a_jdk_or_change_import_analysis() {
@@ -963,6 +1111,7 @@ mod tests {
             context: Vec::new(),
             fingerprint: [0; 32],
             files: 20_000,
+            skipped: Vec::new(),
         };
         let error = run_helper(&input, &java).unwrap_err();
         assert!(!error.contains("JDK 17+"), "{error}");
@@ -1072,6 +1221,7 @@ mod tests {
             context: Vec::new(),
             fingerprint: [0; 32],
             files: 1,
+            skipped: Vec::new(),
         };
         let root = tempfile::tempdir().unwrap();
         assert!(

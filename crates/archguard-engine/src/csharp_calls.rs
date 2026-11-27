@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use archguard_core::{CallAnalysis, CallAnalyzer, Config};
 use archguard_extract::{CsExtractor, Extractor, Lang, strip_root};
+use archguard_flow_common::text_decode::{Decoded, decode_text};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -48,6 +49,8 @@ struct Input {
     fingerprint: [u8; 32],
     files: usize,
     source_bytes: u64,
+    /// One message per source file left out of the analysis.
+    skipped: Vec<String>,
 }
 #[derive(Debug)]
 struct Sdk {
@@ -65,6 +68,9 @@ pub fn analyze_csharp_calls(root: &Path, config: &Config) -> CallAnalysis {
         Ok(input) => input,
         Err(error) => return unavailable(0, error),
     };
+    if input.files == 0 && !input.skipped.is_empty() {
+        return unavailable(0, input.skipped.join("; "));
+    }
     if input.files == 0 {
         return CallAnalysis {
             java_release: 0,
@@ -85,7 +91,9 @@ pub fn analyze_csharp_calls(root: &Path, config: &Config) -> CallAnalysis {
     {
         return analysis.clone();
     }
-    let analysis = run_helper(&input, &sdk).unwrap_or_else(|error| unavailable(input.files, error));
+    let analysis = run_helper(&input, &sdk)
+        .map(|analysis| with_skipped(analysis, &input.skipped))
+        .unwrap_or_else(|error| unavailable(input.files, error));
     let analysis = match prepare(root, config) {
         Ok(after) if after.fingerprint == input.fingerprint => analysis,
         _ => unavailable(
@@ -142,6 +150,50 @@ fn part(hash: &mut Sha256, bytes: &[u8]) {
     hash.update((bytes.len() as u64).to_le_bytes());
     hash.update(bytes);
 }
+/// shortcut: only a file that cannot be read or is broken UTF-16 is left out;
+/// non-UTF-8 text without a byte order mark reads lossy, add a diagnostic for
+/// it when the replaced characters start to matter to a consumer.
+fn read_source(path: &Path) -> Result<String, String> {
+    match decode_text(&fs::read(path).map_err(|e| e.to_string())?) {
+        Decoded::Clean(text) | Decoded::Lossy(text) => Ok(text),
+        Decoded::Unreadable => Err("not decodable (broken UTF-16)".into()),
+    }
+}
+
+/// The text of a source file, or `None` after recording why it is left out.
+/// The fingerprint sees the skip, so fixing the file invalidates the cache.
+fn read_or_skip(
+    path: &Path,
+    rel: &str,
+    hash: &mut Sha256,
+    skipped: &mut Vec<String>,
+) -> Option<String> {
+    let why = match read_source(path) {
+        Ok(content) => return Some(content),
+        Err(why) => why,
+    };
+    part(hash, format!("skipped:{}:{why}", path.display()).as_bytes());
+    skipped.push(format!("C# source {rel} skipped: {why}"));
+    None
+}
+
+/// Skipped files make a ready analysis partial and are named in the diagnostics.
+fn with_skipped(mut analysis: CallAnalysis, skipped: &[String]) -> CallAnalysis {
+    if skipped.is_empty() {
+        return analysis;
+    }
+    if analysis.status == "ready" {
+        analysis.status = "partial".into();
+    }
+    analysis.diagnostics.extend_from_slice(skipped);
+    for analyzer in &mut analysis.analyzers {
+        if analyzer.status == "ready" {
+            analyzer.status = "partial".into();
+        }
+        analyzer.diagnostics.extend_from_slice(skipped);
+    }
+    analysis
+}
 fn prepare(root: &Path, config: &Config) -> Result<Input, String> {
     let root = root.canonicalize().map_err(|e| e.to_string())?;
     if !root.is_dir() {
@@ -161,17 +213,18 @@ fn prepare(root: &Path, config: &Config) -> Result<Input, String> {
             .iter()
             .any(|s| s == "auto" || s == "cs" || s == "csharp");
     let mut sources = Vec::new();
+    let mut skipped = Vec::new();
     let mut source_bytes = 0;
     if enabled {
-        for file in crate::pipeline::walk_files(&root, config).map_err(|e| e.to_string())? {
-            if file.lang != Lang::CSharp {
-                continue;
-            }
+        let walked = crate::pipeline::walk_files(&root, config).map_err(|e| e.to_string())?;
+        for file in walked.into_iter().filter(|f| f.lang == Lang::CSharp) {
             let path = file.path.canonicalize().map_err(|e| e.to_string())?;
             if !path.starts_with(&root) {
                 return Err("C# source resolves outside the analysis root".into());
             }
-            let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            let Some(content) = read_or_skip(&path, &file.rel_path, &mut hash, &mut skipped) else {
+                continue;
+            };
             let stripped = strip_root(&file.rel_path, &config.project.source_roots);
             let extraction = CsExtractor.extract(&stripped, &content);
             let node = crate::pipeline::file_node_name(&file, &stripped, &extraction.declarations);
@@ -206,6 +259,7 @@ fn prepare(root: &Path, config: &Config) -> Result<Input, String> {
     Ok(Input {
         files: sources.len(),
         source_bytes,
+        skipped,
         manifest: json!({"root":root, "sources":sources,
             "project":config.semantic.csharp.project,
             "configuration":config.semantic.csharp.configuration,
@@ -791,5 +845,58 @@ mod tests {
             prepare(root.path(), &config).unwrap().fingerprint,
             "changed assembly bytes must invalidate semantic evidence"
         );
+    }
+
+    /// Real-Roslyn tests run only where a .NET SDK is installed.
+    fn project_with(files: &[(&str, &[u8])]) -> Option<tempfile::TempDir> {
+        sdk().ok()?;
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("src")).unwrap();
+        for (name, bytes) in files {
+            fs::write(root.path().join("src").join(name), bytes).unwrap();
+        }
+        Some(root)
+    }
+    const GOOD: &[u8] = b"class A { void Run() { Helper(); } void Helper() {} }";
+
+    #[test]
+    fn an_undecodable_file_skips_only_itself_and_says_so() {
+        // Odd byte count after a UTF-16LE mark: decode_text yields Unreadable.
+        let Some(root) = project_with(&[("Bad.cs", b"\xFF\xFEa"), ("Good.cs", GOOD)]) else {
+            return;
+        };
+        let analysis = analyze_csharp_calls(root.path(), &Config::default());
+        assert_eq!(analysis.status, "partial", "{:?}", analysis.diagnostics);
+        assert!(
+            analysis
+                .calls
+                .iter()
+                .any(|c| c.target_label.contains("Helper"))
+        );
+        assert!(
+            analysis.diagnostics.iter().any(|d| d.contains("Bad.cs")),
+            "{:?}",
+            analysis.diagnostics
+        );
+        assert!(
+            analysis.analyzers[0]
+                .diagnostics
+                .iter()
+                .any(|d| d.contains("Bad.cs"))
+        );
+    }
+
+    #[test]
+    fn only_valid_files_give_a_ready_analysis_without_skip_diagnostics() {
+        // Latin-1 umlaut in a comment reads lossy, it is not skipped.
+        let latin1: &[u8] = b"// \xE4\nclass B { void Run() { Helper(); } void Helper() {} }";
+        let Some(root) = project_with(&[("Latin.cs", latin1), ("Good.cs", GOOD)]) else {
+            return;
+        };
+        let analysis = analyze_csharp_calls(root.path(), &Config::default());
+        // Without a .csproj the helper itself reports partial; only skips are ours.
+        assert_eq!(analysis.files, 2, "{:?}", analysis.diagnostics);
+        assert!(analysis.calls.len() >= 2);
+        assert!(!analysis.diagnostics.iter().any(|d| d.contains("skipped")));
     }
 }
