@@ -140,12 +140,15 @@ fn env_and_parameter_names_and_unreadable_files_are_gaps() {
         broken,
         env,
         param,
+        legacy,
         mixed,
         nonmap,
         nonmap2,
         p_idx,
         a_idx,
         s_idx,
+        rootstr,
+        strentry,
         whenenv,
     ] = gaps.as_slice()
     else {
@@ -175,6 +178,20 @@ fn env_and_parameter_names_and_unreadable_files_are_gaps() {
             "a parameter in settings, properties or a value is a gap, not dropped: {gap}"
         );
     }
+    assert!(
+        legacy.starts_with("legacy/fos_elastica.yaml: Index name is not a literal")
+            && legacy.ends_with("Source line 3."),
+        "the <=5 `types` layout is not read, so it is a gap: {legacy}"
+    );
+    assert!(
+        rootstr.starts_with("rootstr/fos_elastica.yaml: Definition file could not be read"),
+        "a fos_elastica root that is a parameter is a gap: {rootstr}"
+    );
+    assert!(
+        strentry.starts_with("strentry/fos_elastica.yaml: Index name is not a literal")
+            && strentry.ends_with("Source line 3."),
+        "an index entry that is a parameter is a gap: {strentry}"
+    );
     assert!(
         whenenv.starts_with("whenenv/fos_elastica.yaml: Definition file could not be read"),
         "when@<env> blocks are not read, so they are a gap: {whenenv}"

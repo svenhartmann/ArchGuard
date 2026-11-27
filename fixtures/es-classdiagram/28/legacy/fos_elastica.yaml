@@ -1,0 +1,7 @@
+fos_elastica:
+    indexes:
+        legacy_idx:
+            types:
+                product:
+                    properties:
+                        title: { type: text, analyzer: german }
