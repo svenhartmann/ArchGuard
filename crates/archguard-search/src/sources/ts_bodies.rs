@@ -35,6 +35,8 @@ const MAX_FILES: usize = 5_000;
 const MAX_NEST: u8 = 64;
 const MAX_CHAIN: u8 = 8;
 const MAX_WORK: u32 = 100_000;
+/// Bytes one file may skip over in members it does not read; nested calls would skip each other quadratically.
+const MAX_SKIP: u32 = 4_000_000;
 /// Bytes of built string per work unit: a long string used many times runs the budget out too.
 const STRING_BYTES: usize = 16;
 const EXTS: [&str; 8] = ["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"];
@@ -190,6 +192,7 @@ struct FileScan<'a> {
     owned: bool,
     /// One work budget per file: references to a huge constant must not re-pay it per call.
     steps: Cell<u32>,
+    skipped: Cell<u32>,
     out: &'a mut ServiceTopology,
 }
 
@@ -204,6 +207,7 @@ impl<'a> FileScan<'a> {
             consts: constants(text),
             owned: false,
             steps: Cell::new(MAX_WORK),
+            skipped: Cell::new(MAX_SKIP),
             out,
         }
     }
@@ -234,7 +238,13 @@ impl<'a> FileScan<'a> {
         let open = self.text[at + api.method.len()..].trim_start();
         let from = self.text.len() - open.len() + 1;
         let steps = Cell::new(MAX_WORK);
-        let mut lit = Lit::new(self.text, from, &self.consts, &steps, &self.steps);
+        let mut lit = Lit::new(
+            self.text,
+            from,
+            &self.consts,
+            &steps,
+            (&self.steps, &self.skipped),
+        );
         let entries = lit.object_at().and_then(|()| lit.entries(true));
         let body_ref = lit.body_ref;
         let Some(mut entries) = entries else {
@@ -594,6 +604,7 @@ struct Lit<'a> {
     steps: &'a Cell<u32>,
     /// Budget of the whole file, charged only by constants resolved under a reference.
     shared: &'a Cell<u32>,
+    skipped: &'a Cell<u32>,
     depth: u8,
     nest: u8,
     /// A Client 7 `body` that names a module constant holding an object but could not be read.
@@ -606,7 +617,7 @@ impl<'a> Lit<'a> {
         i: usize,
         consts: &'a HashMap<String, Option<usize>>,
         steps: &'a Cell<u32>,
-        shared: &'a Cell<u32>,
+        (shared, skipped): (&'a Cell<u32>, &'a Cell<u32>),
     ) -> Self {
         Self {
             text,
@@ -614,6 +625,7 @@ impl<'a> Lit<'a> {
             consts,
             steps,
             shared,
+            skipped,
             depth: 0,
             nest: 0,
             body_ref: false,
@@ -736,7 +748,13 @@ impl<'a> Lit<'a> {
         }
         let mut sub = Lit {
             depth: self.depth + 1,
-            ..Lit::new(self.text, at, self.consts, self.shared, self.shared)
+            ..Lit::new(
+                self.text,
+                at,
+                self.consts,
+                self.shared,
+                (self.shared, self.skipped),
+            )
         };
         sub.value()
             .filter(|_| sub.statement_ends() || sub.finished())
@@ -805,72 +823,91 @@ impl<'a> Lit<'a> {
 
     /// The members of the object at `i`, each read on its own: a member that is not entirely
     /// literal is `None` and the next one is still read. `body: {…}` members are lifted.
+    /// An exhausted skip budget ends the object with one gap member.
     fn entries(&mut self, lift_body: bool) -> Option<Entries> {
         self.i += 1;
         let mut out = vec![];
         while !self.eat(b'}') {
-            let start = self.i;
-            let key = self.key().filter(|_| self.at() != Some(b'.'));
-            let Some(key) = key else {
-                self.i = start;
-                self.skip_member();
+            if self.member(lift_body, &mut out)? {
                 out.push(("...".to_owned(), None));
-                if !self.eat(b',') && self.at() != Some(b'}') {
-                    return None;
-                }
-                continue;
-            };
-            let value_at = self.i;
-            if lift_body && key == "body" && self.eat(b':') && self.eat_peek(b'{') {
-                out.extend(self.entries(false)?);
-            } else {
-                self.i = value_at;
-                let value = if self.eat(b':') {
-                    self.value()
-                } else {
-                    self.lookup(&key)
-                };
-                let value = value.filter(|_| self.finished());
-                if value.is_none() {
-                    self.body_ref |= object_body_ref(self.text, self.consts, &key, value_at);
-                    self.i = value_at;
-                    self.skip_member();
-                }
-                out.push((key, value));
-            }
-            if !self.eat(b',') && self.at() != Some(b'}') {
-                return None;
+                break;
             }
         }
         Some(out)
+    }
+
+    /// One member; `Some(true)` when the skip budget ran out, `None` when the object is malformed.
+    fn member(&mut self, lift_body: bool, out: &mut Entries) -> Option<bool> {
+        let start = self.i;
+        let key = self.key().filter(|_| self.at() != Some(b'.'));
+        let Some(key) = key else {
+            self.i = start;
+            let kept = skip_member(self);
+            out.push(("...".to_owned(), None));
+            return member_end(self, kept);
+        };
+        let value_at = self.i;
+        if lift_body && key == "body" && self.eat(b':') && self.eat_peek(b'{') {
+            out.extend(self.entries(false)?);
+            return member_end(self, true);
+        }
+        self.i = value_at;
+        let value = if self.eat(b':') {
+            self.value()
+        } else {
+            self.lookup(&key)
+        };
+        let value = value.filter(|_| self.finished());
+        let unread = value.is_none();
+        let mut kept = true;
+        if unread {
+            self.body_ref |= object_body_ref(self.text, self.consts, &key, value_at);
+            self.i = value_at;
+            kept = skip_member(self);
+        }
+        out.push((key, value));
+        member_end(self, kept)
     }
 
     fn eat_peek(&mut self, c: u8) -> bool {
         self.ws();
         self.at() == Some(c)
     }
+}
 
-    /// Moves to the `,` or `}` that ends the member at `i`.
-    fn skip_member(&mut self) {
-        let (mut depth, mut quote) = (0usize, None);
-        while let Some(c) = self.at() {
-            let rest = &self.text.as_bytes()[self.i..]; // bytes: self.i may sit inside a multibyte char
-            match (quote, c) {
-                // An escape skips the next byte, but never past the end (a trailing `\` would leave i > len).
-                (Some(_), b'\\') => self.i = (self.i + 1).min(self.text.len() - 1),
-                (Some(q), c) if c == q => quote = None,
-                (Some(_), _) => {}
-                (None, b'\'' | b'"' | b'`') => quote = Some(c),
-                (None, b'/') if rest.starts_with(b"//") || rest.starts_with(b"/*") => {
-                    self.ws();
-                    continue;
-                }
-                (None, b'{' | b'[' | b'(') => depth += 1,
-                (None, b'}' | b']' | b')' | b',') if depth == 0 => return,
-                (None, b'}' | b']' | b')') => depth -= 1,
-                _ => {}
+/// Moves to the `,` or `}` that ends the member at `i`.
+/// `false` when the file's skip budget ran out: the rest of the object is a gap.
+fn skip_member(lit: &mut Lit) -> bool {
+    let (mut depth, mut quote) = (0usize, None);
+    while let Some(c) = lit.at() {
+        let Some(left) = lit.skipped.get().checked_sub(1) else {
+            return false;
+        };
+        lit.skipped.set(left);
+        let rest = &lit.text.as_bytes()[lit.i..]; // bytes: lit.i may sit inside a multibyte char
+        match (quote, c) {
+            // An escape skips the next byte, but never past the end (a trailing `\` would leave i > len).
+            (Some(_), b'\\') => lit.i = (lit.i + 1).min(lit.text.len() - 1),
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, b'\'' | b'"' | b'`') => quote = Some(c),
+            (None, b'/') if rest.starts_with(b"//") || rest.starts_with(b"/*") => {
+                lit.ws();
+                continue;
             }
-            self.i += 1;
+            (None, b'{' | b'[' | b'(') => depth += 1,
+            (None, b'}' | b']' | b')' | b',') if depth == 0 => return true,
+            (None, b'}' | b']' | b')') => depth -= 1,
+            _ => {}
         }
+        lit.i += 1;
     }
+    true
+}
+
+fn member_end(lit: &mut Lit, kept: bool) -> Option<bool> {
+    if !kept {
+        return Some(true);
+    }
+    (lit.eat(b',') || lit.at() == Some(b'}')).then_some(false)
 }
