@@ -75,12 +75,15 @@ use archguard_core::domain_model::{
     StateMachine, StateTransition, UseCase, UseCaseKind,
 };
 use archguard_flow_common::extract_ctx::{ExtractContext, domain_sources, with_root_config};
+use archguard_flow_common::lang_guard::{
+    calls_in, capitalize, created, exits, if_at, innermost_open, open_blocks,
+};
 use archguard_flow_common::lang_text::*;
 use archguard_flow_common::lang_ts_imports::{imports, skip_generics, string_literal};
 #[path = "domain_typescript_schema.rs"]
 mod schema;
 use members::{Kind, Member, field};
-use states::{Rules, Step, assignments, created, raise_calls};
+use states::{Rules, Step, assignments, new_type, raise_calls};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -520,7 +523,7 @@ impl Extractor {
                     let at = offset(s, first);
                     string_literal(&src.shown[at..at + first.len()])
                 } else {
-                    created(s, (body.0, pos), s[arg.0..arg.1].trim())
+                    created(s, (body.0, pos), s[arg.0..arg.1].trim(), new_type)
                 };
                 let Some(t) = found else {
                     let why = if call == EMIT {
@@ -815,45 +818,6 @@ fn use_case_kind(name: &str) -> UseCaseKind {
     } else {
         UseCaseKind::Handler
     }
-}
-
-fn capitalize(x: &str) -> String {
-    let mut c = x.chars();
-    c.next()
-        .map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
-}
-
-/// `Entity.m` for each `.m(` in `body` whose `m` one entity owns, plus
-/// (offset, message) for names several entities own.
-fn calls_in(
-    s: &str,
-    body: Span,
-    owners: &BTreeMap<&str, BTreeSet<&str>>,
-) -> (Vec<String>, Vec<(usize, String)>) {
-    let b = s.as_bytes();
-    let mut calls = BTreeSet::new();
-    let mut ambiguous = vec![];
-    for (pos, w) in idents(s, body.0, body.1) {
-        let dotted = prev_nonws(b, pos).is_some_and(|k| b[k] == b'.');
-        let call = next_nonws(b, pos + w.len()).is_some_and(|k| b[k] == b'(');
-        let Some(set) = owners.get(w).filter(|_| dotted && call) else {
-            continue;
-        };
-        let list: Vec<&str> = set.iter().copied().collect();
-        match list.as_slice() {
-            [one] => {
-                calls.insert(format!("{one}.{w}"));
-            }
-            _ => ambiguous.push((
-                pos,
-                format!(
-                    "call .{w}( matches methods of several entities ({}); not recorded.",
-                    list.join(", ")
-                ),
-            )),
-        }
-    }
-    (calls.into_iter().collect(), ambiguous)
 }
 
 /// Classes, enums, type aliases and Prisma models with their decorators.
@@ -1514,21 +1478,6 @@ mod states {
         }
     }
 
-    /// Offsets of the `{` still open at `to`, scanning from `from`.
-    fn open_blocks(b: &[u8], from: usize, to: usize) -> Vec<usize> {
-        let mut stack = vec![];
-        for (k, &c) in b.iter().enumerate().take(to).skip(from) {
-            match c {
-                b'{' => stack.push(k),
-                b'}' => {
-                    stack.pop();
-                }
-                _ => {}
-            }
-        }
-        stack
-    }
-
     /// What precedes the block or statement starting at `at`.
     fn head(s: &str, at: usize) -> Head {
         let b = s.as_bytes();
@@ -1559,47 +1508,6 @@ mod states {
             Head::If(c) => Some(c),
             _ => None,
         }
-    }
-
-    /// An `if` keyword at `k`: (condition, block or single statement).
-    fn if_at(s: &str, k: usize) -> Option<(Span, Span)> {
-        let b = s.as_bytes();
-        let keyword = b[k..].starts_with(b"if")
-            && (k == 0 || !is_id(b[k - 1]))
-            && !b.get(k + 2).is_some_and(|&c| is_id(c));
-        if !keyword {
-            return None;
-        }
-        let open = next_nonws(b, k + 2).filter(|&o| b[o] == b'(')?;
-        let close = matching(b, open)?;
-        let first = next_nonws(b, close + 1)?;
-        let end = if b[first] == b'{' {
-            matching(b, first)?
-        } else {
-            statement_end(b, first)?
-        };
-        Some(((open + 1, close), (first, end)))
-    }
-
-    /// `;` or a line break at depth 0 from `from`.
-    fn statement_end(b: &[u8], from: usize) -> Option<usize> {
-        let mut depth = 0i32;
-        for (k, &c) in b.iter().enumerate().skip(from) {
-            match c {
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => depth -= 1,
-                b';' | b'\n' if depth <= 0 => return Some(k),
-                _ => {}
-            }
-        }
-        None
-    }
-
-    /// True when `range` throws, returns or calls a method that only throws.
-    fn exits(s: &str, range: Span, helpers: &BTreeSet<&str>) -> bool {
-        idents(s, range.0, range.1)
-            .iter()
-            .any(|(_, w)| matches!(*w, "throw" | "return") || helpers.contains(w))
     }
 
     /// Assignments `this.field = …` at statement start in `body`:
@@ -1643,21 +1551,6 @@ mod states {
         starts.then_some(stmt)
     }
 
-    /// The innermost bracket still open at `to`, scanning from `from`.
-    fn innermost_open(b: &[u8], from: usize, to: usize) -> Option<usize> {
-        let mut stack = vec![];
-        for (k, &c) in b.iter().enumerate().take(to).skip(from) {
-            match c {
-                b'(' | b'[' | b'{' => stack.push(k),
-                b')' | b']' | b'}' => {
-                    stack.pop();
-                }
-                _ => {}
-            }
-        }
-        stack.pop()
-    }
-
     /// End of an assigned value: `;`, `,`, a closing bracket or a line break
     /// at depth 0.
     fn value_end(b: &[u8], from: usize, to: usize) -> usize {
@@ -1697,29 +1590,8 @@ mod states {
             .collect()
     }
 
-    /// The type created for a raise argument: `new X(…)`, or a variable
-    /// assigned one in `before` (the method text up to the call).
-    pub(super) fn created(s: &str, before: Span, arg: &str) -> Option<String> {
-        if let Some(t) = new_type(arg) {
-            return Some(t);
-        }
-        if arg.is_empty() || !arg.bytes().all(is_id) {
-            return None;
-        }
-        let b = s.as_bytes();
-        idents(s, before.0, before.1)
-            .into_iter()
-            .rev()
-            .filter(|x| x.1 == arg)
-            .find_map(|(p, w)| {
-                let eq = next_nonws(b, p + w.len())
-                    .filter(|&k| b[k] == b'=' && b.get(k + 1) != Some(&b'='))?;
-                new_type(&s[eq + 1..before.1])
-            })
-    }
-
     /// `new a.X<…>(` → `X`.
-    fn new_type(x: &str) -> Option<String> {
+    pub(super) fn new_type(x: &str) -> Option<String> {
         let rest = x.trim_start().strip_prefix("new")?;
         if !rest.starts_with(char::is_whitespace) {
             return None;

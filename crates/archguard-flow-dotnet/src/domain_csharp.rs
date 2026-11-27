@@ -64,8 +64,9 @@ use archguard_core::domain_model::{
 };
 use archguard_flow_clike::handlers::sends_in;
 use archguard_flow_common::extract_ctx::{ExtractContext, domain_sources, with_root_config};
+use archguard_flow_common::lang_guard::{calls_in, created, exits, open_blocks};
 use members::{field, generic_args, members};
-use states::{Rules, Step, assignments, created, raise_calls};
+use states::{Rules, Step, assignments, new_type, raise_calls};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use text::*;
@@ -578,7 +579,7 @@ impl Extractor {
         let mut events: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (name, body, ..) in ent.methods() {
             for (pos, arg) in raise_calls(s, body) {
-                let Some(t) = created(s, (body.0, pos), arg) else {
+                let Some(t) = created(s, (body.0, pos), arg, new_type) else {
                     let message = format!(
                         "{}.{name}: {RAISE_FUNCTION} argument is neither `new X(…)` nor a variable assigned one; the event is not read.",
                         ent.id
@@ -864,39 +865,6 @@ fn use_case_kind(name: &str) -> UseCaseKind {
     } else {
         UseCaseKind::Handler
     }
-}
-
-/// `Entity.M` for each `.M(` in `body` whose `M` one entity owns, plus
-/// (offset, message) for names several entities own.
-fn calls_in(
-    s: &str,
-    body: Span,
-    owners: &BTreeMap<&str, BTreeSet<&str>>,
-) -> (Vec<String>, Vec<(usize, String)>) {
-    let b = s.as_bytes();
-    let mut calls = BTreeSet::new();
-    let mut ambiguous = vec![];
-    for (pos, w) in idents(s, body.0, body.1) {
-        let dotted = prev_nonws(b, pos).is_some_and(|k| b[k] == b'.');
-        let call = next_nonws(b, pos + w.len()).is_some_and(|k| b[k] == b'(');
-        let Some(set) = owners.get(w).filter(|_| dotted && call) else {
-            continue;
-        };
-        let list: Vec<&str> = set.iter().copied().collect();
-        match list.as_slice() {
-            [one] => {
-                calls.insert(format!("{one}.{w}"));
-            }
-            _ => ambiguous.push((
-                pos,
-                format!(
-                    "call .{w}( matches methods of several entities ({}); not recorded.",
-                    list.join(", ")
-                ),
-            )),
-        }
-    }
-    (calls.into_iter().collect(), ambiguous)
 }
 
 /// Type declarations.
@@ -1399,21 +1367,6 @@ mod states {
         }
     }
 
-    /// Offsets of the `{` still open at `to`, scanning from `from`.
-    fn open_blocks(b: &[u8], from: usize, to: usize) -> Vec<usize> {
-        let mut stack = vec![];
-        for (k, &c) in b.iter().enumerate().take(to).skip(from) {
-            match c {
-                b'{' => stack.push(k),
-                b'}' => {
-                    stack.pop();
-                }
-                _ => {}
-            }
-        }
-        stack
-    }
-
     /// What precedes the block or statement starting at `at`.
     fn head(s: &str, at: usize) -> Head {
         let b = s.as_bytes();
@@ -1464,13 +1417,6 @@ mod states {
             first + s[first..].find(';')?
         };
         Some(((open + 1, close), (first, end)))
-    }
-
-    /// True when `range` throws, returns or calls a method that only throws.
-    fn exits(s: &str, range: Span, helpers: &BTreeSet<&str>) -> bool {
-        idents(s, range.0, range.1)
-            .iter()
-            .any(|(_, w)| matches!(*w, "throw" | "return") || helpers.contains(w))
     }
 
     /// Assignments `field = …` / `this.field = …` at statement start in `body`:
@@ -1543,28 +1489,7 @@ mod states {
             .collect()
     }
 
-    /// The type created for a raise argument: `new X(…)`, or a variable
-    /// assigned `new X(…)` in `before` (the method text up to the call).
-    pub(super) fn created(s: &str, before: Span, arg: &str) -> Option<String> {
-        if let Some(t) = new_type(arg) {
-            return Some(t);
-        }
-        if arg.is_empty() || !arg.bytes().all(is_id) {
-            return None;
-        }
-        let b = s.as_bytes();
-        idents(s, before.0, before.1)
-            .into_iter()
-            .rev()
-            .filter(|x| x.1 == arg)
-            .find_map(|(p, w)| {
-                let eq = next_nonws(b, p + w.len())
-                    .filter(|&k| b[k] == b'=' && b.get(k + 1) != Some(&b'='))?;
-                new_type(&s[eq + 1..before.1])
-            })
-    }
-
-    fn new_type(x: &str) -> Option<String> {
+    pub(super) fn new_type(x: &str) -> Option<String> {
         let rest = x.trim_start().strip_prefix("new")?;
         if !rest.starts_with(char::is_whitespace) {
             return None;
