@@ -76,6 +76,7 @@ fn client_calls_become_artifacts_and_lookalikes_do_not() {
         "index orders-v1 ts:shop []",
         "index os-v1 ts:search [opensearch]",
         "index partial-v1 ts:shop []",
+        "index sbomb-v1 ts:shop []",
         "index self-v1 ts:shop []",
         "index umlaut-v1 ts:shop []",
     ];
@@ -221,6 +222,20 @@ fn a_constant_referenced_many_times_is_a_gap_not_a_memory_bomb() {
     let a = named(&report, "bomb-v1");
     assert_eq!(a.detail.as_ref().unwrap().fields.len(), 1);
     let at = format!("shop/src/bomb.ts:{}: ", a.evidence[0].line.unwrap());
+    assert!(
+        gaps(&report)
+            .iter()
+            .any(|g| g.contains(&at) && g.contains("not read: settings")),
+        "{:?}",
+        gaps(&report)
+    );
+}
+
+#[test]
+fn a_long_string_constant_referenced_many_times_is_a_gap() {
+    let report = analyze();
+    let a = named(&report, "sbomb-v1");
+    let at = format!("shop/src/sbomb.ts:{}: ", a.evidence[0].line.unwrap());
     assert!(
         gaps(&report)
             .iter()
