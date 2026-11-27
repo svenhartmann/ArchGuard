@@ -80,6 +80,17 @@ jobs:
 
       # archguard-desktop links Slint, whose font lookup builds against the
       # system fontconfig via pkg-config (yeslogic-fontconfig-sys).
+      # The UI crate's generated app.rs needs ~9-10 GB per rustc; the runner has 16 GB. Swap keeps a
+      # parallel link from ending in a runner shutdown (exit 143), see the Clippy step.
+      - name: Enlarge swap
+        run: |
+          sudo swapoff -a
+          sudo fallocate -l 16G /swapfile-ci
+          sudo chmod 600 /swapfile-ci
+          sudo mkswap /swapfile-ci
+          sudo swapon /swapfile-ci
+          free -h
+
       - name: Install fontconfig headers for the desktop crate
         run: |
           sudo apt-get update
@@ -101,11 +112,11 @@ jobs:
 
       - name: Test slim
         if: matrix.part == 'test-slim'
-        run: cargo test --workspace --locked
+        run: cargo test -j 2 --workspace --locked
 
       - name: Test DB feature
         if: matrix.part == 'test-db'
-        run: cargo test --workspace --all-features --locked
+        run: cargo test -j 2 --workspace --all-features --locked
 
       - name: Install advisory checker
         if: matrix.part == 'test-db'
