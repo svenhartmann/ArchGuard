@@ -96,7 +96,7 @@ fn add_gap(flow: &mut UiFlow, file: &str, line: u32, message: String) {
 
 /// The `.cs` files that mention `Authorize` (by project-relative path) and the paths of all `.cs`
 /// files read; anything that cannot be read is a gap, a file that is not read has no check known.
-fn scan(ctx: &ExtractContext, flow: &mut UiFlow) -> (HashMap<String, Source>, HashSet<String>) {
+fn scan(ctx: &ExtractContext, flow: &mut UiFlow) -> (HashMap<String, Parsed>, HashSet<String>) {
     let roots = &ctx.config.project.source_roots;
     let (mut sources, mut scanned) = (HashMap::new(), HashSet::new());
     let walked = match walk(ctx.root) {
@@ -114,7 +114,8 @@ fn scan(ctx: &ExtractContext, flow: &mut UiFlow) -> (HashMap<String, Source>, Ha
             Ok(text) => {
                 scanned.insert(strip_root(rel, roots));
                 if text.contains("Authorize") {
-                    sources.insert(strip_root(rel, roots), Source::new(rel.clone(), &text));
+                    let src = Source::new(rel.clone(), &text);
+                    sources.insert(strip_root(rel, roots), Parsed::new(src));
                 }
             }
             Err(e) => add_gap(flow, rel, 0, e),
@@ -123,9 +124,67 @@ fn scan(ctx: &ExtractContext, flow: &mut UiFlow) -> (HashMap<String, Source>, Ha
     (sources, scanned)
 }
 
+/// A source with its declarations and line offsets, built once per file.
+pub(crate) struct Parsed {
+    src: Source,
+    decls: Vec<Decl>,
+    /// Index into `decls` of the first class of a name.
+    classes: HashMap<String, usize>,
+    /// Indices into `decls` of the methods of a name.
+    methods: HashMap<String, Vec<usize>>,
+    /// Offset of the start of every line.
+    lines: Vec<usize>,
+}
+
+impl Parsed {
+    pub(crate) fn new(src: Source) -> Self {
+        let decls = decls(&src, Dialect::CSharp);
+        let (mut classes, mut methods) = (HashMap::new(), HashMap::<String, Vec<usize>>::new());
+        for (i, d) in decls.iter().enumerate() {
+            if d.class {
+                classes.entry(d.name.clone()).or_insert(i);
+            } else {
+                methods.entry(d.name.clone()).or_default().push(i);
+            }
+        }
+        let starts = src.text.match_indices('\n').map(|(i, _)| i + 1);
+        let lines = std::iter::once(0).chain(starts).collect();
+        Self {
+            src,
+            decls,
+            classes,
+            methods,
+            lines,
+        }
+    }
+
+    fn class(&self, name: &str) -> Option<&Decl> {
+        self.classes.get(name).map(|&i| &self.decls[i])
+    }
+
+    /// The declaration of `m` in `class`: its parameter list lies in the span of the method,
+    /// which starts at its first attribute (a wrapped signature puts the list lines below).
+    fn method(&self, class: &Decl, m: &CallMethod) -> Option<&Decl> {
+        let span = m.line..=m.end_line.unwrap_or(m.line);
+        (self.methods.get(&m.name).into_iter().flatten())
+            .map(|&i| &self.decls[i])
+            .find(|d| {
+                d.open > class.open && d.open < class.end && span.contains(&self.src.line(d.open))
+            })
+    }
+
+    /// The text of the lines of `m`.
+    fn span(&self, m: &CallMethod) -> &str {
+        let first = (m.line as usize).saturating_sub(1);
+        let last = m.end_line.unwrap_or(m.line) as usize;
+        let at = |n: usize| self.lines.get(n).copied().unwrap_or(self.src.text.len());
+        &self.src.text[at(first)..at(last)]
+    }
+}
+
 pub(crate) struct World<'a> {
     analysis: &'a CallAnalysis,
-    sources: &'a HashMap<String, Source>,
+    sources: &'a HashMap<String, Parsed>,
     scanned: &'a HashSet<String>,
     classes: HashMap<&'a str, &'a CallClass>,
     methods: HashMap<&'a str, &'a CallMethod>,
@@ -138,7 +197,7 @@ pub(crate) struct World<'a> {
 impl<'a> World<'a> {
     pub(crate) fn new(
         analysis: &'a CallAnalysis,
-        sources: &'a HashMap<String, Source>,
+        sources: &'a HashMap<String, Parsed>,
         scanned: &'a HashSet<String>,
     ) -> Self {
         let mut w = World {
@@ -364,43 +423,25 @@ impl<'a> World<'a> {
             }
             return out;
         };
-        let all = decls(src, Dialect::CSharp);
         let authorize = |d: &Decl| {
             (d.attrs.iter()).any(|a| matches!(simple(&a.name), "Authorize" | "AuthorizeAttribute"))
         };
         // an inherited method is declared (and annotated) in its base class's file
         let declaring =
             (self.classes.get(m.class_id.as_str())).map_or(cls.name.as_str(), |c| c.name.as_str());
-        let class = all.iter().find(|d| d.class && d.name == simple(declaring));
-        let method = class.and_then(|c| {
-            (all.iter()).find(|d| {
-                !d.class
-                    && d.name == m.name
-                    && d.open > c.open
-                    && d.open < c.end
-                    // the span of the method starts at its first attribute: a wrapped
-                    // signature puts its parameter list lines below
-                    && (m.line..=m.end_line.unwrap_or(m.line)).contains(&src.line(d.open))
-            })
-        });
-        // shortcut: the attribute-position match covers the whole span of the method (a body
-        // is searched too), a lambda attribute `[Authorize]` in it counts; upgrade on a false gap
-        let span = (m.end_line.unwrap_or(m.line) + 1 - m.line) as usize;
-        let header: String = (src.text.split_inclusive('\n'))
-            .skip(m.line as usize - 1)
-            .take(span)
-            .collect();
+        let class = src.class(simple(declaring));
+        let method = class.and_then(|c| src.method(c, m));
         match (class, method) {
             (Some(c), Some(d)) => {
                 if authorize(d) || (m.class_id != handler_class && authorize(c)) {
-                    out.push((src.rel.clone(), m.line, target.to_owned(), NOT_ENFORCED.into()));
+                    out.push((src.src.rel.clone(), m.line, target.to_owned(), NOT_ENFORCED.into()));
                 }
             }
             // `decls` skips a non-public method without attributes: one that is not matched
             // is one without, unless its span names `Authorize` as an attribute.
-            (Some(_), None) if !names_authorize(&header) => {}
+            (Some(_), None) if !names_authorize(src.span(m)) => {}
             _ => self.gaps.push((
-                src.rel.clone(),
+                src.src.rel.clone(),
                 m.line,
                 format!(
                     "Check of `{target}` not read: its declaration could not be matched in a file that mentions `Authorize`, so a check there is unknown."
@@ -414,6 +455,8 @@ impl<'a> World<'a> {
 /// Whether `text` names `Authorize` in attribute position: `[Authorize`, `, Authorize`,
 /// `[Ns.Authorize`, optionally `AuthorizeAttribute`, followed by `(`, `]` or `,`. A name that
 /// only contains the word (`MyAuthorize`, `AuthorizeFilter`, `_authorizer`) does not.
+// shortcut: the whole span of a method is searched, so a lambda attribute `[Authorize]` or
+// `a, x.Authorize(` in a body counts; upgrade when it invents a gap in real code.
 fn names_authorize(text: &str) -> bool {
     text.match_indices("Authorize").any(|(i, _)| {
         let head = &text[..i];

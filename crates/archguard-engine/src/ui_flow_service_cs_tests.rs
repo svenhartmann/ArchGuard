@@ -270,7 +270,7 @@ fn a_wrapped_signature_of_the_house_formatter_is_matched() {
 
 /// `methods` annotated methods of one class in one file, every one read through `attributes`.
 fn read_all_attributes(methods: u32) -> std::time::Duration {
-    use crate::ui_flow_service_cs::World;
+    use crate::ui_flow_service_cs::{Parsed, World};
     use archguard_core::{CallAnalysis, CallClass, CallMethod};
     use archguard_flow_clike::source::Source;
     use std::collections::{HashMap, HashSet};
@@ -314,7 +314,10 @@ fn read_all_attributes(methods: u32) -> std::time::Duration {
             .collect(),
         ..CallAnalysis::default()
     };
-    let sources = HashMap::from([("Svc.cs".to_string(), Source::new("Svc.cs".into(), &text))]);
+    let sources = HashMap::from([(
+        "Svc.cs".to_string(),
+        Parsed::new(Source::new("Svc.cs".into(), &text)),
+    )]);
     let scanned = HashSet::from(["Svc.cs".to_string()]);
     let mut world = World::new(&analysis, &sources, &scanned);
     let start = std::time::Instant::now();
