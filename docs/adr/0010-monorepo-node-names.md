@@ -10,8 +10,8 @@ namespace (ARCHITECTURE.md Section 5.1), not after their directory. In a
 monorepo whose projects share a package, this merged the projects.
 
 Example: one customer project has four Azure Functions under `functions/*`, each with
-its own `pom.xml`, and all four declare `de.union.investment.ikonline`. The graph
-had one tree `de/union/investment/ikonline`. Three different
+its own `pom.xml`, and all four declare `de.example.app`. The graph
+had one tree `de/example/app`. Three different
 `common/LogHelper.java` files became one node, and so did eight other classes
 whose names occur in more than one function. Imports between them pointed
 to a package pseudo node. The service topology had found the four projects
@@ -47,7 +47,7 @@ correctly. When the desktop app zoomed into one service, it found no module
   needs a view of the whole repository in every place that names one file:
   the call analyses, performance, review and change context.
 - **Use the project names from the service topology** (for example
-  `ui-ikonline-cms-import`). Rejected. The topology parses every manifest
+  `ui-app-cms-import`). Rejected. The topology parses every manifest
   and Compose file, which is too slow to run on every graph build. The
   directory is also what the desktop app passes when it zooms into a service.
 - **Fix it only in the desktop app.** Not possible. The merged nodes already
