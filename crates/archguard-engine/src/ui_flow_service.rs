@@ -141,8 +141,21 @@ pub(crate) fn apply(ctx: &ExtractContext, flow: &mut UiFlow) {
     }
     let mut scratch = Out::scratch();
     let projects = read_projects(ctx.root, &mut scratch);
-    let descriptor =
-        walk(ctx.root).is_ok_and(|w| w.files.iter().any(|f| f.ends_with("ejb-jar.xml")));
+    // One walk for the descriptor and the jars. A failed walk is a note, not a gap: the
+    // reader that built the flow walked the same root and already set its gap; what is
+    // missing is why the weaker `@RolesAllowed` reading was used.
+    let files = walk(ctx.root).map(|w| w.files).unwrap_or_else(|e| {
+        flow.diagnostics.push(UiFlowDiagnostic {
+            file: ".".into(),
+            line: 0,
+            message: format!(
+                "ejb-jar.xml and the EJB jars were not looked for: the file walk failed ({e}); `@RolesAllowed` is read without them."
+            ),
+            severity: DiagnosticSeverity::Note,
+        });
+        vec![]
+    });
+    let descriptor = files.iter().any(|f| f.ends_with("ejb-jar.xml"));
     if !has_signs(&projects) && !descriptor {
         return;
     }
@@ -156,7 +169,7 @@ pub(crate) fn apply(ctx: &ExtractContext, flow: &mut UiFlow) {
         flow.diagnostics.push(not_read(&analysis));
         return;
     }
-    let mut world = World::new(ctx, &projects, &analysis, &mut scratch);
+    let mut world = World::new(ctx, &projects, &analysis, (&files, &mut scratch));
     world.gaps.extend(apps::failed_scopes(&analysis));
     let mut layers = Vec::new();
     for e in flow.endpoints.iter().filter(|e| handled(e)) {
@@ -307,7 +320,7 @@ impl<'a> World<'a> {
         ctx: &'a ExtractContext<'a>,
         projects: &'a BTreeMap<String, Project>,
         analysis: &'a CallAnalysis,
-        scratch: &mut Out,
+        (files, scratch): (&[String], &mut Out),
     ) -> Self {
         let index = Index::new(
             projects.values().flat_map(|p| &p.1),
@@ -332,11 +345,7 @@ impl<'a> World<'a> {
             sources.remove(key);
         }
         let dirs: Vec<&str> = projects.keys().map(String::as_str).collect();
-        let jars = ejb::Jars::read(
-            ctx.root,
-            &walk(ctx.root).map_or_else(|_| vec![], |w| w.files),
-            &dirs,
-        );
+        let jars = ejb::Jars::read(ctx.root, files, &dirs);
         let mut world = World {
             ctx,
             index,
