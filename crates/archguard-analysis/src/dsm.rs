@@ -102,46 +102,7 @@ fn condensation_groups(view: &Graph, sccs: &[Scc]) -> (Vec<Vec<NodeId>>, HashMap
 #[cfg(test)]
 mod tests {
     use super::*;
-    use archguard_core::{Edge, Node, NodeKind};
-
-    /// Hand-assembled graph: `nodes` gives names in *insertion* order
-    /// (id = position), `edges` references nodes by name.
-    fn graph(nodes: &[&str], edges: &[(&str, &str)]) -> Graph {
-        let id_of = |name: &str| -> NodeId {
-            NodeId(
-                nodes
-                    .iter()
-                    .position(|n| *n == name)
-                    .expect("test: edge endpoint must be a listed node") as u32,
-            )
-        };
-        Graph {
-            review_kpis: None,
-            semantic: None,
-            schema_version: 1,
-            root: "/abs".to_string(),
-            nodes: nodes
-                .iter()
-                .enumerate()
-                .map(|(i, n)| Node {
-                    id: NodeId(i as u32),
-                    name: (*n).to_string(),
-                    kind: NodeKind::File,
-                    parent: None,
-                    lang: None,
-                })
-                .collect(),
-            edges: edges
-                .iter()
-                .map(|(from, to)| Edge {
-                    from: id_of(from),
-                    to: id_of(to),
-                    refs: Vec::new(),
-                    count: None,
-                })
-                .collect(),
-        }
-    }
+    use crate::tests_helpers::graph;
 
     #[test]
     fn sinks_come_first_and_a_cycle_free_view_reports_no_cyclic_edge() {
