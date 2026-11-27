@@ -16,7 +16,7 @@
 //! A reached project method whose class is missing from the call model, and a
 //! method of a file that mentions `Authorize` whose declaration cannot be
 //! matched, leave a gap. Unresolved calls named `AuthorizeAsync` do too.
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 use archguard_core::{
     AccessState, CallAnalysis, CallClass, CallMethod, DiagnosticSeverity, EndpointAccess,
@@ -25,7 +25,7 @@ use archguard_core::{
 use archguard_extract::strip_root;
 use archguard_flow_clike::decl::{Decl, Dialect, decls};
 use archguard_flow_clike::source::Source;
-use archguard_flow_common::extract_ctx::{ExtractContext, read_source, walk};
+use archguard_flow_common::extract_ctx::{ExtractContext, gap, read_source, walk};
 
 const DEPTH: usize = 3;
 const MAX_LAYERS: usize = 40;
@@ -54,19 +54,8 @@ pub(crate) fn apply(ctx: &ExtractContext, flow: &mut UiFlow) {
     if !flow.endpoints.iter().any(handled) {
         return;
     }
-    // Only files that mention `Authorize` can carry a check; without one, no analysis.
     let roots = &ctx.config.project.source_roots;
-    let mut sources: HashMap<String, Source> = HashMap::new();
-    for rel in walk(ctx.root).map_or_else(|_| vec![], |w| w.files) {
-        if !rel.ends_with(".cs") {
-            continue;
-        }
-        if let Ok(text) = read_source(ctx.root, &rel)
-            && text.contains("Authorize")
-        {
-            sources.insert(strip_root(&rel, roots), Source::new(rel, &text));
-        }
-    }
+    let (sources, scanned) = scan(ctx, flow);
     if sources.is_empty() {
         return;
     }
@@ -84,24 +73,14 @@ pub(crate) fn apply(ctx: &ExtractContext, flow: &mut UiFlow) {
         });
         return;
     }
-    let mut world = World::new(&analysis, &sources);
+    let mut world = World::new(&analysis, &sources, &scanned);
     let mut layers = Vec::new();
     for e in flow.endpoints.iter().filter(|e| handled(e)) {
         let site = flow.handler_site(e).map(|s| (s.file.as_str(), s.line));
-        let mut found = world.endpoint(e, site, roots);
-        found.sort();
-        found.dedup();
-        found.truncate(MAX_LAYERS);
-        layers.extend(found);
+        layers.extend(world.endpoint(e, site, roots));
     }
     for (file, line, message) in world.gaps {
-        flow.complete = false;
-        flow.diagnostics.push(UiFlowDiagnostic {
-            file,
-            line,
-            message,
-            severity: DiagnosticSeverity::Gap,
-        });
+        add_gap(flow, &file, line, message);
     }
     flow.service_layers.extend(layers);
     flow.service_layers.sort();
@@ -110,9 +89,44 @@ pub(crate) fn apply(ctx: &ExtractContext, flow: &mut UiFlow) {
     flow.diagnostics.dedup();
 }
 
+fn add_gap(flow: &mut UiFlow, file: &str, line: u32, message: String) {
+    flow.complete = false;
+    gap(&mut flow.diagnostics, file, line, message);
+}
+
+/// The `.cs` files that mention `Authorize` (by project-relative path) and the paths of all `.cs`
+/// files read; anything that cannot be read is a gap, a file that is not read has no check known.
+fn scan(ctx: &ExtractContext, flow: &mut UiFlow) -> (HashMap<String, Source>, HashSet<String>) {
+    let roots = &ctx.config.project.source_roots;
+    let (mut sources, mut scanned) = (HashMap::new(), HashSet::new());
+    let walked = match walk(ctx.root) {
+        Ok(walked) => walked,
+        Err(e) => {
+            add_gap(flow, ".", 0, format!("Discovery settings not read: {e}"));
+            return (sources, scanned);
+        }
+    };
+    for e in walked.errors {
+        add_gap(flow, ".", 0, format!("Directory entry not read: {e}"));
+    }
+    for rel in walked.files.iter().filter(|r| r.ends_with(".cs")) {
+        match read_source(ctx.root, rel) {
+            Ok(text) => {
+                scanned.insert(strip_root(rel, roots));
+                if text.contains("Authorize") {
+                    sources.insert(strip_root(rel, roots), Source::new(rel.clone(), &text));
+                }
+            }
+            Err(e) => add_gap(flow, rel, 0, e),
+        }
+    }
+    (sources, scanned)
+}
+
 struct World<'a> {
     analysis: &'a CallAnalysis,
     sources: &'a HashMap<String, Source>,
+    scanned: &'a HashSet<String>,
     classes: HashMap<&'a str, &'a CallClass>,
     methods: HashMap<&'a str, &'a CallMethod>,
     by_class: HashMap<&'a str, Vec<&'a CallMethod>>,
@@ -122,10 +136,15 @@ struct World<'a> {
 }
 
 impl<'a> World<'a> {
-    fn new(analysis: &'a CallAnalysis, sources: &'a HashMap<String, Source>) -> Self {
+    fn new(
+        analysis: &'a CallAnalysis,
+        sources: &'a HashMap<String, Source>,
+        scanned: &'a HashSet<String>,
+    ) -> Self {
         let mut w = World {
             analysis,
             sources,
+            scanned,
             classes: (analysis.classes.iter())
                 .map(|c| (c.id.as_str(), c))
                 .collect(),
@@ -160,6 +179,13 @@ impl<'a> World<'a> {
         roots: &[String],
     ) -> Vec<ServiceLayer> {
         let Some(handler) = self.handler(e, site, roots) else {
+            let message = format!(
+                "Checks below `{} {}` not read: its handler `{}` is not matched to one method of the call model.",
+                e.method,
+                e.path,
+                e.handler.as_deref().unwrap_or("?")
+            );
+            self.gaps.push((e.file.clone(), e.line, message));
             return vec![];
         };
         let mut found: Vec<Found> = vec![];
@@ -185,6 +211,18 @@ impl<'a> World<'a> {
                     self.enqueue(m, depth + 1, &mut seen, &mut queue);
                 }
             }
+        }
+        found.sort();
+        found.dedup();
+        if found.len() > MAX_LAYERS {
+            let message = format!(
+                "Checks below `{} {}`: {} found, only the first {MAX_LAYERS} are listed.",
+                e.method,
+                e.path,
+                found.len()
+            );
+            self.gaps.push((e.file.clone(), e.line, message));
+            found.truncate(MAX_LAYERS);
         }
         (found.into_iter())
             .map(|(file, line, target, note)| ServiceLayer {
@@ -317,6 +355,13 @@ impl<'a> World<'a> {
     ) -> Vec<Found> {
         let mut out = vec![];
         let Some(src) = self.sources.get(&m.file) else {
+            // a file without `Authorize` has no check; one never read is unknown
+            if !self.scanned.contains(&m.file) {
+                let message = format!(
+                    "Check of `{target}` not read: its file was not read, so a check there is unknown."
+                );
+                self.gaps.push((m.file.clone(), m.line, message));
+            }
             return out;
         };
         let all = decls(src, Dialect::CSharp);
@@ -333,21 +378,27 @@ impl<'a> World<'a> {
                     && d.name == m.name
                     && d.open > c.open
                     && d.open < c.end
-                    && src.line(d.open).abs_diff(m.line) <= 1
+                    // the span of the method starts at its first attribute: a wrapped
+                    // signature puts its parameter list lines below
+                    && (m.line..=m.end_line.unwrap_or(m.line)).contains(&src.line(d.open))
             })
         });
-        let above = (m.line as usize).saturating_sub(4);
-        let near_authorize =
-            (src.text.lines().skip(above).take(4)).any(|l| l.contains("Authorize"));
+        // shortcut: the attribute-position match covers the whole span of the method (a body
+        // is searched too), a lambda attribute `[Authorize]` in it counts; upgrade on a false gap
+        let span = (m.end_line.unwrap_or(m.line) + 1 - m.line) as usize;
+        let header: String = (src.text.split_inclusive('\n'))
+            .skip(m.line as usize - 1)
+            .take(span)
+            .collect();
         match (class, method) {
             (Some(c), Some(d)) => {
                 if authorize(d) || (m.class_id != handler_class && authorize(c)) {
                     out.push((src.rel.clone(), m.line, target.to_owned(), NOT_ENFORCED.into()));
                 }
             }
-            // `decls` skips a method without attributes: a method that is not matched
-            // is one without, unless the lines above it mention `Authorize`.
-            (Some(_), None) if !near_authorize => {}
+            // `decls` skips a non-public method without attributes: one that is not matched
+            // is one without, unless its span names `Authorize` as an attribute.
+            (Some(_), None) if !names_authorize(&header) => {}
             _ => self.gaps.push((
                 src.rel.clone(),
                 m.line,
@@ -358,4 +409,21 @@ impl<'a> World<'a> {
         }
         out
     }
+}
+
+/// Whether `text` names `Authorize` in attribute position: `[Authorize`, `, Authorize`,
+/// `[Ns.Authorize`, optionally `AuthorizeAttribute`, followed by `(`, `]` or `,`. A name that
+/// only contains the word (`MyAuthorize`, `AuthorizeFilter`, `_authorizer`) does not.
+fn names_authorize(text: &str) -> bool {
+    text.match_indices("Authorize").any(|(i, _)| {
+        let head = &text[..i];
+        let head = if head.ends_with('.') {
+            head.trim_end_matches(|c: char| c.is_alphanumeric() || c == '_' || c == '.')
+        } else {
+            head
+        };
+        let rest = &text[i + "Authorize".len()..];
+        let rest = rest.strip_prefix("Attribute").unwrap_or(rest);
+        head.trim_end().ends_with(['[', ',']) && rest.trim_start().starts_with(['(', ']', ','])
+    })
 }
