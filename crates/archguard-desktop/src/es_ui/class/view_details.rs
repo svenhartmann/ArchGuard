@@ -136,6 +136,7 @@ fn focus(f: &FieldDetails) -> EsDetailFocus {
         search_chain,
         norm_name,
         norm_chain,
+        params: pairs(&f.params),
         hint: f.hint.as_ref().map(hint).unwrap_or_default(),
     }
 }

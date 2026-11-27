@@ -7,6 +7,7 @@ use archguard_core::{SearchAnalysis, SearchField, SearchIndexDetail};
 use archguard_terraform::hcl::attr;
 use hcl_edit::expr::Expression;
 use hcl_edit::structure::Body;
+use std::collections::BTreeMap;
 
 /// Scalar and set attributes of provider elasticstack v0.11.13 that are index settings:
 /// the documented ones minus name, alias, mappings, deletion_protection, master_timeout,
@@ -83,13 +84,48 @@ fn setting(e: &Expression, ctx: Option<&Scope>) -> Option<String> {
     }
 }
 
+/// Vector field types, from the Elasticsearch reference "Field data types"
+/// (https://www.elastic.co/docs/reference/elasticsearch/mapping-reference/field-data-types).
+const VECTOR_TYPES: &[&str] = &[
+    "dense_vector",
+    "sparse_vector",
+    "semantic_text",
+    "rank_vectors",
+];
+const NOT_PARAMS: &[&str] = &[
+    "type",
+    "fields",
+    "properties",
+    "analyzer",
+    "search_analyzer",
+    "normalizer",
+];
+
+fn vector_params(kind: &str, def: &Json) -> BTreeMap<String, String> {
+    let Json::Obj(o) = def else {
+        return Default::default();
+    };
+    if !VECTOR_TYPES.contains(&kind) {
+        return Default::default();
+    }
+    o.iter()
+        .filter(|(k, _)| !NOT_PARAMS.contains(&k.as_str()))
+        .map(|(k, v)| match v {
+            Json::Str(s) => (k.clone(), s.clone()),
+            other => (k.clone(), other.clone().sorted().compact()),
+        })
+        .collect()
+}
+
 pub(super) fn fields(props: &Json, prefix: &str, out: &mut Vec<SearchField>) {
     let Json::Obj(props) = props else { return };
     for (name, def) in props {
         let path = format!("{prefix}{name}");
+        let kind = def.str("type").unwrap_or_else(|| "object".into());
         out.push(SearchField {
             path: path.clone(),
-            kind: def.str("type").unwrap_or_else(|| "object".into()),
+            params: vector_params(&kind, def),
+            kind,
             analyzer: def.str("analyzer"),
             search_analyzer: def.str("search_analyzer"),
             normalizer: def.str("normalizer"),

@@ -322,6 +322,7 @@ impl FileScan<'_, '_> {
             analyzer: self.text(args, "analyzer"),
             search_analyzer: self.text(args, "searchAnalyzer"),
             normalizer: self.text(args, "normalizer"),
+            ..Default::default()
         };
         let named = field.analyzer.is_some()
             || field.search_analyzer.is_some()

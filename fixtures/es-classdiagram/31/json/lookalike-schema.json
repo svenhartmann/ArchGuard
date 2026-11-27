@@ -1,0 +1,1 @@
+{ "properties": { "embedding": { "type": "string", "dims": 3 } } }

@@ -45,7 +45,7 @@ impl Json {
     }
 
     /// Object keys in byte order at every level, as Terraform's `jsonencode` writes them.
-    fn sorted(self) -> Json {
+    pub(super) fn sorted(self) -> Json {
         match self {
             Json::Obj(mut o) => {
                 o.sort_by(|a, b| a.0.cmp(&b.0));
