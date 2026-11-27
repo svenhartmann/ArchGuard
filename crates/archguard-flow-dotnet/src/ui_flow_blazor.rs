@@ -178,7 +178,7 @@ fn load(root: &Path, files: &Files, flow: &mut UiFlow) -> Vec<Component> {
             imports.insert(dir.to_string(), (rel.clone(), razor(text)));
         }
     }
-    let derived = attributes::derived_attributes(root, files);
+    let derived = attributes::derived_attributes(root, files, flow);
     for rel in &files.razor {
         if rel.rsplit('/').next() == Some("_Imports.razor") {
             continue;
@@ -474,10 +474,14 @@ mod attributes {
     /// A chain that leaves the scanned files through any unresolved base (except
     /// the plain `Attribute`), or exceeds the depth bound, is included too:
     /// unknown, never "not authorize".
-    pub(super) fn derived_attributes(root: &Path, files: &Files) -> BTreeSet<String> {
+    pub(super) fn derived_attributes(
+        root: &Path,
+        files: &Files,
+        flow: &mut UiFlow,
+    ) -> BTreeSet<String> {
         let mut bases: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for rel in files.cs.iter().chain(&files.code_behind) {
-            let Ok(text) = read_text(root, rel, MAX_BYTES) else {
+            let Some(text) = super::read(root, rel, flow) else {
                 continue;
             };
             let src = Source::new(rel.clone(), &text);
