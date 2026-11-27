@@ -425,3 +425,46 @@ fn many_references_to_a_huge_constant_share_one_budget_per_file() {
         "{small:?} -> {large:?}"
     );
 }
+
+#[test]
+fn an_exhausted_file_budget_keeps_later_calls_literal_names() {
+    let root = std::env::temp_dir().join(format!("archguard-26-budget-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let mut text = "import { Client } from '@elastic/elasticsearch';\n".to_owned()
+        + "const client = new Client({ node: 'http://localhost:9200' });\n"
+        + &format!("const BIG = [{}];\n", "0,".repeat(49_500));
+    for i in 0..5 {
+        text += &format!("client.indices.create({{ index: 'b{i}', settings: BIG }});\n");
+    }
+    std::fs::write(root.join("a.ts"), text).unwrap();
+    let mut report = ServiceTopology::default();
+    let discovery = Discovery::new(&root, &mut report).expect("discovery");
+    let read = |_: &Path, p: &Path| std::fs::read_to_string(p).ok();
+    archguard_search::analyze(&root, &discovery, &read, &mut report);
+    std::fs::remove_dir_all(&root).unwrap();
+    let names: Vec<_> = ts(&report).iter().filter_map(|a| a.name.clone()).collect();
+    assert_eq!(names, ["b0", "b1", "b2", "b3", "b4"], "{:?}", gaps(&report));
+    let all = gaps(&report);
+    assert!(
+        !all.iter()
+            .any(|g| g.contains("Index name is not a literal")),
+        "{all:?}"
+    );
+    assert!(
+        all.iter().any(|g| g.contains("not read: settings")),
+        "{all:?}"
+    );
+}
+
+#[test]
+fn an_unowned_let_body_constant_is_a_gap_at_its_call() {
+    let report = analyze();
+    assert!(
+        gaps(&report)
+            .iter()
+            .any(|g| g.contains("shop/src/probe_const_body.ts:7: ")),
+        "{:?}",
+        gaps(&report)
+    );
+}
