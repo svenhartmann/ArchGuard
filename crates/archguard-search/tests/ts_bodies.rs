@@ -468,3 +468,38 @@ fn an_unowned_let_body_constant_is_a_gap_at_its_call() {
         gaps(&report)
     );
 }
+
+fn time_of_nested(depth: usize) -> std::time::Duration {
+    let root =
+        std::env::temp_dir().join(format!("archguard-26-nest-{depth}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let mut text = "import { Client } from '@elastic/elasticsearch';\nconst client = new Client({ node: 'http://localhost:9200' });\n".to_owned();
+    text += &"client.indices.create({ index: 'n', x: ".repeat(depth);
+    text += "1";
+    text += &" });".repeat(depth);
+    std::fs::write(root.join("a.ts"), text).unwrap();
+    let best = (0..3)
+        .map(|_| {
+            let mut report = ServiceTopology::default();
+            let discovery = Discovery::new(&root, &mut report).expect("discovery");
+            let read = |_: &Path, p: &Path| std::fs::read_to_string(p).ok();
+            let start = std::time::Instant::now();
+            archguard_search::analyze(&root, &discovery, &read, &mut report);
+            start.elapsed()
+        })
+        .min()
+        .unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    best
+}
+
+#[test]
+fn nested_client_calls_do_not_scan_quadratically() {
+    let (small, large) = (time_of_nested(2_000), time_of_nested(8_000));
+    // 4x the depth: linear is about 4x, quadratic about 16x.
+    assert!(
+        large < small * 9 + std::time::Duration::from_millis(50),
+        "{small:?} -> {large:?}"
+    );
+}
