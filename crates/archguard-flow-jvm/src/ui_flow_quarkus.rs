@@ -38,7 +38,7 @@ use archguard_core::{
 };
 use archguard_flow_clike::decl::{Attr, Decl, Dialect, class_header, decls, each_method};
 use archguard_flow_clike::lex::{self, literal, literals, named, positional, split_top};
-use archguard_flow_clike::quarkus_build::quarkus_build;
+use archguard_flow_clike::quarkus_build::{quarkus_build, read_builds};
 use archguard_flow_clike::source::Source;
 use archguard_flow_clike::supertypes::{jdk_type, names_interface};
 use archguard_flow_common::extract_ctx::{
@@ -130,28 +130,23 @@ fn scan(root: &Path, files: Vec<String>, out: &mut Out) {
         } else {
             format!("{dir}/x")
         };
-        let quarkus = ancestors(&probe).any(|d| quarkus_build(root, d));
+        let quarkus =
+            ancestors(&probe).any(|d| quarkus_build(root, d, &mut |f, m| out.gap(f, 0, m)));
         let props = Props::read(root, &project.configs, out);
-        protos.push((application, quarkus, server_build(root, dir), props));
+        let server = server_build(root, dir, out);
+        protos.push((application, quarkus, server, props));
     }
     emit(srcs, protos, out);
 }
 
 /// Whether the build file of `dir` itself depends on a Quarkus REST server
 /// (not only on a REST client).
-fn server_build(root: &Path, dir: &str) -> bool {
-    (BUILD_FILES.iter()).any(|b| {
-        let rel = if dir.is_empty() {
-            (*b).to_string()
-        } else {
-            format!("{dir}/{b}")
-        };
-        read_text(root, &rel, MAX_BYTES).is_ok_and(|t| {
-            let t = t
-                .replace("quarkus-rest-client", "")
-                .replace("quarkus-resteasy-client", "");
-            t.contains("quarkus-rest") || t.contains("quarkus-resteasy")
-        })
+fn server_build(root: &Path, dir: &str, out: &mut Out) -> bool {
+    (read_builds(root, dir, &mut |f, m| out.gap(f, 0, m)).iter()).any(|t| {
+        let t = t
+            .replace("quarkus-rest-client", "")
+            .replace("quarkus-resteasy-client", "");
+        t.contains("quarkus-rest") || t.contains("quarkus-resteasy")
     })
 }
 

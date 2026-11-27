@@ -818,7 +818,11 @@ impl<'a> World<'a> {
         if let Some(message) = forced {
             how = ServiceHow::Hint;
             soft.push(message);
-        } else if bean == Bean::Cdi && !quarkus_build(self.ctx.root, site.dir) {
+        } else if bean == Bean::Cdi
+            && !quarkus_build(self.ctx.root, site.dir, &mut |f, m| {
+                gaps.push((f.into(), 0, m))
+            })
+        {
             how = ServiceHow::Hint;
             soft.push(
                 "`@RolesAllowed` on a plain CDI bean is not specified outside EJB and Quarkus"

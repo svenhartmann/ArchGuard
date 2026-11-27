@@ -79,7 +79,7 @@ use archguard_flow_clike::decl::{
 };
 use archguard_flow_clike::handlers::{self, simple_type};
 use archguard_flow_clike::lex;
-use archguard_flow_clike::quarkus_build::{BUILD_FILES, MAX_BYTES};
+use archguard_flow_clike::quarkus_build::{BUILD_FILES, MAX_BYTES, read_builds};
 use archguard_flow_clike::source::{Source, statement_end};
 use archguard_flow_clike::supertypes::{jdk_type, names_interface};
 use archguard_flow_common::extract_ctx::{
@@ -116,12 +116,13 @@ pub(crate) fn extract_with(ctx: &ExtractContext, hook: Option<RouteHook>) -> UiF
         out.note(".", 0, message);
     }
     let (projects, pages, build_dirs) = read_all(ctx.root, &mut out);
-    let mut apps = spring::Apps::new(ctx.root, &build_dirs);
+    let mut apps = spring::Apps::new(ctx.root, &build_dirs, &mut out);
     let access = ctx.config.views.access.clone();
     let index = Index::new(projects.values().flat_map(|(_, s, _)| s), access);
     for (dir, (application, sources, quarkus)) in &projects {
         let first = out.0.endpoints.len();
-        aspnet::read(sources, &index, target_framework(ctx.root, dir), &mut out);
+        let framework = target_framework(ctx.root, dir, &mut out);
+        aspnet::read(sources, &index, framework, &mut out);
         let mut call_sites = HashMap::new();
         let routes = conventional::routes(sources, &index, &mut out);
         let conf = spring::Conf::read(sources, &index, *quarkus, &mut out);
@@ -189,9 +190,12 @@ mod projects {
     pub fn applications_of(
         root: &Path,
         projects: &BTreeMap<String, Project>,
+        out: &mut Out,
     ) -> BTreeMap<String, Vec<BTreeSet<String>>> {
         let build_dirs = discover(root, &mut Out::scratch()).0;
-        let modules = crate::ui_flow_apps::Modules::read(root, build_dirs.iter());
+        let modules = crate::ui_flow_apps::Modules::read(root, build_dirs.iter(), &mut |f, m| {
+            out.diag(f, 0, m)
+        });
         (projects.keys())
             .map(|dir| (dir.clone(), modules.applications(dir)))
             .collect()
@@ -209,11 +213,12 @@ mod projects {
         let (projects, files, cshtml) = discover(root, out);
         let mut pages: BTreeMap<String, Vec<Source>> = BTreeMap::new();
         for rel in cshtml {
-            if let Ok(text) = read_text(root, &rel, MAX_BYTES) {
-                pages
+            match read_text(root, &rel, MAX_BYTES) {
+                Ok(text) => pages
                     .entry(project_of(&rel, &projects))
                     .or_default()
-                    .push(Source::new(rel, &text));
+                    .push(Source::new(rel, &text)),
+                Err(e) => out.diag(&rel, 0, format!("Razor page not read (limit 1 MiB): {e}")),
             }
         }
         let mut by_project: BTreeMap<String, Project> = BTreeMap::new();
@@ -225,7 +230,7 @@ mod projects {
                         (
                             application(root, dir, &projects),
                             vec![],
-                            quarkus(root, dir),
+                            quarkus(root, dir, out),
                         )
                     })
                     .1
@@ -242,14 +247,9 @@ mod projects {
 
     /// Whether a build file of project directory `dir` names a Quarkus Spring
     /// compatibility extension (`quarkus-spring-web`, `quarkus-spring-security`).
-    fn quarkus(root: &Path, dir: &str) -> bool {
-        let build = |b: &str| match dir {
-            "" => b.to_string(),
-            _ => format!("{dir}/{b}"),
-        };
-        (BUILD_FILES.iter()).any(|b| {
-            read_text(root, &build(b), MAX_BYTES).is_ok_and(|t| t.contains("quarkus-spring-"))
-        })
+    fn quarkus(root: &Path, dir: &str, out: &mut Out) -> bool {
+        (read_builds(root, dir, &mut |f, m| out.diag(f, 0, m)).iter())
+            .any(|t| t.contains("quarkus-spring-"))
     }
 
     /// The project directory's name (the root's for a build file at the root);
@@ -301,8 +301,8 @@ pub use projects::{Project, applications_of, read_projects};
 
 /// The lowest major version of the project's `<TargetFramework(s)>` (`net10.0`
 /// is 10, `netcoreapp3.1` 3, `net48` 4); none without a `.csproj` or when a
-/// framework is unreadable.
-fn target_framework(root: &Path, dir: &str) -> Option<u32> {
+/// framework is unreadable (a gap).
+fn target_framework(root: &Path, dir: &str, out: &mut Out) -> Option<u32> {
     let mut names: Vec<String> = std::fs::read_dir(root.join(dir))
         .ok()?
         .filter_map(|e| Some(e.ok()?.file_name().to_string_lossy().into_owned()))
@@ -313,7 +313,17 @@ fn target_framework(root: &Path, dir: &str) -> Option<u32> {
         "" => names.first()?.clone(),
         _ => format!("{dir}/{}", names.first()?),
     };
-    let text = read_text(root, &rel, MAX_BYTES).ok()?;
+    let text = match read_text(root, &rel, MAX_BYTES) {
+        Ok(text) => text,
+        Err(e) => {
+            out.diag(
+                &rel,
+                0,
+                format!("Project file not read: {e}; its target framework is unknown."),
+            );
+            return None;
+        }
+    };
     let value = ["TargetFrameworks", "TargetFramework"]
         .iter()
         .find_map(|tag| {
@@ -4712,9 +4722,17 @@ pub mod spring {
         }
 
         impl Apps<'_> {
-            pub(in super::super) fn new(root: &Path, build_dirs: &BTreeSet<String>) -> Self {
+            pub(in super::super) fn new(
+                root: &Path,
+                build_dirs: &BTreeSet<String>,
+                out: &mut Out,
+            ) -> Self {
                 Apps {
-                    modules: crate::ui_flow_apps::Modules::read(root, build_dirs.iter()),
+                    modules: crate::ui_flow_apps::Modules::read(
+                        root,
+                        build_dirs.iter(),
+                        &mut |f, m| out.diag(f, 0, m),
+                    ),
                     cache: HashMap::new(),
                 }
             }

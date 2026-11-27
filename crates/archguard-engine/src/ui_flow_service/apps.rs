@@ -72,7 +72,7 @@ pub(super) fn read_apps<'a>(
     index: &Index,
     scratch: &mut Out,
 ) -> HashMap<&'a str, Vec<AppConf<'a>>> {
-    let apps = applications_of(ctx.root, projects);
+    let apps = applications_of(ctx.root, projects, scratch);
     let mut read: HashMap<(Vec<&str>, bool), (Conf, Advice)> = HashMap::new();
     let mut out: HashMap<&str, Vec<AppConf>> = HashMap::new();
     for (dir, (_, _, quarkus)) in projects {

@@ -25,6 +25,7 @@ use archguard_core::{
     AccessState, Condition, DiagnosticSeverity, EndpointAccess, UiFlow, UiFlowDiagnostic,
 };
 use archguard_flow_clike::decl::{Attr, Decl, Dialect, class_header, decls, each_method};
+use archguard_flow_clike::quarkus_build::read_builds;
 use archguard_flow_clike::source::Source;
 use archguard_flow_common::extract_ctx::with_root_config;
 use archguard_flow_common::extract_ctx::{
@@ -58,8 +59,18 @@ pub fn extract(root: &Path) -> UiFlow {
 
 pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     let mut flow = UiFlow::default();
-    let Ok(walk) = walk(ctx.root) else {
-        return flow;
+    let walk = match walk(ctx.root) {
+        Ok(walk) => walk,
+        Err(e) => {
+            gap(
+                &mut flow.diagnostics,
+                ".",
+                0,
+                format!("Discovery settings not read: {e}"),
+            );
+            finish(&mut flow);
+            return flow;
+        }
     };
     let (projects, sources, configs) = classify(&walk.files);
     let project_of = |rel: &str| {
@@ -84,7 +95,7 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
         }
     }
     for (dir, project) in &mut by_project {
-        project.read_build(ctx.root, dir);
+        project.read_build(ctx.root, dir, &mut flow.diagnostics);
     }
     for rel in configs {
         let Some(project) = by_project.get_mut(&project_of(rel)) else {
@@ -687,17 +698,8 @@ struct Project {
 type Decision = Result<AccessState, String>;
 
 impl Project {
-    fn read_build(&mut self, root: &Path, dir: &str) {
-        let build: String = (BUILD_FILES.iter())
-            .map(|name| {
-                let rel = if dir.is_empty() {
-                    (*name).into()
-                } else {
-                    format!("{dir}/{name}")
-                };
-                read_text(root, &rel, MAX_BYTES).unwrap_or_default()
-            })
-            .collect();
+    fn read_build(&mut self, root: &Path, dir: &str, out: &mut Vec<UiFlowDiagnostic>) {
+        let build = read_builds(root, dir, &mut |f, m| gap(out, f, 0, m)).concat();
         self.dependency = build.contains("micronaut-security");
         self.processor = build.contains("micronaut-security-processor")
             || build.contains("micronaut-security-annotations");
