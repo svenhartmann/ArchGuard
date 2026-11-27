@@ -1,7 +1,8 @@
 //! FOSElasticaBundle YAML (ticket 28). Rules: a YAML file is read when it mentions `fos_elastica`;
 //! only the root key `fos_elastica` counts (a nested one, `fos_elastica_x:` or `indexes:` elsewhere
 //! is none). Each `indexes.<key>` is an `index` named by a literal `index_name`, else by the key;
-//! `%env(…)%`, `%param%` and `${…}` are a gap and the index is left out. `settings` (with
+//! `%env(…)%`, `%param%` and `${…}` in the name, in `settings`/`properties` values, or a
+//! `settings`/`properties` that is no mapping are a gap and the index is left out. `settings` (with
 //! `index.analysis`) and `properties.<field>.{type, analyzer, search_analyzer, normalizer, fields,
 //! properties}` fill the detail like a JSON mapping; `persistence.driver/model` only appear in the
 //! evidence text. `indexes` that is no mapping and `when@<env>` blocks are a gap. `scope` = `fos:<folder>`, evidence = the key's line. A file that cannot be
@@ -84,7 +85,7 @@ fn read_file(ctx: &SearchContext, rel: &str, out: &mut ServiceTopology) {
     };
     for (key, entry) in indexes {
         let line = lines.get(key.as_str()).copied().or(indexes_line);
-        match name_of(key, entry) {
+        match name_of(key, entry).filter(|_| !has_variable(entry)) {
             Some(name) => out
                 .elasticsearch
                 .artifacts
@@ -164,6 +165,23 @@ fn key_lines(text: &str) -> (HashMap<&str, u32>, Option<u32>) {
         }
     }
     (map, indexes_line)
+}
+
+/// `settings` or `properties` that is no mapping, or any `%…%`/`${…}` string below them: the
+/// detail would be dropped or name an undeclared analyzer, so the index is a gap instead.
+fn has_variable(entry: &Value) -> bool {
+    fn var(v: &Value) -> bool {
+        match v {
+            Value::String(s) => s.contains('%') || s.contains("${"),
+            Value::Array(a) => a.iter().any(var),
+            Value::Object(m) => m.values().any(var),
+            _ => false,
+        }
+    }
+    ["settings", "properties"]
+        .iter()
+        .filter_map(|k| entry.get(k))
+        .any(|v| !v.is_object() || var(v))
 }
 
 /// The literal index name: `index_name` when given, else the key; `None` when it is not literal.
