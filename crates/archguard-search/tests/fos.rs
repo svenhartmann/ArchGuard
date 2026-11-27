@@ -136,7 +136,19 @@ fn env_and_parameter_names_and_unreadable_files_are_gaps() {
         .map(|d| format!("{}: {}", d.file, d.message))
         .collect();
     gaps.sort();
-    let [broken, env, param, mixed, nonmap, nonmap2, whenenv] = gaps.as_slice() else {
+    let [
+        broken,
+        env,
+        param,
+        mixed,
+        nonmap,
+        nonmap2,
+        p_idx,
+        a_idx,
+        s_idx,
+        whenenv,
+    ] = gaps.as_slice()
+    else {
         panic!("{gaps:?}")
     };
     assert!(broken.starts_with("broken/fos_elastica.yaml: Definition file could not be read"));
@@ -156,6 +168,13 @@ fn env_and_parameter_names_and_unreadable_files_are_gaps() {
         nonmap2.ends_with("Source line 5."),
         "the line is the one under fos_elastica, not doctrine: {nonmap2}"
     );
+    for (gap, line) in [(p_idx, 3), (a_idx, 6), (s_idx, 9)] {
+        assert!(
+            gap.starts_with("params/fos_elastica.yaml: Index name is not a literal")
+                && gap.ends_with(&format!("Source line {line}.")),
+            "a parameter in settings, properties or a value is a gap, not dropped: {gap}"
+        );
+    }
     assert!(
         whenenv.starts_with("whenenv/fos_elastica.yaml: Definition file could not be read"),
         "when@<env> blocks are not read, so they are a gap: {whenenv}"
