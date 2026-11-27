@@ -182,6 +182,25 @@ class LayoutTests(unittest.TestCase):
         self.assertIn('--wait', tail[1])
         self.assertEqual(tail[2][3], dmg)
 
+    def test_a_busy_dmg_image_is_retried_instead_of_failing_the_release(self):
+        # macOS runners: hdiutil create fails now and then with "Resource busy" (v0.3.5 release, x86_64).
+        calls, work = self.fake_tools()
+        recorded, failures = desktop.run, []
+
+        def busy_twice(*command, env=None):
+            if command[0] == 'hdiutil' and len(failures) < 2:
+                failures.append(command)
+                raise desktop.subprocess.CalledProcessError(1, [str(c) for c in command])
+            return recorded(*command, env=env)
+        desktop.run = busy_twice
+        sleeps = []
+        original_sleep, desktop.time.sleep = desktop.time.sleep, sleeps.append
+        self.addCleanup(setattr, desktop.time, 'sleep', original_sleep)
+        dmg = desktop.macos(self.binary, 'aarch64-apple-darwin', self.root / 'dist', work)[0]
+        self.assertTrue(Path(dmg).exists())
+        self.assertEqual(len(failures), 2)
+        self.assertEqual(len(sleeps), 2)
+
     def test_macos_notarization_without_identity_is_rejected(self):
         calls, work = self.fake_tools()
         with self.assertRaisesRegex(ValueError, 'Developer ID'):
