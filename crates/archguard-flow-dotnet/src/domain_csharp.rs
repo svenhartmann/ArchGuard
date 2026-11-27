@@ -1575,6 +1575,19 @@ mod states {
             .unwrap_or(rest.len());
         (end > 0).then(|| simple(&rest[..end]))
     }
+
+    #[cfg(test)]
+    mod statement_end_tests {
+        use super::*;
+
+        /// Pins today's semantics: C# has no line-break rule, the statement runs to `;`.
+        #[test]
+        fn line_break_does_not_end_an_unbraced_if_statement() {
+            let s = "if (x) a = 1\n b = 2;";
+            let (_, body) = if_at(s, 0).unwrap();
+            assert_eq!(&s[body.0..body.1], "a = 1\n b = 2");
+        }
+    }
 }
 
 /// Navigation in blanked source text, plus what only C# needs.

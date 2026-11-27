@@ -1959,6 +1959,19 @@ mod states {
         let call = rest[end..].trim_start().starts_with(['(', '<']);
         (call && !t.is_empty() && (new || t.starts_with(char::is_uppercase))).then_some(t)
     }
+
+    #[cfg(test)]
+    mod statement_end_tests {
+        use super::*;
+
+        /// Pins today's semantics: a line break ends an unbraced `if` statement.
+        #[test]
+        fn line_break_ends_an_unbraced_if_statement() {
+            let s = "if (x) a = 1\n b = 2;";
+            let (_, body) = if_at(s, 0).unwrap();
+            assert_eq!(&s[body.0..body.1], "a = 1");
+        }
+    }
 }
 
 mod rich {
