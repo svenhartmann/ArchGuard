@@ -1,7 +1,7 @@
 //! Detail model (index, building block, other), ticket 07. Reuses `index_page` for the overview,
 //! links, usage and the "not read" note; the analysis parts come from the engine.
 
-use archguard_engine::core::{SearchArtifact, SearchIndexDetail, ServiceTopology};
+use archguard_engine::core::{SearchArtifact, SearchField, SearchIndexDetail, ServiceTopology};
 use archguard_engine::{
     ChainRef, SearchAnalysisPart, SearchFieldRole, SearchGraph, SearchNode, search_analysis_parts,
     search_analysis_users, search_analyzer_difference, search_field_analyzers, search_field_depth,
@@ -70,6 +70,9 @@ pub struct FieldDetails {
     pub index: Option<FieldChain>,
     pub search: Option<FieldChain>,
     pub normalizer: Option<FieldChain>,
+    /// Vector parameters in key order; `semantic_text` without `inference_id` shows the default
+    /// endpoint (the default depends on the Elasticsearch version, so no id is invented).
+    pub params: Vec<(String, String)>,
     pub hint: Option<Hint>,
 }
 
@@ -126,6 +129,18 @@ pub fn details(t: &ServiceTopology, g: &SearchGraph, key: &Key) -> Details {
     found.unwrap_or_else(|| Details::Other(SvcSearchDetail::default()))
 }
 
+fn field_params(f: &SearchField) -> Vec<(String, String)> {
+    let mut p: Vec<_> = f
+        .params
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if f.kind == "semantic_text" && !f.params.contains_key("inference_id") {
+        p.insert(0, ("inference_id".into(), "default endpoint".into()));
+    }
+    p
+}
+
 /// The details of field `path` of the index (or template) node `owner`.
 pub fn field_details(
     t: &ServiceTopology,
@@ -160,6 +175,7 @@ pub fn field_details(
         index,
         search,
         normalizer: f.normalizer.as_deref().map(|n| chain("normalizer", n)),
+        params: field_params(f),
         hint: hints_of(d, path),
     })
 }

@@ -116,6 +116,10 @@ pub struct SearchField {
     pub search_analyzer: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub normalizer: Option<String>,
+    /// Vector fields only (`dense_vector`, `sparse_vector`, `semantic_text`, `rank_vectors`): every
+    /// other key of the definition, as written; objects and lists as compact JSON.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, String>,
 }
 
 /// One analysis component; `kind` is `analyzer`, `tokenizer`, `filter`,

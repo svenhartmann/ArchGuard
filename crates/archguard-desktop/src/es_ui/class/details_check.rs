@@ -312,3 +312,31 @@ fn opensearch_artifacts_show_the_product_in_the_head_scope() {
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn vector_fields_list_their_parameters_and_semantic_text_names_the_default_endpoint() {
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/es-classdiagram/31/terraform");
+    let t = analyze_services(&root).unwrap();
+    let g = search_graph(&t);
+    let at = |p: &str| {
+        field_details(&t, &g, node(&g, "index", "tf-vectors"), p)
+            .unwrap()
+            .params
+    };
+    assert_eq!(
+        at("embedding"),
+        [
+            s("dims", "384"),
+            s("element_type", "float"),
+            s(
+                "index_options",
+                r#"{"ef_construction":100,"m":16,"type":"bbq_hnsw"}"#
+            ),
+            s("similarity", "cosine"),
+        ]
+    );
+    assert_eq!(at("body"), [s("inference_id", "my-e5-endpoint")]);
+    assert_eq!(at("summary"), [s("inference_id", "default endpoint")]);
+    assert!(at("title").is_empty());
+}
