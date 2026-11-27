@@ -21,7 +21,7 @@ use super::json::search_definition;
 use crate::context::{SearchContext, SourceOutput};
 use crate::findings::{EsGap, es_gap};
 use archguard_core::{SearchArtifact, ServiceEvidence, ServiceTopology};
-use archguard_flow_common::support::{relative, test_path};
+use archguard_flow_common::support::{owners, relative, test_path};
 use serde_json::{Map, Number, Value};
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -129,7 +129,9 @@ pub(crate) fn extract_with(ctx: &SearchContext) -> SourceOutput {
         // "ts": the script rule of code.rs covers import/require for every script extension.
         if super::code::imports_client(&text, "ts") {
             let scope = package_scope(ctx, rel, &mut scopes);
-            FileScan::new(&text, rel, scope, &mut out).run();
+            let mut scan = FileScan::new(&text, rel, scope, &mut out);
+            scan.owned = !owners(ctx.topology, rel).is_empty();
+            scan.run();
         }
     }
     SourceOutput::from_scratch(out)
@@ -179,6 +181,8 @@ struct FileScan<'a> {
     newlines: Vec<usize>,
     code: Vec<bool>,
     consts: HashMap<String, Option<usize>>,
+    /// A service owns the file: string_bodies.rs already gaps its unreadable bodies.
+    owned: bool,
     out: &'a mut ServiceTopology,
 }
 
@@ -191,6 +195,7 @@ impl<'a> FileScan<'a> {
             newlines: text.match_indices('\n').map(|(i, _)| i).collect(),
             code: code_mask(text),
             consts: constants(text),
+            owned: false,
             out,
         }
     }
@@ -269,7 +274,11 @@ impl<'a> FileScan<'a> {
     fn attrs(&mut self, api: &Api, entries: Entries, address: &str) -> Map<String, Value> {
         let mut attrs = Map::new();
         for (key, value) in entries {
-            if !api.attrs.contains(&key.as_str()) && key != "..." {
+            // A Client 7 `body` that is no object literal comes back as None: a gap, not skipped.
+            let listed = api.attrs.contains(&key.as_str())
+                || key == "..."
+                || (key == "body" && value.is_none() && !self.owned);
+            if !listed {
                 continue;
             }
             match value {
