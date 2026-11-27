@@ -33,7 +33,8 @@ class ArchguardCallScanner {
     // actual call sites even when project dependencies are unavailable. The
     // public diagnostic sample stays small. Hitting this larger, bounded cap
     // still makes every call unresolved: omitted errors cannot prove a target.
-    static final int MAX_ERRORS = 200_000;
+    // Tests lower the cap with -Darchguard.maxErrors; reaching 200000 real errors takes javac minutes.
+    static final int MAX_ERRORS = Integer.getInteger("archguard.maxErrors", 200_000);
     static final class Source {
         final Path path;
         final String file, graphNode;

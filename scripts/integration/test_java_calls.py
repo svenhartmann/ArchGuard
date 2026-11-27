@@ -10,7 +10,7 @@ HELPER = Path(__file__).resolve().parents[2] / "crates/archguard-engine/src/Arch
 JAVAC_API = "jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED"
 
 
-def analyze(sources, max_calls=None):
+def analyze(sources, max_calls=None, max_errors=None):
     with tempfile.TemporaryDirectory(prefix="archguard-java-test-") as temp:
         root = Path(temp)
         empty = root / "empty"
@@ -23,7 +23,8 @@ def analyze(sources, max_calls=None):
             manifest.extend((str(path), name, name))
         manifest_path = root / "sources"
         manifest_path.write_text("\0".join(manifest) + "\0")
-        command = ["java", "-Xmx512m", "--add-exports", JAVAC_API, "--class-path", str(empty), str(HELPER), str(manifest_path), str(empty)]
+        cap = [] if max_errors is None else [f"-Darchguard.maxErrors={max_errors}"]
+        command = ["java", "-Xmx512m", *cap, "--add-exports", JAVAC_API, "--class-path", str(empty), str(HELPER), str(manifest_path), str(empty)]
         if max_calls is not None:
             context_path = root / "context"
             context_path.write_text("auto\0\0")
@@ -84,6 +85,7 @@ def test_call_budget_keeps_earliest_sites_from_every_file():
 
 
 def test_actual_diagnostic_cap_keeps_recovery_targets_unresolved():
+    # The real cap is 200000 (ee6a5f7a); the test lowers it so javac reaches it within seconds.
     result = analyze({
         "p/Broken.java": "package p; class Broken {\n"
         + "\n".join(f"Missing{i} field{i};" for i in range(10_010)) + "\n}",
@@ -96,7 +98,7 @@ class Factory {
     void create() { new Module(); new Module().choose(null); }
 }
 """,
-    })
+    }, max_errors=10_000)
     assert result["status"] == "partial"
     assert any("error limit reached" in message for message in result["diagnostics"])
     assert len(result["diagnostics"]) <= 20
