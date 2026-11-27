@@ -101,6 +101,14 @@ jobs:
       - name: Advisory check
         run: cargo audit --file Cargo.lock
 
+      - name: Install license gate
+        run: cargo install cargo-deny --version 0.22.1 --locked
+
+      - name: License gate
+        # Advisories stay on cargo-audit; deny covers licenses and registries
+        # from the committed Cargo.lock (deny.toml).
+        run: cargo deny check licenses sources
+
       - name: Install ripgrep for benchmark replays
         run: |
           sudo apt-get update
