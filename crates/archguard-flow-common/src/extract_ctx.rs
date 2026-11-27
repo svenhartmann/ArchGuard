@@ -220,14 +220,15 @@ pub fn cap(paths: &mut Vec<String>, max: usize) -> Option<String> {
 }
 
 /// A file below `root` as text: at most `max` bytes, decoded by
-/// [`decode_text`]. A file that cannot be decoded faithfully (invalid UTF-8,
-/// broken UTF-16) is an `InvalidData` error, so every caller's gap path
-/// reports it instead of reading replacement characters.
+/// [`decode_text`]. Invalid UTF-8 is read lossily (identifiers are usually
+/// ASCII and survive); bytes that give no text at all (broken UTF-16) are an
+/// `InvalidData` error, so every caller's gap path reports them.
+// shortcut: lossily decoded UTF-8 is read without a per-file diagnostic; upgrade when the
+// ctx gets a diagnostic channel at this call (read_text is a free function without one).
 pub fn read_text(root: &Path, rel: &str, max: u64) -> std::io::Result<String> {
     let bytes = read_repo_file(root, Path::new(rel), max)?;
     match decode_text(&bytes) {
-        Decoded::Clean(text) => Ok(text),
-        Decoded::Lossy(_) => Err(invalid("not valid UTF-8; decoding would lose characters")),
+        Decoded::Clean(text) | Decoded::Lossy(text) => Ok(text),
         Decoded::Unreadable => Err(invalid("UTF-16 with a broken byte sequence")),
     }
 }
