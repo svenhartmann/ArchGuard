@@ -42,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix='archguard-development-') as directory:
   while cursor is not None:
    page=call('development_guide',{'limit':20,'offset':cursor});routes+=page['items'];cursor=page['next_offset']
   guide['items']=routes
-  assert {r['view'] for r in guide['items']}=={'graph','dsm','calls','services','architecture','assessment','quality','security'}
+  assert {r['view'] for r in guide['items']}=={'graph','dsm','calls','services','architecture','assessment','quality','security','domain','screens'}
   for row in guide['items']:
    for route in row['tools']:
     assert route['name'] in names,route
