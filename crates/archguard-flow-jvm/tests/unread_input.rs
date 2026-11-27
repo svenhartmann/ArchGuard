@@ -41,7 +41,7 @@ fn micronaut_unreadable_build_file_is_a_gap() {
 
 #[test]
 fn micronaut_unreadable_discovery_settings_are_a_gap() {
-    let dir = tree(&[("archguard.toml", b"= not toml")]);
+    let dir = tree(&[("archguard.toml", b"[project]\nexclude = 1\n")]);
     assert_gap(&ui_flow_micronaut::extract(dir.path()), ".");
 }
 
