@@ -59,6 +59,7 @@ fn client_calls_become_artifacts_and_lookalikes_do_not() {
         })
         .collect();
     let want = [
+        "index bomb-v1 ts:shop []",
         "index calls-v1 ts:shop []",
         "index consts-v1 ts:shop []",
         "index deep-v1 ts:shop []",
@@ -202,6 +203,21 @@ fn non_ascii_text_in_a_skipped_member_is_a_gap_not_a_panic() {
     let a = named(&report, "umlaut-v1");
     assert_eq!(a.detail.as_ref().unwrap().fields.len(), 1);
     let at = format!("shop/src/nonascii.ts:{}: ", a.evidence[0].line.unwrap());
+    assert!(
+        gaps(&report)
+            .iter()
+            .any(|g| g.contains(&at) && g.contains("not read: settings")),
+        "{:?}",
+        gaps(&report)
+    );
+}
+
+#[test]
+fn a_constant_referenced_many_times_is_a_gap_not_a_memory_bomb() {
+    let report = analyze();
+    let a = named(&report, "bomb-v1");
+    assert_eq!(a.detail.as_ref().unwrap().fields.len(), 1);
+    let at = format!("shop/src/bomb.ts:{}: ", a.evidence[0].line.unwrap());
     assert!(
         gaps(&report)
             .iter()
