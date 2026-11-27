@@ -68,6 +68,7 @@ fn client_calls_become_artifacts_and_lookalikes_do_not() {
         "index consts-v1 ts:shop []",
         "index deep-v1 ts:shop []",
         "index esc-v1 ts:shop []",
+        "index exp-v1 ts:shop []",
         "index late-v1 ts:shop []",
         "index legacy-v1 ts:shop []",
         "component_template logs-base ts:shop []",
@@ -309,4 +310,17 @@ fn a_name_that_is_also_bound_in_a_function_is_a_gap_not_the_top_level_value() {
             gaps(&report)
         );
     }
+}
+
+#[test]
+fn an_exported_top_level_constant_is_not_shadowed_by_itself() {
+    let report = analyze();
+    let a = named(&report, "exp-v1");
+    let d = a.detail.as_ref().expect("detail");
+    assert_eq!(d.settings["number_of_shards"], "2");
+    assert!(
+        !gaps(&report).iter().any(|g| g.contains("exported.ts")),
+        "{:?}",
+        gaps(&report)
+    );
 }
