@@ -60,6 +60,8 @@ fn client_calls_become_artifacts_and_lookalikes_do_not() {
         .collect();
     let want = [
         "index asi-v1 ts:shop []",
+        "index body-call-v1 ts:shop []",
+        "index body-var-v1 ts:shop []",
         "index bomb-v1 ts:shop []",
         "index calls-v1 ts:shop []",
         "index consts-v1 ts:shop []",
@@ -233,4 +235,20 @@ fn constants_without_a_trailing_semicolon_resolve() {
     let report = analyze();
     let a = named(&report, "asi-v1");
     assert_eq!(fields(a), ["a:text:"]);
+}
+
+#[test]
+fn a_client_7_body_that_is_not_an_object_literal_is_a_gap() {
+    let report = analyze();
+    for name in ["body-var-v1", "body-call-v1"] {
+        let a = named(&report, name);
+        let at = format!("shop/src/bodyvar.ts:{}: ", a.evidence[0].line.unwrap());
+        assert!(
+            gaps(&report)
+                .iter()
+                .any(|g| g.contains(&at) && g.contains("not read: body")),
+            "{name}: {:?}",
+            gaps(&report)
+        );
+    }
 }
