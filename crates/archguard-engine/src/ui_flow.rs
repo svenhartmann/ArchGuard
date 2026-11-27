@@ -281,6 +281,7 @@ fn extract_all(ctx: &ExtractContext) -> UiFlow {
         merge_ui_flows(flow, extract(ctx))
     });
     crate::ui_flow_service::apply(ctx, &mut flow);
+    crate::ui_flow_service_cs::apply(ctx, &mut flow);
     flow
 }
 

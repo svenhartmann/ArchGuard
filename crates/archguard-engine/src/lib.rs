@@ -128,6 +128,9 @@ pub mod ui_flow_roles;
 #[cfg(test)]
 mod ui_flow_roles_tests;
 pub mod ui_flow_service;
+pub(crate) mod ui_flow_service_cs;
+#[cfg(test)]
+mod ui_flow_service_cs_tests;
 #[cfg(test)]
 mod ui_flow_service_tests;
 pub mod view_conventions;
