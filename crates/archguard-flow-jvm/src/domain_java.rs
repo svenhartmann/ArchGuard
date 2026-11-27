@@ -71,11 +71,11 @@ use archguard_core::domain_model::{
 use archguard_flow_clike::handlers::sends_in;
 use archguard_flow_common::extract_ctx::{ExtractContext, domain_sources, with_root_config};
 use archguard_flow_common::lang_guard::{
-    calls_in, capitalize, exits, if_at, innermost_open, open_blocks,
+    calls_in, capitalize, created, exits, if_at, innermost_open, open_blocks,
 };
 use archguard_flow_common::lang_text::*;
 use members::{Kind, Member, field, param_types};
-use states::{Rules, Step, assignments, created, raise_calls};
+use states::{Rules, Step, assignments, new_type, raise_calls};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -488,7 +488,7 @@ impl Extractor {
         let s = &src.text;
         for (_, name, _, body, _) in decl.methods() {
             for (pos, call, arg) in raise_calls(s, body) {
-                let Some(t) = created(s, (body.0, pos), arg) else {
+                let Some(t) = created(s, (body.0, pos), arg, new_type) else {
                     if call != "apply" {
                         let message = format!(
                             "{}.{name}: {call} argument is neither a constructor call nor a variable assigned one; the event is not read.",
@@ -1817,29 +1817,8 @@ mod states {
             .collect()
     }
 
-    /// The type created for a raise argument: `new X(…)`, Kotlin `X(…)`, or a
-    /// variable assigned one in `before` (the method text up to the call).
-    pub(super) fn created(s: &str, before: Span, arg: &str) -> Option<String> {
-        if let Some(t) = new_type(arg) {
-            return Some(t);
-        }
-        if arg.is_empty() || !arg.bytes().all(is_id) {
-            return None;
-        }
-        let b = s.as_bytes();
-        idents(s, before.0, before.1)
-            .into_iter()
-            .rev()
-            .filter(|x| x.1 == arg)
-            .find_map(|(p, w)| {
-                let eq = next_nonws(b, p + w.len())
-                    .filter(|&k| b[k] == b'=' && b.get(k + 1) != Some(&b'='))?;
-                new_type(&s[eq + 1..before.1])
-            })
-    }
-
     /// `new a.X<…>(` or a constructor call `a.X(` with an upper-case `X`.
-    fn new_type(x: &str) -> Option<String> {
+    pub(super) fn new_type(x: &str) -> Option<String> {
         let x = x.trim_start();
         let (rest, new) = match x.strip_prefix("new") {
             Some(r) if r.starts_with(char::is_whitespace) => (r.trim_start(), true),
