@@ -1,0 +1,22 @@
+# Static example only. No containers are started by archguard.
+services:
+  orders:
+    build: ./orders
+    environment:
+      DATABASE_URL: postgresql://app@postgres:5432/shop
+      REDIS_URL: redis://redis:6379/0
+    depends_on: [postgres, redis]
+  billing:
+    build: ./billing
+    environment:
+      DATABASE_URL: postgresql://app@postgres:5432/billing
+      MONGODB_URI: mongodb://mongo:27017/invoices
+    depends_on: [postgres, mongo]
+  postgres:
+    image: postgres:16
+  redis:
+    image: redis:7
+  mongo:
+    image: mongo:7
+  search:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0

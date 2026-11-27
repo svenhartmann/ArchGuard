@@ -8,9 +8,13 @@
 mod contracts;
 mod export;
 mod follow;
-mod layout;
-mod paths;
+pub(crate) mod layout;
+pub(crate) mod paths;
 mod patterns;
+pub(crate) mod search;
+#[cfg(test)]
+mod search_check;
+pub(crate) mod search_origin;
 mod sections;
 #[cfg(test)]
 mod sections_check;
@@ -18,7 +22,7 @@ mod state;
 mod sync;
 #[cfg(test)]
 mod tree_check;
-mod view;
+pub(crate) mod view;
 
 use std::path::Path;
 
@@ -62,6 +66,11 @@ fn wire_sections(ui: &AppWindow, d: &ServicesData, a: &Actions<ServicesState>) {
     d.on_select_contract(a.on(|s, _, i: i32| s.contracts.choose(index(i).unwrap_or(usize::MAX))));
     d.on_more_contracts(a.on0(|s, _| s.contracts.more()));
     d.on_more_contract_details(a.on0(|s, _| s.contracts.more_details()));
+    d.on_select_search(a.on(|s, _, i: i32| {
+        let len = s.topology().map_or(0, |t| t.elasticsearch.artifacts.len());
+        s.search.choose(index(i).unwrap_or(usize::MAX), len);
+    }));
+    d.on_more_search(a.on0(|s, _| s.search.more()));
     d.on_clear_pattern_highlight(a.on0(|s, ui| {
         s.patterns.highlighted = false;
         graph_ui::mark(ui, &[], &[]);
@@ -133,12 +142,13 @@ pub fn wire(ui: &AppWindow) {
     }));
     d.on_resized(a.on(|s, _, w: f32| s.viewport = w.floor().max(0.0)));
     wire_sections(ui, &d, &a);
-    // `ARCHGUARD_DESKTOP_SVC_OPEN=patterns,contracts` opens those sections
+    // `ARCHGUARD_DESKTOP_SVC_OPEN=patterns,contracts,search` opens those sections
     // for snapshot runs (Details itself opens by a click).
     #[cfg(feature = "snapshot")]
     if let Ok(open) = std::env::var("ARCHGUARD_DESKTOP_SVC_OPEN") {
         d.set_patterns_open(open.contains("patterns"));
         d.set_contracts_open(open.contains("contracts"));
+        d.set_search_open(open.contains("search"));
     }
     follow::wire();
 }
@@ -174,10 +184,11 @@ impl TabState for ServicesState {
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
         let (root, slot) = (data.root.to_path_buf(), Shared::<Topology>::active());
+        let set = crate::documents_set::active_set();
         let analysis = documents::with_store(|s| s.active()?.analysis.clone());
         let calls = Calls::of(data);
         move || {
-            let topology = tab_support::topology(&slot, &root);
+            let topology = tab_support::topology(&slot, &root, set.as_deref());
             let run = analysis
                 .as_ref()
                 .map(|a| (root.as_path(), &a.run, calls.get()));
@@ -195,6 +206,10 @@ pub fn push(ui: &AppWindow, s: &ServicesState) {
     m.patterns.simulated = simulated();
     m.patterns.highlighted &= !m.patterns.simulated;
     m.contracts = s.contracts.model();
+    m.search = s
+        .topology()
+        .map(|t| s.search.model(t, view::evidence))
+        .unwrap_or_default();
     d.set_model(m);
 }
 
@@ -213,9 +228,10 @@ pub fn export_data(ui: &AppWindow) -> Option<(crate::export::Snapshot, crate::ex
 
 /// `ARCHGUARD_DESKTOP_SVC_KIND=<index>`, `ARCHGUARD_DESKTOP_SVC_SERVICE=<name>`
 /// and `ARCHGUARD_DESKTOP_SVC_ROUTING=inout` set the view for snapshot runs;
-/// `ARCHGUARD_DESKTOP_SVC_PATTERN=<row>` and `ARCHGUARD_DESKTOP_SVC_CONTRACT=<row>`
-/// open a listed pattern assessment or API contract (its section opens
-/// with `ARCHGUARD_DESKTOP_SVC_OPEN`, see `wire`).
+/// `ARCHGUARD_DESKTOP_SVC_PATTERN=<row>`, `ARCHGUARD_DESKTOP_SVC_CONTRACT=<row>`
+/// and `ARCHGUARD_DESKTOP_SVC_SEARCH=<artifact>` open a listed pattern
+/// assessment, API contract or Elasticsearch artifact (its section opens
+/// with `ARCHGUARD_DESKTOP_SVC_OPEN=patterns,contracts,search`, see `wire`).
 #[cfg(feature = "snapshot")]
 fn snapshot_overrides(s: &mut ServicesState) {
     if let Some(k) = std::env::var("ARCHGUARD_DESKTOP_SVC_KIND")
@@ -243,6 +259,10 @@ fn snapshot_overrides(s: &mut ServicesState) {
     }
     if let Some(i) = row("ARCHGUARD_DESKTOP_SVC_CONTRACT") {
         s.contracts.choose(i);
+    }
+    if let Some(i) = row("ARCHGUARD_DESKTOP_SVC_SEARCH") {
+        let len = s.topology().map_or(0, |t| t.elasticsearch.artifacts.len());
+        s.search.choose(i, len);
     }
 }
 

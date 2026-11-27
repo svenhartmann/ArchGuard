@@ -1,0 +1,6 @@
+# Static example only. No containers are started by archguard.
+services:
+  writer-a:
+    build: ./writer-a
+  writer-b:
+    build: ./writer-b

@@ -1,0 +1,7 @@
+double s = 0;
+for (int i = 0; i < doc['n'].size(); i++) {
+  if (doc['n'].value > 1 && i > 0) {
+    s += 1;
+  }
+}
+return s;

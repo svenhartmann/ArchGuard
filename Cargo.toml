@@ -22,6 +22,8 @@ members = [
     "crates/archguard-mcp",
     "crates/archguard-report",
     "crates/archguard-store",
+    "crates/archguard-terraform",
+    "crates/archguard-search",
     "crates/archguard-update",
 ]
 

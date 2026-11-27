@@ -7,6 +7,7 @@ use std::path::Path;
 mod cpp_calls;
 mod kotlin_calls;
 mod memo;
+mod painless_calls;
 mod ruby_calls;
 mod scala_calls;
 mod swift_calls;
@@ -138,6 +139,10 @@ fn compute_calls(root: &Path, config: &Config) -> CallAnalysis {
             report,
         ));
     }
+    reports.push((
+        "painless",
+        painless_calls::analyze_painless_calls(root, config),
+    ));
     combine(reports)
 }
 
@@ -224,6 +229,7 @@ pub fn semantic_fingerprints(root: &Path, config: &Config) -> Vec<Result<[u8; 32
         crate::csharp_calls::csharp_calls_fingerprint(root, config),
         crate::typescript_calls::typescript_calls_fingerprint(root, config),
         crate::go_calls::go_calls_fingerprint(root, config),
+        painless_calls::painless_calls_fingerprint(root, config),
     ]
 }
 

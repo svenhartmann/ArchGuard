@@ -1,0 +1,189 @@
+// The class view's list (left column), ticket 10: search, kind choice and grouped rows.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { SearchField, FocusRing } from "widgets.slint";
+import { ComboBox } from "combo.slint";
+
+// `side` is the small right-aligned note of a row (the artifact kind in Analysis).
+export struct EsClassRow {
+    label: string,
+    side: string,
+    writes: int,
+    reads: int,
+    warn: bool,
+    selected: bool,
+    // Position in the flat list; the arrow keys step to the neighbours.
+    index: int,
+    // Top of the row in the scrolled content, computed in Rust with a 30 px group header and
+    // 26 px rows (the view follows the keyboard cursor with it).
+    y: length,
+}
+
+// title: 0 Services, 1 Indices (with `root`), 2 Aliases, 3 Templates, 4 Analysis, 5 Processing.
+export struct EsClassGroup {
+    title: int,
+    root: string,
+    rows: [EsClassRow],
+}
+
+component Pill inherits Rectangle {
+    in property <string> glyph;
+    in property <int> count;
+    in property <color> tint;
+    width: label.preferred-width + 10px;
+    height: label.preferred-height + 2px;
+    border-radius: self.height / 2;
+    background: tint.with-alpha(0.14);
+    label := Text {
+        text: root.glyph + " " + root.count;
+        color: root.tint;
+        font-size: Theme.font-micro;
+        font-weight: Theme.weight-strong;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+}
+
+export component EsClassList inherits Rectangle {
+    in property <[EsClassGroup]> groups;
+    in property <string> query;
+    in property <int> kind;
+    // Rows in all groups (the owner sets it), where the arrow keys stop.
+    in property <int> count;
+    out property <length> scroll-y: sv.content-y;
+    // 12 sets the glyphs of the two counters.
+    in property <string> write-glyph: "✎";
+    in property <string> read-glyph: "↓";
+    callback select(int);
+    callback search(string);
+    callback choose-kind(int);
+    property <int> cursor: -1;
+    property <[string]> kinds: [
+        @tr("All kinds"), @tr("Services"), @tr("Indices"), @tr("Aliases"),
+        @tr("Templates"), @tr("Analysis"), @tr("Processing"),
+    ];
+    width: 280px;
+    background: Theme.panel;
+    forward-focus: keys;
+
+    // Scroll the row at `y` (Rust-computed, 26 px high) into view, with its group header (30 px
+    // above it) when it is the group's first row.
+    function reveal(y: length, first: bool) {
+        if first && y - 30px < -sv.content-y { sv.content-y = -(y - 30px); }
+        else if y < -sv.content-y { sv.content-y = -y; }
+        else if y + 26px > -sv.content-y + sv.visible-height { sv.content-y = -(y + 26px - sv.visible-height); }
+    }
+
+    function step(to: int) {
+        root.cursor = max(0, min(root.count - 1, to));
+        root.select(root.cursor);
+    }
+
+    function title(g: EsClassGroup) -> string {
+        g.title == 0 ? @tr("Services")
+            : g.title == 1 ? (g.root != "" ? @tr("Indices · {0}", g.root) : @tr("Indices · not declared"))
+            : g.title == 2 ? @tr("Aliases")
+            : g.title == 3 ? @tr("Templates")
+            : g.title == 4 ? @tr("Analysis") : @tr("Processing")
+    }
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 6px;
+            SearchField {
+                placeholder: @tr("Search …");
+                text: root.query;
+                edited(t) => { root.search(t); }
+            }
+            ComboBox {
+                model: root.kinds;
+                current-index: root.kind;
+                selected(v) => { root.choose-kind(self.current-index); }
+            }
+        }
+        if root.groups.length == 0: Text {
+            text: @tr("No Elasticsearch artifacts in this project.");
+            color: Theme.muted;
+            font-size: Theme.font-small;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+        }
+        sv := ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                for g in root.groups: VerticalLayout {
+                    HorizontalLayout {
+                        height: 30px;
+                        // Clear of the scrollbar.
+                        padding-right: 22px;
+                        padding-top: 8px;
+                        padding-bottom: 4px;
+                        Text {
+                            text: root.title(g).to-uppercase();
+                            color: Theme.muted;
+                            font-size: Theme.font-heading;
+                            font-weight: Theme.weight-strong;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: g.rows.length;
+                            color: Theme.muted;
+                            font-size: Theme.font-heading;
+                        }
+                    }
+                    for r[i] in g.rows: Rectangle {
+                        height: 26px;
+                        property <bool> at: root.cursor == r.index;
+                        changed at => { if (self.at) { root.reveal(r.y, i == 0); } }
+                        property <bool> chosen: r.selected;
+                        changed chosen => { if (self.chosen) { root.cursor = r.index; } }
+                        init => { if (self.chosen) { root.cursor = r.index; } }
+                        background: r.selected ? Theme.package-selected : touch.has-hover ? Theme.panel-2 : transparent;
+                        Rectangle {
+                            x: 0;
+                            width: 3px;
+                            background: r.selected ? Theme.accent : transparent;
+                        }
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 6px;
+                            spacing: 4px;
+                            Text {
+                                text: (r.warn ? "⚠ " : "") + r.label;
+                                color: r.warn ? Theme.warning : Theme.text;
+                                font-size: Theme.font-body;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                            if r.side != "": Text {
+                                text: r.side;
+                                color: Theme.muted;
+                                font-size: Theme.font-caption;
+                                vertical-alignment: center;
+                            }
+                            if r.writes > 0: Pill { glyph: root.write-glyph; count: r.writes; tint: Theme.outgoing; y: (parent.height - self.height) / 2; }
+                            if r.reads > 0: Pill { glyph: root.read-glyph; count: r.reads; tint: Theme.incoming; y: (parent.height - self.height) / 2; }
+                        }
+                        touch := TouchArea {
+                            clicked => { root.cursor = r.index; root.select(r.index); keys.focus(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Up/Down step through the flat rows, 0 to count - 1.
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.DownArrow) { root.step(root.cursor + 1); return accept; }
+            if (event.text == Key.UpArrow) { root.step(root.cursor - 1); return accept; }
+            reject
+        }
+    }
+    FocusRing { has-focus: keys.has-focus; width: parent.width; height: parent.height; }
+}

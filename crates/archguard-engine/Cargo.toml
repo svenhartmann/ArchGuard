@@ -36,6 +36,8 @@ archguard-flow-rust = { path = "../archguard-flow-rust" }
 archguard-flow-common = { path = "../archguard-flow-common" }
 archguard-report = { path = "../archguard-report" }
 archguard-store = { path = "../archguard-store" }
+archguard-search = { path = "../archguard-search" }
+archguard-terraform = { path = "../archguard-terraform" }
 scip = "0.10.0"
 # Self-instrumentation (ADR 0004): spans at the pipeline phases, written as
 # OTLP JSON Lines only with ARCHGUARD_PROBE=1 (src/self_trace.rs).

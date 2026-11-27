@@ -344,7 +344,7 @@ pub fn place(sc: &Scope, s: &ServicesState, unmapped: &str) -> Placed {
 }
 
 /// `shorten(name, max(6, floor(labelWidth / 7.5)))`.
-fn shorten(text: &str, label_width: f32) -> String {
+pub(crate) fn shorten(text: &str, label_width: f32) -> String {
     let max = ((label_width / 7.5).floor() as usize).max(6);
     if text.chars().count() > max {
         text.chars().take(max - 1).chain(['…']).collect()
@@ -447,7 +447,7 @@ fn edges(sc: &Scope, s: &ServicesState, lay: &layout::Layout, deps: &[usize]) ->
     out
 }
 
-fn evidence(items: &[ServiceEvidence]) -> ModelRc<SvcEvidence> {
+pub(crate) fn evidence(items: &[ServiceEvidence]) -> ModelRc<SvcEvidence> {
     model(items.iter().map(|e| {
         let line = e.line.map_or(String::new(), |l| format!(":{l}"));
         let pointer = if e.pointer.is_empty() {

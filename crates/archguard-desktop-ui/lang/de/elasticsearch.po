@@ -1,0 +1,62 @@
+msgid "No Elasticsearch artifacts in this project."
+msgstr "Keine Elasticsearch-Artefakte in diesem Projekt."
+
+msgid "The service topology is unavailable."
+msgstr "Die Diensttopologie ist nicht verfügbar."
+
+msgid "Not declared in this project."
+msgstr "In diesem Projekt nicht deklariert."
+
+msgid "Mapping"
+msgstr "Mapping"
+
+msgid "Usage in code"
+msgstr "Nutzung im Code"
+
+msgid "Not read: the definition is not a literal."
+msgstr "Nicht gelesen: die Definition ist kein Literal."
+
+msgid "Field"
+msgstr "Feld"
+
+msgid "Type"
+msgstr "Typ"
+
+msgid "Show whole cluster"
+msgstr "Ganzes Cluster zeigen"
+
+msgid "Show neighbourhood"
+msgstr "Nachbarschaft zeigen"
+
+msgid "Analysis components"
+msgstr "Analyse-Bausteine"
+
+msgid "Multi-fields"
+msgstr "Multi-Fields"
+
+msgid "Collapse fields"
+msgstr "Felder einklappen"
+
+msgid "writes"
+msgstr "schreibt"
+
+msgid "reads"
+msgstr "liest"
+
+msgid "«uses» (analysis)"
+msgstr "«uses» (Analyse)"
+
+msgid "Alias ◇ index"
+msgstr "Alias ◇ Index"
+
+msgid "Template covers"
+msgstr "Template deckt ab"
+
+msgid "Pipeline / ILM"
+msgstr "Pipeline / ILM"
+
+msgid "Around {0} · direct neighbours + analysis components"
+msgstr "Ausschnitt um {0} · direkte Nachbarn + Analyse-Bausteine"
+
+msgid "Whole cluster · {0} elements"
+msgstr "Ganzes Cluster · {0} Elemente"

@@ -15,7 +15,8 @@ use archguard_engine::{Level, analyze_run_quiet, collect_review_sources, load_co
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::{Analysis, Loaded};
-use crate::documents::{self, DocId, Status, SubProject, with_store};
+use crate::documents::{self, DocId, Status, Store, SubProject, with_store};
+use crate::documents_set::{self, Target, target};
 use crate::graph_ui;
 use crate::panes::Layout;
 use crate::panes_ui;
@@ -41,6 +42,8 @@ pub fn wire(ui: &AppWindow) {
     crate::access_ui::wire(ui);
     crate::screens_ui::wire(ui);
     crate::domain_ui::wire(ui);
+    crate::es_ui::wire(ui);
+    crate::db_ui::wire(ui);
     quality_ui::wire(ui);
     security_ui::wire(ui);
     crate::export_ui::wire(ui);
@@ -93,17 +96,41 @@ pub fn index(i: i32) -> usize {
     usize::try_from(i).unwrap_or(usize::MAX)
 }
 
-/// Open `root` as the active document; analyse it if it is new.
-pub fn open(ui: &AppWindow, root: PathBuf) {
+/// Notice 16 reads "Could not open: …" (`ui/app.slint`).
+const OPEN_FAILED: i32 = 16;
+
+/// Open a project folder, or a project set file, as the active document;
+/// analyse it if it is new. A set file that is not valid is a notice.
+pub fn open(ui: &AppWindow, path: PathBuf) {
     crate::settings_view_ui::flush_typing();
-    let root = root.canonicalize().unwrap_or(root);
+    let target = match target(&path) {
+        Ok(t) => t,
+        Err(e) => {
+            ui.set_notice_kind(OPEN_FAILED);
+            ui.set_notice(e.into());
+            return;
+        }
+    };
     save_view(ui);
-    let (id, new) = with_store(|s| s.open(&root));
+    let (id, new, root, entry) = with_store(|s| match target {
+        Target::Folder(root) => {
+            let (id, new) = s.open(&root);
+            (id, new, root.clone(), root)
+        }
+        Target::Set {
+            file,
+            primary,
+            name,
+        } => {
+            let (id, new) = s.open_set(&file, &primary, &name);
+            (id, new, primary, file)
+        }
+    });
     if new {
-        seed_view(id, &root);
-        spawn_analysis(ui, id, root.clone());
+        seed_view(id, &entry);
+        spawn_analysis(ui, id, root);
     }
-    settings_file::edit(|s| s.add_recent(&root));
+    settings_file::edit(|s| s.add_recent(&entry));
     record_session();
     push_recent(ui);
     refresh(ui);
@@ -123,12 +150,17 @@ fn seed_view(id: DocId, root: &Path) {
     documents::set_state(id, layout);
 }
 
+/// The open documents as the session; a set is its file.
+fn session_of(s: &Store) -> Session {
+    Session {
+        documents: s.docs().iter().map(|d| d.entry().to_path_buf()).collect(),
+        active: s.active_index().unwrap_or(0),
+    }
+}
+
 /// Store the open documents as the session.
 fn record_session() {
-    let session = with_store(|s| Session {
-        documents: s.docs().iter().map(|d| d.root.clone()).collect(),
-        active: s.active_index().unwrap_or(0),
-    });
+    let session = with_store(|s| session_of(s));
     settings_file::update(|s| s.session = Some(session));
 }
 
@@ -205,6 +237,7 @@ fn pick_folder(ui: &AppWindow) {
 /// sub-projects. Blocking: runs on a worker thread.
 fn analyze(
     root: &Path,
+    set: Option<&Path>,
     topology: &Shared<Topology>,
 ) -> Result<(Analysis, Vec<SubProject>), String> {
     let loaded = load_config(None, root).map_err(|e| e.to_string())?;
@@ -215,9 +248,12 @@ fn analyze(
     let sources = collect_review_sources(root, &run.config, named, &run.config.review.git_since)
         .unwrap_or_default();
     // Read once per document; the Services tab reuses the same slot.
-    let projects = match &*tab_support::topology(topology, root) {
-        Ok(t) => documents::build_units(t),
-        Err(_) => Vec::new(),
+    let projects = match (&*tab_support::topology(topology, root, set), set) {
+        (Ok(_), Some(set)) => archguard_engine::read_project_set(set)
+            .map(|s| documents_set::members(&s.projects))
+            .unwrap_or_default(),
+        (Ok(t), None) => documents::build_units(t),
+        (Err(_), _) => Vec::new(),
     };
     let analysis = Analysis {
         root: root.to_path_buf(),
@@ -280,7 +316,8 @@ fn spawn_analysis(ui: &AppWindow, id: DocId, root: PathBuf) {
     let weak = ui.as_weak();
     let name = "desktop: analyze project";
     let at = root.clone();
-    let work = tab_support::traced(&at, name, move || analyze(&root, &topology));
+    let set = documents_set::active_set_of(id);
+    let work = tab_support::traced(&at, name, move || analyze(&root, set.as_deref(), &topology));
     std::thread::spawn(move || {
         // Taken first, so edits during the analysis count as changes.
         let baseline = reanalyze_ui::fingerprint(&at);
@@ -321,7 +358,7 @@ fn finished(ui: &AppWindow, id: DocId, run: u64, (result, baseline): Landing) {
 /// settings; `display` and `explorer_tab` are those of the Graph the view
 /// bar shows (each Graph tab keeps its own, see `pane_store`).
 pub fn save_view(_ui: &AppWindow) {
-    let Some(root) = with_store(|s| s.active().map(|d| d.root.clone())) else {
+    let Some(root) = with_store(|s| s.active().map(|d| d.entry().to_path_buf())) else {
         return;
     };
     let layout = panes_ui::layout();
@@ -419,6 +456,8 @@ fn show_tabs(ui: &AppWindow, data: &Loaded) {
     crate::access_ui::show(ui, data);
     crate::screens_ui::show(ui, data);
     crate::domain_ui::show(ui, data);
+    crate::es_ui::show(ui, data);
+    crate::db_ui::show(ui, data);
     quality_ui::show(ui, data);
     security_ui::show(ui, data);
     // Graph, Matrix and File tabs: their instances for the layout.
@@ -453,6 +492,81 @@ mod tests {
         assert_eq!(status, Some(Status::Failed("second".into())));
     }
 
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/es-set")
+            .join(name)
+            .canonicalize()
+            .expect("fixture")
+    }
+
+    #[test]
+    fn a_set_file_is_a_set_and_a_folder_a_folder() {
+        let (set, infra) = (fixture("search.archguard-set.toml"), fixture("infra"));
+        assert_eq!(target(&infra), Ok(Target::Folder(infra.clone())));
+        assert_eq!(
+            target(&set),
+            Ok(Target::Set {
+                file: set,
+                primary: infra,
+                name: "search".into()
+            })
+        );
+    }
+
+    #[test]
+    fn a_broken_set_file_is_an_error_text_not_a_crash() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let bad = dir.path().join("bad.archguard-set.toml");
+        std::fs::write(&bad, "projects = 3").expect("write");
+        let Err(text) = target(&bad) else {
+            panic!("expected an error");
+        };
+        assert!(!text.is_empty());
+        assert!(target(&dir.path().join("missing.archguard-set.toml")).is_err());
+    }
+
+    #[test]
+    fn the_analysis_of_a_set_lists_its_members_as_projects() {
+        let (set, infra) = (fixture("search.archguard-set.toml"), fixture("infra"));
+        let (_, projects) = analyze(&infra, Some(&set), &Shared::new()).expect("analysis");
+        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["infra", "adapter"]);
+        assert_eq!(
+            documents::project_root(&infra, &projects[1]),
+            fixture("adapter")
+        );
+    }
+
+    #[test]
+    fn the_session_and_recent_list_keep_the_set_file() {
+        let (set, infra) = (fixture("search.archguard-set.toml"), fixture("infra"));
+        let mut s = documents::Store::default();
+        s.open_set(&set, &infra, "search");
+        s.open(&infra);
+        let session = session_of(&s);
+        assert_eq!(session.documents, [set, infra]);
+        assert_eq!(session.active, 1);
+    }
+
+    /// A set file that cannot be opened must not say "Could not save the changes".
+    #[test]
+    fn an_open_error_has_its_own_notice_text() {
+        assert_ne!(OPEN_FAILED, 2, "2 is the save error");
+        let slint = include_str!("../../archguard-desktop-ui/ui/app.slint");
+        let line = format!(
+            "root.notice-kind == {OPEN_FAILED} {{ return @tr(\"Could not open: {{}}\", root.notice); }}"
+        );
+        assert!(slint.contains(&line), "{line}");
+    }
+
+    #[test]
+    fn the_open_error_notice_has_german_text() {
+        let de = crate::tab_support::texts_check::po_de();
+        let text = de.get("Could not open: {}").map_or("", String::as_str);
+        assert!(text.contains("{}") && !text.is_empty(), "{text:?}");
+    }
+
     #[test]
     fn an_analysis_error_stays_the_error() {
         let result: Result<(), String> = guarded(|| Err("no config".into()));
@@ -475,7 +589,7 @@ mod tests {
         };
         for _ in 0..2 {
             let run = Run::start(id);
-            let analysis = analyze(dir.path(), &Shared::new()).expect("analysis");
+            let analysis = analyze(dir.path(), None, &Shared::new()).expect("analysis");
             assert_eq!(Run::land(id, run, Ok(analysis)), Some(true));
             flow();
             flow();

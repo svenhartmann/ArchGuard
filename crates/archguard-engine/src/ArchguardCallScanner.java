@@ -33,7 +33,7 @@ class ArchguardCallScanner {
     // actual call sites even when project dependencies are unavailable. The
     // public diagnostic sample stays small. Hitting this larger, bounded cap
     // still makes every call unresolved: omitted errors cannot prove a target.
-    static final int MAX_ERRORS = 10_000;
+    static final int MAX_ERRORS = 200_000;
     static final class Source {
         final Path path;
         final String file, graphNode;
@@ -113,6 +113,14 @@ class ArchguardCallScanner {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) throw new IllegalStateException("A full JDK 17+ is required for Java call analysis");
         DiagnosticCollector<JavaFileObject> problems = new DiagnosticCollector<>();
+        // javac rejects --release above its own: analyse with the JDK's release instead.
+        int jdkRelease = Runtime.version().feature();
+        if (release > jdkRelease) {
+            partial = true;
+            diagnostics.add("The project declares Java release " + release + " but the installed JDK is " + jdkRelease
+                + "; analysed as release " + jdkRelease + ", so newer syntax may not parse.");
+            release = jdkRelease;
+        }
         // Count eligible call sites per source first. A single global cap would
         // otherwise stop at the budget in manifest order and leave later files
         // without any call evidence. The quota keeps the earliest sites of every

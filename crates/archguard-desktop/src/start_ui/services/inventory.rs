@@ -316,7 +316,7 @@ pub mod tests {
     }
 
     /// Azure Functions deploy themselves: a local Compose stack beside
-    /// them does not hide them (ElasticSearchIK); a plain library does.
+    /// them does not hide them (a customer project); a plain library does.
     #[test]
     fn function_apps_count_as_deployed() {
         let mut function = project("functions/search", "application");

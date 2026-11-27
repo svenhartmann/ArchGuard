@@ -379,7 +379,9 @@ dependencies = [
  "archguard-flow-server",
  "archguard-flow-web",
  "archguard-report",
+ "archguard-search",
  "archguard-store",
+ "archguard-terraform",
  "globset",
  "hcl-edit",
  "ignore",
@@ -546,12 +548,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "archguard-search"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-flow-common",
+ "archguard-terraform",
+ "hcl-edit",
+ "serde_json",
+ "serde_yaml_ng",
+ "tempfile",
+]
+
+[[package]]
 name = "archguard-store"
 version = "0.3.5"
 dependencies = [
  "archguard-core",
  "lbug",
  "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "archguard-terraform"
+version = "0.3.5"
+dependencies = [
+ "archguard-core",
+ "archguard-flow-common",
+ "hcl-edit",
  "tempfile",
 ]
 

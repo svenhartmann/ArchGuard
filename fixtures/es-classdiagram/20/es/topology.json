@@ -1,0 +1,15 @@
+{
+ "artifacts": [
+  {
+   "kind": "index",
+   "name": "orders",
+   "address": "orders",
+   "scope": "es",
+   "patterns": [],
+   "references": [],
+   "evidence": []
+  }
+ ],
+ "usages": [],
+ "findings": []
+}

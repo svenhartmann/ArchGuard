@@ -1,0 +1,7 @@
+{
+  "policy": {
+    "description": "rollover then delete",
+    "default_state": "hot",
+    "states": [ { "name": "hot", "actions": [ { "rollover": { "min_index_age": "1d" } } ], "transitions": [] } ]
+  }
+}

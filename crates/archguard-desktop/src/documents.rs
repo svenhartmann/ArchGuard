@@ -78,6 +78,9 @@ pub struct Document {
     pub status: Status,
     pub analysis: Option<Arc<Analysis>>,
     pub projects: Vec<SubProject>,
+    /// The project set file when this document opens a set; `root` is then
+    /// its primary project.
+    pub set: Option<PathBuf>,
     states: HashMap<TypeId, Rc<dyn Any>>,
     /// Counts [`Document::forget_derived`]: a worker's result for an older
     /// analysis is dropped ([`generation`]).
@@ -104,11 +107,17 @@ impl Document {
             status: Status::Loading,
             analysis: None,
             projects: Vec::new(),
+            set: None,
             states: HashMap::new(),
             generation: 0,
             unsaved: Vec::new(),
             save_hooks: HashMap::new(),
         }
+    }
+
+    /// What opens this document again: the set file, else the folder.
+    pub fn entry(&self) -> &Path {
+        self.set.as_deref().unwrap_or(&self.root)
     }
 
     fn cell<T: 'static>(&self) -> Option<Rc<dyn Any>> {
@@ -159,14 +168,36 @@ impl Store {
     /// Open `root` as a new active document, or activate the document that
     /// already shows it. Returns its id and whether it is new.
     pub fn open(&mut self, root: &Path) -> (DocId, bool) {
-        if let Some(i) = self.docs.iter().position(|d| d.root == root) {
+        if let Some(i) = self
+            .docs
+            .iter()
+            .position(|d| d.root == root && d.set.is_none())
+        {
             self.active = Some(i);
             return (self.docs[i].id, false);
         }
+        self.open_new(root)
+    }
+
+    fn open_new(&mut self, root: &Path) -> (DocId, bool) {
         self.next += 1;
         self.docs.push(Document::new(self.next, root.to_path_buf()));
         self.active = Some(self.docs.len() - 1);
         (self.next, true)
+    }
+
+    /// As [`Store::open`] for the project set in file `set` with primary
+    /// project `primary`, shown as `name`.
+    pub fn open_set(&mut self, set: &Path, primary: &Path, name: &str) -> (DocId, bool) {
+        if let Some(i) = self.docs.iter().position(|d| d.set.as_deref() == Some(set)) {
+            self.active = Some(i);
+            return (self.docs[i].id, false);
+        }
+        let (id, _) = self.open_new(primary);
+        let doc = &mut self.docs[self.active.expect("just opened")];
+        doc.set = Some(set.to_path_buf());
+        doc.name = name.to_string();
+        (id, true)
     }
 
     /// Activate the document at tab `index`; false if there is none.
@@ -774,6 +805,41 @@ mod tests {
             complete: true,
             ..Default::default()
         }
+    }
+
+    fn es_set(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/es-set")
+            .join(name)
+            .canonicalize()
+            .expect("fixture")
+    }
+
+    #[test]
+    fn a_set_opens_as_a_document_with_the_primary_as_root() {
+        let (set, infra) = (es_set("search.archguard-set.toml"), es_set("infra"));
+        let mut s = Store::default();
+        let (id, new) = s.open_set(&set, &infra, "search");
+        assert!(new);
+        let d = s.get(id).expect("document");
+        assert_eq!(
+            (d.root.as_path(), d.name.as_str()),
+            (infra.as_path(), "search")
+        );
+        assert_eq!(d.set.as_deref(), Some(set.as_path()));
+        assert_eq!(d.entry(), set.as_path());
+    }
+
+    #[test]
+    fn the_same_set_activates_and_the_folder_is_another_document() {
+        let (set, infra) = (es_set("search.archguard-set.toml"), es_set("infra"));
+        let mut s = Store::default();
+        let (a, _) = s.open_set(&set, &infra, "search");
+        let (folder, new) = s.open(&infra);
+        assert!(new && folder != a, "primary as folder is its own document");
+        assert_eq!(s.open_set(&set, &infra, "search"), (a, false));
+        assert_eq!(s.active().map(|d| d.id), Some(a));
+        assert_eq!(s.get(folder).expect("folder").entry(), infra.as_path());
     }
 
     #[test]

@@ -16,12 +16,15 @@ mod compare;
 mod compare_ui;
 mod config_editor;
 mod context;
+mod db_ui;
 mod deferred;
 mod diagram;
 mod documents;
+mod documents_set;
 mod documents_ui;
 mod domain_ui;
 mod editor;
+mod es_ui;
 mod export;
 mod export_ui;
 #[cfg(test)]
@@ -49,6 +52,9 @@ mod pane_store;
 mod panes;
 mod panes_ui;
 mod platform;
+#[cfg(test)]
+mod project_set_check;
+mod project_set_ui;
 mod quality_ui;
 mod rating;
 mod reanalyze_ui;
@@ -106,6 +112,7 @@ fn main() -> Result<(), slint::PlatformError> {
     shell_ui::wire(&ui);
     review_decisions_ui::wire(&ui);
     compare_ui::wire(&ui);
+    project_set_ui::wire(&ui, documents_ui::open);
     help_ui::wire(&ui);
     shell_ui::start(&ui, args);
     let _update = update_ui::wire(&ui); // kept until run() returns: starts a restart or installer

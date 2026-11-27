@@ -122,10 +122,12 @@ pub use review_kpi::{
 pub use review_session::{DecisionKind, FindingRef, ReviewDecision, ReviewRegister};
 pub use rules::{DependencyRule, OwnershipRule};
 pub use services::{
-    Datastore, DatastoreUsage, RouteFailure, RouteStep, Service, ServiceCycle, ServiceDatastores,
-    ServiceDependency, ServiceDependencyKind, ServiceDiagnostic, ServiceEvidence, ServiceProject,
-    ServiceResilience, ServiceRoute, ServiceTable, ServiceTopology, SharedDatastore,
-    SharedDatastoreScope, TraceSequence, TraceStep,
+    Datastore, DatastoreUsage, ElasticsearchModel, RouteFailure, RouteStep, SearchAnalysis,
+    SearchArtifact, SearchField, SearchFinding, SearchIndexDetail, SearchIndexUsage,
+    SearchReference, Service, ServiceCycle, ServiceDatastores, ServiceDependency,
+    ServiceDependencyKind, ServiceDiagnostic, ServiceEvidence, ServiceProject, ServiceResilience,
+    ServiceRoute, ServiceTable, ServiceTopology, SharedDatastore, SharedDatastoreScope,
+    TraceSequence, TraceStep,
 };
 pub use settings::{
     DenyCycles, LayerConfig, LayerOrigin, ModulesConfig, ProjectConfig, RulesConfig, StoreConfig,

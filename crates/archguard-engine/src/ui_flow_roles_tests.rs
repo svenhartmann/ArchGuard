@@ -434,8 +434,16 @@ fn with_role_prefix_literal_names_roles_and_sets_the_prefix() {
     let java = "class Sec { Object a() { return RoleHierarchyImpl.withRolePrefix(\"X_\").role(\"ADMIN\").implies(\"STAFF\").build(); } }";
     let dir = project(&[("api/pom.xml", "<project/>"), ("api/src/Sec.java", java)]);
     let flow = extract(dir.path());
-    assert_eq!(roles(&flow), ["X_ADMIN role api/src/Sec.java:1 [\"X_STAFF\"]"], "{}", notes(&flow));
-    assert_eq!(flow.convention(Some("api")).role_prefix.as_deref(), Some("X_"));
+    assert_eq!(
+        roles(&flow),
+        ["X_ADMIN role api/src/Sec.java:1 [\"X_STAFF\"]"],
+        "{}",
+        notes(&flow)
+    );
+    assert_eq!(
+        flow.convention(Some("api")).role_prefix.as_deref(),
+        Some("X_")
+    );
 }
 
 // W5 guard: an unreadable builder argument is a gap, never a guessed prefix.

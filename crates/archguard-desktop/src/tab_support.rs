@@ -20,6 +20,7 @@ use crate::format::Locale;
 use crate::tree::Tree;
 use crate::ui::{AppWindow, Templates};
 
+mod topology;
 mod trace;
 pub(crate) use trace::traced;
 
@@ -506,13 +507,12 @@ pub fn fill(text: &str, args: &[(&str, String)]) -> String {
 /// A document's service topology, or why it could not be read.
 pub type Topology = Arc<Result<ServiceTopology, String>>;
 
-/// Blocking: the topology of `root`, read once per slot
-/// (`Shared::<Topology>::active()` on the UI thread).
-pub fn topology(slot: &Shared<Topology>, root: &Path) -> Topology {
-    slot.get_or_init(|| {
-        Arc::new(archguard_engine::analyze_services(root).map_err(|e| e.to_string()))
-    })
-    .clone()
+/// Blocking: the topology of `root` (of the project set `set`, if any),
+/// read once per slot (`Shared::<Topology>::active()` on the UI thread).
+/// The only switch between one project and a set.
+pub fn topology(slot: &Shared<Topology>, root: &Path, set: Option<&Path>) -> Topology {
+    slot.get_or_init(|| Arc::new(topology::read(root, set)))
+        .clone()
 }
 
 /// Whether an action for document `doc` waiting for its `T` runs now
@@ -555,7 +555,7 @@ fn poll<T: 'static>(
 
 #[cfg(test)]
 #[path = "texts_check.rs"]
-mod texts_check;
+pub(crate) mod texts_check;
 
 #[cfg(test)]
 mod tests {

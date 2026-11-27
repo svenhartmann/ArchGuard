@@ -29,8 +29,6 @@ mod service_spring;
 mod service_tables;
 #[path = "service_terraform.rs"]
 mod service_terraform;
-#[path = "service_terraform_hcl.rs"]
-mod service_terraform_hcl;
 #[path = "service_traces.rs"]
 mod service_traces;
 
@@ -61,6 +59,10 @@ struct ParsedService {
 #[tracing::instrument(skip_all)]
 pub fn analyze_services(root: &Path) -> Result<ServiceTopology, ArchguardError> {
     analyze_services_with(root, &manifest_render::Tools::from_env())
+}
+/// Analyze several projects and merge their Elasticsearch maps (ADR 0024); one root equals `analyze_services`.
+pub fn analyze_service_set(roots: &[PathBuf]) -> Result<ServiceTopology, ArchguardError> {
+    archguard_search::merge_set(roots, analyze_services)
 }
 pub(crate) fn analyze_services_with(
     root: &Path,
@@ -101,6 +103,8 @@ pub(crate) fn analyze_services_with(
     service_clients::augment(&root, &mut report, &deployments);
     service_datastores::augment(&mut report, &deployments, &spring_datasources);
     service_tables::augment(&root, &discovery, &mut report);
+    // After the tables: no step above reads `report.elasticsearch` (checked with rg).
+    archguard_search::analyze(&root, &discovery, &service_deployments::read, &mut report);
     service_traces::augment(&root, &mut report);
     crate::service_flows::augment(&root, &mut report);
     crate::graphql_contracts::augment(&root, &discovery, &mut report);

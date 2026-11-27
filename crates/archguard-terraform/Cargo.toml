@@ -1,0 +1,15 @@
+[package]
+name = "archguard-terraform"
+description = "L2: Terraform HCL expression tools and the module walker (ADR 0015)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# ADR 0015: Terraform HCL with byte spans for file:line evidence; parser only.
+hcl-edit = "0.10.0"
+archguard-core = { path = "../archguard-core" }
+archguard-flow-common = { path = "../archguard-flow-common" }
+
+[dev-dependencies]
+tempfile = "3.27.0"

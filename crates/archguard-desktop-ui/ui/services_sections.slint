@@ -13,14 +13,14 @@ export component Note inherits Text {
     wrap: word-wrap;
 }
 
-component Mono inherits Text {
+export component Mono inherits Text {
     color: Theme.muted;
     font-family: Theme.mono-family;
     font-size: Theme.font-small;
     wrap: word-wrap;
 }
 
-component Heading inherits Text {
+export component Heading inherits Text {
     color: Theme.text;
     font-size: Theme.font-small;
     font-weight: Theme.weight-strong;
@@ -28,9 +28,11 @@ component Heading inherits Text {
 }
 
 // A list entry that opens its details below it; the model says which is open.
-component Head inherits Rectangle {
+export component Head inherits Rectangle {
     in property <string> text;
     in property <bool> open;
+    // A raw identifier: monospace.
+    in property <bool> mono;
     callback clicked();
     min-height: 26px;
     border-radius: 6px;
@@ -48,6 +50,7 @@ component Head inherits Rectangle {
         Text {
             text: root.text;
             color: Theme.text;
+            font-family: root.mono ? Theme.mono-family : Theme.font-family;
             font-size: Theme.font-small;
             wrap: word-wrap;
             vertical-alignment: center;
@@ -60,7 +63,7 @@ component Head inherits Rectangle {
     }
 }
 
-component More inherits HorizontalLayout {
+export component More inherits HorizontalLayout {
     in property <string> text;
     callback clicked();
     alignment: start;

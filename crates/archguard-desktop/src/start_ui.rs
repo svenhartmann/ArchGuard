@@ -66,6 +66,8 @@ struct Inputs {
     findings: Vec<Finding>,
     /// The document's topology, read once (the Services tab shares it).
     topology: Shared<Topology>,
+    /// The set file of a project set document; the topology is the set's.
+    set: Option<PathBuf>,
     /// The World view kept with the pane layout.
     memo: memo::Memo,
     /// What the A/I scatter's performance report needs.
@@ -81,6 +83,7 @@ impl Inputs {
             graph: data.run.graph.clone(),
             findings: data.run.report.findings.clone(),
             topology: Shared::<Topology>::active(),
+            set: crate::documents_set::active_set(),
             memo: memo::kept(),
             zones: kpis_zones::Inputs::of(data),
         }
@@ -97,6 +100,7 @@ impl Inputs {
             graph,
             findings,
             topology,
+            set,
             memo,
             zones,
         } = self;
@@ -108,7 +112,7 @@ impl Inputs {
         let mut glance = kpis::Glance::new(graph.review_kpis.clone(), &findings, &snapshots);
         glance.abstractions = kpis_zones::apply(glance.kpis.as_mut(), zones.measure(&calls));
         let roots = &config.project.source_roots;
-        let services = ServicesWorld::new(tab_support::topology(&topology, &root))
+        let services = ServicesWorld::new(tab_support::topology(&topology, &root, set.as_deref()))
             .map(|w| w.with_packages(&graph, roots));
         let mut state = from_evidence(Evidence::new(graph, findings, &calls, world), services);
         state.glance = glance;

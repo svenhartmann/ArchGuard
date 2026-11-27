@@ -1,6 +1,7 @@
 //! Static service topology. Configured endpoints are evidence of configuration,
 //! never evidence that a request ran or that an endpoint exists.
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServiceTopology {
@@ -34,6 +35,265 @@ pub struct ServiceTopology {
     /// service's source or the client code it imports.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resilience: Vec<ServiceResilience>,
+    /// Elasticsearch artifacts, index usages and findings read statically.
+    #[serde(default, skip_serializing_if = "ElasticsearchModel::is_empty")]
+    pub elasticsearch: ElasticsearchModel,
+}
+
+/// Static Elasticsearch view: declared artifacts, which services use which
+/// index, and the findings derived from comparing the two.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ElasticsearchModel {
+    pub artifacts: Vec<SearchArtifact>,
+    pub usages: Vec<SearchIndexUsage>,
+    pub findings: Vec<SearchFinding>,
+    /// Project names of a project set; empty outside a set. `projects[0]` is
+    /// the primary project.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projects: Vec<String>,
+}
+
+impl ElasticsearchModel {
+    pub fn is_empty(&self) -> bool {
+        self.artifacts.is_empty()
+            && self.usages.is_empty()
+            && self.findings.is_empty()
+            && self.projects.is_empty()
+    }
+
+    /// The primary project of a project set, if any.
+    pub fn primary(&self) -> Option<&str> {
+        self.projects.first().map(String::as_str)
+    }
+}
+
+/// A declared Elasticsearch object. `kind` is one of `index`, `alias`,
+/// `index_template`, `component_template`, `ilm_policy`, `ingest_pipeline`,
+/// `transform`, `watch`, `enrich_policy`, `snapshot_lifecycle`,
+/// `stored_script`, `search_template`, `data_view`, `alerting_rule`, `ism_policy`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchArtifact {
+    pub kind: String,
+    pub name: Option<String>,
+    pub address: String,
+    pub scope: String,
+    pub patterns: Vec<String>,
+    pub references: Vec<SearchReference>,
+    pub evidence: Vec<ServiceEvidence>,
+    /// Projects of a project set that declare this artifact; empty outside a set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub origins: Vec<String>,
+    /// Mapping, settings and analysis of an index or template; each attribute is read only when literal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<SearchIndexDetail>,
+    /// Empty = Elasticsearch, `opensearch` = OpenSearch; per artifact because a set can mix both.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub flavor: String,
+}
+
+/// Mapping, settings and analysis of an index or template (ADR 0023). An
+/// attribute that is not fully literal is not read; the others are.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchIndexDetail {
+    /// Dotted paths, parents before children; a multi-field is `a.raw`; an
+    /// object without `type` is `object`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<SearchField>,
+    /// Keys without the `index.` prefix, values as written.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub settings: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub analysis: Vec<SearchAnalysis>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchField {
+    pub path: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analyzer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_analyzer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normalizer: Option<String>,
+}
+
+/// One analysis component; `kind` is `analyzer`, `tokenizer`, `filter`,
+/// `char_filter` or `normalizer`, `definition` is compact JSON.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchAnalysis {
+    pub kind: String,
+    pub name: String,
+    pub definition: String,
+}
+
+impl SearchArtifact {
+    /// Declared in a project set, but not in the primary project.
+    pub fn foreign(&self, primary: &str) -> bool {
+        !self.origins.is_empty() && !self.origins.iter().any(|o| o == primary)
+    }
+}
+
+/// Target kind and name an artifact points at, e.g. `ingest_pipeline`/`p1`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchReference {
+    pub kind: String,
+    pub name: String,
+}
+
+/// A service's use of an index; `access` is `write`, `read` or `unknown`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchIndexUsage {
+    pub service: String,
+    pub index: String,
+    pub access: String,
+    pub evidence: Vec<ServiceEvidence>,
+}
+
+/// `kind` is `undeclared_pipeline`, `undeclared_index`, `shared_write_index`,
+/// `uncovered_pattern` or `alert_undeclared_index`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchFinding {
+    pub kind: String,
+    pub subject: String,
+    pub services: Vec<String>,
+    pub evidence: Vec<ServiceEvidence>,
+}
+
+#[cfg(test)]
+mod elasticsearch_tests {
+    use super::*;
+
+    #[test]
+    fn default_topology_omits_elasticsearch_and_filled_model_round_trips() {
+        let t = ServiceTopology::default();
+        assert!(!serde_json::to_string(&t).unwrap().contains("elasticsearch"));
+        let mut t = t;
+        t.elasticsearch.artifacts.push(SearchArtifact {
+            flavor: String::new(),
+            kind: "index_template".into(),
+            name: Some("t1".into()),
+            address: "es_index_template.t1".into(),
+            scope: "infra".into(),
+            patterns: vec!["logs-*".into()],
+            references: vec![SearchReference {
+                kind: "ingest_pipeline".into(),
+                name: "p1".into(),
+            }],
+            evidence: vec![],
+            origins: vec![],
+            detail: None,
+        });
+        t.elasticsearch.usages.push(SearchIndexUsage {
+            service: "api".into(),
+            index: "logs-a".into(),
+            access: "write".into(),
+            evidence: vec![],
+        });
+        t.elasticsearch.findings.push(SearchFinding {
+            kind: "undeclared_index".into(),
+            subject: "logs-a".into(),
+            services: vec!["api".into()],
+            evidence: vec![],
+        });
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(json.contains("elasticsearch"));
+        assert_eq!(serde_json::from_str::<ServiceTopology>(&json).unwrap(), t);
+        assert!(!json.contains("origins"));
+    }
+
+    #[test]
+    fn flavor_round_trips_and_is_skipped_when_empty() {
+        let base = serde_json::json!({"kind": "index", "name": "a", "address": "x", "scope": "s",
+            "patterns": [], "references": [], "evidence": []});
+        let plain: SearchArtifact = serde_json::from_value(base.clone()).unwrap();
+        assert!(!serde_json::to_string(&plain).unwrap().contains("flavor"));
+        let mut os = base;
+        os["flavor"] = "opensearch".into();
+        let os: SearchArtifact = serde_json::from_value(os).unwrap();
+        let json = serde_json::to_value(&os).unwrap();
+        assert_eq!(json["flavor"], "opensearch");
+    }
+
+    fn art(origins: &[&str]) -> SearchArtifact {
+        SearchArtifact {
+            flavor: String::new(),
+            kind: "index".into(),
+            name: Some("audit".into()),
+            address: "a".into(),
+            scope: "s".into(),
+            patterns: vec![],
+            references: vec![],
+            evidence: vec![],
+            origins: origins.iter().map(|o| o.to_string()).collect(),
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn origins_and_projects_round_trip_and_are_skipped_when_empty() {
+        let mut m = ElasticsearchModel::default();
+        m.artifacts.push(art(&["infra", "adapter"]));
+        m.projects = vec!["infra".into(), "adapter".into()];
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"origins\":[\"infra\",\"adapter\"]"));
+        assert!(json.contains("\"projects\":[\"infra\",\"adapter\"]"));
+        assert_eq!(
+            serde_json::from_str::<ElasticsearchModel>(&json).unwrap(),
+            m
+        );
+        let mut bare = m.clone();
+        bare.projects.clear();
+        assert!(
+            !serde_json::to_string(&bare)
+                .unwrap()
+                .contains("\"projects\"")
+        );
+        let plain = serde_json::to_string(&art(&[])).unwrap();
+        assert!(!plain.contains("origins"));
+        assert!(
+            serde_json::from_str::<SearchArtifact>(&plain)
+                .unwrap()
+                .origins
+                .is_empty()
+        );
+        let only_projects = ElasticsearchModel {
+            projects: vec!["a".into()],
+            ..Default::default()
+        };
+        assert!(!only_projects.is_empty());
+    }
+
+    #[test]
+    fn detail_is_skipped_when_none_and_round_trips() {
+        let mut a = art(&[]);
+        assert!(!serde_json::to_string(&a).unwrap().contains("detail"));
+        a.detail = Some(SearchIndexDetail {
+            fields: vec![SearchField {
+                path: "a.b".into(),
+                kind: "keyword".into(),
+                ..Default::default()
+            }],
+            settings: [("number_of_shards".to_string(), "1".to_string())].into(),
+            analysis: vec![],
+        });
+        let json = serde_json::to_string(&a).unwrap();
+        assert!(json.contains("\"detail\""));
+        assert!(!json.contains("analysis"));
+        assert!(!json.contains("analyzer"));
+        assert_eq!(serde_json::from_str::<SearchArtifact>(&json).unwrap(), a);
+    }
+
+    #[test]
+    fn foreign_and_primary() {
+        assert!(!art(&[]).foreign("infra"));
+        assert!(!art(&["infra", "adapter"]).foreign("infra"));
+        assert!(art(&["adapter"]).foreign("infra"));
+        let mut m = ElasticsearchModel::default();
+        assert_eq!(m.primary(), None);
+        m.projects = vec!["infra".into(), "adapter".into()];
+        assert_eq!(m.primary(), Some("infra"));
+    }
 }
 
 /// One HTTP route of a service, read from its source.

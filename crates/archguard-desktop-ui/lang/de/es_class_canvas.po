@@ -1,0 +1,26 @@
+msgid "Chain"
+msgstr "Kette"
+
+msgid "Parameters"
+msgstr "Parameter"
+
+msgid "Points to"
+msgstr "Zeigt auf"
+
+msgid "Access"
+msgstr "Zugriff"
+
+msgid "Patterns"
+msgstr "Muster"
+
+msgid "{0} fields"
+msgstr "{0} Felder"
+
+msgid "{0} more"
+msgstr "{0} weitere"
+
+msgid "not declared"
+msgstr "nicht deklariert"
+
+msgid "Mapping not statically readable."
+msgstr "Mapping nicht statisch lesbar."

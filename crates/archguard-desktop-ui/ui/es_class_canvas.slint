@@ -1,0 +1,403 @@
+// The Elasticsearch class diagram canvas (layout: src/es_ui/class/).
+import { Theme } from "theme.slint";
+import { ZoomControls } from "widgets.slint";
+
+export struct EsClassLine {
+    // Indent level, 12 px each.
+    depth: int,
+    // 0 none, 1 "+" (field), 2 multi-field mark.
+    prefix: int,
+    text: string,
+    // Type, shown after " : ".
+    kind: string,
+    // Analyzer note, shown after the type in the analysis colour.
+    note: string,
+    // > 0: "{n} fields" (collapsed); < 0: "{n} more"; 0: a normal row.
+    summary: int,
+    // The field in focus.
+    focus: bool,
+}
+
+export struct EsClassChip {
+    text: string,
+    // 0 char filter, 1 tokenizer, 2 filter.
+    stage: int,
+    // 1: built in (not declared), outline only.
+    class: int,
+    // Relative to its compartment (px at zoom 1); h is 14.
+    x: float,
+    y: float,
+    w: float,
+}
+
+export struct EsClassCompartment {
+    // 0 Fields, 1 Settings, 2 Analysis, 3 Chain, 4 Parameters, 5 Used by, 6 Points to, 7 Access, 8 Patterns, else none.
+    title: int,
+    // Relative to the box. Rows are 16 px: title, then lines at y + 16 * (1 + i).
+    y: float,
+    lines: [EsClassLine],
+    chips: [EsClassChip],
+}
+
+export struct EsClassBox {
+    // Canvas px at zoom 1; the header is 3 rows (48 px) at the box's top.
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    // 4: analysis block (teal), others neutral.
+    kind: int,
+    stereotype: string,
+    name: string,
+    root: string,
+    ghost: bool,
+    warn: bool,
+    selected: bool,
+    // A field is in focus and this box is not part of its analysis.
+    dim: bool,
+    // Ghost only: the dashed outline as path commands in box-local coordinates.
+    border: string,
+    compartments: [EsClassCompartment],
+}
+
+export struct EsClassEdge {
+    // Path commands in canvas coordinates, dashes included.
+    line: string,
+    head: string,
+    // Head: 0 open arrow, 1 filled, 2 hollow triangle, 3 diamond.
+    shape: int,
+    dashed: bool,
+    // 1 write (outgoing colour), 2 read (incoming colour), else edge.
+    style: int,
+    label: string,
+    lx: float,
+    ly: float,
+    dim: bool,
+}
+
+// Compartment titles by index; -1 has none. Raw words are not translated.
+global ClassText {
+public pure function title(t: int) -> string {
+    return t == 0 ? @tr("Fields")
+        : t == 1 ? @tr("Settings" => "Settings")
+        : t == 2 ? @tr("Analysis")
+        : t == 3 ? @tr("Chain")
+        : t == 4 ? @tr("Parameters")
+        : t == 5 ? @tr("Used by")
+        : t == 6 ? @tr("Points to")
+        : t == 7 ? @tr("Access")
+        : t == 8 ? @tr("Patterns")
+        : "";
+}
+
+// Text size at a zoom: `scaled` (the theme size times the zoom), not below `floor` while legible, never above 85 %
+// of a 16 px row, so a row's text cannot reach into the next row at low zoom.
+public pure function fs(scaled: length, floor: length, zoom: float) -> length {
+    return min(13.6px * zoom, max(floor, scaled));
+}
+
+// prefix 0 none, 1 "+" (field), 2 multi-field mark (›).
+public pure function mark(p: int) -> string {
+    return p == 1 ? "+ " : p == 2 ? "\u{203A} " : "";
+}
+}
+
+// Row of a compartment: a field, setting or parameter; `summary` > 0 stands for
+// that many collapsed fields, < 0 for that many more.
+component ClassLine inherits HorizontalLayout {
+    in property <EsClassLine> l;
+    in property <float> zoom;
+    alignment: start;
+    spacing: 6px * zoom;
+    padding-left: l.depth * 12px * zoom;
+    // The name and type win: they keep their width, the note after them shortens.
+    main := Text {
+        text: l.summary > 0 ? @tr("{0} fields", l.summary) : l.summary < 0 ? @tr("{0} more", -l.summary)
+            : l.text == "not_read" ? @tr("Not read: the definition is not a literal.")
+            : l.text == "mapping_not_read" ? @tr("Mapping not statically readable.")
+            : l.text == "not_declared" ? @tr("Not declared in this project.") : ClassText.mark(l.prefix) + l.text + (l.kind != "" ? " : " + l.kind : "");
+        color: l.summary != 0 || l.text == "not_read" || l.text == "mapping_not_read" || l.text == "not_declared" ? Theme.muted : Theme.text;
+        font-family: Theme.mono-family;
+        font-size: ClassText.fs(Theme.font-mono * zoom, 6px, zoom);
+        vertical-alignment: center;
+        overflow: elide;
+        horizontal-stretch: 0;
+        min-width: l.note == "" ? 0px : self.preferred-width;
+    }
+    if l.note != "": Text {
+        text: l.note;
+        color: Theme.analysis;
+        font-family: Theme.mono-family;
+        font-size: ClassText.fs(Theme.font-mono * zoom, 6px, zoom);
+        vertical-alignment: center;
+        overflow: elide;
+        horizontal-stretch: 1;
+        min-width: 0px;
+    }
+}
+
+component ClassChip inherits Rectangle {
+    in property <EsClassChip> chip;
+    in property <float> zoom;
+    x: chip.x * 1px * zoom;
+    y: chip.y * 1px * zoom;
+    width: chip.w * 1px * zoom;
+    height: 14px * zoom;
+    border-radius: 7px * zoom;
+    border-width: 1px;
+    // stage 0 char filter, 1 tokenizer, 2 filter; class 1 is built in (not declared).
+    border-color: chip.stage == 1 ? Theme.priority : chip.stage == 2 ? Theme.analysis : Theme.muted;
+    background: chip.class == 1 ? transparent : self.border-color.with-alpha(0.15);
+    Text {
+        text: chip.text;
+        color: Theme.text;
+        font-family: Theme.mono-family;
+        // No floor: the pill is as wide as its text at every zoom, so the text never leaves it.
+        font-size: Theme.font-micro * zoom;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+component ClassBox inherits Rectangle {
+    in property <EsClassBox> box;
+    in property <float> zoom;
+    callback clicked(float);
+    // kind 4: an analysis building block.
+    property <bool> analysis: box.kind == 4;
+    property <length> rh: 16px * zoom;
+    x: box.x * 1px * zoom;
+    y: box.y * 1px * zoom;
+    width: box.w * 1px * zoom;
+    height: box.h * 1px * zoom;
+    border-radius: 6px * zoom;
+    background: box.ghost ? transparent : Theme.panel;
+    opacity: box.dim ? Theme.dim-alpha : 1;
+    // The header band must not paint over the rounded corners.
+    clip: true;
+    // A ghost's dashed outline comes from the model.
+    if box.ghost: Path {
+        width: root.width;
+        height: root.height;
+        viewbox-width: box.w;
+        viewbox-height: box.h;
+        commands: box.border;
+        fill: transparent;
+        stroke: box.selected ? Theme.accent : Theme.muted;
+        stroke-width: (box.selected ? 2px : 1px) * zoom;
+    }
+    Rectangle {
+        y: 0;
+        height: 3 * rh;
+        background: box.ghost ? transparent : analysis ? Theme.analysis.with-alpha(0.12) : Theme.panel-2;
+        // Three fixed rows: a text taller than its row (the font floors at low zoom) is centred
+        // on it and never pushes the next row down.
+        Text {
+            x: 6px * zoom;
+            y: 0px;
+            width: parent.width - 12px * zoom;
+            height: rh;
+            text: "\u{AB}" + box.stereotype + "\u{BB}";
+            color: Theme.muted;
+            font-size: ClassText.fs(Theme.font-caption * zoom, 6px, zoom);
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            x: 6px * zoom;
+            y: rh;
+            width: parent.width - 12px * zoom;
+            height: rh;
+            text: (box.warn ? "\u{26A0} " : "") + box.name;
+            color: box.warn ? Theme.warning : Theme.text;
+            font-size: ClassText.fs(Theme.font-body * zoom, 7px, zoom);
+            font-weight: Theme.weight-strong;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            x: 6px * zoom;
+            y: 2 * rh;
+            width: parent.width - 12px * zoom;
+            height: rh;
+            text: box.root != "" ? box.root : box.ghost ? @tr("not declared") : "";
+            color: Theme.muted;
+            font-size: ClassText.fs(Theme.font-caption * zoom, 6px, zoom);
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+    for c in box.compartments: Rectangle {
+        y: c.y * 1px * zoom;
+        width: parent.width;
+        height: rh * (1 + c.lines.length) + 1px;
+        Rectangle { height: 1px; background: Theme.border; }
+        Text {
+            y: 1px;
+            x: 8px * zoom;
+            text: ClassText.title(c.title);
+            color: Theme.muted;
+            font-size: ClassText.fs(Theme.font-micro * zoom, 6px, zoom);
+            font-weight: Theme.weight-strong;
+        }
+        for ln[i] in c.lines: Rectangle {
+            y: rh * (1 + i);
+            width: parent.width;
+            height: rh;
+            // The field in focus.
+            background: ln.focus ? Theme.accent.with-alpha(0.25) : transparent;
+            ClassLine {
+                x: 8px * zoom;
+                width: parent.width - 16px * zoom;
+                height: parent.height;
+                l: ln;
+                zoom: zoom;
+            }
+        }
+        for ch in c.chips: ClassChip {
+            chip: ch;
+            zoom: zoom;
+        }
+    }
+    // The frame lies above the header band, so the selected accent shows on all four sides.
+    if !box.ghost: Rectangle {
+        border-radius: 6px * zoom;
+        border-width: box.selected ? 2px : 1px;
+        border-color: box.selected ? Theme.accent : analysis ? Theme.analysis : Theme.border;
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(self.mouse-y / 1px / zoom); }
+    }
+}
+
+export component EsClassCanvas inherits Rectangle {
+    in property <[EsClassBox]> boxes;
+    in property <[EsClassEdge]> edges;
+    in property <float> canvas-w;
+    in property <float> canvas-h;
+    in property <float> zoom: 1.0;
+    // A new value asks for `fit` once the viewport has a size.
+    in property <int> fit-tick;
+    // A box and the click's height below its top (px at zoom 1).
+    callback select(int, float);
+    // Escape: back from a field to its index.
+    callback escape();
+    callback zoom-by(float);
+    callback fit(float, float);
+
+    // Fit once the viewport has a size: on a new `fit-tick` and when first shown.
+    property <bool> waiting: true;
+    function refit() {
+        if (flick.width > 100px && flick.height > 100px) {
+            root.fit(flick.width / 1px, flick.height / 1px);
+            flick.content-x = 0;
+            flick.content-y = 0;
+            root.waiting = false;
+        } else {
+            root.waiting = true;
+        }
+    }
+    changed fit-tick => { root.waiting = true; root.refit(); }
+    property <length> view-w: flick.width;
+    property <length> view-h: flick.height;
+    changed view-w => { if (root.waiting) { root.refit(); } }
+    changed view-h => { if (root.waiting) { root.refit(); } }
+    init => { root.refit(); }
+
+    // Takes the keyboard on a click in a box; Escape leaves the field in focus.
+    keys := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(e) => {
+            if (e.text == Key.Escape) {
+                root.escape();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    flick := Flickable {
+        content-width: max(self.width, root.canvas-w * root.zoom * 1px);
+        content-height: max(self.height, root.canvas-h * root.zoom * 1px);
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: root.canvas-w * root.zoom * 1px;
+            height: root.canvas-h * root.zoom * 1px;
+            for e in root.edges: Rectangle {
+                opacity: e.dim ? Theme.dim-alpha : 1;
+                property <color> tone: e.style == 1 ? Theme.outgoing : e.style == 2 ? Theme.incoming : Theme.edge;
+                Path {
+                    width: root.canvas-w * root.zoom * 1px;
+                    height: root.canvas-h * root.zoom * 1px;
+                    viewbox-width: root.canvas-w;
+                    viewbox-height: root.canvas-h;
+                    commands: e.line;
+                    fill: transparent;
+                    stroke: tone;
+                    stroke-width: 1.4px * root.zoom;
+                }
+                // shape 0 open arrow, 1 filled head, 2 hollow triangle, 3 diamond.
+                Path {
+                    width: root.canvas-w * root.zoom * 1px;
+                    height: root.canvas-h * root.zoom * 1px;
+                    viewbox-width: root.canvas-w;
+                    viewbox-height: root.canvas-h;
+                    commands: e.head;
+                    fill: e.shape == 1 ? tone : e.shape == 0 ? transparent : Theme.panel;
+                    stroke: tone;
+                    stroke-width: 1.4px * root.zoom;
+                }
+            }
+            for b[i] in root.boxes: ClassBox {
+                box: b;
+                zoom: root.zoom;
+                clicked(y) => { keys.focus(); root.select(i, y); }
+            }
+            // Labels lie above the boxes, on a background, so no box hides them.
+            for e in root.edges: Rectangle {
+                visible: e.label != "";
+                opacity: e.dim ? Theme.dim-alpha : 1;
+                x: e.lx * 1px * root.zoom;
+                y: e.ly * 1px * root.zoom;
+                width: lab.preferred-width + 6px;
+                height: lab.preferred-height + 2px;
+                border-radius: 3px;
+                background: Theme.bg.with-alpha(0.85);
+                lab := Text {
+                    text: e.label;
+                    color: Theme.muted;
+                    font-size: max(6px, Theme.font-micro * root.zoom);
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        x: 16px;
+        y: parent.height - self.height - 16px;
+        width: bar.preferred-width;
+        height: 44px;
+        border-radius: Theme.radius;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.border;
+        bar := HorizontalLayout {
+            padding: 6px;
+            ZoomControls {
+                zoom: root.zoom;
+                zoom-out => { root.zoom-by(1.0 / 1.25); }
+                zoom-in => { root.zoom-by(1.25); }
+                reset => { root.zoom-by(1.0 / root.zoom); }
+                fit => { root.fit(flick.width / 1px, flick.height / 1px); }
+            }
+        }
+    }
+}

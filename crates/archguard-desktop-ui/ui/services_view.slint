@@ -8,9 +8,10 @@ import { Icons, Button, Disclosure, ZoomControls, HelpTip, TipArea, EmptyState }
 import { Fmt } from "format.slint";
 import { ServicesTree, SvcRow, SvcEdge } from "services_tree.slint";
 import { ServicesInspector, SvcInspector, SvcEvidence, SvcLink } from "services_inspector.slint";
+import { SearchSection, SvcSearch, SvcSearchKind, SvcSearchRow, SvcSearchDetail, SvcSearchFinding, SvcSearchGap } from "services_search.slint";
 import { Note, PatternsSection, ContractsSection, SvcPatterns, SvcPattern, SvcPatternDetail, SvcRecord, SvcContracts, SvcContract, SvcContractDetail, SvcOperation, SvcChange } from "services_sections.slint";
 
-export { SvcRow, SvcEdge, SvcInspector, SvcEvidence, SvcLink, SvcPatterns, SvcPattern, SvcPatternDetail, SvcRecord, SvcContracts, SvcContract, SvcContractDetail, SvcOperation, SvcChange }
+export { SvcRow, SvcEdge, SvcInspector, SvcEvidence, SvcLink, SvcPatterns, SvcPattern, SvcPatternDetail, SvcRecord, SvcContracts, SvcContract, SvcContractDetail, SvcOperation, SvcChange, SvcSearch, SvcSearchKind, SvcSearchRow, SvcSearchDetail, SvcSearchFinding, SvcSearchGap }
 
 export struct SvcProject {
     path: string,
@@ -67,6 +68,8 @@ export struct ServicesModel {
     // Details → architecture pattern candidates and API contracts.
     patterns: SvcPatterns,
     contracts: SvcContracts,
+    // Details → Elasticsearch artifacts.
+    search: SvcSearch,
 }
 
 export global ServicesData {
@@ -75,6 +78,7 @@ export global ServicesData {
     // snapshot runs can open them: ARCHGUARD_DESKTOP_SVC_OPEN).
     in-out property <bool> patterns-open;
     in-out property <bool> contracts-open;
+    in-out property <bool> search-open;
 
     // Group name of a service without project and Compose file.
 
@@ -103,6 +107,9 @@ export global ServicesData {
     callback select-contract(int);
     callback more-contracts();
     callback more-contract-details();
+    // Elasticsearch: open artifact (its index) and pages.
+    callback select-search(int);
+    callback more-search();
 
     // serviceKindLabel; index as the relation list.
     public pure function kind-label(k: int) -> string {
@@ -292,12 +299,14 @@ component Toolbar inherits Rectangle {
 
 export component ServicesView inherits Rectangle {
     property <ServicesModel> m: ServicesData.model;
-    property <bool> details-open;
+    in-out property <bool> details-open;
     property <bool> evidence-open;
     property <bool> projects-open;
     property <bool> workspace-open;
     property <bool> diagnostics-open;
     background: Theme.bg;
+    // Snapshot runs open a section through the global flags.
+    init => { details-open = details-open || ServicesData.patterns-open || ServicesData.contracts-open || ServicesData.search-open; }
     // Tabs must not change the window's preferred size; a split pane can
     // be narrow.
     min-width: 360px;
@@ -317,7 +326,7 @@ export component ServicesView inherits Rectangle {
             horizontal-stretch: 1;
             summary := ScrollView {
                 // Open pattern or contract lists get most of the height.
-                height: min(desc.preferred-height, root.height * (ServicesData.patterns-open || ServicesData.contracts-open ? 0.7 : 0.35));
+                height: min(desc.preferred-height, root.height * (ServicesData.patterns-open || ServicesData.contracts-open || ServicesData.search-open ? 0.7 : 0.35));
                 // As wide as the visible area, so the summary wraps before
                 // the edge and the scroll bar.
                 desc := VerticalLayout {
@@ -405,6 +414,15 @@ export component ServicesView inherits Rectangle {
                             choose(i) => { ServicesData.select-contract(i); }
                             more => { ServicesData.more-contracts(); }
                             more-details => { ServicesData.more-contract-details(); }
+                        }
+                    }
+                    if m.search.total > 0: Details {
+                        text: @tr("Elasticsearch");
+                        open <=> ServicesData.search-open;
+                        if ServicesData.search-open: SearchSection {
+                            data: m.search;
+                            choose(i) => { ServicesData.select-search(i); }
+                            more => { ServicesData.more-search(); }
                         }
                     }
                     if m.diagnostics.length > 0: Details {

@@ -183,6 +183,20 @@ mod projects {
         read_all(root, out).0
     }
 
+    /// For each project directory of `projects`, the Maven applications that
+    /// include it as sets of project directories (see `ui_flow_apps`); an empty
+    /// list when the project stands alone.
+    pub fn applications_of(
+        root: &Path,
+        projects: &BTreeMap<String, Project>,
+    ) -> BTreeMap<String, Vec<BTreeSet<String>>> {
+        let build_dirs = discover(root, &mut Out::scratch()).0;
+        let modules = crate::ui_flow_apps::Modules::read(root, build_dirs.iter());
+        (projects.keys())
+            .map(|dir| (dir.clone(), modules.applications(dir)))
+            .collect()
+    }
+
     /// Projects, Razor `.cshtml` files and build-file directories.
     pub(super) type Read = (
         BTreeMap<String, Project>,
@@ -283,7 +297,7 @@ mod projects {
     }
 }
 use projects::read_all;
-pub use projects::{Project, read_projects};
+pub use projects::{Project, applications_of, read_projects};
 
 /// The lowest major version of the project's `<TargetFramework(s)>` (`net10.0`
 /// is 10, `netcoreapp3.1` 3, `net48` 4); none without a `.csproj` or when a
@@ -4002,7 +4016,7 @@ pub mod spring {
                 let e = ident_end(src, s);
                 !in_ranges(read, s)
                     && (s == 0 || !lex::is_ident(b[s - 1]))
-                    && SCOPING.contains(&&src.text[s..e])
+                    && src.text.get(s..e).is_some_and(|n| SCOPING.contains(&n))
                     && is_call(src, s, e)
                     && !super::rule_calls::is_rule_call(src, s, lambdas)
             })

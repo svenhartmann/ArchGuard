@@ -72,6 +72,7 @@ mod performance;
 mod php_calls;
 mod pipeline;
 mod project_files;
+mod project_set;
 mod python_calls;
 mod quality_findings;
 mod quality_gate;
@@ -124,10 +125,10 @@ mod typescript_calls;
 pub mod ui_flow;
 pub mod ui_flow_replay;
 pub mod ui_flow_roles;
-pub mod ui_flow_service;
-pub(crate) mod ui_flow_service_cs;
 #[cfg(test)]
 mod ui_flow_roles_tests;
+pub mod ui_flow_service;
+pub(crate) mod ui_flow_service_cs;
 #[cfg(test)]
 mod ui_flow_service_cs_tests;
 #[cfg(test)]
@@ -143,6 +144,13 @@ pub use api_contracts::{
 pub use arc42::{arc42_document, arc42_from_evidence};
 /// Source-root stripping, as module names spell project paths (ADR 0010).
 pub use archguard_extract::strip_root;
+pub use archguard_search::{
+    ChainRef, SearchAnalysisPart, SearchAnalysisUse, SearchAnalysisUser, SearchAnalyzerDifference,
+    SearchEdge, SearchFieldRole, SearchGraph, SearchNode, is_detail_gap, is_elasticsearch_gap,
+    search_analysis_parts, search_analysis_users, search_analyzer_difference,
+    search_artifact_covers, search_builtin, search_field_analyzers, search_field_depth,
+    search_field_role, search_graph, short_scope,
+};
 pub use architecture::architecture_context;
 pub use cache::{
     fingerprint, load_graph_if_fresh, save_graph, source_content_fingerprint, source_fingerprint,
@@ -195,6 +203,7 @@ pub use performance::{
 };
 pub use pipeline::{Level, NamedGraph, SourceNames};
 pub use project_files::write_project_file;
+pub use project_set::{ProjectSet, read_project_set, resolve_project_dirs, write_project_set};
 pub use quality_findings::{
     QualityFinding, QualityReport, import_quality_findings, quality_findings_fingerprint,
     read_quality_findings,
@@ -234,7 +243,7 @@ pub use security::{
     scan_security, security_fingerprint,
 };
 pub use semantic_calls::{analyze_calls, semantic_fingerprints};
-pub use services::analyze_services;
+pub use services::{analyze_service_set, analyze_services};
 pub use share_report::share_report;
 pub use snapshot::{
     Snapshot, SnapshotRow, latest_snapshot, read_snapshots, read_trend, snapshot_record,
