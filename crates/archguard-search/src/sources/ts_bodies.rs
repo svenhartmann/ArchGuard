@@ -233,6 +233,7 @@ impl<'a> FileScan<'a> {
         let steps = Cell::new(MAX_WORK);
         let mut lit = Lit::new(self.text, from, &self.consts, &steps);
         let entries = lit.object_at().and_then(|()| lit.entries(true));
+        let body_ref = lit.body_ref;
         let Some(mut entries) = entries else {
             return self.not_a_name(line);
         };
@@ -240,7 +241,7 @@ impl<'a> FileScan<'a> {
             return self.not_a_name(line);
         };
         let address = format!("{}:{line}", self.rel);
-        let attrs = self.attrs(api, entries, &address);
+        let attrs = self.attrs(api, entries, &address, body_ref);
         let body = match api.wrap {
             Some(w) => Map::from_iter([(w.to_owned(), Value::Object(attrs))]),
             None => attrs,
@@ -276,7 +277,13 @@ impl<'a> FileScan<'a> {
     }
 
     /// The listed attributes that are entirely literal; each other one is a gap.
-    fn attrs(&mut self, api: &Api, entries: Entries, address: &str) -> Map<String, Value> {
+    fn attrs(
+        &mut self,
+        api: &Api,
+        entries: Entries,
+        address: &str,
+        body_ref: bool,
+    ) -> Map<String, Value> {
         let mut attrs = Map::new();
         for (key, value) in entries {
             // A Client 7 `body` that is no object literal comes back as None: a gap, not skipped.
@@ -284,7 +291,7 @@ impl<'a> FileScan<'a> {
                 || key == "..."
                 || (key == "body"
                     && (matches!(value, Some(Value::Object(_)))
-                        || (value.is_none() && !self.owned)));
+                        || (value.is_none() && (!self.owned || body_ref))));
             if !listed {
                 continue;
             }
@@ -415,14 +422,23 @@ fn clients(text: &str) -> HashMap<&str, &'static str> {
 /// How the file names the client class: `Client`, an alias, or `<namespace>.Client`.
 fn client_classes(text: &str) -> Vec<(String, &'static str)> {
     let mut out = vec![];
+    // Statement starts, built once: a per-match `rfind` over the head is quadratic on hostile files.
+    let starts: Vec<usize> = text
+        .match_indices('\n')
+        .filter(|&(i, _)| {
+            ["\nimport ", "\nconst ", "\nlet ", "\nvar ", "\nexport "]
+                .iter()
+                .any(|k| text[i..].starts_with(k))
+        })
+        .map(|(i, _)| i + 1)
+        .collect();
     for (pkg, flavor) in PACKAGES {
         for (p, _) in text.match_indices(pkg) {
             let head = &text[..p];
-            let from = ["\nimport ", "\nconst ", "\nlet ", "\nvar ", "\nexport "]
-                .iter()
-                .filter_map(|k| head.rfind(k))
-                .max()
-                .map_or(0, |i| i + 1);
+            let from = starts[..starts.partition_point(|&s| s <= p)]
+                .last()
+                .copied()
+                .unwrap_or(0);
             let stmt = head[from..]
                 .trim_end()
                 .trim_end_matches(['\'', '"', '('])
@@ -478,7 +494,7 @@ fn constants(text: &str) -> HashMap<String, Option<usize>> {
             let name = decl
                 .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
                 .next();
-            let eq = decl.find('=').filter(|_| !decl.contains('('));
+            let eq = decl.find('=');
             if let (Some(name), Some(eq)) = (name.filter(|n| !n.is_empty()), eq) {
                 let value = at + line.len() - decl.len() + eq + 1;
                 let first = !out.contains_key(name);
@@ -543,6 +559,27 @@ fn idents(s: &str) -> impl Iterator<Item = String> + '_ {
         .map(str::to_owned)
 }
 
+/// `body: NAME` at `at` (after the key), `NAME` a module constant declared with an object or unclear.
+fn object_body_ref(
+    text: &str,
+    consts: &HashMap<String, Option<usize>>,
+    key: &str,
+    at: usize,
+) -> bool {
+    let name = text[at..]
+        .trim_start()
+        .strip_prefix(':')
+        .map(str::trim_start);
+    let name = name.and_then(|r| {
+        r.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+            .next()
+    });
+    key == "body"
+        && name
+            .and_then(|n| consts.get(n))
+            .is_some_and(|v| v.is_none_or(|off| text[off..].trim_start().starts_with('{')))
+}
+
 type Entries = Vec<(String, Option<Value>)>;
 
 /// A strict reader of JavaScript literals over `text` from offset `i`.
@@ -553,6 +590,8 @@ struct Lit<'a> {
     steps: &'a Cell<u32>,
     depth: u8,
     nest: u8,
+    /// A Client 7 `body` that names a module constant holding an object but could not be read.
+    body_ref: bool,
 }
 
 impl<'a> Lit<'a> {
@@ -569,6 +608,7 @@ impl<'a> Lit<'a> {
             steps,
             depth: 0,
             nest: 0,
+            body_ref: false,
         }
     }
 
@@ -783,6 +823,7 @@ impl<'a> Lit<'a> {
                 };
                 let value = value.filter(|_| self.finished());
                 if value.is_none() {
+                    self.body_ref |= object_body_ref(self.text, self.consts, &key, value_at);
                     self.i = value_at;
                     self.skip_member();
                 }
