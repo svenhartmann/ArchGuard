@@ -1,10 +1,6 @@
 //! View operations over the engine-provided effective configuration.
 
-use std::collections::hash_map::Entry;
-use std::collections::{BTreeSet, HashMap, HashSet};
-
 use archguard_engine::LoadedConfig;
-use archguard_engine::analysis::find_sccs;
 use archguard_engine::core::{Cut, Graph, LayerConfig, NodeId};
 
 /// Consumers receive the effective configuration from `AnalysisRun`.
@@ -47,87 +43,9 @@ pub fn within_cut(graph: &Graph, parent: NodeId) -> Cut {
     Cut::new(graph.children_of(parent))
 }
 
-/// Precomputed arguments of the T38 DSM renderers: the reverse
-/// topological order of the condensation (sinks first, cycle-group
-/// members adjacent) and the set of edges inside cyclic components.
-///
-/// Groups are the cyclic SCCs plus one singleton per remaining node.
-/// Kahn runs on the condensation's OUT-degree, so groups nothing
-/// depends on (sinks) come first; ties break on the smallest member
-/// name, then on group index, keeping the order deterministic. The
-/// condensation is a DAG, so the loop always empties; a defensive tail
-/// keeps stray ids from vanishing.
-pub fn dsm_layout(view: &Graph) -> (Vec<NodeId>, HashSet<(NodeId, NodeId)>) {
-    let sccs = find_sccs(view);
-    let mut groups: Vec<Vec<NodeId>> = Vec::new();
-    let mut group_of: HashMap<NodeId, usize> = HashMap::new();
-    for scc in &sccs {
-        let gid = groups.len();
-        for &id in &scc.node_ids {
-            group_of.insert(id, gid);
-        }
-        groups.push(scc.node_ids.clone());
-    }
-    for node in &view.nodes {
-        if let Entry::Vacant(entry) = group_of.entry(node.id) {
-            let gid = groups.len();
-            entry.insert(gid);
-            groups.push(vec![node.id]);
-        }
-    }
-
-    // Condensation: group → groups it depends on.
-    let mut depends: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); groups.len()];
-    for edge in &view.edges {
-        if let (Some(&a), Some(&b)) = (group_of.get(&edge.from), group_of.get(&edge.to))
-            && a != b
-        {
-            depends[a].insert(b);
-        }
-    }
-    let mut pending: Vec<usize> = depends.iter().map(|set| set.len()).collect();
-
-    let sort_key = |gid: usize| -> (String, usize) {
-        let smallest = groups[gid]
-            .iter()
-            .filter_map(|id| view.node_name(*id))
-            .min()
-            .unwrap_or("?")
-            .to_string();
-        (smallest, gid)
-    };
-
-    let mut emitted = vec![false; groups.len()];
-    let mut order: Vec<NodeId> = Vec::new();
-    loop {
-        let next = (0..groups.len())
-            .filter(|&g| !emitted[g] && pending[g] == 0)
-            .map(|g| (sort_key(g), g))
-            .min()
-            .map(|(_, g)| g);
-        let Some(gid) = next else { break };
-        emitted[gid] = true;
-        order.extend(groups[gid].iter().copied());
-        for p in 0..groups.len() {
-            if !emitted[p] && depends[p].contains(&gid) {
-                pending[p] -= 1;
-            }
-        }
-    }
-    // Defensive tail (unreachable for a real DAG condensation).
-    for gid in 0..groups.len() {
-        if !emitted[gid] {
-            order.extend(groups[gid].iter().copied());
-        }
-    }
-
-    let cyclic: HashSet<(NodeId, NodeId)> = sccs.iter().flat_map(|s| s.edges.clone()).collect();
-    (order, cyclic)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{dsm_layout, effective_depth, expand_cut, find_node, within_cut};
+    use super::{effective_depth, expand_cut, find_node, within_cut};
     use archguard_engine::LoadedConfig;
     use archguard_engine::core::{
         Config, ConfigSource, Cut, Edge, Graph, LayerConfig, Node, NodeId, NodeKind, Ref,
@@ -242,36 +160,6 @@ mod tests {
             cut.nodes().iter().copied().collect::<Vec<_>>(),
             vec![NodeId(2), NodeId(3)]
         );
-    }
-
-    #[test]
-    fn dsm_layout_puts_sinks_first_and_keeps_the_cycle_group_adjacent() {
-        // Aggregated view of `graph()`: app (cycle a↔b) depends on domain.
-        let view = Graph {
-            semantic: None,
-            review_kpis: None,
-            schema_version: 1,
-            root: "/abs/projekt".to_string(),
-            nodes: vec![module(0, "app", None), module(1, "domain", None)],
-            edges: vec![edge(0, 1)],
-        };
-        let (order, cyclic) = dsm_layout(&view);
-        assert_eq!(order, vec![NodeId(1), NodeId(0)], "domain (sink) first");
-        assert!(cyclic.is_empty(), "the view itself has no cycle");
-
-        // A real cycle in the view keeps its members adjacent.
-        let view = Graph {
-            semantic: None,
-            review_kpis: None,
-            schema_version: 1,
-            root: "/abs/projekt".to_string(),
-            nodes: vec![file(0, "a", 0), file(1, "b", 0), file(2, "sink", 0)],
-            edges: vec![edge(0, 1), edge(1, 0), edge(0, 2)],
-        };
-        let (order, cyclic) = dsm_layout(&view);
-        assert_eq!(order, vec![NodeId(2), NodeId(0), NodeId(1)]);
-        assert!(cyclic.contains(&(NodeId(0), NodeId(1))));
-        assert!(cyclic.contains(&(NodeId(1), NodeId(0))));
     }
 
     #[test]
