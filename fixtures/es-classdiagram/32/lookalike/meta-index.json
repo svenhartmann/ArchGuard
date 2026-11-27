@@ -1,0 +1,6 @@
+{
+  "mappings": {
+    "_meta": { "inference": { "model_id": "not-a-reference" }, "inference_id": "nor-this" },
+    "properties": { "t": { "type": "text" } }
+  }
+}

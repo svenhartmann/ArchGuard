@@ -1,0 +1,5 @@
+PUT _inference/${ENDPOINT}
+{
+  "service": "elasticsearch",
+  "service_settings": { "model_id": ".my-e5-small" }
+}

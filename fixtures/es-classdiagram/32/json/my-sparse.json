@@ -1,0 +1,4 @@
+{
+  "service": "elasticsearch",
+  "service_settings": { "model_id": ".my-sparse", "num_allocations": 1 }
+}
