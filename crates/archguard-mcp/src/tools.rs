@@ -15,12 +15,11 @@
 //! focus logic, because that would require a report→mcp dependency edge
 //! and the crate graph stays untouched.
 
-use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::paths;
-use archguard_engine::analysis::{Baseline, SimOp, cycle_hash, find_sccs, simulate};
+use archguard_engine::analysis::{Baseline, SimOp, cycle_hash, dsm_layout, find_sccs, simulate};
 use archguard_engine::core::{
     Cut, Finding, FindingKind, Graph, LayerConfig, LayerOrigin, NodeId, Report, aggregate,
 };
@@ -717,83 +716,6 @@ fn expand_cut(graph: &Graph, base: &Cut, names: &[String]) -> Result<Cut, String
 /// The cut showing exactly the direct children of `parent`.
 fn within_cut(graph: &Graph, parent: NodeId) -> Cut {
     Cut::new(graph.children_of(parent))
-}
-
-/// Precomputed arguments of the T38 DSM renderer: the reverse
-/// topological order of the condensation (sinks first, cycle-group
-/// members adjacent) and the set of edges inside cyclic components —
-/// same recipe as the CLI's `view_util::dsm_layout` (the report crate
-/// must not know about SCCs). Groups are the cyclic SCCs plus one
-/// singleton per remaining node; Kahn runs on the condensation's
-/// OUT-degree, ties break on the smallest member name, then on group
-/// index. The condensation is a DAG, so the loop always empties; a
-/// defensive tail keeps stray ids from vanishing.
-fn dsm_layout(view: &Graph) -> (Vec<NodeId>, HashSet<(NodeId, NodeId)>) {
-    let sccs = find_sccs(view);
-    let mut groups: Vec<Vec<NodeId>> = Vec::new();
-    let mut group_of: HashMap<NodeId, usize> = HashMap::new();
-    for scc in &sccs {
-        let gid = groups.len();
-        for &id in &scc.node_ids {
-            group_of.insert(id, gid);
-        }
-        groups.push(scc.node_ids.clone());
-    }
-    for node in &view.nodes {
-        if let Entry::Vacant(entry) = group_of.entry(node.id) {
-            let gid = groups.len();
-            entry.insert(gid);
-            groups.push(vec![node.id]);
-        }
-    }
-
-    // Condensation: group → groups it depends on.
-    let mut depends: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); groups.len()];
-    for edge in &view.edges {
-        if let (Some(&a), Some(&b)) = (group_of.get(&edge.from), group_of.get(&edge.to))
-            && a != b
-        {
-            depends[a].insert(b);
-        }
-    }
-    let mut pending: Vec<usize> = depends.iter().map(|set| set.len()).collect();
-
-    let sort_key = |gid: usize| -> (String, usize) {
-        let smallest = groups[gid]
-            .iter()
-            .filter_map(|id| view.node_name(*id))
-            .min()
-            .unwrap_or("?")
-            .to_string();
-        (smallest, gid)
-    };
-
-    let mut emitted = vec![false; groups.len()];
-    let mut order: Vec<NodeId> = Vec::new();
-    loop {
-        let next = (0..groups.len())
-            .filter(|&g| !emitted[g] && pending[g] == 0)
-            .map(|g| (sort_key(g), g))
-            .min()
-            .map(|(_, g)| g);
-        let Some(gid) = next else { break };
-        emitted[gid] = true;
-        order.extend(groups[gid].iter().copied());
-        for p in 0..groups.len() {
-            if !emitted[p] && depends[p].contains(&gid) {
-                pending[p] -= 1;
-            }
-        }
-    }
-    // Defensive tail (unreachable for a real DAG condensation).
-    for gid in 0..groups.len() {
-        if !emitted[gid] {
-            order.extend(groups[gid].iter().copied());
-        }
-    }
-
-    let cyclic: HashSet<(NodeId, NodeId)> = sccs.iter().flat_map(|s| s.edges.clone()).collect();
-    (order, cyclic)
 }
 
 // ------------------------------------------------------- T40 tool builders

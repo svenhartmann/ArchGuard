@@ -6,17 +6,18 @@
 //! direct children of that module), optionally zoomed in further with
 //! `--expand a,b` on top. Text and JSON reuse the T38 renderers of
 //! `archguard-report`; the reverse topological order and the cyclic-edge
-//! set come from [`view_util::dsm_layout`] because the report crate must
-//! not know about SCCs.
+//! set come from `archguard_engine::analysis::dsm_layout` because the
+//! report crate must not know about SCCs.
 
 use archguard_engine::LoadedConfig;
+use archguard_engine::analysis::dsm_layout;
 use archguard_engine::core::{Graph, aggregate};
 use archguard_engine::report::{to_dsm_json, to_dsm_text};
 
 use crate::args::format_label;
 use crate::args::{Cli, Format};
 use crate::output::{EXIT_OK, emit, usage};
-use crate::view_util::{dsm_layout, expand_cut, find_node, module_cut, within_cut};
+use crate::view_util::{expand_cut, find_node, module_cut, within_cut};
 
 /// Handler for `Command::Dsm`; `expand` and `within` are the raw flag
 /// values (validated module names, unknown ones are a usage error).
