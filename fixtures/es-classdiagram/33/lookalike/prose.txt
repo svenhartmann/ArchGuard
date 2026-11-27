@@ -1,0 +1,3 @@
+Use PUT to create an index; send the mapping as a JSON body.
+PUT /shop-prose is the path form, with more words after it.
+POST requests are fine too.

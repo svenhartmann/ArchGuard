@@ -1,0 +1,4 @@
+PUT ${INDEX}
+{
+  "mappings": { "properties": { "a": { "type": "text" } } }
+}

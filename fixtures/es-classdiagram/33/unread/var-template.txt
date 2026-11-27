@@ -1,0 +1,5 @@
+PUT _index_template/{{name}}
+{
+  "index_patterns": ["x-*"],
+  "template": {}
+}

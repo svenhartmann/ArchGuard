@@ -1,0 +1,4 @@
+PUT http://localhost:9200/hostidx
+{
+  "mappings": { "properties": { "a": { "type": "text" } } }
+}
