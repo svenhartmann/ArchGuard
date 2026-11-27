@@ -267,6 +267,7 @@ fn details_texts_are_translated() {
         "Used by",
         "Chain",
         "Parameters",
+        "default endpoint",
     ] {
         assert!(texts.iter().any(|x| x == t), "the details use {t:?}");
     }

@@ -337,6 +337,6 @@ fn vector_fields_list_their_parameters_and_semantic_text_names_the_default_endpo
         ]
     );
     assert_eq!(at("body"), [s("inference_id", "my-e5-endpoint")]);
-    assert_eq!(at("summary"), [s("inference_id", "default endpoint")]);
+    assert_eq!(at("summary"), [s("inference_id", "")]);
     assert!(at("title").is_empty());
 }
