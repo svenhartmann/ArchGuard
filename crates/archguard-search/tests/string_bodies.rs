@@ -287,6 +287,13 @@ fn a_recognized_python_call_with_positional_arguments_is_a_gap() {
 }
 
 #[test]
+fn a_typescript_call_with_a_variable_argument_is_a_gap() {
+    let ts = "await client.indices.create(params);\n";
+    let (names, gaps) = probe("q.ts", ts);
+    assert_eq!((names.len(), gaps), (0, 1));
+}
+
+#[test]
 fn a_java_source_call_over_the_span_limit_is_a_gap_not_skipped() {
     let java = format!(
         "class A {{ void f() {{ new CreateIndexRequest(\"long-v1\").source(BODY{}, XContentType.JSON); }} }}\n",
