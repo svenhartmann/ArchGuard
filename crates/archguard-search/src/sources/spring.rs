@@ -16,7 +16,8 @@
 // shortcut: flavor is a plain substring match anywhere in the module's own build file (a parent
 // pom, `gradle/libs.versions.toml` and a nested Gradle module without build file are missed) and
 // the `org.opensearch.data` import counts per file, not per module; lift when a corpus needs it.
-// shortcut: Kotlin classes need a `{}` body, nested classes share their outer class's fields and
+// shortcut: Kotlin classes need a `{}` body (a Kotlin file importing `Document` without any
+// such class is a gap, one with another class with body is not), nested classes share their outer class's fields and
 // resources are found only under `src/main/resources`; lift when a corpus needs it.
 use super::constants::{Constants, lang, literal};
 use super::json::detail_from_json;
@@ -161,6 +162,10 @@ impl FileScan<'_, '_> {
         } else {
             ""
         };
+        // A Kotlin class without a `{}` body is not in `classes`; the file is a gap, not silence.
+        if scan.kotlin && scan.provides("Document") && scan.classes.is_empty() {
+            self.gap();
+        }
         for class in &scan.classes {
             if let Some(a) = self.artifact(&scan, class, flavor) {
                 self.out.elasticsearch.artifacts.push(a);
