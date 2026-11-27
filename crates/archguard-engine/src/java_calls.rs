@@ -654,6 +654,90 @@ fn run_helper(input: &Input, executable: &Path) -> Result<CallAnalysis, String> 
 mod tests {
     use super::*;
 
+    /// Real-javac tests run only where a JDK is installed.
+    fn project_with(files: &[(&str, &[u8])]) -> Option<tempfile::TempDir> {
+        let jdk = |tool: &str| {
+            Command::new(tool)
+                .arg("--version")
+                .output()
+                .is_ok_and(|o| o.status.success())
+        };
+        if !(jdk("java") && jdk("javac")) {
+            return None;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("src/main/java/de/x");
+        fs::create_dir_all(&dir).unwrap();
+        for (name, bytes) in files {
+            fs::write(dir.join(name), bytes).unwrap();
+        }
+        Some(root)
+    }
+    const GOOD: &[u8] =
+        b"package de.x;\npublic class Good { void run() { help(); } void help() {} }\n";
+
+    #[test]
+    fn an_undecodable_file_skips_only_itself_and_says_so() {
+        // Odd byte count after a UTF-16LE mark: decode_text yields Unreadable.
+        let Some(root) = project_with(&[("Bad.java", b"\xFF\xFEa"), ("Good.java", GOOD)]) else {
+            return;
+        };
+        let analysis = analyze_java_calls(root.path(), &Config::default());
+        assert_eq!(analysis.status, "partial", "{:?}", analysis.diagnostics);
+        assert!(analysis.calls.iter().any(|c| c.code == "help()"));
+        assert!(analysis.diagnostics.iter().any(|d| d.contains("Bad.java")));
+        assert!(
+            analysis.analyzers[0]
+                .diagnostics
+                .iter()
+                .any(|d| d.contains("Bad.java"))
+        );
+    }
+
+    #[test]
+    fn only_unreadable_files_give_unavailable_with_their_messages() {
+        let Some(root) = project_with(&[("Bad.java", b"\xFF\xFEa")]) else {
+            return;
+        };
+        let analysis = analyze_java_calls(root.path(), &Config::default());
+        assert_eq!(analysis.status, "unavailable", "{:?}", analysis.diagnostics);
+        assert!(analysis.diagnostics.iter().any(|d| d.contains("Bad.java")));
+    }
+
+    #[test]
+    fn a_latin1_file_is_read_and_not_reported_as_skipped() {
+        let latin1: &[u8] = b"package de.x;\n// \xE4\npublic class Latin { void run() { help(); } void help() {} }\n";
+        let Some(root) = project_with(&[("Latin.java", latin1), ("Good.java", GOOD)]) else {
+            return;
+        };
+        let analysis = analyze_java_calls(root.path(), &Config::default());
+        assert_eq!(analysis.files, 2, "{:?}", analysis.diagnostics);
+        assert!(analysis.calls.len() >= 2);
+        assert!(!analysis.diagnostics.iter().any(|d| d.contains("skipped")));
+    }
+
+    #[test]
+    fn grouping_reads_latin1_and_utf16_like_the_scan() {
+        // Same-named class in two projects forces conflict_free_groups; the
+        // Latin-1 twin must still count as an owner, the broken one must not panic.
+        let root = tempfile::tempdir().unwrap();
+        for (project, bytes) in [
+            ("a", &b"package de.x;\n// \xE4\nclass T {}\n"[..]),
+            ("b", GOOD_T),
+        ] {
+            let dir = root.path().join(project).join("src/main/java/de/x");
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(root.path().join(project).join("pom.xml"), "<project/>").unwrap();
+            fs::write(dir.join("T.java"), bytes).unwrap();
+            fs::write(dir.join("Bad.java"), b"\xFF\xFEa").unwrap();
+        }
+        let config = Config::default();
+        let files = crate::pipeline::walk_files(root.path(), &config).unwrap();
+        let groups = conflict_free_groups(&files, &config).expect("twin T.java");
+        assert_eq!(groups.len(), 2, "{groups:?}");
+    }
+    const GOOD_T: &[u8] = b"package de.x;\nclass T {}\n";
+
     #[test]
     fn no_java_does_not_require_a_jdk_or_change_import_analysis() {
         let root = tempfile::tempdir().unwrap();
