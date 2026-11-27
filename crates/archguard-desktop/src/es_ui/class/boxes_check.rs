@@ -196,6 +196,18 @@ fn alias_points_to_its_index() {
 }
 
 #[test]
+fn inference_endpoint_lists_its_settings() {
+    let detail = json!({"detail": {"settings": {"task": "text_embedding", "model_id": "m"}}});
+    let (t, g) = small(vec![art("inference_endpoint", "ep", detail)], json!([]));
+    let b = box_of(&t, &g, "inference_endpoint");
+    let texts: Vec<String> = rows(&b, Title::Inference)
+        .into_iter()
+        .map(|r| r.2)
+        .collect();
+    assert_eq!(texts, ["model_id = m", "task = text_embedding"]);
+}
+
+#[test]
 fn service_shows_writes_and_reads() {
     let ev = json!([{"file": "a.cs", "pointer": "", "line": 1, "description": ""}]);
     let usages = json!([

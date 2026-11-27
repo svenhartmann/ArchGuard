@@ -423,3 +423,31 @@ fn a_field_focus_in_a_cluster_lights_the_merged_equal_blocks() {
         "merged box once"
     );
 }
+
+#[test]
+fn inference_endpoint_has_edges_to_its_index_and_pipeline() {
+    let ep = |n: &str| json!([{"kind": "inference_endpoint", "name": n}]);
+    let elasticsearch = serde_json::from_value(json!({
+        "artifacts": [
+            art("inference_endpoint", "my-e5", json!([]), Value::Null),
+            art("index", "docs", ep("my-e5"), Value::Null),
+            art("ingest_pipeline", "embed", ep("my-e5"), Value::Null)],
+        "usages": [], "findings": []
+    }))
+    .unwrap();
+    let t = ServiceTopology {
+        elasticsearch,
+        ..Default::default()
+    };
+    let g = search_graph(&t);
+    let sel = node(&g, "inference_endpoint", "my-e5");
+    let d = diagram(&t, &g, &sel, None, &Switches::default());
+    for (kind, name) in [("index", "docs"), ("ingest_pipeline", "embed")] {
+        let other = node(&g, kind, name);
+        let linked = d
+            .edges
+            .iter()
+            .any(|e| (e.from == other && e.to == sel) || (e.from == sel && e.to == other));
+        assert!(linked, "no edge between my-e5 and {name}");
+    }
+}

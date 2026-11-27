@@ -22,6 +22,7 @@ pub enum Title {
     Patterns,
     PointsTo,
     Access,
+    Inference,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -213,6 +214,11 @@ fn node_box(b: &mut BoxContent, t: &ServiceTopology, g: &SearchGraph, i: usize, 
                 (e.from == i && e.relation == "reference").then(|| g.nodes[e.to].label.clone())
             });
             b.compartments.push(comp(Title::PointsTo, lines));
+        }
+        ("inference_endpoint", Some(a)) => {
+            let settings = a.detail.iter().flat_map(|d| &d.settings);
+            let lines = settings.map(|(k, v)| text_line(format!("{k} = {v}")));
+            b.compartments.push(comp(Title::Inference, lines.collect()));
         }
         ("service", _) => {
             // A write or unknown edge leaves the service, a read edge points at it.

@@ -1,0 +1,6 @@
+{
+  "processors": [
+    { "set": { "field": "a", "value": "b" } },
+    { "inference": { "model_id": "my-elser", "input_output": { "input_field": "text", "output_field": "vec" } } }
+  ]
+}

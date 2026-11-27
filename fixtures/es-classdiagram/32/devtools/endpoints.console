@@ -1,0 +1,15 @@
+# fictitious endpoints
+PUT _inference/text_embedding/my-e5
+{
+  "service": "elasticsearch",
+  "service_settings": {
+    "model_id": ".my-e5-small",
+    "num_threads": 1
+  }
+}
+
+PUT _inference/my-elser
+{
+  "service": "elasticsearch",
+  "service_settings": { "model_id": ".my-elser-v2" }
+}

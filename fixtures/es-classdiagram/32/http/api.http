@@ -1,0 +1,7 @@
+PUT https://{{host}}/_inference/rerank/http-rerank
+Content-Type: application/json
+
+{
+  "service": "cohere",
+  "service_settings": { "model_id": "my-rerank-v1" }
+}

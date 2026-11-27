@@ -24,3 +24,6 @@ msgstr "nicht deklariert"
 
 msgid "Mapping not statically readable."
 msgstr "Mapping nicht statisch lesbar."
+
+msgid "Inference"
+msgstr "Inference"

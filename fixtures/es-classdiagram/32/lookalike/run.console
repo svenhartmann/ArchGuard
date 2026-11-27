@@ -1,0 +1,4 @@
+POST _inference/text_embedding/my-e5
+{
+  "input": "run this text through the endpoint"
+}
