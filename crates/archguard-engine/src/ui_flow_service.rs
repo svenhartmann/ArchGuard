@@ -143,13 +143,19 @@ pub(crate) fn apply(ctx: &ExtractContext, flow: &mut UiFlow) {
     let projects = read_projects(ctx.root, &mut scratch);
     // One walk for the descriptor and the jars. A failed walk is a note, not a gap: the
     // reader that built the flow walked the same root and already set its gap; what is
-    // missing is why the weaker `@RolesAllowed` reading was used.
+    // missing is why the service layer was read weakly or not at all.
+    //
+    // The note is pushed here, before the `!has_signs && !descriptor` return below, and
+    // must stay there: a failed walk leaves `files` empty, so `descriptor` is false and
+    // that return fires *because* of the failure. A project whose only EJB sign is its
+    // ejb-jar.xml would otherwise be skipped in silence. The message therefore names
+    // what stays unknown instead of a reading that only happens on one of the paths.
     let files = walk(ctx.root).map(|w| w.files).unwrap_or_else(|e| {
         flow.diagnostics.push(UiFlowDiagnostic {
             file: ".".into(),
             line: 0,
             message: format!(
-                "ejb-jar.xml and the EJB jars were not looked for: the file walk failed ({e}); `@RolesAllowed` is read without them."
+                "ejb-jar.xml and the EJB jars were not looked for: the file walk failed ({e}); whether this service layer declares EJB roles is unknown."
             ),
             severity: DiagnosticSeverity::Note,
         });
