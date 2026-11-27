@@ -1,7 +1,8 @@
 //! Requests in `.http`/`.rest` files and curl calls in `*.sh`, `Dockerfile` and `Makefile`
 //! become artifacts (ticket 25). Rules of this format, by the name position of the API:
 //! `PUT /<index>` -> index; `PUT|POST /_index_template/<n>` and `/_template/<n>` -> index_template;
-//! `/_component_template/<n>`; `/_ilm/policy/<n>` -> ilm_policy; `/_plugins/_ism/policies/<n>` and
+//! `/_component_template/<n>`; `/_inference/<id>` and `/_inference/<task>/<id>` -> inference_endpoint
+//! (https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-inference-put); `/_ilm/policy/<n>` -> ilm_policy; `/_plugins/_ism/policies/<n>` and
 //! `/_opendistro/_ism/policies/<n>` -> ism_policy (flavor opensearch); `/_ingest/pipeline/<n>`;
 //! `POST /_aliases` -> one alias per `add` action, referencing its index or indices. Scheme, host
 //! and query are ignored; GET, DELETE, `_search` and every other path create nothing. A name with a
@@ -108,7 +109,7 @@ fn slash(s: &str) -> usize {
 }
 
 /// Kind and name segment of a write to an API with a name in its path.
-fn route<'a>(method: &str, segs: &[&'a str]) -> Option<(&'static str, &'a str)> {
+fn index_route<'a>(method: &str, segs: &[&'a str]) -> Option<(&'static str, &'a str)> {
     let write = matches!(method, "PUT" | "POST");
     match segs {
         [n] if method == "PUT" && !n.starts_with('_') => Some(("index", n)),
@@ -118,6 +119,15 @@ fn route<'a>(method: &str, segs: &[&'a str]) -> Option<(&'static str, &'a str)> 
         ["_plugins" | "_opendistro", "_ism", "policies", n] if write => Some(("ism_policy", n)),
         ["_ingest", "pipeline", n] if write => Some(("ingest_pipeline", n)),
         _ => None,
+    }
+}
+
+fn route<'a>(method: &str, segs: &[&'a str]) -> Option<(&'static str, &'a str)> {
+    match segs {
+        ["_inference", .., n] if segs.len() <= 3 && matches!(method, "PUT" | "POST") => {
+            Some(("inference_endpoint", n))
+        }
+        _ => index_route(method, segs),
     }
 }
 
@@ -207,6 +217,9 @@ impl<'a, 'b> Scan<'a, 'b> {
         let mut a = self.artifact(req, kind, name);
         (a.flavor, a.patterns) = (def.flavor.into(), def.patterns);
         (a.references, a.detail) = (def.references, def.detail);
+        if let (Some(d), [_, task, _]) = (a.detail.as_mut(), segs.as_slice()) {
+            d.settings.insert("task".into(), (*task).into());
+        }
         a.evidence.extend(file.map(|f| ServiceEvidence {
             file: f,
             pointer: String::new(),

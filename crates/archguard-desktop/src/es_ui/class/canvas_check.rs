@@ -168,6 +168,7 @@ fn canvas_texts_are_translated() {
         "Points to",
         "Access",
         "Patterns",
+        "Inference",
         "{0} fields",
         "{0} more",
         "not declared",

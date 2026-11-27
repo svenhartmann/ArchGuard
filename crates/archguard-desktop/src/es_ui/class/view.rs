@@ -290,6 +290,7 @@ fn title_code(t: Title) -> i32 {
         Title::PointsTo => 6,
         Title::Access => 7,
         Title::Patterns => 8,
+        Title::Inference => 9,
     }
 }
 

@@ -155,6 +155,13 @@ fn classify(o: &Map<String, Value>) -> Option<(Kind, &'static str)> {
         .or_else(|| policy(o))
         .or_else(|| pipeline(o))
         .or_else(|| fragment(o))
+        .or_else(|| endpoint(o))
+}
+
+/// Create-inference body: `service` string and `service_settings` object.
+fn endpoint(o: &Map<String, Value>) -> Option<(Kind, &'static str)> {
+    (o.get("service").is_some_and(Value::is_string) && object(o, "service_settings").is_some())
+        .then_some(("inference_endpoint", "service_settings"))
 }
 
 fn has_any(o: &Map<String, Value>, keys: &[&str]) -> bool {
@@ -252,6 +259,11 @@ fn build(o: &Map<String, Value>, kind: Kind, key: &'static str) -> Definition {
         flavor,
         key,
     };
+    match kind {
+        "inference_endpoint" => def.detail = Some(endpoint_detail(o)),
+        "ingest_pipeline" => def.references = processor_references(o),
+        _ => {}
+    }
     if !matches!(kind, "index" | "index_template" | "component_template") {
         return def;
     }
@@ -272,6 +284,28 @@ fn build(o: &Map<String, Value>, kind: Kind, key: &'static str) -> Definition {
     def.references = references(o, body, &detail);
     def.detail = (detail != SearchIndexDetail::default()).then_some(detail);
     def
+}
+
+/// `service` and `service_settings.model_id` as settings lines.
+fn endpoint_detail(o: &Map<String, Value>) -> SearchIndexDetail {
+    let mut d = SearchIndexDetail::default();
+    let model = object(o, "service_settings").and_then(|s| s.get("model_id"));
+    for (k, v) in [("service", o.get("service")), ("model_id", model)] {
+        if let Some(s) = v.and_then(Value::as_str) {
+            d.settings.insert(k.into(), s.into());
+        }
+    }
+    d
+}
+
+// shortcut: only top-level processors are read, not `foreach` or `on_failure` chains.
+fn processor_references(o: &Map<String, Value>) -> Vec<SearchReference> {
+    let items = o.get("processors").and_then(Value::as_array);
+    let models = items.into_iter().flatten().filter_map(|p| {
+        let m = object(p.as_object()?, "inference")?.get("model_id")?;
+        m.as_str()
+    });
+    models.map(|m| reference("inference_endpoint", m)).collect()
 }
 
 /// Fields from `mappings.properties`, flattened settings and analysis; the same rules as the
@@ -324,6 +358,12 @@ fn references(
         ("lifecycle.name", "ilm_policy"),
     ] {
         out.extend(detail.settings.get(setting).map(|n| reference(kind, n)));
+    }
+    for f in &detail.fields {
+        for key in ["inference_id", "search_inference_id"] {
+            let id = f.params.get(key).filter(|v| !v.is_empty());
+            out.extend(id.map(|n| reference("inference_endpoint", n)));
+        }
     }
     out.extend(
         object(body, "aliases")
