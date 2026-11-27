@@ -183,7 +183,7 @@ pub(crate) fn collect_inputs(root: &Path, config: &Config) -> Result<Inputs, Arc
     if !root.is_dir() {
         return Err(error("a project directory is required"));
     }
-    let excludes = archguard_extract::Excludes::new(&config.project.exclude).map_err(error)?;
+    let excludes = archguard_core::Excludes::new(&config.project.exclude).map_err(error)?;
     let walk_root = root.to_path_buf();
     let walker = ignore::WalkBuilder::new(root)
         .hidden(false)

@@ -108,7 +108,7 @@ pub fn excluded(name: &str) -> bool {
 /// Shared discovery bounds for manifests and deployment declarations.
 /// Samples remain analyzable when explicitly selected as the analysis root.
 pub struct Discovery {
-    excludes: archguard_extract::Excludes,
+    excludes: archguard_core::Excludes,
 }
 impl Discovery {
     pub fn new(root: &Path, report: &mut ServiceTopology) -> Result<Self, ArchguardError> {
@@ -159,7 +159,7 @@ impl Discovery {
             break;
         }
         Ok(Self {
-            excludes: archguard_extract::Excludes::new(&patterns)?,
+            excludes: archguard_core::Excludes::new(&patterns)?,
         })
     }
     pub fn walk(&self, root: &Path) -> ignore::Walk {

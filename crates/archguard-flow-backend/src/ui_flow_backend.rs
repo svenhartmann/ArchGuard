@@ -4016,7 +4016,7 @@ pub mod spring {
                 let e = ident_end(src, s);
                 !in_ranges(read, s)
                     && (s == 0 || !lex::is_ident(b[s - 1]))
-                    && SCOPING.contains(&&src.text[s..e])
+                    && src.text.get(s..e).is_some_and(|n| SCOPING.contains(&n))
                     && is_call(src, s, e)
                     && !super::rule_calls::is_rule_call(src, s, lambdas)
             })

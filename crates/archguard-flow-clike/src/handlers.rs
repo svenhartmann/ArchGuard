@@ -102,7 +102,7 @@ pub fn enclosing_class(src: &Source, at: usize) -> Option<String> {
         for p in words(&src.text, kw).filter(|p| *p < at) {
             let s = skip_ws(b, p + kw.len());
             let e = s + b[s..].iter().take_while(|c| is_ident(**c)).count();
-            let Some(open) = src.text[e..at].find('{').map(|o| o + e) else {
+            let Some(open) = src.text.get(e..at).and_then(|t| t.find('{')).map(|o| o + e) else {
                 continue;
             };
             if src.text[e..open].contains(';') || src.pair(open).is_none_or(|c| c < at) {
