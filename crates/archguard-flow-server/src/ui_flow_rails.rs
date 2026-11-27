@@ -313,7 +313,9 @@ mod lex {
                     b'"' | b'\'' => quote = Some(c),
                     b'(' | b'[' | b'{' => depth += 1,
                     b')' | b']' | b'}' => depth -= 1,
-                    _ if depth == 0 && s[i..].starts_with(pat) => return Some(i),
+                    _ if depth == 0 && s.get(i..).is_some_and(|r| r.starts_with(pat)) => {
+                        return Some(i);
+                    }
                     _ => {}
                 },
             }
