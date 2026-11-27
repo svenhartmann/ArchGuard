@@ -5,7 +5,7 @@
 //! `index.analysis`) and `properties.<field>.{type, analyzer, search_analyzer, normalizer, fields,
 //! properties}` fill the detail like a JSON mapping; `persistence.driver/model` only appear in the
 //! evidence text. `indexes` that is no mapping and `when@<env>` blocks are a gap. `scope` = `fos:<folder>`, evidence = the key's line. A file that cannot be
-//! read or parsed is a gap when it is named `fos_elastica.y*ml` or mentions the marker. Trust
+//! read or parsed is a gap when it is named `fos_elastica.y*ml` or has a root `fos_elastica:` line. Trust
 //! boundary: files below the root through the safe reader, at most 5 000 YAML files, no test
 //! paths, no network, no aliases; contents are data.
 // shortcut: YAML aliases are refused (a small file can expand exponentially); lift on demand.
@@ -67,7 +67,15 @@ fn read_file(ctx: &SearchContext, rel: &str, out: &mut ServiceTopology) {
         .then(|| serde_yaml_ng::from_str(&text).ok())
         .flatten();
     let Some(value) = value else {
-        es_gap(out, EsGap::DefinitionUnread, rel, None, &[]);
+        // Only a file that is a config or has the root line is a gap; a service reference
+        // (`@fos_elastica.finder…`) in ordinary Symfony YAML is a lookalike.
+        if named_like_config(rel)
+            || text
+                .lines()
+                .any(|l| l.trim_end().starts_with("fos_elastica:"))
+        {
+            es_gap(out, EsGap::DefinitionUnread, rel, None, &[]);
+        }
         return;
     };
     let (lines, indexes_line) = key_lines(&text);
@@ -75,7 +83,7 @@ fn read_file(ctx: &SearchContext, rel: &str, out: &mut ServiceTopology) {
         return;
     };
     for (key, entry) in indexes {
-        let line = lines.get(key.as_str()).copied();
+        let line = lines.get(key.as_str()).copied().or(indexes_line);
         match name_of(key, entry) {
             Some(name) => out
                 .elasticsearch
