@@ -52,6 +52,7 @@ fn only_indexes_below_the_fos_elastica_root_are_artifacts() {
         "index cm_idx fos:commented",
         "index custom_idx fos:extra",
         "index dev_only fos:config/packages/dev",
+        "index flow_idx fos:flow",
         "index products fos:dup",
         "index shop_v2 fos:config/packages",
         "index user fos:dup",
@@ -182,4 +183,15 @@ fn evidence_line_survives_trailing_comments() {
         .find(|a| a.name.as_deref() == Some("cm_idx"))
         .expect("cm_idx");
     assert_eq!(cm.evidence[0].line, Some(3));
+}
+
+#[test]
+fn flow_style_indexes_use_the_indexes_line_as_evidence() {
+    let report = analyze();
+    let all = fos(&report);
+    let flow = all
+        .iter()
+        .find(|a| a.name.as_deref() == Some("flow_idx"))
+        .expect("flow_idx");
+    assert_eq!(flow.evidence[0].line, Some(2));
 }

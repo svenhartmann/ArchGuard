@@ -1,0 +1,5 @@
+services:
+    App\Search\Indexer:
+        arguments:
+            $finder: '@fos_elastica.finder.app_user'
+            $handlers: !tagged_iterator app.handler
