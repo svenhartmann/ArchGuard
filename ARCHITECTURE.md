@@ -229,8 +229,8 @@ archguard/
 
 | Crate | Responsibility | External dependencies |
 | --- | --- | --- |
-| `archguard-core` | `Node`, `Edge`, `Ref`, `Graph`, `GraphBuilder`, `Finding`, `Report`, `Config`, `ArchguardError` | `serde`, `serde_json`, `thiserror` |
-| `archguard-extract` | `.gitignore`-aware file discovery, `Extractor` trait, Java/C#/Python/TS/JS/PHP/Rust/Go scanners; two-stage resolution (path and declaration map/PSR-4) | `ignore`, `globset`, `serde_json` |
+| `archguard-core` | `Node`, `Edge`, `Ref`, `Graph`, `GraphBuilder`, `Finding`, `Report`, `Config`, `ArchguardError`, `Excludes` | `globset`, `serde`, `serde_json`, `thiserror` |
+| `archguard-extract` | `.gitignore`-aware file discovery, `Extractor` trait, Java/C#/Python/TS/JS/PHP/Rust/Go scanners; two-stage resolution (path and declaration map/PSR-4) | `ignore`, `serde_json` |
 | `archguard-analysis` | SCC, bounded cycle enumeration, fan-in/out, instability, layer checks, **layer inference (ranking and name affinity)**, cut scoring, baseline diff | `petgraph` |
 | `archguard-report` | Serialize `Report` types into all output formats | `serde_json` |
 | `archguard-store` | `LadybugStore` DB mirror, read-only openCypher queries, query sanitizer | `lbug = "=0.22.1"` (LadybugDB, only with Cargo feature `db`) |
@@ -343,7 +343,7 @@ and their `refs` merged. Edges connect only `file` nodes. All lists are stably s
 
 1. **Load declarations:** read project config using the [file priority](README.md#configuration-and-project-data). Sections and values not written there take their documented default (Section 11); a section header without values declares nothing. Resolution: `declared ⇐ derived ⇐ default`.
 2. **Infer project setup:** if `[project]` is absent, infer source roots and languages from manifests (PSR-4, `Cargo.toml`, tsconfig, pyproject) and extension statistics (Section 7, "Project inference").
-3. **Walk:** use the `ignore` crate (respecting `.gitignore`), filtering known extensions and `exclude` globs (root-anchored; a matched directory is pruned with everything below it, a trailing `/` matches directories only; one rule in `archguard_extract::Excludes`).
+3. **Walk:** use the `ignore` crate (respecting `.gitignore`), filtering known extensions and `exclude` globs (root-anchored; a matched directory is pruned with everything below it, a trailing `/` matches directories only; one rule in `archguard_core::Excludes`).
 4. **Extract:** the scanner for each file yields imports (`RawImport` with `TargetSpec::Path` for relative paths or `TargetSpec::Symbol` for package/namespace imports) **and** declarations (the file's `package`/`namespace`).
 5. **Resolve in two stages:** resolve path specs against the file tree and symbol specs against the **declaration map** (module path → declaring files, supplemented by PHP PSR-4 mappings from `composer.json`). A unique file gives a file edge; a known package gives a pseudo-node `package/*`; no match means external, a warning and no edge.
 6. **Build the graph:** `GraphBuilder` creates each file node **and its directory ancestor chain** (`ensure_path`); edges are file → file only (interning, deduplication, discard self-edges).
