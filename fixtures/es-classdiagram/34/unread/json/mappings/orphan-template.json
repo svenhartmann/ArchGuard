@@ -1,0 +1,1 @@
+{ "script": { "lang": "mustache", "source": "{\"query\":{\"match_all\":{}}}" } }

@@ -1,0 +1,4 @@
+when@prod:
+  fos_elastica:
+    indexes:
+      books: ~

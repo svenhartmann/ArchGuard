@@ -1,0 +1,4 @@
+POST {{host}}/{{index}}/_doc
+Content-Type: application/json
+
+{ "a": 1 }

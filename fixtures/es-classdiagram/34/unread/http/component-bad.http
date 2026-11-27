@@ -1,0 +1,4 @@
+PUT /_component_template/base-parts
+Content-Type: application/json
+
+[1, 2]
